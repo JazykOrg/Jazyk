@@ -1,0 +1,25 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://natlan.org/schemas/project-settings.schema.json
+title: Natlan Project Settings
+description: Configuration schema for natlan.yml project settings file
+type: object
+properties:
+  docs:
+    description: Settings for managing documentation files
+    type: object
+    properties:
+      glob:
+        description: Glob patterns to match or exclude documentation files. Use '!' prefix to exclude files.
+        type: array
+        items:
+          type: string
+        examples:
+          - docs/**/*.md
+          - "!docs/api/**/*.md"
+      handlers:
+        description: Custom handlers for documentation files in addition to built-in handlers
+        type: array
+        items:
+          type: object
+    additionalProperties: false
+additionalProperties: false

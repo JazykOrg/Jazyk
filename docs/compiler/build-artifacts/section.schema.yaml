@@ -1,0 +1,45 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://natlan.org/schemas/section.schema.json
+title: Section
+description: Build artifact for a documentation section that documents relevant information about the section for re-compilation and downstream processing such as code-generation
+type: object
+required:
+  - location
+  - contentHash
+properties:
+  location:
+    description: URI reference that can be used to locate the section in the documentation. The path to the section in the file itself is specific to the documentation format
+    type: string
+    format: uri
+  contentHash:
+    description: MurmurHash3 hash of the section content that can be used to determine if the section has changed since the last build
+    type: string
+  links:
+    description: Links to/from other sections. 2-way links are supported to allow traversing the documentation graph
+    type: array
+    items:
+      type: object
+      required:
+        - target
+        - relationship
+      properties:
+        target:
+          description: URI reference to the target section
+          type: string
+          format: uri
+        relationship:
+          description: Type of relationship between this section and the target section
+          type: string
+          enum:
+            - generalization
+            - realization
+            - composition
+            - aggregation
+            - association
+            - dependency
+        direction:
+          description: Direction of the link relative to this section
+          type: string
+          enum:
+            - outgoing
+            - incoming

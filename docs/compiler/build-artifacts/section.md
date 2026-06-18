@@ -39,8 +39,7 @@ changed since the last build.
 
 ## Relationship
 
-This section may have a relationship to/from other sections. 2-way linkage is added to allow traversing
-the documentation graph.
+This section may have a relationship to another section.
 
 See [types of relationships](./relationships.md#relationships) for more information.
 

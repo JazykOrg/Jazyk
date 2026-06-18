@@ -11,6 +11,7 @@ TODO
 The compiler can be invoked in a number of ways.
 
 TODO CLI
+TODO Language Server
 TODO MCP
 TODO IDE extensions
 

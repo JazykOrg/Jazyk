@@ -14,8 +14,8 @@ properties:
   contentHash:
     description: MurmurHash3 hash of the section content that can be used to determine if the section has changed since the last build
     type: string
-  links:
-    description: Links to/from other sections. 2-way links are supported to allow traversing the documentation graph
+  relationships:
+    description: Relationships to/from other sections
     type: array
     items:
       type: object
@@ -37,9 +37,14 @@ properties:
             - aggregation
             - association
             - dependency
-        direction:
-          description: Direction of the link relative to this section
-          type: string
-          enum:
-            - outgoing
-            - incoming
+        cardinality:
+          description: Multiplicity at each end of the relationship
+          type: object
+          required:
+            - self
+            - target
+          properties:
+            self:
+              $ref: '#/definitions/multiplicity'
+            target:
+              $ref: '#/definitions/multiplicity'

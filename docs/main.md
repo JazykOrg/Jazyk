@@ -57,7 +57,7 @@ graph TD;
   Docs[/"Documentation<br/>(Natural Language)"/];
   Artifacts[("Build Artifacts<br/>(machine-readable)")];
 
-  subgraph Usages
+  subgraph Consumers
     CodeGen[Code Generation];
     TestGen[Test Generation];
     PM[Project Management];
@@ -75,8 +75,8 @@ graph TD;
   Docs --> Compiler;
   Compiler --> Artifacts;
 
-  CLI --> Usages;
-  MCP --> Usages;
+  CLI --> Consumers;
+  MCP --> Consumers;
 
   Artifacts <--> CodeGen;
   Artifacts <--> TestGen;
@@ -108,9 +108,8 @@ Frontends embed the compiler and expose it for different consumers.
 
 ### Consumers
 
-Usages consume the build artifacts to do useful work downstream.
+Consumers use the build artifacts to do useful work downstream.
 
-- [Project Management](./pm.md)
 - [Code Generation](./codegen.md)
 - [Test Generation](./testgen.md)
 - [LLM Static Analysis](./llm-test.md)

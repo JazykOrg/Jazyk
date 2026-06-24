@@ -14,4 +14,6 @@ at [jazyk.org](https://jazyk.org).
 ## Content
 
 - [/](./site/page-home.md)
+- [/compilation](./site/page-compilation.md)
+- [/artifact](./site/page-artifact.md)
 - [/favicon.svg](./logo.svg)

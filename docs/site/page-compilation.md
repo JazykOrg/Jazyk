@@ -9,9 +9,9 @@
 
 ### Compiler
 
-TODO For each phase, describe its purpose and logic, and include example input and output
+*TODO For each phase, describe its purpose and logic, and include example input and output*
 
 ### Linker
 
-TODO For each phase, describe its purpose and logic, and include example input and output
+*TODO For each phase, describe its purpose and logic, and include example input and output*
 

@@ -9,9 +9,9 @@
 
 ### Graph
 
-TODO show an example diagram graph of docs sections, entities, relationships
-     and how they all relate to each other.
+*TODO show an example diagram graph of docs sections, entities, relationships
+     and how they all relate to each other.*
 
 ### Format
 
-TODO show schema of artifact
+*TODO show schema of artifact*

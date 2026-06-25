@@ -1,7 +1,7 @@
 $schema: http://json-schema.org/draft-07/schema#
-$id: https://natlan.org/schemas/project-settings.schema.json
-title: NatLan Project Settings
-description: Schema for natlan.toml project configuration file
+$id: https://jazyk.org/schemas/project-settings.schema.json
+title: Jazyk Project Settings
+description: Schema for jazyk.toml project configuration file
 type: object
 properties:
   docs:
@@ -45,3 +45,25 @@ properties:
                 items:
                   type: string
             additionalProperties: false
+  llm:
+    type: object
+    description: LLM backend. An OpenAI-compatible chat completions endpoint such as Ollama
+    properties:
+      base_url:
+        type: string
+        description: Base URL of the OpenAI-compatible endpoint
+      model:
+        type: string
+        description: Model id. Part of the cache key
+      api_key_env:
+        type: string
+        description: Name of the environment variable holding the API key
+  roots:
+    type: object
+    description: Entry-point files for reachability. Every entity defined in a root file is a root entity
+    properties:
+      files:
+        type: array
+        description: Glob patterns matching the root files
+        items:
+          type: string

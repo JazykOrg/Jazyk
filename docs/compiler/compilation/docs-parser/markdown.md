@@ -28,7 +28,7 @@ Otherwise, the top-level heading becomes the root section of the file.
 
 ### Location paths
 
-A section's [location](../../build-artifacts/section.md#location) fragment is the slugified path of
+A section's [location](../../model/section.md#section) fragment is the slugified path of
 headings from the document root to the section. List items within a section are also addressed by index.
 If there are multiple list items, the index continues incrementally.
 
@@ -44,16 +44,17 @@ F
 2. H <-- doc.md#/a/b/3
 ```
 
-## Relationships
+## Cross-references
 
-There are following relationships:
-- Markdown links to other sections or sections in another file (`(Write)[./file.md#/file/write]`)
-- Footnotes (`[^1]`).
-- Nested subsections (`## B` enclosed within `# A`).
-- Nested list (`- B` enclosed within `# A`)
+The parser extracts raw cross-references and passes them to the linker as relocations to resolve. The
+parser does not type them. Typed [relationships](../../model/relationship.md#relationship) between
+entities are produced later, from requirements.
 
-For all relationships, the parser defaults to the [Reference](../../build-artifacts/relationships.md#reference)
-type for all relationships.
+Cross-references come from:
+- Markdown links to a section in this or another file (`[Write](./file.md#/file/write)`)
+- Footnotes (`[^1]`)
+- Nested subsections (`## B` inside `# A`)
+- Nested list items (`- B` inside `# A`)
 
 ## Embedded content
 

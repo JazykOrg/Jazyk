@@ -186,8 +186,8 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
         ],
         "review-entity" => vec![
-            "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "delete_requirement",
-            "report_diagnostic", "resolve_diagnostic", "done",
+            "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "update_requirement",
+            "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
         ],
         "mcp-read" => READ_TOOLS.to_vec(),
         "mcp-write" => catalog().iter().map(|t| t.name).filter(|n| *n != "done").collect(),
@@ -477,7 +477,10 @@ impl ToolSession {
                     if &doc != wd {
                         return Err(ToolError::new(
                             "wrong-document",
-                            format!("mention cites {} but this turn reconciles {}; cite a section of the target document", doc, wd),
+                            format!(
+                                "mention cites {} but this turn reconciles {}; quote a sentence from {}'s own sections (text this document merely links to cannot anchor a mention here)",
+                                doc, wd, wd
+                            ),
                         ));
                     }
                 }
@@ -611,7 +614,10 @@ impl ToolSession {
                     if &doc != wd {
                         return Err(ToolError::new(
                             "wrong-document",
-                            format!("source cites {} but this turn reconciles {}; cite a section of the target document", doc, wd),
+                            format!(
+                                "source cites {} but this turn reconciles {}; quote the sentence from {}'s own sections (text this document merely links to cannot anchor a requirement here)",
+                                doc, wd, wd
+                            ),
                         ));
                     }
                 }

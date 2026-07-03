@@ -36,6 +36,9 @@ formal spec:
 - The compiler shall flag only findings the document author can act on.
 - It does not demand formal-spec completeness from prose. Missing persistence details,
   versioning schemes, or exhaustive case enumeration are not findings.
+- It does not demand `shall` grammar from prose either. A declarative statement of
+  system behavior is extracted as a requirement, rephrased into EARS. See
+  [declarative prose states obligations](./ears.md#declarative-prose-states-obligations).
 - A diagnostic's severity shall stay stable across builds unless the underlying facts
   materially change. Diagnostics are sticky nodes, reconciled rather than regenerated, so
   a rebuild over unchanged documents does not reshuffle severities. See

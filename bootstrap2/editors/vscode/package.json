@@ -1,0 +1,62 @@
+{
+  "name": "jazyk",
+  "displayName": "Jazyk",
+  "description": "Language support for Jazyk — natural language compiled into a semantic graph.",
+  "version": "0.2.0",
+  "publisher": "jazyk",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:jazyk",
+    "workspaceContains:**/jazyk.toml"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "jazyk.restartServer",
+        "title": "Jazyk: Restart Language Server"
+      }
+    ],
+    "languages": [
+      {
+        "id": "jazyk",
+        "aliases": [
+          "Jazyk"
+        ],
+        "extensions": [
+          ".md"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Jazyk",
+      "properties": {
+        "jazyk.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the jazyk binary. When empty, the extension looks for bootstrap2/target/release/jazyk, then bootstrap2/target/debug/jazyk in the workspace, then falls back to `jazyk` on PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.0"
+  }
+}

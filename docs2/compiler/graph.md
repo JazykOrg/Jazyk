@@ -108,6 +108,9 @@ and claiming the section anyway.
   requirement `edges` by entity pair, unions the contributing requirements, and keeps the
   strongest implied type. See [relationship](./model/relationship.md). There is no write
   tool for relationships, so an edge cannot exist without a requirement behind it.
+- A committed requirement adds its source as a mention on every entity it references
+  (deduplicated). An entity reused by reference accumulates cross-document presence
+  without an explicit `upsert_entity` call.
 - The name index (name and alias → entity id) is rebuilt on load and after each commit.
   The [search tool](./tools.md#read-tools) queries it.
 

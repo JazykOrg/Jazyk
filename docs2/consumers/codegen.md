@@ -35,6 +35,18 @@ keeps a map from entity id to code unit. On rebuild:
   generator follows it and folds the absorbed unit into the survivor's.
 - A renamed entity keeps its id, so its code unit is migrated in place, not rewritten.
 
+## Command
+
+`jazyk codegen [entity...]` generates code units into `<out>/codegen/`. See
+[CLI](../frontends/cli.md).
+
+- With no arguments it generates every entity that has at least one requirement, in
+  topological order over the relationship edges.
+- Each unit is one file named by the entity slug, e.g. `codegen/graph-store.rs`. The
+  file opens with a header comment carrying the entity id and the requirement ids it
+  implements: the traceability key downstream tooling binds to.
+- `--lang` picks the target language; the default is `rust`.
+
 ## Forced decisions
 
 Generation sometimes must choose a value the documents never stated (a default, a limit, a

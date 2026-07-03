@@ -261,6 +261,46 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
             }
         }
     }
+    // Near-identical statements on one entity: review debt made deterministic. Token-set
+    // similarity catches rephrasings the requirement natural key (exact normalized text)
+    // does not.
+    {
+        let toks = |s: &str| -> BTreeSet<String> {
+            s.to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| t.len() > 2)
+                .map(String::from)
+                .collect()
+        };
+        let mut flagged: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut by_entity: BTreeMap<&String, Vec<(&String, BTreeSet<String>)>> = BTreeMap::new();
+        for (rid, r) in &store.graph.requirements {
+            for e in &r.entities {
+                by_entity.entry(e).or_default().push((rid, toks(&r.ears)));
+            }
+        }
+        for list in by_entity.values() {
+            for i in 0..list.len() {
+                for j in i + 1..list.len() {
+                    let (a, ta) = &list[i];
+                    let (b, tb) = &list[j];
+                    let inter = ta.intersection(tb).count();
+                    let union = ta.union(tb).count();
+                    if union > 0 && inter * 10 >= union * 8 {
+                        let key = if a < b { ((*a).clone(), (*b).clone()) } else { ((*b).clone(), (*a).clone()) };
+                        if flagged.insert(key.clone()) {
+                            f.push((
+                                "duplicate-requirement".into(),
+                                key.0.clone(),
+                                "warning".into(),
+                                format!("{} and {} state near-identical requirements; keep one", key.0, key.1),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     // Flip detection: an entity id minted with a collision suffix while a tombstone holds
     // the base slug means a natural key was deleted and recreated across builds.
     for id in store.graph.entities.keys() {

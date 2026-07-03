@@ -55,11 +55,15 @@ api_key_env = "JAZYK_API_KEY"
 temperature = 0
 ```
 
-- `base_url`: any OpenAI-compatible server.
+- `base_url`: any OpenAI-compatible server. Endpoints that only answer streaming
+  responses are handled transparently: on a "stream must be set to true" rejection the
+  client switches to streaming for the rest of the run.
 - `model`: the model id.
 - `api_key_env`: the environment variable holding the API key. A literal `api_key` may be
   given instead. Prefer `api_key_env` in tracked files.
-- `temperature`: sampling temperature. Default 0.
+- `temperature`: sampling temperature. Default 0. Some models only allow their own
+  default and reject the parameter; on such a rejection the client retries once without
+  it and stops sending it for the rest of the run.
 
 The endpoint, model, and credentials describe the machine, not the project, so their
 recommended home is a global config at `~/.jazyk/config.toml` (or `~/.jazyk.toml`) with
@@ -112,5 +116,8 @@ Run-level knobs are environment variables only, since they tune one run, not the
   (default 2).
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
+- `JAZYK_READ_TIMEOUT`: seconds to wait on one LLM response before the call fails
+  (default 300). Bounds runaway calls: a stalled endpoint costs at most the timeout
+  times the retries, not an open-ended wait.
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
   [trace events](./turns.md#trace-events) including full context packs and raw payloads.

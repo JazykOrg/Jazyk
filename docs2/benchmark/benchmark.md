@@ -37,6 +37,8 @@ visible before a full build is attempted.
   codec in use.
 - Extraction sanity: the model finds the planted requirements and entities and creates
   no junk nodes. See [turn-extract](./cases/turn-extract.md).
+- Declarative extraction: the model recognizes obligations stated without `shall` and
+  rephrases them into EARS. See [turn-declarative](./cases/turn-declarative.md).
 - Reuse discipline: the model searches before creating and reuses the existing entity.
   See [turn-reuse](./cases/turn-reuse.md).
 - Repair: the model reads a rejection message and fixes the call. See

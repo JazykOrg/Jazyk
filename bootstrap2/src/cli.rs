@@ -7,6 +7,7 @@ use crate::store::Store;
 use crate::turn::{Trace, TraceLevel};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Options {
     pub base_url: Option<String>,
     pub model: Option<String>,
@@ -17,6 +18,7 @@ pub struct Options {
     pub write: bool,
     pub focus: Option<String>,
     pub budget: Option<usize>,
+    pub lang: Option<String>,
 }
 
 impl Default for Options {
@@ -31,6 +33,7 @@ impl Default for Options {
             write: false,
             focus: None,
             budget: None,
+            lang: None,
         }
     }
 }
@@ -259,6 +262,242 @@ pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
             }
         }
     }
+}
+
+// Generate one code unit per entity from its assembled context pack. Leaf entities
+// (fewest ungenerated neighbors) go first, so later units can reference earlier ones.
+pub fn run_codegen(opts: &Options, entities: &[String]) -> i32 {
+    let (_proj, llm, out) = resolve(&[], opts);
+    if opts.verbose {
+        llm::set_verbose(true);
+    }
+    let store = Store::load(&out);
+    let lang = opts.lang.clone().unwrap_or_else(|| "rust".to_string());
+    let ext = match lang.as_str() {
+        "rust" => "rs",
+        "python" => "py",
+        "typescript" => "ts",
+        "go" => "go",
+        _ => "txt",
+    };
+
+    let mut targets: Vec<String> = if entities.is_empty() {
+        store
+            .graph
+            .entities
+            .keys()
+            .filter(|id| !store.requirements_referencing(id).is_empty())
+            .cloned()
+            .collect()
+    } else {
+        let mut v = Vec::new();
+        for e in entities {
+            let id = store.resolve_id(e).to_string();
+            if store.graph.entities.contains_key(&id) {
+                v.push(id);
+            } else {
+                eprintln!("jazyk: unknown entity `{}`", e);
+                return 2;
+            }
+        }
+        v
+    };
+    if targets.is_empty() {
+        eprintln!("jazyk: no entities with requirements; run `jazyk compile` first");
+        return 1;
+    }
+
+    // Leaf-first ordering: repeatedly emit the entity with the fewest ungenerated
+    // neighbors over the relationship graph (ties by name).
+    let neighbors = |id: &str| -> Vec<String> {
+        store
+            .graph
+            .relationships
+            .values()
+            .filter(|r| r.members.iter().any(|m| m == id))
+            .flat_map(|r| r.members.iter().filter(|m| *m != id).cloned())
+            .collect()
+    };
+    let mut ordered: Vec<String> = Vec::new();
+    while !targets.is_empty() {
+        let (i, _) = targets
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, id)| {
+                let pending = neighbors(id).iter().filter(|n| targets.contains(n)).count();
+                (pending, (*id).clone())
+            })
+            .unwrap();
+        ordered.push(targets.remove(i));
+    }
+
+    let dir = out.join("codegen");
+    std::fs::create_dir_all(&dir).ok();
+    let mut generated: Vec<String> = Vec::new();
+    let mut failures = 0;
+    for id in &ordered {
+        let slug = id.strip_prefix("ent:").unwrap_or(id);
+        let pack = match context::assemble(&store, id, &Focus { parents: 1, mentions: 1, requirements: 2 }, 16_000) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("jazyk: {}: {}", id, e);
+                failures += 1;
+                continue;
+            }
+        };
+        let system = format!(
+            "You are the code generation consumer of jazyk, a natural language compiler. Given one entity's assembled specification (definition, requirements, relationships), produce ONE self-contained {} module implementing it. Every requirement is an obligation; implement each and cite its id in a comment at the implementing site. Reference already generated units by their slug as module or import names when a relationship requires them. Start the file with a comment header naming the entity id and the requirement ids implemented (the traceability key). Return ONLY code, no fences, no prose.",
+            lang
+        );
+        let user = format!(
+            "{}\n\nAlready generated units: {}\n",
+            pack.pack,
+            if generated.is_empty() { "(none)".to_string() } else { generated.join(", ") }
+        );
+        match llm.chat(&system, &user, &format!("codegen {}", id)) {
+            Ok(code) => {
+                let code = strip_fences(&code);
+                let path = dir.join(format!("{}.{}", slug, ext));
+                std::fs::write(&path, code).ok();
+                println!("jazyk: wrote {}", path.display());
+                generated.push(slug.to_string());
+            }
+            Err(e) => {
+                eprintln!("jazyk: {} failed: {}", id, e);
+                failures += 1;
+            }
+        }
+    }
+    println!("jazyk: codegen done — {} unit(s), {} failure(s)", generated.len(), failures);
+    if failures > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// Derive tests from requirements: one file per entity, one or more tests per
+// requirement, the verbatim quote embedded as the trace.
+pub fn run_testgen(opts: &Options, entities: &[String]) -> i32 {
+    let (_proj, llm, out) = resolve(&[], opts);
+    if opts.verbose {
+        llm::set_verbose(true);
+    }
+    let store = Store::load(&out);
+    let lang = opts.lang.clone().unwrap_or_else(|| "rust".to_string());
+    let ext = match lang.as_str() {
+        "rust" => "rs",
+        "python" => "py",
+        "typescript" => "ts",
+        "go" => "go",
+        _ => "txt",
+    };
+    // Group requirements by their first referenced entity so each lands in one file.
+    let mut by_entity: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for (rid, r) in &store.graph.requirements {
+        let Some(first) = r.entities.first() else { continue };
+        let owner = store.resolve_id(first).to_string();
+        if !entities.is_empty() {
+            let wanted = entities.iter().any(|e| store.resolve_id(e) == owner || r.entities.iter().any(|x| store.resolve_id(x) == store.resolve_id(e)));
+            if !wanted {
+                continue;
+            }
+        }
+        by_entity.entry(owner).or_default().push(rid.clone());
+    }
+    if by_entity.is_empty() {
+        eprintln!("jazyk: no requirements to derive tests from; run `jazyk compile` first");
+        return 1;
+    }
+    let dir = out.join("testgen");
+    std::fs::create_dir_all(&dir).ok();
+    let mut units = 0;
+    let mut failures = 0;
+    for (ent, rids) in &by_entity {
+        let slug = ent.strip_prefix("ent:").unwrap_or(ent);
+        let mut file = format!("// tests for {} (one test per requirement; the quote is the trace)\n", ent);
+        for rid in rids {
+            let Some(r) = store.graph.requirements.get(rid) else { continue };
+            // The EARS pattern decides the test shape.
+            let ears_l = r.ears.to_lowercase();
+            let shape = if ears_l.starts_with("when") {
+                "a scenario test: arrange, trigger the event, assert the response"
+            } else if ears_l.starts_with("if") {
+                "a negative test: set up the condition, assert the required handling"
+            } else if ears_l.starts_with("while") {
+                "a stateful test: enter the state, assert the behavior holds throughout"
+            } else {
+                "a property or invariant test"
+            };
+            let pack = context::assemble(&store, rid, &Focus { parents: 1, mentions: 1, requirements: 2 }, 8_000)
+                .map(|p| p.pack)
+                .unwrap_or_default();
+            let system = format!(
+                "You are the test generation consumer of jazyk, a natural language compiler. Derive {} in {} for exactly ONE requirement. The test function name must embed the requirement id (sanitized to identifier characters). Put the requirement's verbatim quote in a comment above the test. Reference the unit under test as the module named after the entity slug. Return ONLY code, no fences, no prose.",
+                shape, lang
+            );
+            match llm.chat(&system, &pack, &format!("testgen {}", rid)) {
+                Ok(code) => {
+                    file.push_str(&format!("\n// --- {} ---\n{}\n", rid, strip_fences(&code)));
+                }
+                Err(e) => {
+                    eprintln!("jazyk: {} failed: {}", rid, e);
+                    failures += 1;
+                }
+            }
+        }
+        let path = dir.join(format!("{}.{}", slug, ext));
+        std::fs::write(&path, &file).ok();
+        println!("jazyk: wrote {} ({} requirement(s))", path.display(), rids.len());
+        units += 1;
+    }
+    println!("jazyk: testgen done — {} file(s), {} failure(s)", units, failures);
+    if failures > 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// Render the graph into one self-contained HTML file. An `--out` value ending in .html
+// names the file; anything else is the store's out directory as usual.
+pub fn run_viewer(opts: &Options) -> i32 {
+    let html_target = opts.out.clone().filter(|o| o.ends_with(".html"));
+    let mut store_opts = opts.clone();
+    if html_target.is_some() {
+        store_opts.out = None;
+    }
+    let (_proj, _llm, out) = resolve(&[], &store_opts);
+    let store = Store::load(&out);
+    let html = crate::viewer::render(&store);
+    let path = html_target
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| out.join("graph.html"));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    match std::fs::write(&path, html) {
+        Ok(()) => {
+            println!("jazyk: wrote {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk: write {}: {}", path.display(), e);
+            1
+        }
+    }
+}
+
+// Models wrap code in markdown fences despite instructions; strip one outer fence.
+fn strip_fences(s: &str) -> String {
+    let t = s.trim();
+    if let Some(rest) = t.strip_prefix("```") {
+        if let Some(end) = rest.rfind("```") {
+            let body = &rest[..end];
+            return body.split_once('\n').map(|(_, b)| b).unwrap_or(body).to_string();
+        }
+    }
+    t.to_string()
 }
 
 pub fn run_query(paths: &[String], opts: &Options, query: &str) -> i32 {

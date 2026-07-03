@@ -39,6 +39,7 @@ one `yaml` block; each block is one case.
 ## Index
 
 - [turn-extract](./cases/turn-extract.md): extraction sanity.
+- [turn-declarative](./cases/turn-declarative.md): declarative extraction.
 - [turn-reuse](./cases/turn-reuse.md): reuse discipline.
 - [turn-converge](./cases/turn-converge.md): convergence discipline.
 - [turn-repair](./cases/turn-repair.md): repair.

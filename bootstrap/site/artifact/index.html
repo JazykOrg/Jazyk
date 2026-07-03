@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jazyk build artifacts</title>
-  <meta name="description" content="The build artifacts produced by Jazyk compilation and linking: a graph of sections, entities, requirements, and relationships." />
+  <title>The Jazyk graph</title>
+  <meta name="description" content="The semantic graph Jazyk maintains: entities with one living definition, EARS requirements with verbatim quotes, derived relationships, and sticky diagnostics. YAML on disk, ids minted once." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -22,7 +22,7 @@
       </a>
       <div class="flex items-center gap-6 text-sm">
         <a href="/compilation/" class="hover:text-brand">Compilation</a>
-        <a href="/artifact/" class="text-brand">Artifacts</a>
+        <a href="/artifact/" class="text-brand">Graph</a>
         <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
       </div>
     </nav>
@@ -30,77 +30,87 @@
 
   <main>
     <section class="mx-auto max-w-3xl px-6 py-16 text-center">
-      <h1 class="text-4xl font-bold tracking-tight text-slate-900">Build artifacts</h1>
-      <p class="mt-3 text-lg text-slate-600">Output of compilation and linking</p>
+      <h1 class="text-4xl font-bold tracking-tight text-slate-900">The graph</h1>
+      <p class="mt-3 text-lg text-slate-600">The build artifact is a persistent semantic graph, not a report</p>
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-16">
-      <h2 class="text-2xl font-bold text-slate-900">The graph</h2>
-      <p class="mt-3 text-slate-600">An artifact is a graph of four node types. Sections give the document its structure. Entities are the domain concepts. Requirements are EARS statements attached to entities. Relationships are typed edges between entities, and every edge is a product of a requirement.</p>
+      <h2 class="text-2xl font-bold text-slate-900">Five node types</h2>
+      <p class="mt-3 text-slate-600">Sections carry the documents' structure. Everything semantic lives in the other four. Nodes are created once and edited in place across builds: a rename keeps the id, a merge leaves a redirect, and a cleared finding resolves instead of vanishing.</p>
 
       <div class="mt-6 grid gap-4 sm:grid-cols-2">
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="font-semibold text-slate-900">Section</div>
-          <p class="mt-1 text-sm text-slate-600">Document structure as a parent and child tree. Holds the verbatim text for reconstruction.</p>
+          <p class="mt-1 text-sm text-slate-600">Document structure as a parent and child tree. Holds the verbatim text; every quote locates inside it.</p>
         </div>
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="font-semibold text-slate-900">Entity</div>
-          <p class="mt-1 text-sm text-slate-600">A domain concept with a stable id, a scope, and an internal or external linkage.</p>
+          <p class="mt-1 text-sm text-slate-600">A domain concept with one living definition, refined as documents change. One concept, one node, never a per-document copy.</p>
         </div>
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="font-semibold text-slate-900">Requirement</div>
-          <p class="mt-1 text-sm text-slate-600">An EARS statement attached to one or more entities. Behavior or constraint is derived from the pattern.</p>
+          <p class="mt-1 text-sm text-slate-600">An EARS statement attached to entities, carrying the verbatim source sentence as its quote.</p>
         </div>
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="font-semibold text-slate-900">Relationship</div>
-          <p class="mt-1 text-sm text-slate-600">A typed edge between two entities, reified, with a UML type and multiplicity.</p>
+          <p class="mt-1 text-sm text-slate-600">A typed edge between two entities, derived from requirements on every commit. No requirement, no edge.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5 sm:col-span-2">
+          <div class="font-semibold text-slate-900">Diagnostic</div>
+          <p class="mt-1 text-sm text-slate-600">A recorded judgment: contradiction, ambiguity, duplicate, uncovered section. Sticky by construction: it keeps its id across builds, and a human triage mark (suppressed, wontfix) is never overwritten by the compiler.</p>
         </div>
       </div>
+    </section>
 
-      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>  Section ──contains──▶ Section
-     │
-     │ declares
-     ▼
-  Entity ◀──attached to── Requirement ──implies──▶ Relationship
-     ▲                                                  │
-     └──────────────── connects ───────────────────────┘
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <h2 class="text-2xl font-bold text-slate-900">On disk</h2>
+      <p class="mt-3 text-slate-600">Plain YAML, sorted for clean diffs, under <span class="font-mono text-sm">jazyk-out/</span>: one shard per node type, one file per document's section tree and coverage, a journal entry per committed changeset, and a status file with the convergence verdict. From a real build:</p>
 
-  Diagnostic ──▶ flags any Entity, Requirement, or Relationship</code></pre>
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>ent:order:
+  name: Order
+  definition: A transaction where a Customer selects products from the
+    Catalog, submits them for purchase, and the system reserves Stock and
+    manages payment and fulfillment.
+  mentions:
+  - doc: docs/system.md
+    section: /orderly
+    quote: A Customer browses the [Catalog](./catalog.md), places an
+      [Order](./orders.md), pays through [Payment](./payment.md), ...
+  created: g1
+  updated: g26      # definition refreshed by a review turn
+
+req:orders-3:
+  ears: An Order shall be paid within 14 days of placement, otherwise the
+    system shall cancel it.
+  entities: [ent:order, ent:payment]
+  source:
+    doc: docs/orders.md
+    section: /order/lifecycle
+    quote: An Order shall be paid within 14 days of placement, otherwise
+      the system shall cancel it.</code></pre>
+
+      <p class="mt-4 text-slate-600">Ids are minted by the store at creation and never change, so generated code, tests, and tickets bind to <span class="font-mono text-sm">ent:order</span> and stay bound through renames and merges. The journal records every changeset with the turn's reasoning: the audit trail explains the graph, not just describes it.</p>
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-20">
-      <h2 class="text-2xl font-bold text-slate-900">The format</h2>
-      <p class="mt-3 text-slate-600">Artifacts are written as YAML, validated against JSON Schema. Diagnostics are first class and sticky: they carry their reasoning and are reconciled across builds rather than regenerated.</p>
+      <h2 class="text-2xl font-bold text-slate-900">Queryable, the same way, everywhere</h2>
+      <p class="mt-3 text-slate-600">One context engine assembles bounded packs around any node, with hop quotas and a size budget; whatever the budget cuts off comes back as an expansion handle. The CLI, the MCP server, and the language server all read through it, so an agent asking about <span class="font-mono text-sm">ent:order</span> sees exactly what the compiler saw.</p>
 
-      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>entities:
-  - id: e_session
-    name: Session
-    scope: public
-    linkage: external
-    definition: A signed-in user's authenticated period of activity.
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>$ jazyk context ent:order
 
-requirements:
-  - id: r_session_expiry
-    entities: [e_session]
-    text: When 30 minutes pass with no activity, the session expires.
-    ears:
-      type: event
-      trigger: 30 minutes pass with no activity
-      response: the session expires
+## Entity ent:order (Order)
+definition: A transaction where a Customer selects products ...
 
-relationships:
-  - type: association
-    from: e_user
-    to: e_session
-    multiplicity: { from: '1', to: '0..*' }
+### Requirements
+- req:orders-3: An Order shall be paid within 14 days of placement,
+  otherwise the system shall cancel it. (ties: ent:payment)
+- req:payment-1: When a Payment is confirmed, the system shall mark the
+  Order as paid. (ties: ent:payment)
 
-diagnostics:
-  - severity: warning
-    code: contradiction
-    reasoning: One document says sessions expire, another says they never do.
-    entities: [e_session]</code></pre>
+### More
+- h:ent:order|requirements|4 (4 more requirements)</code></pre>
 
-      <p class="mt-4 text-sm text-slate-500">Schemas live under <a href="https://github.com/JazykOrg/Jazyk/tree/master/docs/compiler" class="text-brand hover:underline">docs/compiler</a> and publish at <span class="font-mono">jazyk.org/schemas</span>.</p>
+      <p class="mt-4 text-sm text-slate-500">Schemas live under <a href="https://github.com/JazykOrg/Jazyk/tree/master/docs2/compiler" class="text-brand hover:underline">docs2/compiler</a> and publish at <span class="font-mono">jazyk.org/schemas</span>.</p>
     </section>
   </main>
 

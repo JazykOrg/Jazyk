@@ -75,8 +75,9 @@ Turns see subsets, not the whole catalog:
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,
   `delete_requirement`, `set_coverage`, `done`.
 - `review-entity`: `context`, `expand`, `search`, `get_entity`, `update_entity`,
-  `merge_entities`, `delete_requirement`, `report_diagnostic`, `resolve_diagnostic`,
-  `done`.
+  `merge_entities`, `update_requirement` (a review adds missing `edges` when
+  requirements tie entities structurally), `delete_requirement`, `report_diagnostic`,
+  `resolve_diagnostic`, `done`.
 - `jazyk mcp graph` (default): the read tools.
 - `jazyk mcp graph --write`: everything.
 

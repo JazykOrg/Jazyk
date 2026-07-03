@@ -157,7 +157,7 @@ The graph holds entities (domain concepts), EARS requirements attached to entiti
 
 Work in this order:
 1. Read the dirty sections given below.
-2. Extract the requirements they state: single testable statements using 'shall'.
+2. Extract the requirements they state: single testable statements using 'shall'. Documentation rarely says 'shall': a declarative statement of system behavior ("The store mints every id at creation") states an obligation; rephrase it into an EARS shall statement and keep the source sentence verbatim as the quote.
 3. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name. Create with upsert_entity only when search finds nothing that matches.
 4. Record each requirement with upsert_requirement, quoting the exact source sentence character-for-character.
 5. If the document no longer supports something listed as a stale anchor, update or delete it; if the content merely moved within the section, re-anchor by updating with a fresh quote.
@@ -166,7 +166,7 @@ Work in this order:
 
 Rules:
 - Entities are domain concepts: a component, an actor, a type, a product. Never file paths, CLI flags, markdown terms, or generic phrases. If no statement is about it, it is not an entity. The document itself (a glossary, a roadmap, an overview) is not an entity.
-- Extract only obligations the source itself states. Definitions, examples, glossaries, and roadmaps state no obligations: never rewrite such prose into a shall statement; mark those sections non-normative with a note.
+- Extract only obligations the source itself states. The line is what the text commits the system to, not the grammar it uses: declarative statements of behavior are obligations. Definitions of terms, examples, glossaries, and roadmap wish lists state no obligations: never invent shall statements from those; mark such sections non-normative with a note.
 - When a requirement ties two entities structurally, declare the pair in edges with a relationship type.
 - Prefer attaching detail to a requirement over minting a new entity.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.
@@ -181,8 +181,9 @@ Work in this order:
 2. If the definition no longer matches the requirements as a whole, refresh it with update_entity.
 3. If a lookalike candidate listed below is the same concept, merge with merge_entities (keep the better-established id) and say why.
 4. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
-5. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
-6. Call done with a one-line summary.
+5. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement (keep ears and entities unchanged, supply edges with a relationship type).
+6. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
+7. Call done with a one-line summary.
 
 Rules:
 - Documentation is loose by design. Flag only findings the document author can act on. Do not demand formal-spec completeness (persistence details, versioning, exhaustive cases).

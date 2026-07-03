@@ -481,6 +481,16 @@ impl Store {
                         remap.insert(id, final_id.clone());
                     }
                     touched.extend(requirement.entities.iter().cloned());
+                    // A committed requirement adds its source as a mention on every entity
+                    // it references, so reuse accumulates cross-document presence.
+                    for e in &requirement.entities {
+                        if let Some(ent) = self.graph.entities.get_mut(e) {
+                            if !ent.mentions.contains(&requirement.source) {
+                                ent.mentions.push(requirement.source.clone());
+                                ent.updated = Some(build.clone());
+                            }
+                        }
+                    }
                     applied.push(Op::CreateRequirement { id: final_id.clone(), requirement: requirement.clone() });
                     self.graph.requirements.insert(final_id, requirement);
                 }
@@ -895,13 +905,14 @@ impl Store {
             }
         }
         // Deterministic rules whose condition cleared: resolve.
-        const CHECK_RULES: [&str; 7] = [
+        const CHECK_RULES: [&str; 8] = [
             "uncovered-section",
             "suspicious-non-normative",
             "unused-entity",
             "unreachable-entity",
             "stale-provenance",
             "unstable-extraction",
+            "duplicate-requirement",
             "incomplete-build",
         ];
         for d in self.graph.diagnostics.values_mut() {

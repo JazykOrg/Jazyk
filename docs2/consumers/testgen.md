@@ -30,6 +30,19 @@ Every requirement carries a verbatim `quote`
 failing test shows the exact source sentence it checks. The trail is
 test → requirement id → `quote` → section.
 
+## Command
+
+`jazyk testgen [entity...]` generates tests into `<out>/testgen/`. See
+[CLI](../frontends/cli.md).
+
+- With no arguments it covers every requirement in the graph. With entity ids it covers
+  the requirements referencing them.
+- Tests are grouped one file per entity (the requirement's first entity), named by the
+  entity slug, e.g. `testgen/graph-store.rs`. Each test carries the requirement id in
+  its name and the `quote` in a comment.
+- `--lang` picks the target language; the default is `rust`. Generated tests reference
+  the code units [codegen](./codegen.md#command) produces, by entity slug.
+
 ## Coverage as a graph query
 
 Test coverage is a query over the graph, not over the code:

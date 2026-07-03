@@ -13,6 +13,7 @@ mod reconcile;
 mod store;
 mod tools;
 mod turn;
+mod viewer;
 
 // Load a .env file by walking up from the current directory. Does not override existing env vars.
 fn load_dotenv() {
@@ -51,6 +52,9 @@ fn top_usage() -> String {
     s.push_str("  jazyk status                   summarize the last build\n");
     s.push_str("  jazyk context <target>         print a context pack (ent:…, req:…, doc.md#/ref, or h:… handle)\n");
     s.push_str("  jazyk query <text>             search entities\n");
+    s.push_str("  jazyk codegen [entity...]      generate code units from the graph (--lang, default rust)\n");
+    s.push_str("  jazyk testgen [entity...]      derive tests from requirements (--lang, default rust)\n");
+    s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk mcp graph [--write]      the graph MCP server over stdio\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
@@ -104,6 +108,10 @@ fn main() {
                 i += 1;
                 opts.budget = args.get(i).and_then(|s| s.parse::<usize>().ok());
             }
+            "--lang" => {
+                i += 1;
+                opts.lang = args.get(i).cloned();
+            }
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
@@ -150,6 +158,9 @@ fn main() {
                 2
             }
         },
+        "codegen" => cli::run_codegen(&opts, &positional),
+        "testgen" => cli::run_testgen(&opts, &positional),
+        "viewer" => cli::run_viewer(&opts),
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
             lsp::Lsp::new(proj.root.clone(), out).run();

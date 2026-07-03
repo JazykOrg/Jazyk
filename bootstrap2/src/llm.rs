@@ -11,6 +11,15 @@ use std::time::Duration;
 // Codec capability, learned once per run. 0 = unknown, 1 = native tools, 2 = text fallback.
 static TOOLS_MODE: AtomicU8 = AtomicU8::new(0);
 
+// Set once a model rejects the temperature parameter (some only allow their default);
+// the rest of the run omits it. Providers often wrap the rejection as a bare 400, so the
+// first hard 400 with a temperature set triggers the drop-and-retry.
+static TEMP_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+
+// Set once an endpoint answers "stream must be set to true"; the rest of the run uses
+// streaming requests and assembles the message from SSE deltas.
+static STREAM_REQUIRED: AtomicBool = AtomicBool::new(false);
+
 pub fn tools_mode() -> u8 {
     TOOLS_MODE.load(Ordering::Relaxed)
 }
@@ -141,6 +150,21 @@ impl Llm {
                     return Ok(msg);
                 }
                 Err(e) => {
+                    // An endpoint that only serves streaming responses says so; switch
+                    // once, sticky for the run, and retry.
+                    if e.to_lowercase().contains("stream must be set to true")
+                        && !STREAM_REQUIRED.swap(true, Ordering::Relaxed)
+                    {
+                        eprintln!("[jazyk] endpoint requires streaming; switching to SSE for the rest of the run");
+                        continue;
+                    }
+                    // A model that rejects `temperature` answers 400 (often wrapped by a
+                    // proxy). Drop the parameter once, sticky for the run, and retry.
+                    let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
+                    if looks_400 && self.temperature.is_some() && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed) {
+                        eprintln!("[jazyk] model rejected the request (likely temperature); retrying without it for the rest of the run");
+                        continue;
+                    }
                     if tools.is_some() && rejects_tools(&e) && !is_transient(&e) {
                         return Err(format!("tools-rejected: {}", e));
                     }
@@ -174,13 +198,19 @@ impl Llm {
     }
 
     fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>) -> Result<Value, String> {
+        let streaming = STREAM_REQUIRED.load(Ordering::Relaxed);
         let mut payload = json!({
             "model": self.model,
-            "stream": false,
+            "stream": streaming,
             "messages": messages,
         });
+        if streaming {
+            payload["stream_options"] = json!({"include_usage": true});
+        }
         if let Some(t) = self.temperature {
-            payload["temperature"] = json!(t);
+            if !TEMP_UNSUPPORTED.load(Ordering::Relaxed) {
+                payload["temperature"] = json!(t);
+            }
         }
         if let Some(tools) = tools {
             payload["tools"] = json!(tools);
@@ -194,7 +224,13 @@ impl Llm {
         let path = format!("{}/chat/completions", base_path);
         let addr = format!("{}:{}", host, port);
         let mut conn = TcpStream::connect(&addr).map_err(|e| format!("connect {}: {}", addr, e))?;
-        conn.set_read_timeout(Some(Duration::from_secs(900))).ok();
+        // Bounded reads keep a stalled endpoint from holding a turn open indefinitely.
+        let read_timeout = std::env::var("JAZYK_READ_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(300)
+            .max(10);
+        conn.set_read_timeout(Some(Duration::from_secs(read_timeout))).ok();
         conn.set_write_timeout(Some(Duration::from_secs(60))).ok();
         let auth = if self.api_key.is_empty() {
             String::new()
@@ -210,6 +246,10 @@ impl Llm {
             body
         );
         conn.write_all(req.as_bytes()).map_err(|e| format!("write: {}", e))?;
+
+        if streaming {
+            return read_stream_message(&mut conn);
+        }
 
         let mut buf = Vec::new();
         conn.read_to_end(&mut buf).map_err(|e| format!("read: {}", e))?;
@@ -237,6 +277,115 @@ impl Llm {
         SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
         Ok(msg)
     }
+}
+
+// Read a streamed (SSE) chat completion and assemble the assistant message: content
+// deltas concatenate; tool-call deltas accumulate per index (id and name arrive first,
+// arguments append across chunks). Non-`data:` lines (chunk sizes, blanks) are skipped.
+fn read_stream_message(conn: &mut TcpStream) -> Result<Value, String> {
+    struct TcAcc {
+        id: String,
+        name: String,
+        args: String,
+    }
+    let mut raw: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut headers_done = false;
+    let mut pending = String::new();
+    let mut content = String::new();
+    let mut tcs: Vec<TcAcc> = Vec::new();
+    let mut usage_tokens: Option<u64> = None;
+    let mut done = false;
+
+    loop {
+        let n = match conn.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => return Err(format!("read: {}", e)),
+        };
+        if !headers_done {
+            raw.extend_from_slice(&buf[..n]);
+            let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+            let head = String::from_utf8_lossy(&raw[..pos]).to_string();
+            let head_line = head.lines().next().unwrap_or("").to_string();
+            if !head_line.contains(" 200") {
+                // Drain and surface the body so the fallback logic sees the error text.
+                let mut rest = raw[pos + 4..].to_vec();
+                while let Ok(m) = conn.read(&mut buf) {
+                    if m == 0 {
+                        break;
+                    }
+                    rest.extend_from_slice(&buf[..m]);
+                }
+                let body = String::from_utf8_lossy(&rest);
+                return Err(format!("http error: {} :: {}", head_line, truncate(&body, 300)));
+            }
+            headers_done = true;
+            pending.push_str(&String::from_utf8_lossy(&raw[pos + 4..]));
+        } else {
+            pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+
+        while let Some(nl) = pending.find('\n') {
+            let line = pending[..nl].trim_end_matches('\r').to_string();
+            pending.drain(..nl + 1);
+            let Some(data) = line.strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data.is_empty() {
+                continue;
+            }
+            if data == "[DONE]" {
+                done = true;
+                break;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            if let Some(u) = v["usage"]["completion_tokens"].as_u64() {
+                usage_tokens = Some(u);
+            }
+            let delta = &v["choices"][0]["delta"];
+            if let Some(c) = delta["content"].as_str() {
+                content.push_str(c);
+            }
+            if let Some(calls) = delta["tool_calls"].as_array() {
+                for tc in calls {
+                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                    while tcs.len() <= idx {
+                        tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                    }
+                    if let Some(id) = tc["id"].as_str() {
+                        tcs[idx].id = id.to_string();
+                    }
+                    if let Some(n) = tc["function"]["name"].as_str() {
+                        tcs[idx].name = n.to_string();
+                    }
+                    if let Some(a) = tc["function"]["arguments"].as_str() {
+                        tcs[idx].args.push_str(a);
+                    }
+                }
+            }
+        }
+        if done {
+            break;
+        }
+    }
+
+    if content.is_empty() && tcs.is_empty() {
+        return Err("empty stream response".to_string());
+    }
+    let tokens = usage_tokens.unwrap_or_else(|| {
+        ((content.chars().count() + tcs.iter().map(|t| t.args.chars().count()).sum::<usize>()) as u64).div_ceil(4)
+    });
+    SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+    let mut msg = json!({"role": "assistant", "content": content});
+    if !tcs.is_empty() {
+        msg["tool_calls"] = json!(tcs
+            .iter()
+            .map(|t| {
+                json!({"id": t.id, "type": "function", "function": {"name": t.name, "arguments": t.args}})
+            })
+            .collect::<Vec<_>>());
+    }
+    Ok(msg)
 }
 
 fn parse_url(u: &str) -> Result<(String, u16, String), String> {

@@ -12,8 +12,9 @@ use crate::turn::{run_turn, Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 5] = [
+const CASE_FILES: [&str; 6] = [
     include_str!("../../docs2/benchmark/cases/turn-extract.md"),
+    include_str!("../../docs2/benchmark/cases/turn-declarative.md"),
     include_str!("../../docs2/benchmark/cases/turn-reuse.md"),
     include_str!("../../docs2/benchmark/cases/turn-converge.md"),
     include_str!("../../docs2/benchmark/cases/turn-repair.md"),
@@ -445,7 +446,8 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        assert_eq!(cases.len(), 6); // five files, turn-review holds two blocks
+        assert_eq!(cases.len(), 7); // six files, turn-review holds two blocks
+        assert!(cases.iter().any(|c| c.name == "turn-declarative"));
         assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
         let extract = cases.iter().find(|c| c.name == "turn-extract").unwrap();
         assert_eq!(extract.task_type, "reconcile-doc");

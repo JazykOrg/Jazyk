@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jazyk compiler and linker</title>
-  <meta name="description" content="The phases of Jazyk compilation and linking, powered by LLM." />
+  <title>Jazyk compilation</title>
+  <meta name="description" content="How Jazyk compiles: a deterministic reconciler computes what changed, bounded LLM turns bring the semantic graph in line with it, and deterministic checks close the loop." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -22,7 +22,7 @@
       </a>
       <div class="flex items-center gap-6 text-sm">
         <a href="/compilation/" class="text-brand">Compilation</a>
-        <a href="/artifact/" class="hover:text-brand">Artifacts</a>
+        <a href="/artifact/" class="hover:text-brand">Graph</a>
         <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
       </div>
     </nav>
@@ -30,112 +30,81 @@
 
   <main>
     <section class="mx-auto max-w-3xl px-6 py-16 text-center">
-      <h1 class="text-4xl font-bold tracking-tight text-slate-900">Jazyk compiler and linker</h1>
-      <p class="mt-3 text-lg text-slate-600">Phases of compilation and linking powered by LLM</p>
+      <h1 class="text-4xl font-bold tracking-tight text-slate-900">Compilation is reconciliation</h1>
+      <p class="mt-3 text-lg text-slate-600">The documents are desired state, the graph is observed state</p>
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-12">
-      <h2 class="text-2xl font-bold text-slate-900">Compiler</h2>
-      <p class="mt-3 text-slate-600">Each file compiles on its own, in parallel, producing one object artifact. Deterministic steps frame the document; LLM steps read the prose.</p>
+      <p class="text-slate-600">A build compares the two and schedules work until they agree. Everything that must never be wrong is deterministic code; the model is invoked only inside bounded turns, behind validation gates. The first build is not a special case: it reconciles against an empty graph. A rebuild with nothing changed makes zero LLM calls.</p>
+
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>parse all docs → diff section trees → dirty set
+  → ingest wave   (reconcile-doc turns, root first, then levels in parallel)
+  → review wave   (review-entity turns)
+  → checks        (deterministic lint, coverage, reachability)
+  → fixed point reached, or budget exhausted with work parked</code></pre>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-12">
+      <h2 class="text-2xl font-bold text-slate-900">The steps</h2>
 
       <ol class="mt-6 space-y-4">
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-brand">A1</span>
-            <span class="font-semibold text-slate-900">Parse sections</span>
+            <span class="font-semibold text-slate-900">Parse</span>
             <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">Markdown to a section tree. Sections hold verbatim text so the document can be reconstructed.</p>
+          <p class="mt-2 text-sm text-slate-600">Each document becomes a section tree with verbatim text and per-section content hashes.</p>
         </li>
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-brand">A2</span>
-            <span class="font-semibold text-slate-900">Extract entities</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Identify the domain concepts a file names. Each entity gets a stable id, a scope, and an internal or external mark.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-brand">A3</span>
-            <span class="font-semibold text-slate-900">Extract requirements</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Read each statement as an EARS requirement attached to its entities, and capture the typed edges the statement implies.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-brand">A4</span>
-            <span class="font-semibold text-slate-900">Consolidate relationships</span>
+            <span class="font-semibold text-slate-900">Diff</span>
             <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">Reify the edges into relationships, deduplicate, and promote weak references to stronger UML types where the requirements warrant it.</p>
+          <p class="mt-2 text-sm text-slate-600">The section diff is the sole source of staleness. Changed and removed sections are dirty; a section that merely moved has its anchors rewritten mechanically and stays clean. The model never decides what is stale.</p>
+        </li>
+        <li class="rounded-lg border-2 border-brand bg-brand/5 p-5">
+          <div class="flex items-baseline gap-3">
+            <span class="font-semibold text-slate-900">Ingest turns</span>
+            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
+          </div>
+          <p class="mt-2 text-sm text-slate-600">One turn per dirty document. The model reads the dirty sections, searches the graph before creating any entity, records requirements with verbatim quotes, and marks each section covered or non-normative. Mutations are staged, validated one by one, and committed atomically when the turn finishes.</p>
+        </li>
+        <li class="rounded-lg border-2 border-brand bg-brand/5 p-5">
+          <div class="flex items-baseline gap-3">
+            <span class="font-semibold text-slate-900">Review turns</span>
+            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
+          </div>
+          <p class="mt-2 text-sm text-slate-600">One turn per entity whose facts changed. The model judges whether the requirements form a coherent whole, merges lookalike duplicates, refreshes the definition, and records contradictions and ambiguities as diagnostics.</p>
         </li>
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-brand">A5</span>
-            <span class="font-semibold text-slate-900">Local definitions</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
+            <span class="font-semibold text-slate-900">Checks</span>
+            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">Assemble each entity's definition from the requirements within the file. The result is one object artifact, the translation unit.</p>
+          <p class="mt-2 text-sm text-slate-600">Whole-graph lint: sections left unprocessed, entities no requirement references, unreachable entities, quotes that no longer locate, and coverage claims that dodge normative text.</p>
+        </li>
+        <li class="rounded-lg border border-slate-200 p-5">
+          <div class="flex items-baseline gap-3">
+            <span class="font-semibold text-slate-900">Fixed point</span>
+            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
+          </div>
+          <p class="mt-2 text-sm text-slate-600">The build converges when a full wave proposes zero mutations and the checks pass. Work that exhausts its budget parks with a diagnostic; the next build resumes it first. Nothing fails silently.</p>
         </li>
       </ol>
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-20">
-      <h2 class="text-2xl font-bold text-slate-900">Linker</h2>
-      <p class="mt-3 text-slate-600">The linker takes every object artifact and resolves the program as a whole. Resolution is conservative and deterministic; semantic judgment is deferred to the validate steps.</p>
+      <h2 class="text-2xl font-bold text-slate-900">Gates, not hope</h2>
+      <p class="mt-3 text-slate-600">Every mutation the model stages is validated by the graph store. A rejection names the rule and how to repair the call, because the caller is a model that will read it and try again:</p>
+      <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>✗ unknown-id: unknown entity id `ent:Product`; nearest existing:
+  ent:product; use one of those, or create it with upsert_entity first
 
-      <ol class="mt-6 space-y-4">
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L1</span>
-            <span class="font-semibold text-slate-900">Load link interfaces</span>
-            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Read the entities and relationships each object artifact exports.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L2</span>
-            <span class="font-semibold text-slate-900">Resolve entities</span>
-            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Match entities across files by explicit link, then by exact name. No fuzzy matching. An unresolved reference is a <span class="font-mono text-xs">missing-link</span>.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L3</span>
-            <span class="font-semibold text-slate-900">Merge relationships</span>
-            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Combine the edges from every file onto the resolved entities. Produces the linked artifact.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L4</span>
-            <span class="font-semibold text-slate-900">Synthesize definitions</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Write one coherent definition per entity from all merged requirements. Synthesizing it is itself the test of whether a merge was valid; a clash splits into a <span class="font-mono text-xs">false-merge</span>.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L5</span>
-            <span class="font-semibold text-slate-900">Semantic review</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Read across documents for contradictions, ambiguity, and incompleteness, and record them as diagnostics with reasoning.</p>
-        </li>
-        <li class="rounded-lg border border-slate-200 p-5">
-          <div class="flex items-baseline gap-3">
-            <span class="font-mono text-sm text-accent">L6</span>
-            <span class="font-semibold text-slate-900">Spec-lint, coverage, reachability</span>
-            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
-          </div>
-          <p class="mt-2 text-sm text-slate-600">Run the structural checks over the linked graph. Produces the reviewed artifact and the combined diagnostics.</p>
-        </li>
-      </ol>
+✗ junk-name: `--api-key` looks like a CLI flag; entities are domain
+  concepts. If it truly is one, repeat the call with a note explaining why
+
+✗ quote-not-found: quote not found in docs/admin.md#/admin-cli/rules;
+  copy the sentence verbatim from the section</code></pre>
+      <p class="mt-4 text-slate-600">Identity never depends on the model. Ids are minted by the store at creation and never change; creates key on the entity's name, so a retried or parallel create lands on the existing node instead of duplicating it.</p>
     </section>
   </main>
 

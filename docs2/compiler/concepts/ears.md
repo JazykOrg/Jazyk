@@ -22,6 +22,23 @@ A requirement stores the statement in its `ears` field. The behavior-vs-constrai
 distinction is a derived facet of the pattern, not a stored field. Ubiquitous statements
 typically state constraints; triggered, stated, and conditioned patterns describe behavior.
 
+## Declarative prose states obligations
+
+Documentation rarely says "shall". A declarative statement of system behavior states an
+obligation all the same: "The store mints every id at node creation" obliges the store
+to mint ids at creation. The turn rephrases such statements into EARS form for the
+`ears` field and keeps the source sentence verbatim in the `quote`. E.g.:
+
+```
+quote: The store mints every id at node creation. Ids are immutable.
+ears:  The store shall mint every id at node creation and never change it.
+```
+
+What stays out is prose that states no obligation at all: definitions of terms,
+examples, glossaries, and roadmap wish lists. Those sections are marked non-normative
+instead of being rewritten into requirements. The line is what the text commits the
+system to, not the grammar it uses.
+
 ## Shape check
 
 The [validation gate](../graph.md#validation-gates) applies a lenient shape check when a

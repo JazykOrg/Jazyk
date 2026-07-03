@@ -2,12 +2,13 @@
 
 Grades convergence discipline. The graph already reflects the document exactly and the
 sections are already covered in the fixture. A capable model recognizes there is nothing
-to do and stages zero mutations. See
+to add. Idempotent coverage re-claims are tolerated (natural-key upserts make them
+harmless); creating entities or requirements is not. See
 [incremental builds](../../compiler/reconciler.md#incremental-builds).
 
 ```yaml
 name: turn-converge
-description: Stage zero mutations when the graph already reflects the document.
+description: Stage nothing new when the graph already reflects the document.
 task:
   type: reconcile-doc
   target: docs/shop.md
@@ -45,5 +46,9 @@ given:
       'docs/shop.md#/shop/checkout': covered
 assert:
   - mutationCount:
-      max: 0
+      max: 3
+  - entityCount:
+      max: 2
+  - diagnosticAbsent:
+      rule: contradiction
 ```

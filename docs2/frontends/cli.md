@@ -60,6 +60,25 @@ jazyk context ent:shopping-cart --focus mentions=1,requirements=2 --budget 8000
 `jazyk query <text>` runs the [search tool](../compiler/tools.md#read-tools) and prints the
 matches, one `{id, name, definition}` line each.
 
+### jazyk codegen
+
+`jazyk codegen [entity...]` generates one code unit per entity from its assembled
+context pack, into `<out>/codegen/`. With no arguments it generates every entity that
+has at least one requirement, leaf entities first. `--lang` picks the target language
+(default `rust`). See [code generation](../consumers/codegen.md#command).
+
+### jazyk testgen
+
+`jazyk testgen [entity...]` derives tests from requirements into `<out>/testgen/`, one
+file per entity, one or more tests per requirement, quotes embedded as the trace.
+`--lang` picks the target language (default `rust`). See
+[test generation](../consumers/testgen.md#command).
+
+### jazyk viewer
+
+`jazyk viewer [--out FILE]` renders the graph into one self-contained HTML file
+(default `<out>/graph.html`). See [viewer](./viewer.md).
+
 ### jazyk mcp graph
 
 Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds the

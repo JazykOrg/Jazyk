@@ -168,6 +168,24 @@ tests, after bounded model repair plus deterministic salvage.
   the markdown parser were not selected. This is the self-hosting direction proven, not
   a drop-in replacement.
 
+## Stability under edits
+
+Controlled edits to the converged F2 fixture, gpt-5.5:
+
+- Cosmetic (a comma added to unquoted prose): one turn, one mutation (the section's
+  coverage re-claim), and the graph shards byte-identical to the pre-edit snapshot.
+  The no-op doctrine holds: the model read the section, marked it non-normative again
+  with sound reasoning, staged nothing else.
+- Punctuation inside a quoted requirement sentence: every requirement id survived (no
+  delete and recreate churn). The quote re-anchor and the third experiment (a new
+  sentence trickling into exactly one new requirement and an incremental codegen of
+  only the touched entities) were cut short when the remote provider began refusing
+  authentication mid-run; the machinery for both is in place (natural-key quote
+  refresh, `codegen_pending` diffs) and resumes with provider access.
+
+The run also exposed and fixed a gate gap: `update_requirement` accepted relationship
+types `upsert_requirement` would reject.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

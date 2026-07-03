@@ -64,8 +64,10 @@ matches, one `{id, name, definition}` line each.
 
 `jazyk codegen [entity...]` generates one code unit per entity from its assembled
 context pack, into `<out>/codegen/`. With no arguments it generates every entity that
-has at least one requirement, leaf entities first. `--lang` picks the target language
-(default `rust`). See [code generation](../consumers/codegen.md#command).
+has at least one requirement, leaf entities first, skipping entities whose facts are
+unchanged since the last run (`--force` regenerates everything). Dense entities
+generate in parts. `--lang` picks the target language (default `rust`). See
+[code generation](../consumers/codegen.md#command).
 
 ### jazyk testgen
 

@@ -53,6 +53,12 @@ A build runs in waves:
   (reachability follows relationships and shared requirements), and flip detection (a
   natural key deleted and recreated across recent builds becomes an
   `unstable-extraction` diagnostic). Findings may enqueue one bounded fix-up pass.
+- Document-quality checks, in the same wave: prose problems a human can fix, surfaced
+  where the human writes ([LSP](../frontends/lsp.md) shows them inline). A section whose
+  body exceeds the configured size (`section-too-large`), a document with too many
+  sections (`doc-too-large`), and an entity whose requirement count approaches the
+  generation ceiling (`entity-too-dense`, the signal to split the topic into
+  subsections). Thresholds live in [limits](./project-settings.md#limits).
 
 ## Convergence
 

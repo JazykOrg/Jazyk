@@ -7,17 +7,40 @@ a second API beside it.
 
 ## Default serving
 
-By default the server exposes the [read tools](../compiler/tools.md#read-tools) only:
+By default the server exposes the [read tools](../compiler/tools.md#read-tools) and the
+[generation tools](../compiler/tools.md#generation-tools):
 
-- `context`
-- `expand`
-- `search`
-- `read_section`
-- `get_entity`
+- `context`, `expand`, `search`, `read_section`, `get_entity`
+- `codegen_instructions`, `codegen_pending`, `codegen_task`, `codegen_mark`
+- `await_changes` (a server tool, below)
 
-This is the public query surface. An agent can look up an entity, pull a bounded
-[context pack](../compiler/context.md), and follow
-[expansion handles](../compiler/context.md#expansion-handles), with no way to mutate the graph.
+This is the public query and generation surface. An agent can look up an entity, pull a
+bounded [context pack](../compiler/context.md), follow
+[expansion handles](../compiler/context.md#expansion-handles), and act as a generation
+worker, with no way to mutate the graph.
+
+## External generation workers
+
+The server adds one tool of its own:
+
+- `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
+  generation counter moves or a documentation file changes on disk, or at the timeout
+  (default 300 seconds). The reply carries the changed documents, whether the graph is
+  stale (documents changed but not yet reconciled), and the pending generation work.
+
+The loop this enables: a human edits documentation in an editor while `jazyk watch`
+reconciles the graph beside it. The external agent sits in `await_changes`; when it
+returns, the agent fetches `codegen_task` for each pending entity, writes the unit into
+the workspace, verifies it with its own build and tests, and calls `codegen_mark`. The
+generated code appears in the same editor the human is writing docs in. E.g.:
+
+```
+await_changes → {changedDocs: [docs/orders.md], graphStale: false,
+                 pending: [{entity: ent:order, changed: [req:orders-4 (added)]}]}
+codegen_task {entity: ent:order} → instructions + context + diff + unit path
+(worker writes src/order.rs, runs its tests)
+codegen_mark {entity: ent:order} → recorded; back to await_changes
+```
 
 ## Write mode
 

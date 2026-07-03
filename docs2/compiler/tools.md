@@ -55,6 +55,26 @@ clever ones.
 There is no write tool for relationships. Edges exist only as a
 [derived product of requirements](./graph.md#derived-data).
 
+## Generation tools
+
+Code generation is a workflow over the graph, so its steps are tools too. Any agent
+that speaks MCP can be the generation worker; `jazyk codegen` is one such worker and
+consumes the same task packages in-process. These tools read the graph and the
+generation state (`codegen/state.yaml`); they never mutate the graph.
+
+- `codegen_instructions({lang?})`: the generation contract as text: one unit per
+  entity, the traceability header, requirement-id comments at implementing sites,
+  referencing other units by slug, and the parts protocol for dense entities.
+- `codegen_pending({lang?})`: entities whose facts differ from the generation state:
+  `{entity, unit, reason, changed}` where `changed` lists the requirement ids added,
+  removed, or reworded since the unit was last generated.
+- `codegen_task({entity, lang?})`: the full package for one unit: the instructions, the
+  entity's context pack, its requirements in generation groups, the change diff, the
+  target unit path, and the units already generated.
+- `codegen_mark({entity})`: record the entity's current fact hash in the generation
+  state. The worker writes the unit file itself; marking declares it done, and the
+  entity leaves `codegen_pending`.
+
 ## Validation and errors
 
 Every call is validated by the [gates](./graph.md#validation-gates). An error names the

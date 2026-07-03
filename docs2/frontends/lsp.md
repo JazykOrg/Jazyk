@@ -18,6 +18,11 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
   compiler and the [MCP server](./mcp.md) show.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
+- Document links: every whole-word occurrence of an entity name or alias in an open
+  document links to that entity's requirements document at `<out>/docsgen/<slug>.md`
+  (see [documentation generation](../consumers/docsgen.md)). A reader clicks any mention
+  of a concept and lands on its assembled requirements. Links are emitted only when the
+  target file exists.
 
 ## Rebuilds and refresh
 

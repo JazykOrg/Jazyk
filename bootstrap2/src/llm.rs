@@ -68,6 +68,32 @@ fn semaphore() -> &'static Semaphore {
         Semaphore { permits: Mutex::new(n), cv: Condvar::new() }
     })
 }
+// Minimum gap between request starts, so tight failure loops cannot hammer an endpoint.
+// Tunable with JAZYK_MIN_INTERVAL_MS; default 500.
+static LAST_REQUEST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+fn pace() {
+    let min_ms = std::env::var("JAZYK_MIN_INTERVAL_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(500);
+    if min_ms == 0 {
+        return;
+    }
+    let wait = {
+        let mut last = LAST_REQUEST.lock().unwrap();
+        let now = std::time::Instant::now();
+        let wait = match *last {
+            Some(t) => Duration::from_millis(min_ms).saturating_sub(now.duration_since(t)),
+            None => Duration::ZERO,
+        };
+        *last = Some(now + wait);
+        wait
+    };
+    if !wait.is_zero() {
+        std::thread::sleep(wait);
+    }
+}
+
 struct Permit;
 fn acquire() -> Permit {
     let s = semaphore();
@@ -182,12 +208,13 @@ impl Llm {
                             std::thread::sleep(Duration::from_secs(20));
                         } else {
                             eprintln!(
-                                "[jazyk] {} — transient error, retrying ({}/{}): {}",
+                                "[jazyk] {} — transient error, retrying in 5s ({}/{}): {}",
                                 label,
                                 attempt + 1,
                                 max,
                                 truncate(&last, 120)
                             );
+                            std::thread::sleep(Duration::from_secs(5));
                         }
                     } else {
                         break;
@@ -229,8 +256,9 @@ impl Llm {
         }
         let body = payload.to_string();
 
-        // Bound concurrent requests across all worker threads.
+        // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
+        pace();
 
         let (host, port, base_path) = parse_url(&self.base_url)?;
         let path = format!("{}/chat/completions", base_path);

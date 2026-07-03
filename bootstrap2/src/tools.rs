@@ -170,6 +170,26 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "codegen_instructions",
+            description: "The code generation contract every worker follows: traceability header, requirement-id comments, referencing by slug, the parts protocol for dense entities.",
+            parameters: obj(json!({"lang": {"type": "string"}}), &[]),
+        },
+        ToolDef {
+            name: "codegen_pending",
+            description: "Entities whose facts differ from the generation state, each with the requirement ids added, removed, or reworded since its unit was last generated.",
+            parameters: obj(json!({"lang": {"type": "string"}}), &[]),
+        },
+        ToolDef {
+            name: "codegen_task",
+            description: "The full generation package for one entity: instructions, context pack, requirement groups, change diff, target unit path, and already generated units. The worker writes the unit file itself.",
+            parameters: obj(json!({"entity": {"type": "string"}, "lang": {"type": "string"}}), &["entity"]),
+        },
+        ToolDef {
+            name: "codegen_mark",
+            description: "Record the entity's current facts as generated; it leaves codegen_pending until its facts change again.",
+            parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
+        },
+        ToolDef {
             name: "done",
             description: "End the turn and request commit of the staged mutations. summary says what was done.",
             parameters: obj(json!({"summary": {"type": "string"}}), &["summary"]),
@@ -178,6 +198,7 @@ pub fn catalog() -> Vec<ToolDef> {
 }
 
 pub const READ_TOOLS: [&str; 5] = ["context", "expand", "search", "read_section", "get_entity"];
+pub const GEN_TOOLS: [&str; 4] = ["codegen_instructions", "codegen_pending", "codegen_task", "codegen_mark"];
 
 pub fn toolset(task: &str) -> Vec<&'static str> {
     match task {
@@ -189,7 +210,11 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "update_requirement",
             "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
         ],
-        "mcp-read" => READ_TOOLS.to_vec(),
+        "mcp-read" => {
+            let mut v = READ_TOOLS.to_vec();
+            v.extend(GEN_TOOLS);
+            v
+        }
         "mcp-write" => catalog().iter().map(|t| t.name).filter(|n| *n != "done").collect(),
         _ => READ_TOOLS.to_vec(),
     }
@@ -691,15 +716,27 @@ impl ToolSession {
                         }
                     }
                 }
-                let edges = args["edges"].as_array().map(|arr| {
-                    arr.iter()
-                        .map(|e| ReqEdge {
+                let mut edges: Option<Vec<ReqEdge>> = None;
+                if let Some(arr) = args["edges"].as_array() {
+                    let mut v = Vec::new();
+                    for e in arr {
+                        let t = e["type"].as_str().map(|s| s.to_string());
+                        if let Some(t) = &t {
+                            if !REL_TYPES.contains(&t.as_str()) {
+                                return Err(ToolError::new(
+                                    "bad-edge",
+                                    format!("unknown relationship type `{}`; one of: {}", t, REL_TYPES.join(", ")),
+                                ));
+                            }
+                        }
+                        v.push(ReqEdge {
                             a: e["a"].as_str().unwrap_or_default().to_string(),
                             b: e["b"].as_str().unwrap_or_default().to_string(),
-                            rel_type: e["type"].as_str().map(|s| s.to_string()),
-                        })
-                        .collect::<Vec<_>>()
-                });
+                            rel_type: t,
+                        });
+                    }
+                    edges = Some(v);
+                }
                 self.stage(Op::UpdateRequirement { id: id.clone(), ears: Self::opt_str(args, "ears"), entities, edges })?;
                 Ok(json!({"id": id, "updated": true}))
             }
@@ -786,6 +823,26 @@ impl ToolSession {
                 }
                 self.stage(Op::SetCoverage { doc, section: sec, state, note })?;
                 Ok(json!({"set": true}))
+            }
+            "codegen_instructions" => {
+                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
+                Ok(json!({"instructions": crate::gen::instructions(&lang)}))
+            }
+            "codegen_pending" => {
+                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
+                Ok(json!(crate::gen::pending(&self.snapshot, &lang)))
+            }
+            "codegen_task" => {
+                let entity = Self::str_arg(args, "entity")?;
+                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
+                let id = self.snapshot.resolve_id(&entity).to_string();
+                crate::gen::task_package(&self.snapshot, &id, &lang)
+                    .map_err(|e| ToolError::new("unknown-id", e))
+            }
+            "codegen_mark" => {
+                let entity = Self::str_arg(args, "entity")?;
+                let id = self.snapshot.resolve_id(&entity).to_string();
+                crate::gen::mark(&self.snapshot, &id).map_err(|e| ToolError::new("unknown-id", e))
             }
             "done" => {
                 // Batch gate: a `covered` claim on a section containing `shall` is honest

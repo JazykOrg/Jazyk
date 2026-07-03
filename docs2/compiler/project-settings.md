@@ -98,6 +98,9 @@ turn_rounds = 24
 turn_mutations = 64
 context_budget = 24000
 build_turn_factor = 3
+max_section_chars = 6000
+max_doc_sections = 40
+max_entity_requirements = 50
 ```
 
 - `turn_rounds`: maximum message rounds per turn. Default 24.
@@ -106,6 +109,13 @@ build_turn_factor = 3
 - `build_turn_factor`: sets the per-build turn cap as
   `build_turn_factor × (dirty documents + touched entities)`. Default 3. See
   [convergence](./reconciler.md#convergence).
+- `max_section_chars`: a section body over this size draws `section-too-large`.
+  Default 6000.
+- `max_doc_sections`: a document with more sections draws `doc-too-large`. Default 40.
+- `max_entity_requirements`: an entity with more requirements draws `entity-too-dense`,
+  the signal to split the topic into subsections. Default 50. Code generation divides
+  dense entities into parts regardless
+  ([dense entities](../consumers/codegen.md#dense-entities-generate-in-parts)).
 
 ## Environment tuning
 
@@ -113,8 +123,11 @@ Run-level knobs are environment variables only, since they tune one run, not the
 
 - `JAZYK_MAX_CONCURRENCY`: cap on parallel turns within a level (default 6).
 - `JAZYK_MAX_RETRIES`: retries, in addition to the first attempt, for a failed LLM call
-  (default 2). Transient transport failures retry at once. A rate-limited call retries
-  after a 20 second pause instead; hammering a rate limit only extends it.
+  (default 2). A transient transport failure retries after a 5 second pause; a
+  rate-limited call waits 20 seconds. Hammering a struggling endpoint only makes it
+  worse.
+- `JAZYK_MIN_INTERVAL_MS`: minimum gap between request starts to the endpoint
+  (default 500). Bounds the request rate even when calls fail fast in a tight loop.
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
 - `JAZYK_READ_TIMEOUT`: seconds to wait on one LLM response before the call fails

@@ -19,6 +19,7 @@ pub struct Options {
     pub focus: Option<String>,
     pub budget: Option<usize>,
     pub lang: Option<String>,
+    pub force: bool,
 }
 
 impl Default for Options {
@@ -34,6 +35,7 @@ impl Default for Options {
             focus: None,
             budget: None,
             lang: None,
+            force: false,
         }
     }
 }
@@ -331,44 +333,98 @@ pub fn run_codegen(opts: &Options, entities: &[String]) -> i32 {
         ordered.push(targets.remove(i));
     }
 
-    let dir = out.join("codegen");
-    std::fs::create_dir_all(&dir).ok();
-    let mut generated: Vec<String> = Vec::new();
+    std::fs::create_dir_all(out.join("codegen")).ok();
+    // The built-in worker consumes the same task packages an external MCP worker gets:
+    // codegen_pending decides what runs, codegen_task supplies the package, codegen_mark
+    // records completion. See docs2/consumers/codegen.md#pluggable-workers.
+    let pending: std::collections::BTreeSet<String> = crate::gen::pending(&store, &lang)
+        .iter()
+        .filter_map(|p| p["entity"].as_str().map(String::from))
+        .collect();
+    let mut regenerated = 0;
+    let mut skipped = 0;
     let mut failures = 0;
     for id in &ordered {
-        let slug = id.strip_prefix("ent:").unwrap_or(id);
-        let pack = match context::assemble(&store, id, &Focus { parents: 1, mentions: 1, requirements: 2 }, 16_000) {
-            Ok(p) => p,
+        if !opts.force && !pending.contains(id) {
+            skipped += 1;
+            continue;
+        }
+        let task = match crate::gen::task_package(&store, id, &lang) {
+            Ok(t) => t,
             Err(e) => {
                 eprintln!("jazyk: {}: {}", id, e);
                 failures += 1;
                 continue;
             }
         };
-        let system = format!(
-            "You are the code generation consumer of jazyk, a natural language compiler. Given one entity's assembled specification (definition, requirements, relationships), produce ONE self-contained {} module implementing it. Every requirement is an obligation; implement each and cite its id in a comment at the implementing site. Reference already generated units by their slug as module or import names when a relationship requires them. Start the file with a comment header naming the entity id and the requirement ids implemented (the traceability key). Return ONLY code, no fences, no prose.",
-            lang
+        let instructions = task["instructions"].as_str().unwrap_or_default();
+        let header = format!(
+            "Entity {} ({})\nContext:\n{}\nRelationships: {}\nChanged since last generation: {}\nAlready generated units: {}\n",
+            id,
+            task["name"].as_str().unwrap_or_default(),
+            task["context"].as_str().unwrap_or_default(),
+            task["relationships"].as_array().map(|a| a.len()).unwrap_or(0),
+            task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+            task["generatedUnits"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
         );
-        let user = format!(
-            "{}\n\nAlready generated units: {}\n",
-            pack.pack,
-            if generated.is_empty() { "(none)".to_string() } else { generated.join(", ") }
-        );
-        match llm.chat(&system, &user, &format!("codegen {}", id)) {
-            Ok(code) => {
-                let code = strip_fences(&code);
-                let path = dir.join(format!("{}.{}", slug, ext));
-                std::fs::write(&path, code).ok();
-                println!("jazyk: wrote {}", path.display());
-                generated.push(slug.to_string());
-            }
-            Err(e) => {
-                eprintln!("jazyk: {} failed: {}", id, e);
-                failures += 1;
+        let groups = task["requirementGroups"].as_array().cloned().unwrap_or_default();
+        let parts = groups.len();
+        let mut code = String::new();
+        let mut ok = true;
+        for (k, group) in groups.iter().enumerate() {
+            let req_lines: Vec<String> = group
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|r| format!("- {}: {}", r["id"].as_str().unwrap_or(""), r["ears"].as_str().unwrap_or("")))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let user = if k == 0 {
+                format!("{}\nRequirements (group 1 of {}):\n{}\n", header, parts, req_lines.join("\n"))
+            } else {
+                format!(
+                    "{}\nRequirements (group {} of {}):\n{}\n\nModule so far:\n{}\n",
+                    header,
+                    k + 1,
+                    parts,
+                    req_lines.join("\n"),
+                    crate::llm::truncate(&code, 20_000)
+                )
+            };
+            match llm.chat(instructions, &user, &format!("codegen {} part {}/{}", id, k + 1, parts)) {
+                Ok(part) => {
+                    if k > 0 {
+                        code.push_str(&format!("\n// --- generated part {} ---\n", k + 1));
+                    }
+                    code.push_str(&strip_fences(&part));
+                    code.push('\n');
+                }
+                Err(err) => {
+                    eprintln!("jazyk: {} part {}/{} failed: {}", id, k + 1, parts, err);
+                    ok = false;
+                    break;
+                }
             }
         }
+        if ok && !code.trim().is_empty() {
+            let path = std::path::PathBuf::from(task["unit"].as_str().unwrap_or_default());
+            std::fs::write(&path, &code).ok();
+            println!(
+                "jazyk: wrote {}{}",
+                path.display(),
+                if parts > 1 { format!(" ({} parts)", parts) } else { String::new() }
+            );
+            crate::gen::mark(&store, id).ok();
+            regenerated += 1;
+        } else {
+            failures += 1;
+        }
     }
-    println!("jazyk: codegen done — {} unit(s), {} failure(s)", generated.len(), failures);
+    println!(
+        "jazyk: codegen done — {} regenerated, {} unchanged, {} failure(s)",
+        regenerated, skipped, failures
+    );
     if failures > 0 {
         1
     } else {

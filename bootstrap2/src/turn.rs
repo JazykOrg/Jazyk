@@ -172,7 +172,7 @@ Rules:
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.
 - The ears text may rephrase the statement into EARS form, but the quote must stay a verbatim copy of the source sentence.
 - A tool error names what was wrong and how to repair the call; fix it and continue.
-- If the sections state nothing new, set coverage and call done. Stage only what the document supports."#;
+- Staging nothing is a correct outcome. If the graph already reflects the sections, set coverage and finish. Prefer a no-op over cosmetic rewording of existing definitions or statements; stability of the graph across builds matters more than polish. Stage only what the document supports."#;
 
 const REVIEW_SYSTEM: &str = r#"You are the review turn of jazyk, a natural language compiler. Your job: judge one entity whose facts changed, by calling tools.
 

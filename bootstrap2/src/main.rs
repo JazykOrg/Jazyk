@@ -1,6 +1,8 @@
 mod benchmark;
 mod cli;
 mod context;
+mod docsgen;
+mod gen;
 mod jsonrpc;
 mod llm;
 mod lsp;
@@ -115,6 +117,7 @@ fn main() {
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
+            "--force" => opts.force = true,
             s if cmd.is_empty() => cmd = s.to_string(),
             s => positional.push(s.to_string()),
         }
@@ -150,7 +153,7 @@ fn main() {
         "mcp" => match positional.first().map(|s| s.as_str()) {
             Some("graph") => {
                 let (proj, _llm, out) = cli::resolve(&[], &opts);
-                mcp::McpServer::new(out, opts.write, &proj.limits).run();
+                mcp::McpServer::new(proj, out, opts.write).run();
                 0
             }
             _ => {

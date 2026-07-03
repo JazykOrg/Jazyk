@@ -80,6 +80,10 @@ impl Lsp {
                     let r = self.on_completion();
                     reply(&mut out, id, r);
                 }
+                "textDocument/documentLink" => {
+                    let r = self.on_document_links(&params);
+                    reply(&mut out, id, r);
+                }
                 _ => {
                     if id.is_some() {
                         reply(&mut out, id, Value::Null);
@@ -96,7 +100,8 @@ impl Lsp {
                 "definitionProvider": true,
                 "referencesProvider": true,
                 "hoverProvider": true,
-                "completionProvider": { "triggerCharacters": ["`", "["] }
+                "completionProvider": { "triggerCharacters": ["`", "["] },
+                "documentLinkProvider": { "resolveProvider": false }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
@@ -326,6 +331,57 @@ impl Lsp {
             Ok(pack) => json!({ "contents": { "kind": "markdown", "value": pack.pack } }),
             Err(_) => Value::Null,
         }
+    }
+
+    // Every whole-word occurrence of an entity name or alias links to that entity's
+    // requirements document under <out>/docsgen/. Links are emitted only when the
+    // target file exists, so they never dangle. Longest name wins on overlaps, like
+    // entity_at; at most 200 links per document.
+    fn on_document_links(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let text = self.doc_text(&doc);
+        struct Cand {
+            line: usize,
+            col: usize,
+            len: usize,
+            id: String,
+            name: String,
+        }
+        let mut cands: Vec<Cand> = Vec::new();
+        for (id, e) in &self.store.graph.entities {
+            let slug = id.strip_prefix("ent:").unwrap_or(id);
+            if !self.out.join("docsgen").join(format!("{}.md", slug)).exists() {
+                continue;
+            }
+            let mut names = vec![e.name.clone()];
+            names.extend(e.aliases.iter().cloned());
+            for n in names {
+                for (line, col, len) in occurrences(&text, &n) {
+                    cands.push(Cand { line, col, len, id: id.clone(), name: e.name.clone() });
+                }
+            }
+        }
+        cands.sort_by(|a, b| b.len.cmp(&a.len).then(a.line.cmp(&b.line)).then(a.col.cmp(&b.col)));
+        let mut taken: Vec<(usize, usize, usize)> = Vec::new(); // (line, start, end)
+        let mut links: Vec<Value> = Vec::new();
+        for c in cands {
+            if links.len() >= 200 {
+                break;
+            }
+            let end = c.col + c.len;
+            if taken.iter().any(|(l, s, e)| *l == c.line && c.col < *e && *s < end) {
+                continue;
+            }
+            taken.push((c.line, c.col, end));
+            let slug = c.id.strip_prefix("ent:").unwrap_or(&c.id);
+            let target = path_to_uri(&self.out.join("docsgen").join(format!("{}.md", slug)));
+            links.push(json!({
+                "range": self.range((c.line, c.col, c.line, end)),
+                "target": target,
+                "tooltip": format!("{}: requirements document", c.name)
+            }));
+        }
+        json!(links)
     }
 
     fn on_completion(&self) -> Value {

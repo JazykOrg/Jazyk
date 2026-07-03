@@ -6,7 +6,7 @@ more Products from the [Catalog](./catalog.md).
 ## Lifecycle
 
 When a Customer submits an Order, the system shall reserve the Stock for each Product
-in it. An Order shall be paid within 14 days of placement, otherwise the system shall
+in it. An Order shall be paid within 14 days of placement; otherwise the system shall
 cancel it.
 
 ## Contents

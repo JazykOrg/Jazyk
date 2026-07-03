@@ -261,6 +261,42 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
             }
         }
     }
+    // Document-quality checks: prose problems a human can fix, surfaced where the human
+    // writes (the LSP shows them inline).
+    for (doc, rec) in &store.docs {
+        if rec.sections.len() > proj.limits.max_doc_sections {
+            f.push((
+                "doc-too-large".into(),
+                format!("{}#{}", doc, rec.sections.iter().find(|(_, s)| s.kind == "root").map(|(r, _)| r.clone()).unwrap_or_default()),
+                "warning".into(),
+                format!("{} has {} sections (cap {}); split the document", doc, rec.sections.len(), proj.limits.max_doc_sections),
+            ));
+        }
+        for (r, sec) in &rec.sections {
+            if sec.raw.len() > proj.limits.max_section_chars {
+                f.push((
+                    "section-too-large".into(),
+                    format!("{}#{}", doc, r),
+                    "warning".into(),
+                    format!("{}#{} is {} chars (cap {}); split the section", doc, r, sec.raw.len(), proj.limits.max_section_chars),
+                ));
+            }
+        }
+    }
+    for id in store.graph.entities.keys() {
+        let n = store.requirements_referencing(id).len();
+        if n > proj.limits.max_entity_requirements {
+            f.push((
+                "entity-too-dense".into(),
+                id.clone(),
+                "info".into(),
+                format!(
+                    "{} carries {} requirements (ceiling {}); consider splitting the topic into subsections (generation divides into parts regardless)",
+                    id, n, proj.limits.max_entity_requirements
+                ),
+            ));
+        }
+    }
     // Near-identical statements on one entity: review debt made deterministic. Token-set
     // similarity catches rephrasings the requirement natural key (exact normalized text)
     // does not.
@@ -515,6 +551,12 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     // Status and verdict.
     s.status.parked = parked_all.clone();
     s.status.verdict = if parked_all.is_empty() { "converged".into() } else { "incomplete".into() };
+    if parked_all.is_empty() {
+        let n = crate::docsgen::write_all(&s);
+        if n > 0 {
+            trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
+        }
+    }
     s.status.spent.tokens = crate::llm::tokens_spent();
     s.save_status();
 

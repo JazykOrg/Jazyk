@@ -9,6 +9,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 pub struct McpServer {
+    project: crate::project::Project,
     out: PathBuf,
     write: bool,
     mutation_limit: usize,
@@ -16,13 +17,78 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    pub fn new(out: PathBuf, write: bool, limits: &crate::project::Limits) -> McpServer {
+    pub fn new(project: crate::project::Project, out: PathBuf, write: bool) -> McpServer {
         McpServer {
+            mutation_limit: project.limits.turn_mutations,
+            context_budget: project.limits.context_budget,
+            project,
             out,
             write,
-            mutation_limit: limits.turn_mutations,
-            context_budget: limits.context_budget,
         }
+    }
+
+    // The server's own long poll: returns when the graph's generation counter moves or a
+    // documentation file changes on disk, or at the timeout. Mirrors
+    // docs2/frontends/mcp.md#external-generation-workers.
+    fn await_changes(&self, params: &Value) -> Value {
+        let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300).clamp(1, 3600);
+        let fingerprint = |path: &std::path::Path| -> String {
+            std::fs::metadata(path)
+                .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
+                .unwrap_or_default()
+        };
+        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> = self
+            .project
+            .doc_files()
+            .into_iter()
+            .map(|f| (f.clone(), fingerprint(&f)))
+            .collect();
+        let start_gen = Store::load(&self.out).status.generation;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+        let mut changed_docs: Vec<String> = Vec::new();
+        let mut changed = false;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let store = Store::load(&self.out);
+            if store.status.generation != start_gen {
+                changed = true;
+            }
+            for f in self.project.doc_files() {
+                if snapshot.get(&f).map(|s| s.as_str()) != Some(fingerprint(&f).as_str()) {
+                    let rel = f
+                        .strip_prefix(&self.project.root)
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| f.to_string_lossy().to_string());
+                    if !changed_docs.contains(&rel) {
+                        changed_docs.push(rel);
+                    }
+                    changed = true;
+                }
+            }
+            if changed {
+                break;
+            }
+        }
+        let store = Store::load(&self.out);
+        // Stale: a documentation file's content no longer matches what the graph reconciled.
+        let graph_stale = self.project.doc_files().iter().any(|f| {
+            let rel = f
+                .strip_prefix(&self.project.root)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            match (std::fs::read_to_string(f), store.docs.get(&rel)) {
+                (Ok(text), Some(rec)) => crate::model::hash_hex(&text) != rec.content_hash,
+                (Ok(_), None) => true,
+                _ => false,
+            }
+        });
+        json!({
+            "changed": changed,
+            "changedDocs": changed_docs,
+            "graphStale": graph_stale,
+            "generation": store.status.generation,
+            "pending": crate::gen::pending(&store, "rust"),
+        })
     }
 
     pub fn run(&self) {
@@ -68,15 +134,23 @@ impl McpServer {
             "ping" => Ok(json!({})),
             "tools/list" => {
                 let enabled = self.enabled_tools();
-                let tools: Vec<Value> = catalog()
+                let mut tools: Vec<Value> = catalog()
                     .iter()
                     .filter(|t| enabled.contains(&t.name))
                     .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
+                tools.push(json!({
+                    "name": "await_changes",
+                    "description": "Long poll: returns when the graph's generation counter moves or a documentation file changes on disk, or at the timeout (default 300s). Carries the changed documents, graph staleness, and pending generation work.",
+                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}, "additionalProperties": false}
+                }));
                 Ok(json!({"tools": tools}))
             }
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or_default().to_string();
+                if name == "await_changes" {
+                    return Ok(text_result(self.await_changes(params), false));
+                }
                 let args = params["arguments"].clone();
                 let enabled = self.enabled_tools();
                 if !enabled.contains(&name.as_str()) {

@@ -23,6 +23,9 @@ pub struct Limits {
     pub turn_mutations: usize,
     pub context_budget: usize,
     pub build_turn_factor: u32,
+    pub max_section_chars: usize,
+    pub max_doc_sections: usize,
+    pub max_entity_requirements: usize,
 }
 
 impl Default for Limits {
@@ -32,6 +35,9 @@ impl Default for Limits {
             turn_mutations: 64,
             context_budget: 24_000,
             build_turn_factor: 3,
+            max_section_chars: 6_000,
+            max_doc_sections: 40,
+            max_entity_requirements: 50,
         }
     }
 }
@@ -158,6 +164,15 @@ impl Project {
         }
         if let Some(v) = t.integer("limits.build_turn_factor") {
             p.limits.build_turn_factor = v as u32;
+        }
+        if let Some(v) = t.integer("limits.max_section_chars") {
+            p.limits.max_section_chars = v as usize;
+        }
+        if let Some(v) = t.integer("limits.max_doc_sections") {
+            p.limits.max_doc_sections = v as usize;
+        }
+        if let Some(v) = t.integer("limits.max_entity_requirements") {
+            p.limits.max_entity_requirements = v as usize;
         }
         p
     }

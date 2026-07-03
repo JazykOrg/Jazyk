@@ -467,6 +467,11 @@ impl Store {
                                 r.edges.push(edge);
                             }
                         }
+                        // A re-anchored quote (same statement, edited source sentence)
+                        // refreshes in place; the id never churns.
+                        if r.source.quote != requirement.source.quote {
+                            r.source = requirement.source.clone();
+                        }
                         r.updated = Some(build.clone());
                         touched.extend(r.entities.iter().cloned());
                         continue;
@@ -905,7 +910,7 @@ impl Store {
             }
         }
         // Deterministic rules whose condition cleared: resolve.
-        const CHECK_RULES: [&str; 8] = [
+        const CHECK_RULES: [&str; 11] = [
             "uncovered-section",
             "suspicious-non-normative",
             "unused-entity",
@@ -913,6 +918,9 @@ impl Store {
             "stale-provenance",
             "unstable-extraction",
             "duplicate-requirement",
+            "section-too-large",
+            "doc-too-large",
+            "entity-too-dense",
             "incomplete-build",
         ];
         for d in self.graph.diagnostics.values_mut() {

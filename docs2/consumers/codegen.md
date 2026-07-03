@@ -35,6 +35,30 @@ keeps a map from entity id to code unit. On rebuild:
   generator follows it and folds the absorbed unit into the survivor's.
 - A renamed entity keeps its id, so its code unit is migrated in place, not rewritten.
 
+## Dense entities generate in parts
+
+A stringent component legitimately carries 50 or more requirements, and one generation
+call has an output ceiling. The unit stays one file; the generation divides:
+
+- The first part generates the module's types, state, and the first group of
+  requirements.
+- Each further part receives the code generated so far and the next group of
+  requirements, and returns only additional code (a further `impl` block) to append.
+- Parts concatenate into the one code unit; traceability comments per requirement are
+  unaffected.
+
+The group size defaults to 20 requirements per part. The `entity-too-dense` check warns
+the author when an entity approaches the configured ceiling
+([limits](../compiler/project-settings.md#limits)), so splitting the documentation into
+subsections stays a choice, not an emergency.
+
+## Incremental regeneration in practice
+
+`codegen/state.yaml` in the out directory maps each generated entity to a hash of its
+facts (definition plus its requirements). A rerun skips entities whose hash is
+unchanged, so a docs edit regenerates only the entities it touched. `--force`
+regenerates everything.
+
 ## Command
 
 `jazyk codegen [entity...]` generates code units into `<out>/codegen/`. See
@@ -46,6 +70,16 @@ keeps a map from entity id to code unit. On rebuild:
   file opens with a header comment carrying the entity id and the requirement ids it
   implements: the traceability key downstream tooling binds to.
 - `--lang` picks the target language; the default is `rust`.
+
+## Pluggable workers
+
+Generation is defined by the [generation tools](../compiler/tools.md#generation-tools),
+not by the built-in command. `jazyk codegen` is one worker: it asks for the pending
+list and the task packages in-process, calls the configured model, and marks units
+done. An external agent connected to [`jazyk mcp graph`](../frontends/mcp.md) is
+another worker with the same contract: same instructions, same context, same change
+diffs, same state. Whichever worker runs, the unit and its traceability comments come
+out the same shape.
 
 ## Forced decisions
 

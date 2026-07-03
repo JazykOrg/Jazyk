@@ -6,6 +6,18 @@ prose and builds a graph; this consumer reads the graph, through the
 and produces reports and proposals that improve the prose. Nothing is written to a source
 file without human review.
 
+## The requirements document
+
+Every converged build renders one human-readable document per entity into
+`<out>/docsgen/<entity-slug>.md`: the definition, every requirement with its verbatim
+quote and source section, the derived relationships, and any open diagnostics. The
+render is deterministic (no LLM), so it is always as fresh as the graph.
+
+This is the reading surface between prose and graph. The [LSP](../frontends/lsp.md)
+links every entity occurrence in a source document to its requirements document, so a
+reader clicks a concept in a source page and lands on everything the project says about
+it, with each statement pointing back at the exact source sentence.
+
 ## Glossary
 
 The glossary is generated from the graph: every entity's name, aliases, and `definition`,

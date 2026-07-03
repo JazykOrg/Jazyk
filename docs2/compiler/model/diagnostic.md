@@ -47,6 +47,9 @@ checks alike.
 | review turns | `ambiguity` | info, warning, or error | a statement open to more than one reading |
 | [checks](../reconciler.md#waves) | `unused-entity` | warning | an entity no requirement references |
 | checks | `duplicate-requirement` | warning | two requirements on one entity whose statements are near identical |
+| checks | `section-too-large` | warning | a section body over the configured size; split it |
+| checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
+| checks | `entity-too-dense` | info | an entity's requirement count approaches the generation ceiling; consider subsections |
 | checks | `unreachable-entity` | warning | an entity not reachable from the declared roots |
 | checks | `unstable-extraction` | warning | a natural key deleted and recreated across recent builds |
 | checks | `stale-provenance` | warning | a `quote` that no longer locates in its section |

@@ -1,0 +1,288 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://jazyk.org/schemas/tools.json
+title: Jazyk Tool Payloads
+description: >-
+  Input and output shapes for the tool registry. Each write tool has one request payload
+  definition. Shared node shapes are referenced from graph.json. Every call is validated
+  by the graph store's gates; a rejection is a toolError
+definitions:
+  focus:
+    description: Hop quota per edge axis
+    type: object
+    properties:
+      parents:
+        type: integer
+        minimum: 0
+      mentions:
+        type: integer
+        minimum: 0
+      requirements:
+        type: integer
+        minimum: 0
+    additionalProperties: false
+  contextRequest:
+    description: Request payload of the context tool
+    type: object
+    required:
+      - target
+    properties:
+      target:
+        type: string
+        description: A section reference, entity id, or requirement id
+      focus:
+        $ref: '#/definitions/focus'
+      budget:
+        type: integer
+        minimum: 1
+        description: Maximum pack size in characters
+    additionalProperties: false
+  contextResponse:
+    description: Response of the context and expand tools
+    type: object
+    properties:
+      pack:
+        type: string
+        description: The rendered context pack, compact markdown with node ids inline
+      handles:
+        description: Expansion handles for frontiers the budget cut off
+        type: array
+        items:
+          type: object
+          required:
+            - handle
+          properties:
+            handle:
+              $ref: '#/definitions/expansionHandle'
+            description:
+              type: string
+            size:
+              type: integer
+              minimum: 0
+              description: Approximate size of the omitted frontier in characters
+  expansionHandle:
+    description: A stable token naming an omitted frontier, accepted by the expand tool
+    type: string
+    pattern: '^h:'
+  toolError:
+    description: A rejected call. Names the violated rule and how to repair the call
+    type: object
+    required:
+      - rule
+      - message
+    properties:
+      rule:
+        type: string
+      message:
+        type: string
+  upsertEntity:
+    description: >-
+      Request payload of upsert_entity. Keys on name plus scope; a match updates instead
+      of duplicating. Returns the entity id and whether it was created
+    type: object
+    required:
+      - name
+      - mention
+    properties:
+      name:
+        type: string
+      definition:
+        type: string
+      aliases:
+        type: array
+        items:
+          type: string
+      scope:
+        type: string
+        default: public
+      mention:
+        description: Where the entity is mentioned. 'section' is a full section reference
+        type: object
+        required:
+          - section
+          - quote
+        properties:
+          section:
+            type: string
+          quote:
+            type: string
+        additionalProperties: false
+      note:
+        type: string
+        description: Required when the name looks like syntax rather than a concept
+    additionalProperties: false
+  updateEntity:
+    description: Request payload of update_entity. A rename keeps the id
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      definition:
+        type: string
+      add_aliases:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  deleteEntity:
+    description: >-
+      Request payload of delete_entity. Rejected while any requirement references the
+      entity
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  mergeEntities:
+    description: >-
+      Request payload of merge_entities. The store rewires references and leaves a
+      redirect from the absorbed id to the survivor
+    type: object
+    required:
+      - keep
+      - absorb
+      - reason
+    properties:
+      keep:
+        type: string
+        description: Entity id that survives
+      absorb:
+        type: string
+        description: Entity id that is absorbed
+      reason:
+        type: string
+    additionalProperties: false
+  upsertRequirement:
+    description: Request payload of upsert_requirement. Without id a new requirement is minted
+    type: object
+    required:
+      - ears
+      - entities
+      - section
+      - quote
+    properties:
+      id:
+        type: string
+      ears:
+        type: string
+        description: The EARS statement
+      entities:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          description: Entity id
+      section:
+        type: string
+        description: Full section reference the statement comes from
+      quote:
+        type: string
+        description: Verbatim text from the section
+      edges:
+        description: Entity pairs the statement ties together
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/requirementEdge'
+    additionalProperties: false
+  updateRequirement:
+    description: Request payload of update_requirement
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      ears:
+        type: string
+      entities:
+        type: array
+        minItems: 1
+        items:
+          type: string
+      edges:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/requirementEdge'
+    additionalProperties: false
+  deleteRequirement:
+    description: Request payload of delete_requirement
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  reportDiagnostic:
+    description: Request payload of report_diagnostic
+    type: object
+    required:
+      - rule
+      - severity
+      - subjects
+      - message
+      - reasoning
+    properties:
+      rule:
+        type: string
+      severity:
+        $ref: 'graph.json#/definitions/severity'
+      subjects:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          description: Node id
+      message:
+        type: string
+      reasoning:
+        type: string
+    additionalProperties: false
+  resolveDiagnostic:
+    description: Request payload of resolve_diagnostic
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  setCoverage:
+    description: Request payload of set_coverage
+    type: object
+    required:
+      - section
+      - state
+    properties:
+      section:
+        type: string
+        description: Full section reference
+      state:
+        $ref: 'graph.json#/definitions/coverageState'
+      note:
+        type: string
+        description: Required when state is non-normative
+    additionalProperties: false
+  done:
+    description: Request payload of done. Ends the turn and requests commit
+    type: object
+    required:
+      - summary
+    properties:
+      summary:
+        type: string
+    additionalProperties: false

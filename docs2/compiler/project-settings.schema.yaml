@@ -1,0 +1,113 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://jazyk.org/schemas/project-settings.json
+title: Jazyk Project Settings
+description: Schema for the jazyk.toml project configuration file
+type: object
+properties:
+  docs:
+    type: object
+    description: Configuration for documentation processing
+    properties:
+      glob:
+        type: array
+        description: >-
+          Ordered glob patterns matching documentation files, relative to the project root.
+          Patterns starting with '!' are exclusions. The last pattern to match a file wins
+        items:
+          type: string
+      handlers:
+        type: object
+        description: Custom format handlers, keyed by handler name. Tried before built-in handlers
+        additionalProperties:
+          type: object
+          description: One handler configuration
+          required:
+            - matcher
+            - path
+          properties:
+            matcher:
+              type: string
+              description: Glob pattern matching the files this handler claims
+            path:
+              type: string
+              description: Path to the handler implementation
+      linting:
+        type: object
+        description: Linting rules for documentation
+        properties:
+          rules:
+            type: object
+            description: >-
+              Plain-English rules grouped by the severity they produce. Evaluated during
+              review turns and checks
+            properties:
+              warnings:
+                type: array
+                description: Rules that produce a warning
+                items:
+                  type: string
+              errors:
+                type: array
+                description: Rules that produce an error
+                items:
+                  type: string
+            additionalProperties: false
+  llm:
+    type: object
+    description: >-
+      LLM backend, an OpenAI-compatible chat completions endpoint. Resolved per field:
+      CLI flag, then environment variable, then global config, then this table, then
+      built-in default
+    properties:
+      base_url:
+        type: string
+        description: Base URL of the OpenAI-compatible endpoint
+      model:
+        type: string
+        description: Model id
+      api_key_env:
+        type: string
+        description: Name of the environment variable holding the API key
+      api_key:
+        type: string
+        description: Literal API key. Prefer api_key_env in tracked files
+      temperature:
+        type: number
+        description: Sampling temperature
+        default: 0
+  roots:
+    type: object
+    description: Root documents. They seed reconciler scheduling and anchor reachability checks
+    properties:
+      files:
+        type: array
+        description: Glob patterns matching the root documents, matched like docs.glob
+        items:
+          type: string
+  limits:
+    type: object
+    description: Turn and build budgets
+    properties:
+      turn_rounds:
+        type: integer
+        description: Maximum message rounds per turn
+        minimum: 1
+        default: 12
+      turn_mutations:
+        type: integer
+        description: Maximum staged mutations per turn
+        minimum: 1
+        default: 64
+      context_budget:
+        type: integer
+        description: Maximum context pack size in characters
+        minimum: 1
+        default: 24000
+      build_turn_factor:
+        type: integer
+        description: >-
+          Per-build turn cap factor. The cap is build_turn_factor times the number of
+          dirty documents plus touched entities
+        minimum: 1
+        default: 3
+    additionalProperties: false

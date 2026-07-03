@@ -1,0 +1,5 @@
+[docs]
+glob = ["docs/**/*.md"]
+
+[roots]
+files = ["docs/system.md"]

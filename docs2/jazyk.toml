@@ -1,0 +1,17 @@
+#:schema = ./compiler/project-settings.schema.yaml
+
+[docs]
+glob = [
+    "**/*.md",
+    # Benchmark case files are fixtures, not documentation. Compiling them would leak
+    # their planted entities (Cart, ABC) into the project graph.
+    "!benchmark/cases/**",
+]
+
+[docs.linting.rules]
+warnings = [
+    "An em dash appears in prose. This documentation uses commas, periods, parentheses, or colons instead.",
+]
+
+[roots]
+files = ["main.md"]

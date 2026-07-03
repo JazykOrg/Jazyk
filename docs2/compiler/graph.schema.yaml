@@ -1,0 +1,351 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://jazyk.org/schemas/graph.json
+title: Jazyk Graph Store
+description: |-
+  Definitions for the graph store files in the out directory:
+  - graph/entities.yaml is a map of id to entity
+  - graph/requirements.yaml is a map of id to requirement
+  - graph/relationships.yaml is a map of id to relationship (derived, regenerated on commit)
+  - graph/diagnostics.yaml is a map of id to diagnostic
+  - graph/redirects.yaml is a map of absorbed id to surviving id (plain strings)
+  - docs/<mirrored doc path>.yaml is one docRecord per source document
+  - journal/<build>-<seq>.yaml is one journalEntry per committed changeset
+  - status.yaml is one status object
+definitions:
+  severity:
+    description: Diagnostic severity. 'none' is a recorded judgment that is not surfaced
+    type: string
+    enum:
+      - error
+      - warning
+      - info
+      - none
+  relationshipType:
+    description: Relationship type, from strongest to weakest
+    type: string
+    enum:
+      - generalization
+      - realization
+      - composition
+      - aggregation
+      - association
+      - dependency
+      - reference
+  coverageState:
+    description: Coverage state of a reconciled section
+    type: string
+    enum:
+      - covered
+      - non-normative
+  sourceRef:
+    description: >-
+      A located quote. 'doc' is the document path, 'section' the internal reference,
+      'quote' the verbatim text located by string search
+    type: object
+    required:
+      - doc
+      - section
+      - quote
+    properties:
+      doc:
+        type: string
+      section:
+        type: string
+      quote:
+        type: string
+  requirementEdge:
+    description: An entity pair a requirement ties together
+    type: object
+    required:
+      - a
+      - b
+    properties:
+      a:
+        type: string
+        description: Entity id
+      b:
+        type: string
+        description: Entity id
+      type:
+        description: Implied relationship type
+        allOf:
+          - $ref: '#/definitions/relationshipType'
+        default: reference
+  workItem:
+    description: One scheduled unit of work, a task type and its target
+    type: object
+    required:
+      - task
+      - target
+    properties:
+      task:
+        type: string
+        enum:
+          - reconcile-doc
+          - review-entity
+      target:
+        type: string
+        description: Document path or entity id
+  entity:
+    description: One entry in graph/entities.yaml
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+      aliases:
+        type: array
+        items:
+          type: string
+      definition:
+        description: The single living definition, refined across builds
+        type: string
+      scope:
+        type: string
+        description: Visibility scope, part of the entity's natural key
+        default: public
+      mentions:
+        description: The sections that talk about this entity
+        type: array
+        items:
+          $ref: '#/definitions/sourceRef'
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+      reasoning:
+        type: string
+      created:
+        type: string
+        description: Build marker set by the store on commit
+      updated:
+        type: string
+        description: Build marker set by the store on commit
+  requirement:
+    description: One entry in graph/requirements.yaml
+    type: object
+    required:
+      - ears
+      - entities
+      - source
+    properties:
+      ears:
+        type: string
+        description: The EARS statement
+      entities:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          description: Entity id
+      edges:
+        type: array
+        items:
+          $ref: '#/definitions/requirementEdge'
+      source:
+        $ref: '#/definitions/sourceRef'
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+      reasoning:
+        type: string
+      created:
+        type: string
+        description: Build marker set by the store on commit
+      updated:
+        type: string
+        description: Build marker set by the store on commit
+  relationship:
+    description: One entry in graph/relationships.yaml. Derived from requirements on commit
+    type: object
+    required:
+      - type
+      - members
+      - requirements
+    properties:
+      type:
+        $ref: '#/definitions/relationshipType'
+      members:
+        description: The two entities the edge connects
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: string
+      requirements:
+        description: The requirements this edge is derived from
+        type: array
+        minItems: 1
+        items:
+          type: string
+  diagnostic:
+    description: One entry in graph/diagnostics.yaml. Sticky, reconciled across builds
+    type: object
+    required:
+      - rule
+      - severity
+      - subjects
+      - message
+    properties:
+      rule:
+        type: string
+      severity:
+        $ref: '#/definitions/severity'
+      subjects:
+        description: Node ids this diagnostic is about
+        type: array
+        minItems: 1
+        items:
+          type: string
+      message:
+        type: string
+      reasoning:
+        description: Why this severity or disposition was chosen
+        type: string
+      lifecycle:
+        type: string
+        enum:
+          - open
+          - resolved
+        default: open
+      triage:
+        description: Human-set state. Survives rebuilds
+        type:
+          - string
+          - 'null'
+        enum:
+          - acknowledged
+          - suppressed
+          - wontfix
+          - null
+      created:
+        type: string
+        description: Build marker set by the store on commit
+      updated:
+        type: string
+        description: Build marker set by the store on commit
+  section:
+    description: One entry in a docRecord's sections map, keyed by internal reference
+    type: object
+    required:
+      - title
+    properties:
+      title:
+        type: string
+      kind:
+        type: string
+        enum:
+          - root
+          - heading
+          - list-item
+          - code-block
+          - blockquote
+          - diagram
+      order:
+        type: integer
+        minimum: 0
+        description: Position among siblings
+      parent:
+        type: string
+        description: Internal reference of the parent. Absent on the root section
+      raw:
+        type: string
+        description: Verbatim source text
+      hash:
+        type: string
+        description: Content hash of raw, used for section diffing
+      lines:
+        description: Start and end line in the source file
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: integer
+          minimum: 0
+  coverage:
+    description: >-
+      One entry in a docRecord's coverage map, keyed by internal reference. A section
+      with no entry is unprocessed
+    type: object
+    properties:
+      state:
+        $ref: '#/definitions/coverageState'
+      note:
+        type: string
+        description: Required when state is non-normative
+      claimedBy:
+        type: string
+        description: The journal entry of the changeset that set the state
+  docRecord:
+    description: One file under docs/, mirroring one source document
+    type: object
+    properties:
+      contentHash:
+        type: string
+        description: Hash of the source file at last reconcile
+      sections:
+        type: object
+        description: Map of internal reference to section
+        additionalProperties:
+          $ref: '#/definitions/section'
+      coverage:
+        type: object
+        description: Map of internal reference to coverage
+        additionalProperties:
+          $ref: '#/definitions/coverage'
+  journalEntry:
+    description: One file under journal/, one per committed changeset
+    type: object
+    properties:
+      build:
+        type: string
+        description: Build marker
+      workItem:
+        $ref: '#/definitions/workItem'
+      mutations:
+        description: The applied mutations, each an operation name with its arguments
+        type: array
+        items:
+          type: object
+      rounds:
+        type: integer
+        minimum: 0
+        description: Message rounds the turn used
+      tokens:
+        type: integer
+        minimum: 0
+        description: Tokens the turn spent
+  status:
+    description: The status.yaml file
+    type: object
+    properties:
+      generation:
+        type: integer
+        minimum: 0
+        description: Bumped on every commit
+      parked:
+        description: Work items left open when the build budget ran out
+        type: array
+        items:
+          $ref: '#/definitions/workItem'
+      spent:
+        type: object
+        description: Budgets spent in the last build
+        properties:
+          turns:
+            type: integer
+            minimum: 0
+          rounds:
+            type: integer
+            minimum: 0
+          tokens:
+            type: integer
+            minimum: 0
+      verdict:
+        type: string
+        description: Convergence verdict of the last build
+        enum:
+          - converged
+          - incomplete

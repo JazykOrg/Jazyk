@@ -1,0 +1,181 @@
+$schema: http://json-schema.org/draft-07/schema#
+$id: https://jazyk.org/schemas/case.json
+title: Jazyk Benchmark Case
+description: >-
+  One benchmark case: a sandbox fixture, one turn to run, and deterministic assertions
+  over the staged mutations and the resulting graph. Embedded as a fenced yaml block in
+  a case file under cases/
+type: object
+required: [name, description, task, given, assert]
+additionalProperties: false
+properties:
+  name:
+    description: Unique case name, usually the case file stem
+    type: string
+  description:
+    description: One sentence stating the skill the case grades
+    type: string
+  task:
+    description: The turn the harness runs
+    type: object
+    required: [type, target]
+    additionalProperties: false
+    properties:
+      type:
+        description: The task type of the turn
+        type: string
+        enum: [reconcile-doc, review-entity]
+      target:
+        description: >-
+          The work item target. A document path for reconcile-doc, an entity id for
+          review-entity
+        type: string
+  given:
+    description: The fixture the sandbox store is seeded from
+    type: object
+    required: [docs]
+    additionalProperties: false
+    properties:
+      docs:
+        description: Map of document path to markdown text
+        type: object
+        additionalProperties:
+          type: string
+      graph:
+        description: Graph nodes pre-seeded before the turn runs
+        type: object
+        additionalProperties: false
+        properties:
+          entities:
+            description: Map of entity id to entity fields
+            type: object
+            additionalProperties:
+              type: object
+          requirements:
+            description: Map of requirement id to requirement fields
+            type: object
+            additionalProperties:
+              type: object
+          coverage:
+            description: Map of section reference to a pre-set coverage state
+            type: object
+            additionalProperties:
+              type: string
+              enum: [covered, non-normative]
+  assert:
+    description: Deterministic checks. All must pass for the case to pass
+    type: array
+    minItems: 1
+    items:
+      $ref: '#/definitions/check'
+definitions:
+  check:
+    description: One check. Exactly one check kind per object
+    type: object
+    minProperties: 1
+    maxProperties: 1
+    additionalProperties: false
+    properties:
+      entityExists:
+        $ref: '#/definitions/entityExists'
+      entityAbsent:
+        $ref: '#/definitions/entityAbsent'
+      entityCount:
+        $ref: '#/definitions/entityCount'
+      requirementExists:
+        $ref: '#/definitions/requirementExists'
+      mutationCount:
+        $ref: '#/definitions/mutationCount'
+      diagnosticExists:
+        $ref: '#/definitions/diagnosticExists'
+      diagnosticAbsent:
+        $ref: '#/definitions/diagnosticAbsent'
+      coverageSet:
+        $ref: '#/definitions/coverageSet'
+  entityExists:
+    description: An entity with this exact name or alias exists in the resulting graph
+    type: object
+    required: [name]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+  entityAbsent:
+    description: No entity name in the resulting graph matches this regular expression
+    type: object
+    required: [namePattern]
+    additionalProperties: false
+    properties:
+      namePattern:
+        description: Regular expression tested against every entity name
+        type: string
+  entityCount:
+    description: The number of entities in the resulting graph is within bounds
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  requirementExists:
+    description: >-
+      A requirement exists whose EARS statement matches the pattern and which references
+      the entity
+    type: object
+    required: [earsPattern, entity]
+    additionalProperties: false
+    properties:
+      earsPattern:
+        description: Regular expression tested against the requirement's ears statement
+        type: string
+      entity:
+        description: An entity the requirement must reference, by id or exact name
+        type: string
+  mutationCount:
+    description: The number of mutations staged by the turn is within bounds
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  diagnosticExists:
+    description: >-
+      An open diagnostic with this rule exists and its subjects include the subject
+    type: object
+    required: [rule, subject]
+    additionalProperties: false
+    properties:
+      rule:
+        type: string
+      subject:
+        description: A node id the diagnostic must list in its subjects
+        type: string
+  diagnosticAbsent:
+    description: No open diagnostic with this rule exists in the resulting graph
+    type: object
+    required: [rule]
+    additionalProperties: false
+    properties:
+      rule:
+        type: string
+  coverageSet:
+    description: The section's coverage state equals state after the turn
+    type: object
+    required: [section, state]
+    additionalProperties: false
+    properties:
+      section:
+        description: Full section reference, document path plus internal reference
+        type: string
+      state:
+        type: string
+        enum: [unprocessed, covered, non-normative]

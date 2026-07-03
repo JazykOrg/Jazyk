@@ -113,6 +113,21 @@ budget before claiming coverage (default raised to 24, and models are told to ba
 tool calls); concurrent gpt-5.5 workloads through one provider hit rate limits, so
 generation jobs are sequenced, not parallelized.
 
+## Foreign prose: the mdBook corpus
+
+The full mdBook guide (35 documents of someone else's documentation, heavy with code
+blocks, TOML snippets, and CLI invocations) compiled with the same local gemma default:
+28 entities, 6 requirements, coverage 66%, 7 documents parked, zero error diagnostics.
+
+- The doctrine transfers: every extracted entity is a sane mdBook domain concept
+  (`ent:book`, `ent:chapter-file`, `ent:html-renderer`, `ent:handlebars-template`), and
+  the requirements are correctly EARS-ified from declarative prose, e.g. "The system
+  shall generate a 404 page to be used for broken links."
+- The junk gates held on completely foreign content: no paths, flags, or markdown terms
+  became entities despite the corpus being full of them.
+- Density again tracked model capability, not corpus origin: low requirement recall and
+  parked documents mirror the gemma dogfood, not anything mdBook-specific.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

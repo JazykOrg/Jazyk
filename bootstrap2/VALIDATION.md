@@ -145,6 +145,29 @@ loop (the model fixing its own files given rustc output) reached a green `cargo 
 - The failure mode of narrow repair (two files per pass) was oscillation; repairing every
   failing file per pass converged monotonically: 45 errors → 3 files → green.
 
+## Self-hosting: the compiler regenerated from its own documentation
+
+`jazyk codegen` ran against the gpt-5.5 docs2 graph for the 18 most requirement-dense
+core entities (`graph-store`, `entity`, `ears-requirement`, `derived-relationship`,
+`diagnostics`, `section`, `semantic-graph`, `turn`, `context-engine`, `reconciler`,
+`changeset`, `tool-registry`, and peers). The result assembled into `jazyk3`, a
+~14,800-line crate that compiles with zero errors and passes its 23 embedded unit
+tests, after bounded model repair plus deterministic salvage.
+
+- The generated module map mirrors the design vocabulary, not bootstrap2's file layout:
+  `store` ↔ `graph_store`, `context` ↔ `context_engine` + `context_pack`,
+  `reconcile` ↔ `reconciler`, `tools` ↔ `tool_registry`, with the model split into
+  per-node modules. The docs, not the old code, shaped the architecture.
+- Boundary finding, now measured: an entity whose requirement set is dense enough
+  (`semantic-graph` carries 51 requirements) exceeds the model's output ceiling and
+  truncates as a single generation unit; the same ceiling breaks whole-file repair.
+  Snippet-scoped repair and deterministic salvage (lexing brace depth outside strings
+  and comments, cutting at the last complete item) close the gap; the real fix is
+  decomposing dense entities into several generation tasks.
+- Scope honesty: 18 core entities, not the whole system. Frontends, the LLM client, and
+  the markdown parser were not selected. This is the self-hosting direction proven, not
+  a drop-in replacement.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

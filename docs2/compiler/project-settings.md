@@ -94,13 +94,13 @@ files = ["docs/main.md"]
 
 ```toml
 [limits]
-turn_rounds = 12
+turn_rounds = 24
 turn_mutations = 64
 context_budget = 24000
 build_turn_factor = 3
 ```
 
-- `turn_rounds`: maximum message rounds per turn. Default 12.
+- `turn_rounds`: maximum message rounds per turn. Default 24.
 - `turn_mutations`: maximum staged mutations per turn. Default 64.
 - `context_budget`: maximum context pack size in characters. Default 24000.
 - `build_turn_factor`: sets the per-build turn cap as
@@ -113,7 +113,8 @@ Run-level knobs are environment variables only, since they tune one run, not the
 
 - `JAZYK_MAX_CONCURRENCY`: cap on parallel turns within a level (default 6).
 - `JAZYK_MAX_RETRIES`: retries, in addition to the first attempt, for a failed LLM call
-  (default 2).
+  (default 2). Transient transport failures retry at once. A rate-limited call retries
+  after a 20 second pause instead; hammering a rate limit only extends it.
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
 - `JAZYK_READ_TIMEOUT`: seconds to wait on one LLM response before the call fails

@@ -90,6 +90,29 @@ behavior, push the prompt to rephrase declaratives into EARS, or adopt `shall` p
 in spec-grade sections. The lint rule ran (4 findings) but the 4B judge misapplied it,
 consistent with its failed benchmark verdict.
 
+## The density experiment: doctrine and capability
+
+Three dogfood runs over the same 30 documents isolate the two variables:
+
+| run | entities | requirements | relationships | junk | errors |
+| --- | --- | --- | --- | --- | --- |
+| gemma4:e4b, strict doctrine | 10 | 4 | 0 | 0 | 0 |
+| gemma4:e4b, declarative doctrine | 48 | 1 | 0 | 0 | 0 |
+| gpt-5.5, declarative doctrine | 157 | 415 | 305 | 0 | 0 |
+
+The declarative doctrine ("declarative prose states obligations, rephrase into EARS")
+amplifies model capability rather than substituting for it. gemma minted entities but
+could not land the statements behind them (47 `unused-entity` warnings); gpt-5.5
+produced a dense spec graph with typed relationships. Both models were graded by
+`jazyk benchmark` beforehand: gemma not capable, gpt-5.5 18/19 checks under native
+tools. The harness invariants held in every run: zero junk names, zero spurious error
+diagnostics.
+
+Operational findings from the same runs: a dense extractor exhausts a 12-round turn
+budget before claiming coverage (default raised to 24, and models are told to batch
+tool calls); concurrent gpt-5.5 workloads through one provider hit rate limits, so
+generation jobs are sequenced, not parallelized.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

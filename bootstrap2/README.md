@@ -26,6 +26,9 @@ jazyk compile --verbose      # full context packs and payloads
 jazyk status                 # last build summary
 jazyk context ent:order      # print a context pack
 jazyk query customer         # search entities
+jazyk codegen [entity...]    # one code unit per entity from its context pack
+jazyk testgen [entity...]    # tests derived from requirements, quote as trace
+jazyk viewer                 # the graph as one self-contained HTML page
 jazyk mcp graph [--write]    # the graph MCP server on stdio
 jazyk lsp                    # the language server on stdio (read-only)
 jazyk benchmark              # grade the configured model under both codecs

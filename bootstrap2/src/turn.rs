@@ -155,7 +155,7 @@ const RECONCILE_SYSTEM: &str = r#"You are the compilation turn of jazyk, a natur
 
 The graph holds entities (domain concepts), EARS requirements attached to entities, and a coverage mark per section.
 
-Work in this order:
+Work in this order (you may batch several tool calls in one reply):
 1. Read the dirty sections given below.
 2. Extract the requirements they state: single testable statements using 'shall'. Documentation rarely says 'shall': a declarative statement of system behavior ("The store mints every id at creation") states an obligation; rephrase it into an EARS shall statement and keep the source sentence verbatim as the quote.
 3. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name. Create with upsert_entity only when search finds nothing that matches.

@@ -73,7 +73,9 @@ item. See [changesets](./graph.md#changesets).
 
 ## Budgets
 
-- Rounds per turn: default 12.
+- Rounds per turn: default 24. A dense document stages one mutation per round under a
+  model that calls one tool at a time, so the budget scales with extraction density, not
+  caution. A model may batch several tool calls in one reply; each reply is one round.
 - Staged mutations per turn: default 64.
 - Context budget: per model profile, e.g. 24k characters for a 4B class model.
 - Per build: a hard turn cap, so a stuck build stops instead of looping. See

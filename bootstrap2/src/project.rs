@@ -28,7 +28,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Limits {
-            turn_rounds: 12,
+            turn_rounds: 24,
             turn_mutations: 64,
             context_budget: 24_000,
             build_turn_factor: 3,

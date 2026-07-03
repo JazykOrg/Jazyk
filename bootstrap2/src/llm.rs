@@ -170,13 +170,25 @@ impl Llm {
                     }
                     last = e;
                     if attempt < max && is_transient(&last) {
-                        eprintln!(
-                            "[jazyk] {} — transient error, retrying ({}/{}): {}",
-                            label,
-                            attempt + 1,
-                            max,
-                            truncate(&last, 120)
-                        );
+                        // A rate limit is not a hiccup: pause before retrying instead of
+                        // hammering the window shut.
+                        if last.to_lowercase().contains("rate limit") {
+                            eprintln!(
+                                "[jazyk] {} — rate limited, retrying in 20s ({}/{})",
+                                label,
+                                attempt + 1,
+                                max
+                            );
+                            std::thread::sleep(Duration::from_secs(20));
+                        } else {
+                            eprintln!(
+                                "[jazyk] {} — transient error, retrying ({}/{}): {}",
+                                label,
+                                attempt + 1,
+                                max,
+                                truncate(&last, 120)
+                            );
+                        }
                     } else {
                         break;
                     }

@@ -128,6 +128,23 @@ blocks, TOML snippets, and CLI invocations) compiled with the same local gemma d
 - Density again tracked model capability, not corpus origin: low requirement recall and
   parked documents mirror the gemma dogfood, not anything mdBook-specific.
 
+## End to end: docs to green tests
+
+The full chain ran on the F2 fixture with `gpt-5.5`: `jazyk compile` built the graph,
+`jazyk codegen` generated 12 Rust modules (compiling to within 4 errors on the first
+shot), `jazyk testgen` derived 22 tests from the 22 requirements, and a bounded repair
+loop (the model fixing its own files given rustc output) reached a green `cargo test`:
+43 tests passing, 0 failures.
+
+- Everything is machine-generated: modules, tests, and repairs. Assembly (module naming,
+  `crate::` to crate-name rewrites in integration tests, one test-framework dependency)
+  is deterministic harness work.
+- Repair converged in 9 iterations total once run at full width; per-file repairs
+  preserved the requirement-id traceability comments, so every passing test still names
+  the requirement and quote it verifies.
+- The failure mode of narrow repair (two files per pass) was oscillation; repairing every
+  failing file per pass converged monotonically: 45 errors → 3 files → green.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

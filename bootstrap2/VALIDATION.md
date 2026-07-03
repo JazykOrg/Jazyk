@@ -186,6 +186,29 @@ Controlled edits to the converged F2 fixture, gpt-5.5:
 The run also exposed and fixed a gate gap: `update_requirement` accepted relationship
 types `upsert_requirement` would reject.
 
+## Pluggable generation workers over MCP
+
+The generation contract (`codegen_instructions` / `codegen_pending` / `codegen_task` /
+`codegen_mark`) was exercised by an external agent speaking only the MCP wire protocol
+over stdio against `jazyk mcp graph`, from the F2 fixture:
+
+- `codegen_pending` returned 6 entities with requirement-level diffs (added ids per
+  entity, plus one `(reworded)` case where only statement text changed).
+- Per entity, `codegen_task` supplied the context pack, requirement groups, change
+  diff, unit path, and `factHash`; the worker made minimal edits guided by `changed`
+  (co-cited duplicate requirements at existing sites, added the one genuinely new
+  behavior, refreshed a reworded comment) instead of regenerating whole units.
+- `codegen_mark` with the package's `factHash` drained pending to 0.
+- The assembled crate builds clean and its unit tests pass after the update.
+
+Codex CLI as the worker is blocked by Codex itself, not the contract: `codex exec`
+(v0.140.0) fires an interactive approval elicitation for every MCP tool call and
+auto-cancels it in non-interactive mode (`ResolveElicitation { decision: Cancel }`),
+regardless of `approval: never`, sandbox mode, or project `trust_level`. The same
+server answers the same calls in 9ms when driven directly. Running Codex
+interactively (approve the `jazyk` server once in the TUI) or with its explicit
+bypass flag are the two ways in.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

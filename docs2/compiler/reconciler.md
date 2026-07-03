@@ -71,6 +71,10 @@ A hard per-build turn budget backstops the loop. Work still open when the budget
 is parked in `status.yaml` and reported as an `incomplete-build` diagnostic. The next
 build resumes parked items first. Unfinished work is never silent.
 
+The fix-up pass also re-enqueues documents holding requirements whose `quote` no longer
+locates, so a stale anchor left behind by a failed turn is retried on the next build
+instead of lingering as a `stale-provenance` warning.
+
 ## Coverage
 
 Every section carries a coverage state in the store:

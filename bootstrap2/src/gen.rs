@@ -210,6 +210,7 @@ pub fn task_package(store: &Store, id: &str, lang: &str) -> Result<Value, String
         "entity": id,
         "name": e.name,
         "unit": store.out.join("codegen").join(format!("{}.{}", slug, ext_for(lang))).to_string_lossy(),
+        "factHash": fact_hash(store, id),
         "instructions": instructions(lang),
         "context": pack,
         "relationships": rels,
@@ -219,14 +220,17 @@ pub fn task_package(store: &Store, id: &str, lang: &str) -> Result<Value, String
     }))
 }
 
-// Record an entity's current facts as generated.
-pub fn mark(store: &Store, id: &str) -> Result<Value, String> {
+// Record an entity as generated. The worker passes the factHash from its task package,
+// so the mark records the facts the unit was generated against; if the graph moved
+// meanwhile, the entity correctly stays pending.
+pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>) -> Result<Value, String> {
     if !store.graph.entities.contains_key(id) {
         return Err(format!("unknown entity `{}`", id));
     }
     let slug = slug_of(id);
+    let hash = fact_hash_seen.map(String::from).unwrap_or_else(|| fact_hash(store, id));
     let mut state = GenState::load(&store.out);
-    state.mark(&slug, fact_hash(store, id), reqs_of_sorted(store, id));
+    state.mark(&slug, hash, reqs_of_sorted(store, id));
     state.save();
     Ok(json!({"marked": id}))
 }
@@ -268,7 +272,7 @@ mod tests {
         // Mark plus an existing unit file makes it disappear from pending.
         std::fs::create_dir_all(out.join("codegen")).ok();
         std::fs::write(out.join("codegen/cart.rs"), "// unit").ok();
-        mark(&s, "ent:cart").unwrap();
+        mark(&s, "ent:cart", None).unwrap();
         assert!(pending(&s, "rust").is_empty());
 
         // A new requirement reappears as a precise diff.

@@ -415,7 +415,7 @@ pub fn run_codegen(opts: &Options, entities: &[String]) -> i32 {
                 path.display(),
                 if parts > 1 { format!(" ({} parts)", parts) } else { String::new() }
             );
-            crate::gen::mark(&store, id).ok();
+            crate::gen::mark(&store, id, task["factHash"].as_str()).ok();
             regenerated += 1;
         } else {
             failures += 1;

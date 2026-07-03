@@ -520,21 +520,39 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     })
                     .map(|(r, _)| r.clone())
                     .collect();
-                if uncovered.is_empty() {
+                // Also re-enqueue stale anchors: requirements whose quote no longer
+                // locates in this document, left behind by a failed turn.
+                let mut stale: Vec<String> = Vec::new();
+                let mut stale_sections: Vec<String> = Vec::new();
+                for (rid, r) in &s.graph.requirements {
+                    if &r.source.doc == doc && !s.quote_locates(&r.source.doc, &r.source.section, &r.source.quote) {
+                        stale.push(rid.clone());
+                        if !stale_sections.contains(&r.source.section) && rec.sections.contains_key(&r.source.section) {
+                            stale_sections.push(r.source.section.clone());
+                        }
+                    }
+                }
+                let mut dirty = uncovered;
+                for sec in stale_sections {
+                    if !dirty.contains(&sec) {
+                        dirty.push(sec);
+                    }
+                }
+                if dirty.is_empty() && stale.is_empty() {
                     None
                 } else {
                     Some(WorkItem {
                         task: "reconcile-doc".into(),
                         target: doc.clone(),
-                        dirty_sections: uncovered,
-                        stale_anchors: vec![],
+                        dirty_sections: dirty,
+                        stale_anchors: stale,
                     })
                 }
             })
             .collect()
     };
     if !fixup.is_empty() && (turns as usize) < budget_cap {
-        trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections", fixup.len()));
+        trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
         turns += fixup.len() as u32;
         let (applied, _touched, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, trace);
         applied_total += applied;

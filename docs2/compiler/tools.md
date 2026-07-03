@@ -36,9 +36,13 @@ clever ones.
 - `delete_entity({id, reason})`: rejected while requirements reference the entity.
 - `merge_entities({keep, absorb, reason})`: the store rewires references and leaves a
   redirect. See [mutations](./graph.md#mutations).
-- `upsert_requirement({id?, ears, entities, section, quote, edges?})`: without `id` a new
-  requirement is minted. `edges` name entity pairs the statement ties together, with an
-  optional [relationship type](./model/relationship.md).
+- `upsert_requirement({ears, entities, section, quote, edges?})`: the store mints the
+  id; any id supplied is ignored. Idempotency comes from the natural key (the source
+  section plus the punctuation-insensitive statement text), so a retried or lightly
+  reworded statement updates in place, refreshing its `ears` and `quote`, never minting
+  a duplicate. `edges` name entity pairs the statement ties together, with an optional
+  [relationship type](./model/relationship.md). Real revisions go through
+  `update_requirement`.
 - `update_requirement({id, ears?, entities?, edges?})`.
 - `delete_requirement({id, reason})`.
 - `report_diagnostic({rule, severity, subjects, message, reasoning})`. `rule` is one of
@@ -71,9 +75,11 @@ generation state (`codegen/state.yaml`); they never mutate the graph.
 - `codegen_task({entity, lang?})`: the full package for one unit: the instructions, the
   entity's context pack, its requirements in generation groups, the change diff, the
   target unit path, and the units already generated.
-- `codegen_mark({entity})`: record the entity's current fact hash in the generation
-  state. The worker writes the unit file itself; marking declares it done, and the
-  entity leaves `codegen_pending`.
+- `codegen_mark({entity, factHash?})`: record the entity as generated. The worker
+  writes the unit file itself; marking declares it done, and the entity leaves
+  `codegen_pending`. Pass the `factHash` from the `codegen_task` package so the mark
+  records the facts the unit was generated against; if the graph moved meanwhile, the
+  entity correctly stays pending.
 
 ## Validation and errors
 

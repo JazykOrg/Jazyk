@@ -45,9 +45,10 @@ A mutation is one operation on the graph. The full set:
 Mutations are exposed to the model as [write tools](./tools.md#write-tools). Their semantics:
 
 - Upserts key on a natural key, not an id. For entities the natural key is `name` plus
-  `scope`. For requirements it is the source section plus the whitespace-normalized
-  statement text. An upsert that matches an existing node updates it instead of creating
-  a duplicate. This makes retries harmless.
+  `scope`. For requirements it is the source section plus the punctuation-insensitive
+  statement text, so a punctuation or spacing edit to a sentence matches its existing
+  requirement and refreshes the `ears` and `quote` in place. An upsert that matches an
+  existing node updates it instead of creating a duplicate. This makes retries harmless.
 - The store mints ids. A mutation never supplies a new id, only references existing ones.
 - Deletes require a `reason`, which is recorded in the journal.
 - `merge_entities` keeps one entity, absorbs the other, rewires all requirement references,

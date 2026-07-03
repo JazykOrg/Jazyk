@@ -161,7 +161,10 @@ definitions:
         type: string
     additionalProperties: false
   upsertRequirement:
-    description: Request payload of upsert_requirement. Without id a new requirement is minted
+    description: >-
+      Request payload of upsert_requirement. The store mints the id; a supplied id is
+      ignored. The natural key (section plus punctuation-insensitive statement) makes
+      the call idempotent
     type: object
     required:
       - ears
@@ -169,8 +172,6 @@ definitions:
       - section
       - quote
     properties:
-      id:
-        type: string
       ears:
         type: string
         description: The EARS statement

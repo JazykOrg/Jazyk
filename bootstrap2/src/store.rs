@@ -73,6 +73,16 @@ fn normalize(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+// Punctuation-insensitive statement normalization: the requirement natural key. A comma
+// or spacing edit to a sentence keeps matching its existing requirement.
+fn normalize_statement(s: &str) -> String {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 // Whitespace-insensitive containment: a quote wrapped across source lines still locates.
 pub fn text_contains(hay: &str, needle: &str) -> bool {
     let h = hay.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -442,8 +452,9 @@ impl Store {
                         skipped.push(format!("create_requirement {}: unknown entity {}", id, missing));
                         continue;
                     }
-                    // Natural key for requirements: source section plus normalized statement.
-                    // A same-statement create becomes an update, never a duplicate.
+                    // Natural key for requirements: source section plus the punctuation-
+                    // insensitive statement. A same-statement create becomes an update,
+                    // never a duplicate; a lightly reworded statement refreshes in place.
                     if let Some(existing) = self
                         .graph
                         .requirements
@@ -451,7 +462,7 @@ impl Store {
                         .find(|(_, r)| {
                             r.source.doc == requirement.source.doc
                                 && r.source.section == requirement.source.section
-                                && normalize(&r.ears) == normalize(&requirement.ears)
+                                && normalize_statement(&r.ears) == normalize_statement(&requirement.ears)
                         })
                         .map(|(rid, _)| rid.clone())
                     {
@@ -467,8 +478,11 @@ impl Store {
                                 r.edges.push(edge);
                             }
                         }
-                        // A re-anchored quote (same statement, edited source sentence)
-                        // refreshes in place; the id never churns.
+                        // The matched statement's ears and quote refresh in place (same
+                        // statement modulo punctuation); the id never churns.
+                        if r.ears != requirement.ears {
+                            r.ears = requirement.ears.clone();
+                        }
                         if r.source.quote != requirement.source.quote {
                             r.source = requirement.source.clone();
                         }

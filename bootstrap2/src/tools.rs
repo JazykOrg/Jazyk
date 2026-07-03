@@ -107,10 +107,9 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one EARS requirement (a single testable statement using 'shall'). entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type.",
+            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type.",
             parameters: obj(
                 json!({
-                    "id": {"type": "string"},
                     "ears": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}},
                     "section": {"type": "string"},
@@ -186,8 +185,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "codegen_mark",
-            description: "Record the entity's current facts as generated; it leaves codegen_pending until its facts change again.",
-            parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
+            description: "Record the entity as generated. Pass the factHash from the codegen_task package so the mark records the facts the unit was generated against.",
+            parameters: obj(json!({"entity": {"type": "string"}, "factHash": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
             name: "done",
@@ -671,17 +670,8 @@ impl ToolSession {
                     }
                 }
                 let source = SourceRef { doc: doc.clone(), section: sec, quote: quote.trim().to_string() };
-                if let Some(id) = Self::opt_str(args, "id") {
-                    let known = self.snapshot.graph.requirements.contains_key(&id) || self.staged_reqs.contains(&id);
-                    if !known {
-                        return Err(ToolError::new(
-                            "unknown-id",
-                            format!("unknown requirement id `{}`; omit `id` to create a new requirement", id),
-                        ));
-                    }
-                    self.stage(Op::UpdateRequirement { id: id.clone(), ears: Some(ears), entities: Some(entities), edges: Some(edges) })?;
-                    return Ok(json!({"id": id, "created": false}));
-                }
+                // The store mints ids; a supplied id is ignored. Idempotency comes from
+                // the natural key at commit, and update_requirement handles revisions.
                 let mut taken = self.taken_ids.clone();
                 taken.extend(self.staged_reqs.iter().cloned());
                 let id = self.snapshot.mint_req_id(&doc, &taken);
@@ -842,7 +832,8 @@ impl ToolSession {
             "codegen_mark" => {
                 let entity = Self::str_arg(args, "entity")?;
                 let id = self.snapshot.resolve_id(&entity).to_string();
-                crate::gen::mark(&self.snapshot, &id).map_err(|e| ToolError::new("unknown-id", e))
+                let seen = Self::opt_str(args, "factHash");
+                crate::gen::mark(&self.snapshot, &id, seen.as_deref()).map_err(|e| ToolError::new("unknown-id", e))
             }
             "done" => {
                 // Batch gate: a `covered` claim on a section containing `shall` is honest

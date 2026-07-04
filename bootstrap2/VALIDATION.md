@@ -209,6 +209,39 @@ server answers the same calls in 9ms when driven directly. Running Codex
 interactively (approve the `jazyk` server once in the TUI) or with its explicit
 bypass flag are the two ways in.
 
+## The verification ledger: requirements to verdicts
+
+The gen workflow (one task per entity producing deliverable files plus tests, tracked in
+`gen/ledger.yaml`) ran end to end on F2 with gemma generating and a claude agent as the
+fix-and-verify worker:
+
+- `jazyk gen` produced 12 entities' product and test files into `product/` and seeded 27
+  requirement rows: 20 `programmatic` (each with an exact `cargo test req_<id>_<hash8>`
+  command), 7 `llm` (criteria files; gemma omitted tests it could not write
+  programmatically and the harness recorded them as llm rows, as designed).
+- `jazyk test` honestly recorded all 20 programmatic rows as failing (the gemma crate
+  did not compile). The worker agent fixed the product, and all 27 rows reached
+  `verified`, including a genuine llm FAIL: a refund requirement whose implementation
+  was only a `println!`. Fixing it flipped the row to `stale-code` by hash, and a
+  re-judgment verified it. The full fail, fix, re-stale, re-verify loop worked without
+  any human bookkeeping.
+- The cascade experiment: rewording one requirement (14 days to 21) recompiled in place
+  (id stable), flipped exactly its rows to `stale-requirement (requirement-changed)`,
+  surfaced the new requirement as `missing (not-generated)`, and listed exactly the
+  three affected entities in `gen_pending` with precise diffs. Regeneration minted a
+  new test name from the new statement hash, mechanically retiring the old run command.
+- The llm rows were verified over MCP (`verify_task`, judgment, `verify_mark` with the
+  package's `factHash`), proving the external-worker contract for verification the same
+  way it was proven for generation.
+- Dogfood started: `docs2/jazyk.toml` points `[gen] deliverable` at `project2/`; three
+  core entities generated 106 requirement rows (79 programmatic, 27 llm) with
+  `graph_store.rs`, `reconciler.rs`, `context_engine.rs` and their test files. The full
+  run waits for a capable model.
+
+Known weakness, consistent with every gemma result: regeneration quality. A fresh gemma
+pass over an entity can re-break compilation, which the ledger reports truthfully as
+failing rows; a capable model or an agent worker closes the loop.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

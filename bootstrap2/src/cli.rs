@@ -709,10 +709,14 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
             None => skipped += 1,
         }
     }
-    println!(
-        "jazyk: test done — {} verified, {} failing, {} stale, {} skipped",
-        verified, failing, stale, skipped
-    );
+    if selected.is_empty() {
+        println!("jazyk: nothing to do; every targeted row is verified");
+    } else {
+        println!(
+            "jazyk: test done — {} verified, {} failing, {} stale, {} skipped",
+            verified, failing, stale, skipped
+        );
+    }
     if failing > 0 || stale > 0 || skipped > 0 {
         1
     } else {

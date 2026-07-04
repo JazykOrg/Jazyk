@@ -15,3 +15,7 @@ warnings = [
 
 [roots]
 files = ["main.md"]
+
+[gen]
+deliverable = "../project2"
+lang = "rust"

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::Duration;
+    use product::order::*;
+    use chrono::{Duration, Utc};
 
     fn setup_order() -> Order {
         let items = vec![
@@ -69,14 +69,8 @@ mod tests {
     // req:orders-3 [req_orders_3_af4d8d86]: An Order shall be paid within 21 days of placement; otherwise the system shall cancel it.
     fn test_order_is_cancelled_after_21_days() {
         let mut order = setup_order();
-        // Advance time past 21 days
-        let deadline = order.created_at + Duration::days(21);
-        let now = deadline + Duration::days(1);
-
-        // Manually set created_at to simulate the original creation date for testing purposes if needed, but we rely on Utc::now() in check_payment_deadline
-        // For a controlled test, we must mock time or use a fixed reference point. Since we cannot easily mock chrono::Utc::now(), we will trust the logic flow and assert the outcome based on the function call.
-
-        // If this were run after 21 days, it should cancel.
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);
@@ -94,7 +88,8 @@ mod tests {
     fn test_order_is_cancelled_after_21_days_consistency() {
         // This is functionally identical to orders-3, ensuring consistency across requirements.
         let mut order = setup_order();
-        // Assume time has passed...
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);
@@ -104,7 +99,8 @@ mod tests {
     // req:orders-7 [req_orders_7_d8fc86d8]: The system shall cancel an Order if it is not paid within 21 days of placement.
     fn test_order_cancellation_on_missed_deadline() {
         let mut order = setup_order();
-        // Simulate time passing past the deadline
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);

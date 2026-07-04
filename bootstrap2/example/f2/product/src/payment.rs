@@ -21,7 +21,8 @@ pub struct Payment {
 
 // Placeholder for Order structure interaction
 pub mod order_management {
-    use super::Payment;
+    use super::{Payment, PaymentStatus};
+    use std::time::{Duration, SystemTime};
     #[derive(Debug)]
     pub struct Order {
         pub id: String,
@@ -82,6 +83,8 @@ pub mod order_management {
 
     // Requirement req:payment-3 implementation
     pub fn handle_failed_payment(order: &mut Order, payment: &mut Payment, customer_notifier: &mut bool) -> Result<(), String> {
+        // This call represents one failed payment attempt.
+        payment.attempts += 1;
         if payment.attempts >= 3 {
             // req:payment-3: If a Payment fails three times, then the system shall put the Order on hold and notify the Customer. (req_payment_3_13c7cdf2)
             order.status = OrderStatus::OnHold;
@@ -184,7 +187,7 @@ mod tests {
         // Should succeed if paid within the deadline (simulated by function returning Ok)
         let result = order_management::check_payment_deadline(&mut order, payment_time, 14);
         assert!(result.is_ok(), "Payment should be marked successful within 14 days.");
-        assert_eq(order.status, order_management::OrderStatus::PendingPayment, "Order status should remain pending if paid on time.");
+        assert_eq!(order.status, order_management::OrderStatus::PendingPayment, "Order status should remain pending if paid on time.");
     }
 
     // Test for req:orders-5 (Time limit check - 14 days)
@@ -211,7 +214,7 @@ mod tests {
         // If the check fails (which would happen if the time difference is too large), the order should be cancelled.
         // We assert that the function runs without panic and checks the state change logic.
         if result.is_err() {
-            assert_eq(order.status, order_management::OrderStatus::Cancelled, "Order must be cancelled if payment deadline (21 days) is missed.");
+            assert_eq!(order.status, order_management::OrderStatus::Cancelled, "Order must be cancelled if payment deadline (21 days) is missed.");
         } else {
              // If it passed the check (i.e., we are testing the successful path), ensure cancellation didn't happen prematurely.
             assert_ne!(order.status, order_management::OrderStatus::Cancelled);
@@ -232,8 +235,8 @@ mod tests {
 
         let result = order_management::confirm_payment(&mut order, &payment);
         assert!(result.is_ok());
-        assert(order.is_paid);
-        assert_eq(order.status, order_management::OrderStatus::Paid);
+        assert!(order.is_paid);
+        assert_eq!(order.status, order_management::OrderStatus::Paid);
     }
 
     // Test for req:payment-3 (Three failures -> Hold + Notify)
@@ -247,9 +250,9 @@ mod tests {
         let result = order_management::handle_failed_payment(&mut order, &mut payment, &mut customer_notifier);
 
         assert!(result.is_ok());
-        assert(order.status == order_management::OrderStatus::OnHold);
-        assert(customer_notifier);
-        assert(payment.attempts >= 3); // Ensure attempts count is high enough to trigger the logic
+        assert!(order.status == order_management::OrderStatus::OnHold);
+        assert!(customer_notifier);
+        assert!(payment.attempts >= 3); // Ensure attempts count is high enough to trigger the logic
     }
 
     // Test for req:returns-1 (Refund restores Stock)
@@ -261,11 +264,11 @@ mod tests {
         // Step 1: Process Refund (which must happen before stock restoration in a real flow)
         let refund_result = returns_management::process_refund(&mut payment);
         assert!(refund_result.is_ok());
-        assert_eq(payment.status, PaymentStatus::Refunded);
+        assert_eq!(payment.status, PaymentStatus::Refunded);
 
         // Step 2: Restore Stock (This is the final action required by the requirement)
         stock_management::restore_stock(&mut stock);
 
-        assert_eq(stock.quantity, 6, "Stock quantity must be incremented after refund.");
+        assert_eq!(stock.quantity, 6, "Stock quantity must be incremented after refund.");
     }
 }

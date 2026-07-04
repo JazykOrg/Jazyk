@@ -1,5 +1,5 @@
 // tests/product.rs
-use product::Product; // Assuming the crate structure allows importing Product from the library root
+use product::product::*;
 
 #[test]
 fn test_product_must_belong_to_one_category() {

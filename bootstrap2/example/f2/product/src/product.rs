@@ -6,11 +6,11 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Product {
-    id: u32,
-    name: String,
-    price: f64,
-    catalog_category_id: u32, // Links to Catalog (req:catalog-1, req:catalog-3)
-    stock_level: i32, // Local representation or state derived from Stock entity
+    pub id: u32,
+    pub name: String,
+    pub price: f64,
+    pub catalog_category_id: u32, // Links to Catalog (req:catalog-1, req:catalog-3)
+    pub stock_level: i32, // Local representation or state derived from Stock entity
 }
 
 // Mock external dependencies for compilation and context
@@ -187,13 +187,13 @@ mod tests {
         // Successful shipment
         let result = product.process_shipment_picking(5);
         assert!(result.is_ok());
-        assert_eq(product.stock_level, 15);
+        assert_eq!(product.stock_level, 15);
 
         // Attempting to pick more than available (should fail)
         let result_fail = product.process_shipment_picking(20);
         assert!(result_fail.is_err());
         // Stock level should remain unchanged after failed attempt
-        assert_eq(product.stock_level, 15);
+        assert_eq!(product.stock_level, 15);
 
         // Invalid quantity input
         let result_zero = product.process_shipment_picking(0);
@@ -209,7 +209,7 @@ mod tests {
         // Successful reservation
         let result = product.reserve_stock(3);
         assert!(result.is_ok());
-        assert_eq(product.stock_level, 7);
+        assert_eq!(product.stock_level, 7);
 
         // Attempting to reserve more than available (should fail)
         let result_fail = product.reserve_stock(8);
@@ -247,4 +247,3 @@ mod tests {
     }
 }
 // End of src/product.rs
-```

@@ -42,27 +42,27 @@ pub enum OrderStatus {
 /// Represents a single item within an order.
 #[derive(Debug, Clone)]
 pub struct OrderItem {
-    product_id: ProductId,
-    quantity: u32,
-    placement_price: f64, // Price at the time of placement (req:orders-1)
+    pub product_id: ProductId,
+    pub quantity: u32,
+    pub placement_price: f64, // Price at the time of placement (req:orders-1)
 }
 
 /// Represents the core Order entity.
 #[derive(Debug, Clone)]
 pub struct Order {
-    order_id: String,
-    customer_id: CustomerId,
-    items: Vec<OrderItem>,
-    status: OrderStatus,
-    created_at: DateTime<Utc>,
-    last_updated_at: DateTime<Utc>,
+    pub order_id: String,
+    pub customer_id: CustomerId,
+    pub items: Vec<OrderItem>,
+    pub status: OrderStatus,
+    pub created_at: DateTime<Utc>,
+    pub last_updated_at: DateTime<Utc>,
 
     // Payment tracking fields
-    payment_status: Option<String>, // e.g., "Pending", "Confirmed", "Failed"
-    failed_payment_attempts: u8, // Used for req:payment-3
+    pub payment_status: Option<String>, // e.g., "Pending", "Confirmed", "Failed"
+    pub failed_payment_attempts: u8, // Used for req:payment-3
     
     // Shipment tracking fields
-    shipment_id: Option<ShipmentId>,
+    pub shipment_id: Option<ShipmentId>,
 }
 
 impl Order {
@@ -138,12 +138,10 @@ impl Order {
 
     /// Checks if payment deadline (30 days) has passed. (req:payment-2)
     pub fn check_long_term_deadline(&self) -> bool {
-        // This checks the 30 day limit. If this is hit, it might trigger cancellation or escalation depending on business rules.
+        // req:payment-2: An Order shall be paid within 30 days of placement. True while the
+        // order complies with the 30 day window (still inside it, or already paid).
         let deadline = self.created_at + chrono::Duration::days(30);
-        if Utc::now() > deadline && self.status != OrderStatus::Canceled {
-            // req:payment-2: An Order shall be paid within 30 days of placement. (This is a warning/monitoring point, not necessarily an immediate action if the 21 day rule already applies)
-        }
-        false
+        self.status == OrderStatus::Paid || Utc::now() <= deadline
     }
 
     /// Handles payment failure logic. (req:payment-3)
@@ -248,8 +246,8 @@ mod tests {
         assert!(!items.is_empty());
         // Check that the structure is correct: (ID, Quantity, Price)
         let item = &items[0];
-        assert_eq(item.1, 2); // quantity
-        assert_eq(item.2, 10.0); // placement price
+        assert_eq!(item.1, 2); // quantity
+        assert_eq!(item.2, 10.0); // placement price
     }
 
     #[test]
@@ -265,13 +263,8 @@ mod tests {
     fn test_order_is_cancelled_after_21_days() {
         let mut order = setup_order();
         // Advance time past 21 days
-        let deadline = order.created_at + Duration::days(21);
-        let now = deadline + Duration::days(1);
-
-        // Manually set created_at to simulate the original creation date for testing purposes if needed, but we rely on Utc::now() in check_payment_deadline
-        // For a controlled test, we must mock time or use a fixed reference point. Since we cannot easily mock chrono::Utc::now(), we will trust the logic flow and assert the outcome based on the function call.
-
-        // If this were run after 21 days, it should cancel.
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);
@@ -289,7 +282,8 @@ mod tests {
     fn test_order_is_cancelled_after_21_days_consistency() {
         // This is functionally identical to orders-3, ensuring consistency across requirements.
         let mut order = setup_order();
-        // Assume time has passed...
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);
@@ -299,7 +293,8 @@ mod tests {
     // req:orders-7 [req_orders_7_d8fc86d8]: The system shall cancel an Order if it is not paid within 21 days of placement.
     fn test_order_cancellation_on_missed_deadline() {
         let mut order = setup_order();
-        // Simulate time passing past the deadline
+        // Simulate 22 elapsed days since placement.
+        order.created_at = Utc::now() - Duration::days(22);
         let cancelled = order.check_payment_deadline();
         assert!(cancelled);
         assert_eq!(order.status, OrderStatus::Canceled);
@@ -310,7 +305,7 @@ mod tests {
     fn test_payment_confirmation_marks_order_paid() {
         let mut order = setup_order();
         order.mark_as_paid();
-        assert_eq(order.status, OrderStatus::Paid);
+        assert_eq!(order.status, OrderStatus::Paid);
     }
 
     #[test]
@@ -328,8 +323,8 @@ mod tests {
 
         // Failure 1
         order.handle_payment_failure();
-        assert_eq(order.failed_payment_attempts, 1);
-        assert_eq(order.status, OrderStatus::Submitted); // Should revert/stay submitted if not yet failed 3 times
+        assert_eq!(order.failed_payment_attempts, 1);
+        assert_eq!(order.status, OrderStatus::Submitted); // Should revert/stay submitted if not yet failed 3 times
 
         // Failure 2
         order.handle_payment_failure();

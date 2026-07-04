@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use product::payment::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Helper to create a mock order
@@ -32,7 +32,7 @@ mod tests {
         // Should succeed if paid within the deadline (simulated by function returning Ok)
         let result = order_management::check_payment_deadline(&mut order, payment_time, 14);
         assert!(result.is_ok(), "Payment should be marked successful within 14 days.");
-        assert_eq(order.status, order_management::OrderStatus::PendingPayment, "Order status should remain pending if paid on time.");
+        assert_eq!(order.status, order_management::OrderStatus::PendingPayment, "Order status should remain pending if paid on time.");
     }
 
     // req:orders-5 [req_orders_5_af4d8d86]: An Order shall be paid within 21 days of placement; otherwise the system shall cancel it.
@@ -80,8 +80,8 @@ mod tests {
 
         let result = order_management::confirm_payment(&mut order, &payment);
         assert!(result.is_ok());
-        assert(order.is_paid);
-        assert_eq(order.status, order_management::OrderStatus::Paid);
+        assert!(order.is_paid);
+        assert_eq!(order.status, order_management::OrderStatus::Paid);
     }
 
     // req:payment-3 [req_payment_3_13c7cdf2]: If a Payment fails three times, then the system shall put the Order on hold and notify the Customer.
@@ -95,9 +95,9 @@ mod tests {
         let result = order_management::handle_failed_payment(&mut order, &mut payment, &mut customer_notifier);
 
         assert!(result.is_ok());
-        assert(order.status == order_management::OrderStatus::OnHold);
-        assert(customer_notifier);
-        assert(payment.attempts >= 3); // Ensure attempts count is high enough to trigger the logic
+        assert!(order.status == order_management::OrderStatus::OnHold);
+        assert!(customer_notifier);
+        assert!(payment.attempts >= 3); // Ensure attempts count is high enough to trigger the logic
     }
 
     // req:returns-1 [req_returns_1_98c2ffb2]: When a Return is received and inspected, the system shall refund the Payment and restore the Stock.

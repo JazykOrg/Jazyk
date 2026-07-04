@@ -15,6 +15,7 @@ mod reconcile;
 mod store;
 mod tools;
 mod turn;
+mod verify;
 mod viewer;
 
 // Load a .env file by walking up from the current directory. Does not override existing env vars.
@@ -54,8 +55,9 @@ fn top_usage() -> String {
     s.push_str("  jazyk status                   summarize the last build\n");
     s.push_str("  jazyk context <target>         print a context pack (ent:…, req:…, doc.md#/ref, or h:… handle)\n");
     s.push_str("  jazyk query <text>             search entities\n");
-    s.push_str("  jazyk codegen [entity...]      generate code units from the graph (--lang, default rust)\n");
-    s.push_str("  jazyk testgen [entity...]      derive tests from requirements (--lang, default rust)\n");
+    s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--lang, --force)\n");
+    s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
+    s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk mcp graph [--write]      the graph MCP server over stdio\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
@@ -110,6 +112,10 @@ fn main() {
                 i += 1;
                 opts.budget = args.get(i).and_then(|s| s.parse::<usize>().ok());
             }
+            "--kind" => {
+                i += 1;
+                opts.kind = args.get(i).cloned();
+            }
             "--lang" => {
                 i += 1;
                 opts.lang = args.get(i).cloned();
@@ -118,6 +124,8 @@ fn main() {
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
             "--force" => opts.force = true,
+            "--list" => opts.list = true,
+            "--audit" => opts.audit = true,
             s if cmd.is_empty() => cmd = s.to_string(),
             s => positional.push(s.to_string()),
         }
@@ -161,8 +169,19 @@ fn main() {
                 2
             }
         },
-        "codegen" => cli::run_codegen(&opts, &positional),
-        "testgen" => cli::run_testgen(&opts, &positional),
+        "gen" => cli::run_gen(&opts, &positional),
+        "test" => cli::run_test(&opts, &positional),
+        "codegen" | "testgen" => {
+            eprintln!("jazyk: `{}` is deprecated; generation is one workflow now, use `jazyk gen` (and `jazyk test` to verify)", cmd);
+            cli::run_gen(&opts, &positional)
+        }
+        "docsgen" => {
+            let (_proj, _llm, out) = cli::resolve(&[], &opts);
+            let store = store::Store::load(&out);
+            let n = docsgen::write_all(&store);
+            println!("jazyk: docsgen — {} requirements document(s) in {}", n, out.join("docsgen").display());
+            0
+        }
         "viewer" => cli::run_viewer(&opts),
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);

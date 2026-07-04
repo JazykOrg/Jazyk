@@ -61,25 +61,48 @@ There is no write tool for relationships. Edges exist only as a
 
 ## Generation tools
 
-Code generation is a workflow over the graph, so its steps are tools too. Any agent
-that speaks MCP can be the generation worker; `jazyk codegen` is one such worker and
-consumes the same task packages in-process. These tools read the graph and the
-generation state (`codegen/state.yaml`); they never mutate the graph.
+[Generation](../consumers/gen.md) is a workflow over the graph, so its steps are tools
+too. Any agent that speaks MCP can be the generation worker; `jazyk gen` is one such
+worker and consumes the same task packages in-process. These tools read the graph and
+the [ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
+graph.
 
-- `codegen_instructions({lang?})`: the generation contract as text: one unit per
-  entity, the traceability header, requirement-id comments at implementing sites,
-  referencing other units by slug, and the parts protocol for dense entities.
-- `codegen_pending({lang?})`: entities whose facts differ from the generation state:
-  `{entity, unit, reason, changed}` where `changed` lists the requirement ids added,
-  removed, or reworded since the unit was last generated.
-- `codegen_task({entity, lang?})`: the full package for one unit: the instructions, the
+- `gen_instructions({lang?})`: the generation contract as text: one bounded task per
+  entity producing both the entity's part of the deliverable and the tests for its
+  requirements, the traceability markers, the two test kinds, and the parts protocol
+  for dense entities.
+- `gen_pending({lang?})`: entities whose facts differ from the ledger:
+  `{entity, reason, changed}` where `changed` lists the requirement ids added, removed,
+  or reworded since the entity was last generated.
+- `gen_task({entity, lang?})`: the full package for one task: the instructions, the
   entity's context pack, its requirements in generation groups, the change diff, the
-  target unit path, and the units already generated.
-- `codegen_mark({entity, factHash?})`: record the entity as generated. The worker
-  writes the unit file itself; marking declares it done, and the entity leaves
-  `codegen_pending`. Pass the `factHash` from the `codegen_task` package so the mark
-  records the facts the unit was generated against; if the graph moved meanwhile, the
-  entity correctly stays pending.
+  deliverable directory, a suggested default layout the worker may override, the
+  `factHash`, and the manifest of already generated files.
+- `gen_mark({entity, factHash, manifest})`: record the task done. The worker writes the
+  deliverable files itself; the `manifest` binds them to the graph:
+  `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}]}`.
+  Marking updates both ledger maps and the entity leaves `gen_pending`. A `factHash`
+  that no longer matches the live graph is recorded but leaves the entity pending, so a
+  graph that moved mid-task is never masked.
+
+## Verification tools
+
+Verification runs the tests the ledger records and feeds verdicts back. Same worker
+model: `jazyk test` is the built-in worker; any MCP agent is another. These tools write
+only the ledger, never the graph.
+
+- `verify_pending({filter?, entity?})`: rows needing action, with their derived
+  [status](../consumers/gen.md#status-is-derived-never-stored) and a `reason`
+  (`not-generated`, `artifact-gone`, `never-run`, `requirement-changed`,
+  `test-changed`, `code-changed`, `failed`, `requirement-gone`). Requirements the
+  graph holds but the ledger does not appear as `missing`, so ungenerated work is
+  never silent. Deterministic; no model involved.
+- `verify_task({requirement})`: the package for one row: the statement, quote, and
+  hash; the context pack; the manifest files; and either the run command
+  (`programmatic`) or the criteria and confirm-steps (`llm`).
+- `verify_mark({requirement, verdict, factHash?, evidence?})`: record a `pass` or
+  `fail` verdict with its evidence, rebaselining the test and files hashes. A stale
+  `factHash` is recorded but the row stays pending, the same protection `gen_mark` has.
 
 ## Validation and errors
 

@@ -60,21 +60,33 @@ jazyk context ent:shopping-cart --focus mentions=1,requirements=2 --budget 8000
 `jazyk query <text>` runs the [search tool](../compiler/tools.md#read-tools) and prints the
 matches, one `{id, name, definition}` line each.
 
-### jazyk codegen
+### jazyk gen
 
-`jazyk codegen [entity...]` generates one code unit per entity from its assembled
-context pack, into `<out>/codegen/`. With no arguments it generates every entity that
-has at least one requirement, leaf entities first, skipping entities whose facts are
-unchanged since the last run (`--force` regenerates everything). Dense entities
-generate in parts. `--lang` picks the target language (default `rust`). See
-[code generation](../consumers/codegen.md#command).
+`jazyk gen [entity...]` runs the built-in [generation](../consumers/gen.md) worker: it
+produces the entity's part of the deliverable and the tests for its requirements in one
+bounded task, writes them into the configured
+[deliverable directory](../compiler/project-settings.md#generation), and records the
+manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
+every entity that has at least one requirement, leaf entities first, skipping entities
+whose facts are unchanged (`--force` regenerates everything). Dense entities generate
+in parts. `--lang` overrides the project's `lang` hint. `jazyk codegen` and
+`jazyk testgen` are deprecated aliases.
 
-### jazyk testgen
+### jazyk test
 
-`jazyk testgen [entity...]` derives tests from requirements into `<out>/testgen/`, one
-file per entity, one or more tests per requirement, quotes embedded as the trace.
-`--lang` picks the target language (default `rust`). See
-[test generation](../consumers/testgen.md#command).
+`jazyk test [target...]` runs [verification](../consumers/gen.md#runners). With no
+arguments it processes every runnable ledger row; entity ids select their requirements'
+rows; requirement ids select rows directly. `programmatic` rows execute their recorded
+command (exit 0 is a pass); `llm` rows run the in-process harness against the criteria.
+`--kind programmatic|llm` filters; `--force` also reruns `verified` rows; `--list`
+prints the derived status table without running; `--audit` rebuilds the ledger from the
+artifact markers. Exit 0 when every targeted row is `verified`, 1 otherwise.
+
+### jazyk docsgen
+
+`jazyk docsgen` renders the per-entity requirements documents into `<out>/docsgen/` on
+demand, without compiling. The same render runs after every committed changeset. See
+[documentation generation](../consumers/docsgen.md#the-requirements-document).
 
 ### jazyk viewer
 

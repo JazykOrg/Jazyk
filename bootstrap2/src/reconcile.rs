@@ -115,6 +115,11 @@ fn run_wave(
                     for sk in &report.skipped {
                         trace.line(&format!("{} {}", item.task, item.target), &format!("skipped at commit: {}", sk));
                     }
+                    // Requirements documents render after every committed changeset, so
+                    // readers and editor links stay fresh during the build.
+                    if report.applied > 0 {
+                        crate::docsgen::write_all(&s);
+                    }
                     *applied.lock().unwrap() += report.applied;
                     touched.lock().unwrap().extend(report.touched_entities);
                     return;

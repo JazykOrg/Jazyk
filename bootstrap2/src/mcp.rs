@@ -27,22 +27,37 @@ impl McpServer {
         }
     }
 
-    // The server's own long poll: returns when the graph's generation counter moves or a
-    // documentation file changes on disk, or at the timeout. Mirrors
-    // docs2/frontends/mcp.md#external-generation-workers.
+    // The server's own long poll: returns when the graph's generation counter moves, a
+    // documentation file changes on disk, or the ledger or a watched deliverable file
+    // changes, or at the timeout. Mirrors docs2/frontends/mcp.md#external-workers.
     fn await_changes(&self, params: &Value) -> Value {
         let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300).clamp(1, 3600);
+        let mut gs = crate::gen::GenSettings::resolve(&self.project, &self.out);
+        if let Some(l) = params["arguments"]["lang"].as_str() {
+            gs.lang = l.to_string();
+        }
         let fingerprint = |path: &std::path::Path| -> String {
             std::fs::metadata(path)
                 .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
                 .unwrap_or_default()
         };
-        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> = self
-            .project
-            .doc_files()
-            .into_iter()
-            .map(|f| (f.clone(), fingerprint(&f)))
-            .collect();
+        // Watched surfaces: docs, the ledger, and every file the ledger names.
+        let watched = |gs: &crate::gen::GenSettings| -> Vec<std::path::PathBuf> {
+            let mut v = self.project.doc_files();
+            v.push(crate::gen::Ledger::path(&self.out));
+            let ledger = crate::gen::Ledger::load(&self.out);
+            for row in ledger.requirements.values() {
+                for f in &row.files {
+                    v.push(gs.deliverable.join(f));
+                }
+                v.push(crate::gen::artifact_path(&self.out, gs, &row.test));
+            }
+            v.sort();
+            v.dedup();
+            v
+        };
+        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> =
+            watched(&gs).into_iter().map(|f| (f.clone(), fingerprint(&f))).collect();
         let start_gen = Store::load(&self.out).status.generation;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
         let mut changed_docs: Vec<String> = Vec::new();
@@ -53,7 +68,7 @@ impl McpServer {
             if store.status.generation != start_gen {
                 changed = true;
             }
-            for f in self.project.doc_files() {
+            for f in watched(&gs) {
                 if snapshot.get(&f).map(|s| s.as_str()) != Some(fingerprint(&f).as_str()) {
                     let rel = f
                         .strip_prefix(&self.project.root)
@@ -87,7 +102,8 @@ impl McpServer {
             "changedDocs": changed_docs,
             "graphStale": graph_stale,
             "generation": store.status.generation,
-            "pending": crate::gen::pending(&store, "rust"),
+            "genPending": crate::gen::pending(&store, &gs),
+            "verifyPending": crate::verify::pending_counts(&store, &gs),
         })
     }
 
@@ -141,8 +157,8 @@ impl McpServer {
                     .collect();
                 tools.push(json!({
                     "name": "await_changes",
-                    "description": "Long poll: returns when the graph's generation counter moves or a documentation file changes on disk, or at the timeout (default 300s). Carries the changed documents, graph staleness, and pending generation work.",
-                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}, "additionalProperties": false}
+                    "description": "Long poll: returns when the graph's generation counter moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s). Carries the changed documents, graph staleness, pending generation work, and pending verification counts.",
+                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}, "lang": {"type": "string"}}, "additionalProperties": false}
                 }));
                 Ok(json!({"tools": tools}))
             }
@@ -170,6 +186,7 @@ impl McpServer {
                     target_sections: Vec::new(),
                 };
                 let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
+                session.gen = crate::gen::GenSettings::resolve(&self.project, &self.out);
                 match session.dispatch(&name, &args) {
                     Ok(v) => {
                         if is_write && !session.staged.is_empty() {

@@ -7,40 +7,61 @@ a second API beside it.
 
 ## Default serving
 
-By default the server exposes the [read tools](../compiler/tools.md#read-tools) and the
-[generation tools](../compiler/tools.md#generation-tools):
+By default the server exposes the [read tools](../compiler/tools.md#read-tools), the
+[generation tools](../compiler/tools.md#generation-tools), and the
+[verification tools](../compiler/tools.md#verification-tools):
 
 - `context`, `expand`, `search`, `read_section`, `get_entity`
-- `codegen_instructions`, `codegen_pending`, `codegen_task`, `codegen_mark`
+- `gen_instructions`, `gen_pending`, `gen_task`, `gen_mark`
+- `verify_pending`, `verify_task`, `verify_mark`
 - `await_changes` (a server tool, below)
 
-This is the public query and generation surface. An agent can look up an entity, pull a
-bounded [context pack](../compiler/context.md), follow
+This is the public query, generation, and verification surface. An agent can look up an
+entity, pull a bounded [context pack](../compiler/context.md), follow
 [expansion handles](../compiler/context.md#expansion-handles), and act as a generation
-worker, with no way to mutate the graph.
+or verification worker, with no way to mutate the graph.
 
-## External generation workers
+## External workers
 
 The server adds one tool of its own:
 
-- `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
-  generation counter moves or a documentation file changes on disk, or at the timeout
-  (default 300 seconds). The reply carries the changed documents, whether the graph is
-  stale (documents changed but not yet reconciled), and the pending generation work.
+- `await_changes({timeout_seconds?, lang?})`: a long poll. It returns when the graph's
+  generation counter moves, a documentation file changes on disk, a manifest or test
+  file in the deliverable changes, or the ledger changes, or at the timeout (default
+  300 seconds). The reply carries the changed documents, whether the graph is stale
+  (documents changed but not yet reconciled), the pending generation work, and the
+  pending verification work grouped by reason.
+
+Three workflows ride this surface, each an LLM harness that any agent can replace:
+
+1. Compilation (docs → graph) is jazyk's own harness: `jazyk compile` or `jazyk watch`.
+   Workers do not mutate the graph; when `await_changes` reports `graphStale`, the
+   reconciler needs to run.
+2. Generation (graph → deliverable + tests): drain `gen_pending`; for each entity fetch
+   `gen_task`, write the files, `gen_mark` with the manifest.
+3. Verification (tests → verdicts): drain `verify_pending`; for each row fetch
+   `verify_task`, run the command or judge the criteria, `verify_mark` the verdict.
 
 The loop this enables: a human edits documentation in an editor while `jazyk watch`
-reconciles the graph beside it. The external agent sits in `await_changes`; when it
-returns, the agent fetches `codegen_task` for each pending entity, writes the unit into
-the workspace, verifies it with its own build and tests, and calls `codegen_mark`. The
-generated code appears in the same editor the human is writing docs in. E.g.:
+reconciles beside it. The external agent sits in `await_changes`; when it returns, the
+agent generates, verifies, and fixes until both pending lists drain, and the deliverable
+appears in the same editor the human is writing prose in. E.g.:
 
 ```
 await_changes → {changedDocs: [docs/orders.md], graphStale: false,
-                 pending: [{entity: ent:order, changed: [req:orders-4 (added)]}]}
-codegen_task {entity: ent:order} → instructions + context + diff + unit path
-(worker writes src/order.rs, runs its tests)
-codegen_mark {entity: ent:order} → recorded; back to await_changes
+                 genPending: [{entity: ent:order, changed: [req:orders-4 (added)]}],
+                 verifyPending: {requirement-changed: 1}}
+gen_task {entity: ent:order} → instructions + context + diff + deliverable + factHash
+(worker writes src/order.rs and tests/order.rs, runs the tests)
+gen_mark {entity: ent:order, factHash, manifest} → ledger updated
+verify_task {requirement: req:orders-4} → run command
+(worker runs it; exit 0)
+verify_mark {requirement: req:orders-4, verdict: pass} → verified; back to await_changes
 ```
+
+A fix-fail-reverify cycle is self-terminating: editing a deliverable file re-stales
+exactly the rows whose files hash moved, and `verify_pending` shrinks monotonically once
+tests pass.
 
 ## Write mode
 

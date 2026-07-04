@@ -30,3 +30,17 @@ The server does not compile. Rebuilds run through the same
 [reconciler](../compiler/reconciler.md) as `jazyk compile` and `jazyk watch`. The store's
 generation counter tells the server when to refresh: when the counter moves, the server reloads
 the graph and republishes (see [concurrency](../compiler/graph.md#concurrency)).
+
+## Build activity in the log
+
+The server tails build activity into its log channel (stderr, which editors surface as
+the extension's output panel):
+
+- when the store lock appears or disappears, one line marks the build starting or
+  ending,
+- when the generation counter moves, one line per committed mutation, read from the
+  [journal](../compiler/graph.md#journal): the work item, the operation, and the node
+  id.
+
+The log is a mirror of the journal, so watching the output panel during a build shows
+the same additions, updates, and deletions the audit trail records.

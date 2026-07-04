@@ -169,24 +169,57 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
-            name: "codegen_instructions",
-            description: "The code generation contract every worker follows: traceability header, requirement-id comments, referencing by slug, the parts protocol for dense entities.",
+            name: "gen_instructions",
+            description: "The generation contract every worker follows: one task per entity producing the deliverable files and the tests for its requirements, traceability markers, the two test kinds, the parts protocol for dense entities.",
             parameters: obj(json!({"lang": {"type": "string"}}), &[]),
         },
         ToolDef {
-            name: "codegen_pending",
-            description: "Entities whose facts differ from the generation state, each with the requirement ids added, removed, or reworded since its unit was last generated.",
+            name: "gen_pending",
+            description: "Entities whose facts differ from the ledger, each with the requirement ids added, removed, or reworded since the entity was last generated.",
             parameters: obj(json!({"lang": {"type": "string"}}), &[]),
         },
         ToolDef {
-            name: "codegen_task",
-            description: "The full generation package for one entity: instructions, context pack, requirement groups, change diff, target unit path, and already generated units. The worker writes the unit file itself.",
+            name: "gen_task",
+            description: "The full generation package for one entity: instructions, context pack, requirement groups (with suggested test names), change diff, the deliverable directory, a suggested layout, factHash, and the manifest of already generated files. The worker writes the files itself.",
             parameters: obj(json!({"entity": {"type": "string"}, "lang": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
-            name: "codegen_mark",
-            description: "Record the entity as generated. Pass the factHash from the codegen_task package so the mark records the facts the unit was generated against.",
-            parameters: obj(json!({"entity": {"type": "string"}, "factHash": {"type": "string"}}), &["entity"]),
+            name: "gen_mark",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. Pass the factHash from the gen_task package.",
+            parameters: obj(
+                json!({
+                    "entity": {"type": "string"},
+                    "factHash": {"type": "string"},
+                    "manifest": {"type": "object", "properties": {
+                        "files": {"type": "array", "items": {"type": "string"}},
+                        "tests": {"type": "array", "items": {"type": "object"}}
+                    }}
+                }),
+                &["entity", "factHash", "manifest"],
+            ),
+        },
+        ToolDef {
+            name: "verify_pending",
+            description: "Ledger rows needing action, with derived status (missing, stale-requirement, stale-test, stale-code, failing, unverified) and reason. Deterministic; no model involved.",
+            parameters: obj(json!({"filter": {"type": "string", "enum": ["stale", "failing", "all"]}, "entity": {"type": "string"}}), &[]),
+        },
+        ToolDef {
+            name: "verify_task",
+            description: "The verification package for one requirement: statement, quote, factHash, context pack, implementing files, and either the run command (programmatic) or the criteria (llm).",
+            parameters: obj(json!({"requirement": {"type": "string"}}), &["requirement"]),
+        },
+        ToolDef {
+            name: "verify_mark",
+            description: "Record a pass or fail verdict with evidence. Pass the factHash from the verify_task package; if the graph moved meanwhile the verdict is recorded but the row stays pending.",
+            parameters: obj(
+                json!({
+                    "requirement": {"type": "string"},
+                    "verdict": {"type": "string", "enum": ["pass", "fail"]},
+                    "factHash": {"type": "string"},
+                    "evidence": {"type": "string"}
+                }),
+                &["requirement", "verdict"],
+            ),
         },
         ToolDef {
             name: "done",
@@ -197,7 +230,8 @@ pub fn catalog() -> Vec<ToolDef> {
 }
 
 pub const READ_TOOLS: [&str; 5] = ["context", "expand", "search", "read_section", "get_entity"];
-pub const GEN_TOOLS: [&str; 4] = ["codegen_instructions", "codegen_pending", "codegen_task", "codegen_mark"];
+pub const GEN_TOOLS: [&str; 4] = ["gen_instructions", "gen_pending", "gen_task", "gen_mark"];
+pub const VERIFY_TOOLS: [&str; 3] = ["verify_pending", "verify_task", "verify_mark"];
 
 pub fn toolset(task: &str) -> Vec<&'static str> {
     match task {
@@ -212,6 +246,7 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         "mcp-read" => {
             let mut v = READ_TOOLS.to_vec();
             v.extend(GEN_TOOLS);
+            v.extend(VERIFY_TOOLS);
             v
         }
         "mcp-write" => catalog().iter().map(|t| t.name).filter(|n| *n != "done").collect(),
@@ -272,6 +307,8 @@ pub struct ToolSession {
     pub scope: WorkScope,
     pub staged: Vec<Op>,
     pub done: Option<String>,
+    // Resolved [gen] settings for the generation and verification tools.
+    pub gen: crate::gen::GenSettings,
     mutation_limit: usize,
     default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this turn's own creates.
@@ -282,17 +319,28 @@ pub struct ToolSession {
 
 impl ToolSession {
     pub fn new(snapshot: Store, scope: WorkScope, mutation_limit: usize, default_budget: usize) -> ToolSession {
+        let gen = crate::gen::GenSettings::from_out(&snapshot.out);
         ToolSession {
             snapshot,
             scope,
             staged: Vec::new(),
             done: None,
+            gen,
             mutation_limit,
             default_budget,
             staged_entities: Default::default(),
             staged_reqs: Default::default(),
             taken_ids: Default::default(),
         }
+    }
+
+    // The session's [gen] settings, with a per-call `lang` override.
+    fn gen_settings(&self, args: &Value) -> crate::gen::GenSettings {
+        let mut gs = self.gen.clone();
+        if let Some(l) = Self::opt_str(args, "lang") {
+            gs.lang = l;
+        }
+        gs
     }
 
     fn known_entity(&self, id: &str) -> bool {
@@ -814,26 +862,59 @@ impl ToolSession {
                 self.stage(Op::SetCoverage { doc, section: sec, state, note })?;
                 Ok(json!({"set": true}))
             }
-            "codegen_instructions" => {
-                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
-                Ok(json!({"instructions": crate::gen::instructions(&lang)}))
+            "gen_instructions" => {
+                let gs = self.gen_settings(args);
+                Ok(json!({"instructions": crate::gen::instructions(&gs.lang)}))
             }
-            "codegen_pending" => {
-                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
-                Ok(json!(crate::gen::pending(&self.snapshot, &lang)))
+            "gen_pending" => {
+                let gs = self.gen_settings(args);
+                Ok(json!(crate::gen::pending(&self.snapshot, &gs)))
             }
-            "codegen_task" => {
+            "gen_task" => {
                 let entity = Self::str_arg(args, "entity")?;
-                let lang = Self::opt_str(args, "lang").unwrap_or_else(|| "rust".to_string());
+                let gs = self.gen_settings(args);
                 let id = self.snapshot.resolve_id(&entity).to_string();
-                crate::gen::task_package(&self.snapshot, &id, &lang)
+                crate::gen::task_package(&self.snapshot, &id, &gs)
                     .map_err(|e| ToolError::new("unknown-id", e))
             }
-            "codegen_mark" => {
+            "gen_mark" => {
                 let entity = Self::str_arg(args, "entity")?;
+                let gs = self.gen_settings(args);
                 let id = self.snapshot.resolve_id(&entity).to_string();
+                let Some(seen) = Self::opt_str(args, "factHash") else {
+                    return Err(ToolError::new(
+                        "bad-argument",
+                        "factHash is required; pass the factHash from the gen_task package".into(),
+                    ));
+                };
+                if !args["manifest"].is_object() {
+                    return Err(ToolError::new(
+                        "bad-argument",
+                        "manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}".into(),
+                    ));
+                }
+                crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &args["manifest"], &gs)
+                    .map_err(|e| ToolError::new("unknown-id", e))
+            }
+            "verify_pending" => {
+                let gs = self.gen_settings(args);
+                let filter = Self::opt_str(args, "filter");
+                let entity = Self::opt_str(args, "entity");
+                Ok(json!(crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref())))
+            }
+            "verify_task" => {
+                let rid = Self::str_arg(args, "requirement")?;
+                let gs = self.gen_settings(args);
+                crate::verify::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
+            }
+            "verify_mark" => {
+                let rid = Self::str_arg(args, "requirement")?;
+                let verdict = Self::str_arg(args, "verdict")?;
+                let gs = self.gen_settings(args);
                 let seen = Self::opt_str(args, "factHash");
-                crate::gen::mark(&self.snapshot, &id, seen.as_deref()).map_err(|e| ToolError::new("unknown-id", e))
+                let evidence = Self::opt_str(args, "evidence");
+                crate::verify::mark(&self.snapshot, &rid, &verdict, seen.as_deref(), evidence.as_deref(), &gs)
+                    .map_err(|e| ToolError::new("bad-argument", e))
             }
             "done" => {
                 // Batch gate: a `covered` claim on a section containing `shall` is honest

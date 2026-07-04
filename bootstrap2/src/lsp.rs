@@ -29,6 +29,7 @@ impl Lsp {
     }
 
     pub fn run(&mut self) {
+        spawn_build_logger(self.out.clone());
         let stdin = io::stdin();
         let mut reader = BufReader::new(stdin.lock());
         let stdout = io::stdout();
@@ -471,4 +472,57 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+// Tail build activity into the log channel (stderr): the store lock marks builds
+// starting and ending, and each generation bump replays the new journal entries, one
+// line per committed mutation. Mirrors docs2/frontends/lsp.md#build-activity-in-the-log.
+fn spawn_build_logger(out: PathBuf) {
+    std::thread::spawn(move || {
+        let read_generation = |out: &Path| -> u64 {
+            std::fs::read_to_string(out.join("status.yaml"))
+                .ok()
+                .and_then(|t| {
+                    t.lines()
+                        .find(|l| l.starts_with("generation:"))
+                        .and_then(|l| l.split(':').nth(1))
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                })
+                .unwrap_or(0)
+        };
+        let mut last_gen = read_generation(&out);
+        let mut lock_seen = out.join(".lock").exists();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let lock_now = out.join(".lock").exists();
+            if lock_now != lock_seen {
+                lock_seen = lock_now;
+                eprintln!(
+                    "[jazyk-build] {}",
+                    if lock_now { "build started (lock acquired)" } else { "build ended (lock released)" }
+                );
+            }
+            let gen_now = read_generation(&out);
+            if gen_now <= last_gen {
+                continue;
+            }
+            for g in (last_gen + 1)..=gen_now {
+                let path = out.join("journal").join(format!("g{}.yaml", g));
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let Ok(entry) = serde_norway::from_str::<Value>(&text) else { continue };
+                let task = entry["workItem"]["task"].as_str().unwrap_or("?");
+                let target = entry["workItem"]["target"].as_str().unwrap_or("?");
+                let muts = entry["mutations"].as_array().cloned().unwrap_or_default();
+                eprintln!("[jazyk-build] g{} {} {} ({} mutation(s))", g, task, target, muts.len());
+                for m in &muts {
+                    eprintln!(
+                        "[jazyk-build]   {} {}",
+                        m["op"].as_str().unwrap_or("?"),
+                        m["id"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            last_gen = gen_now;
+        }
+    });
 }

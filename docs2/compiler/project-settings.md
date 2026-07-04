@@ -102,6 +102,23 @@ from a root is flagged.
 files = ["docs/main.md"]
 ```
 
+## Generation
+
+Settings for the [generation workflow](../consumers/gen.md). All optional.
+
+```toml
+[gen]
+deliverable = "../project2"
+lang = "rust"
+```
+
+- `deliverable`: the directory the end product is generated into, resolved relative to
+  the project root. Default `<out>/gen/deliverable` when unset, so the workflow runs
+  without configuration. Generation metadata (the ledger, criteria files) always stays
+  in the out directory; only the product lands here.
+- `lang`: a freeform hint passed to generation tasks (a language, a format, a genre).
+  Default `rust`. `--lang` overrides per run.
+
 ## Limits
 
 [Turn and build budgets](./turns.md#budgets). All optional.
@@ -129,7 +146,7 @@ max_entity_requirements = 50
 - `max_entity_requirements`: an entity with more requirements draws `entity-too-dense`,
   the signal to split the topic into subsections. Default 50. Code generation divides
   dense entities into parts regardless
-  ([dense entities](../consumers/codegen.md#dense-entities-generate-in-parts)).
+  ([dense entities](../consumers/gen.md#dense-entities-generate-in-parts)).
 
 ## Environment tuning
 

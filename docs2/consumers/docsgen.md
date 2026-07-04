@@ -8,11 +8,11 @@ file without human review.
 
 ## The requirements document
 
-Every build renders one human-readable document per entity into
+Every committed changeset renders one human-readable document per entity into
 `<out>/docsgen/<entity-slug>.md`: the definition, every requirement with its verbatim
 quote and source section, the derived relationships, and any open diagnostics. The
-render is deterministic (no LLM), so it is always as fresh as the graph, including on
-builds that park work.
+render is deterministic (no LLM), so it is always as fresh as the graph, during builds
+and on builds that park work alike. `jazyk docsgen` renders on demand.
 
 This is the reading surface between prose and graph. The [LSP](../frontends/lsp.md)
 links every entity occurrence in a source document to its requirements document, so a

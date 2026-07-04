@@ -15,8 +15,8 @@ the graph through the [context engine](../compiler/context.md) and the
 ## Stable ids are the traceability key
 
 Work items are keyed by node id ([identifiers](../compiler/model.md#identifiers)). The same
-id binds the spec (the graph node), the code unit ([code generation](./codegen.md)), the
-tests ([test generation](./testgen.md)), and the ticket. Re-syncing is idempotent: an
+id binds the spec (the graph node), the implementing files and the
+tests ([generation](./gen.md)), and the ticket. Re-syncing is idempotent: an
 existing key updates its item and creates no duplicates. A merged entity leaves a redirect
 ([mutations](../compiler/graph.md#mutations)); the sync follows it and folds the absorbed
 item into the survivor's.

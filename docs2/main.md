@@ -123,7 +123,6 @@ Frontends embed the compiler and expose the graph to different consumers.
 
 Consumers work from the graph to do useful work downstream.
 
-- [Code Generation](./consumers/codegen.md)
-- [Test Generation](./consumers/testgen.md)
+- [Generation](./consumers/gen.md)
 - [Project Management](./consumers/pm.md)
 - [Docs Feedback](./consumers/docsgen.md)

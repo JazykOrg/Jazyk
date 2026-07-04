@@ -63,6 +63,10 @@ Everything lives in the out directory (default `jazyk-out/`). See
 - `docsgen/`: one human-readable requirements document per entity, rendered
   deterministically on every build. See
   [documentation generation](../consumers/docsgen.md#the-requirements-document).
+- `gen/`: generation and verification metadata: the
+  [ledger](../consumers/gen.md#the-ledger) and the criteria files for llm tests. The
+  deliverable itself lives outside the out directory
+  ([generation settings](./project-settings.md#generation)).
 - `journal/`: the audit trail of every change.
 - `status.yaml`: convergence verdict, budgets spent, parked work.
 

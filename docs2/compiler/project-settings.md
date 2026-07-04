@@ -4,6 +4,20 @@ A directory containing `jazyk.toml` is a Jazyk project. The file marks the proje
 and all globs resolve relative to it. The CLI walks up from the current directory to find
 it. The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).
 
+## Redirect
+
+A `jazyk.toml` may contain only a redirect, pointing discovery at a nested directory:
+
+```toml
+redirect = "docs2"
+```
+
+Discovery that lands on a redirecting file continues into the named directory and loads
+the project there. This lets a repository root delegate to the directory that holds the
+real project, so tools launched from the root (editors, MCP clients) resolve the same
+project as tools launched inside it. Redirects do not chain: the target must hold a real
+`jazyk.toml`.
+
 ## Docs
 
 ### Glob

@@ -110,6 +110,31 @@ pub fn load_global_llm() -> GlobalLlm {
 }
 
 // Walk up from `start` to the nearest directory containing jazyk.toml.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_delegates_to_nested_project() {
+        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        std::fs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
+        std::fs::write(
+            dir.join("inner/jazyk.toml"),
+            "[docs]\nglob = [\"**/*.md\"]\n\n[roots]\nfiles = [\"main.md\"]\n",
+        )
+        .unwrap();
+        let p = Project::load(&dir);
+        assert_eq!(p.root, dir.join("inner"));
+        assert_eq!(p.docs_glob, vec!["**/*.md".to_string()]);
+        // A redirect to a directory without jazyk.toml stays at the original root.
+        std::fs::write(dir.join("jazyk.toml"), "redirect = \"missing\"\n").unwrap();
+        let p2 = Project::load(&dir);
+        assert_eq!(p2.root, dir);
+    }
+}
+
 pub fn find_root(start: &Path) -> Option<PathBuf> {
     let mut dir = Some(start.to_path_buf());
     while let Some(d) = dir {
@@ -122,8 +147,14 @@ pub fn find_root(start: &Path) -> Option<PathBuf> {
 }
 
 impl Project {
-    // Load from a jazyk.toml at `root`. Missing keys keep their defaults.
+    // Load from a jazyk.toml at `root`. Missing keys keep their defaults. A file holding
+    // a `redirect` delegates to a nested project directory; redirects do not chain.
+    // Mirrors docs2/compiler/project-settings.md#redirect.
     pub fn load(root: &Path) -> Project {
+        Self::load_inner(root, true)
+    }
+
+    fn load_inner(root: &Path, follow_redirect: bool) -> Project {
         let mut p = Project::default();
         p.root = root.to_path_buf();
         let toml_path = root.join("jazyk.toml");
@@ -132,6 +163,14 @@ impl Project {
             Err(_) => return p,
         };
         let t = Toml::parse(&text);
+        if follow_redirect {
+            if let Some(dir) = t.string("redirect") {
+                let target = root.join(dir);
+                if target.join("jazyk.toml").exists() {
+                    return Self::load_inner(&target, false);
+                }
+            }
+        }
         if let Some(g) = t.array("docs.glob") {
             p.docs_glob = g;
         }

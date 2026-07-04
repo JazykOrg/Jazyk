@@ -1,7 +1,7 @@
 {
   "name": "jazyk",
   "displayName": "Jazyk",
-  "description": "Language support for Jazyk — natural language compiled into a semantic graph.",
+  "description": "Language support for Jazyk: natural language compiled into a semantic graph.",
   "version": "0.2.0",
   "publisher": "jazyk",
   "engines": {

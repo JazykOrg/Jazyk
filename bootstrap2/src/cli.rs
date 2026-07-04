@@ -275,13 +275,6 @@ pub fn run_codegen(opts: &Options, entities: &[String]) -> i32 {
     }
     let store = Store::load(&out);
     let lang = opts.lang.clone().unwrap_or_else(|| "rust".to_string());
-    let ext = match lang.as_str() {
-        "rust" => "rs",
-        "python" => "py",
-        "typescript" => "ts",
-        "go" => "go",
-        _ => "txt",
-    };
 
     let mut targets: Vec<String> = if entities.is_empty() {
         store

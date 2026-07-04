@@ -569,11 +569,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     // Status and verdict.
     s.status.parked = parked_all.clone();
     s.status.verdict = if parked_all.is_empty() { "converged".into() } else { "incomplete".into() };
-    if parked_all.is_empty() {
-        let n = crate::docsgen::write_all(&s);
-        if n > 0 {
-            trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
-        }
+    let n = crate::docsgen::write_all(&s);
+    if n > 0 {
+        trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
     }
     s.status.spent.tokens = crate::llm::tokens_spent();
     s.save_status();

@@ -61,7 +61,7 @@ Everything lives in the out directory (default `jazyk-out/`). See
 - `graph/`: the semantic graph, the primary output.
 - `docs/`: section trees and coverage per document.
 - `docsgen/`: one human-readable requirements document per entity, rendered
-  deterministically on every converged build. See
+  deterministically on every build. See
   [documentation generation](../consumers/docsgen.md#the-requirements-document).
 - `journal/`: the audit trail of every change.
 - `status.yaml`: convergence verdict, budgets spent, parked work.

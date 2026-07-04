@@ -1,16 +1,5 @@
-#:schema = ./docs/compiler/project-settings.schema.yaml
-
-[docs]
-glob = [
-    "docs/**/*.md",
-    "docs/**/*.yaml",
-]
-
-[docs.linting.rules]
-warnings = [
-    "Grammatical errors and spelling mistakes",
-]
-errors = [
-    "Deprecated terminology like 'master/slave'",
-    "Unimplemented or TODO sections",
-]
+# The live project is docs2 (the turn-based design and its dogfood input). This file
+# delegates discovery so tools launched from the repository root (editors, MCP clients,
+# the CLI) resolve the same project as tools launched inside docs2/.
+# See docs2/compiler/project-settings.md#redirect.
+redirect = "docs2"

@@ -288,6 +288,14 @@ fn junk_name(name: &str) -> Option<&'static str> {
     if n.contains('`') || n.contains('#') {
         return Some("contains markup");
     }
+    // A single camelCase token is a code identifier: an operation or accessor named in
+    // the docs. Operations are requirement detail, never entities.
+    if !n.contains(' ')
+        && n.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && n.chars().any(|c| c.is_ascii_uppercase())
+    {
+        return Some("looks like a code identifier (an operation or function); operations belong in the requirement statement, not the entity list");
+    }
     const MD_TERMS: [&str; 12] = [
         "heading", "headings", "code block", "code blocks", "blockquote", "blockquotes", "list item",
         "list items", "markdown", "table", "link", "bullet",
@@ -1237,6 +1245,12 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "junk-name");
         assert!(err.message.contains("note"));
+        // Operation identifiers are requirement detail, not entities.
+        let err2 = t
+            .dispatch("upsert_entity", &json!({"name": "createUser", "mention": {"section": "/shop/cart", "quote": "holds items"}}))
+            .unwrap_err();
+        assert_eq!(err2.rule, "junk-name");
+        assert!(err2.message.contains("operation"), "{}", err2.message);
     }
 
     #[test]

@@ -524,58 +524,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         parked_all.extend(parked);
     }
 
-    // Wave 2: review entities whose fact set changed (and resumed review items).
-    // Entities that share requirements or relationships form one review group: groups run
-    // in parallel, entities within a group in order, so a judgment sees its neighbors'
-    // merges and diagnostics.
-    let mut review_targets: BTreeSet<String> = touched_all
-        .iter()
-        .filter(|id| store.lock().unwrap().graph.entities.contains_key(*id))
-        .cloned()
-        .collect();
-    for p in &previously_parked {
-        if p.task == "review-entity" {
-            review_targets.insert(p.target.clone());
-        }
-    }
-    let groups = review_groups(&store.lock().unwrap(), &review_targets);
-    let review_count: usize = groups.iter().map(|g| g.len()).sum();
-    if review_count > 0 && (turns as usize) < budget_cap {
-        trace.line(
-            "reconcile",
-            &format!("review wave: {} entity(ies) in {} group(s)", review_count, groups.len()),
-        );
-        turns += review_count as u32;
-        let applied = Mutex::new(0usize);
-        let parked = Mutex::new(Vec::new());
-        parallel::par_map(&groups, workers(), |_, group| {
-            for id in group {
-                // The entity may have been merged away by an earlier turn in this group.
-                if !store.lock().unwrap().graph.entities.contains_key(id) {
-                    continue;
-                }
-                let item = WorkItem {
-                    task: "review-entity".into(),
-                    target: id.clone(),
-                    dirty_sections: vec![],
-                    stale_anchors: vec![],
-                };
-                let (a, _t, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, trace);
-                *applied.lock().unwrap() += a;
-                parked.lock().unwrap().extend(p);
-            }
-        });
-        applied_total += applied.into_inner().unwrap();
-        parked_all.extend(parked.into_inner().unwrap());
-    } else if review_count > 0 {
-        for g in groups {
-            for id in g {
-                parked_all.push(WorkItem { task: "review-entity".into(), target: id, dirty_sections: vec![], stale_anchors: vec![] });
-            }
-        }
-    }
-
-    // Deterministic cleanup.
+    // Deterministic cleanup before the fix-up sweep reads coverage.
     {
         let mut s = store.lock().unwrap();
         let gc_actions = s.gc();
@@ -584,8 +533,10 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         }
     }
 
-    // One bounded fix-up pass: sections that stayed unprocessed re-enqueue their document
-    // once, so a partially covered document is not silently left behind.
+    // One bounded fix-up pass, BEFORE judgment: sections that stayed unprocessed
+    // re-enqueue their document once, so a partially covered document is not silently
+    // left behind. Coverage outranks review when the budget is tight; a fix-up that no
+    // longer fits the budget parks instead of vanishing, so the verdict stays honest.
     let fixup: Vec<WorkItem> = {
         let s = store.lock().unwrap();
         let parked_docs: BTreeSet<&String> = parked_all.iter().map(|p| &p.target).collect();
@@ -597,8 +548,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     .sections
                     .iter()
                     .filter(|(r, sec)| {
+                        let skip = if sec.kind == "heading" { 1 } else { 0 };
                         !rec.coverage.contains_key(*r)
-                            && !sec.raw.lines().skip(1).all(|l| l.trim().is_empty())
+                            && !sec.raw.lines().skip(skip).all(|l| l.trim().is_empty())
                     })
                     .map(|(r, _)| r.clone())
                     .collect();
@@ -633,12 +585,78 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             })
             .collect()
     };
-    if !fixup.is_empty() && (turns as usize) < budget_cap {
-        trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
-        turns += fixup.len() as u32;
-        let (applied, _touched, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, trace);
-        applied_total += applied;
-        parked_all.extend(parked);
+    if !fixup.is_empty() {
+        if (turns as usize) >= budget_cap {
+            parked_all.extend(fixup);
+        } else {
+            trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
+            turns += fixup.len() as u32;
+            let (applied, touched, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, trace);
+            applied_total += applied;
+            touched_all.extend(touched);
+            parked_all.extend(parked);
+            let mut s = store.lock().unwrap();
+            s.gc();
+        }
+    }
+
+    // Wave 2: review entities whose fact set changed (and resumed review items).
+    // Entities that share requirements or relationships form one review group: groups run
+    // in parallel, entities within a group in order, so a judgment sees its neighbors'
+    // merges and diagnostics. Whole groups run while they fit the budget; the rest parks
+    // and the next build resumes it.
+    let mut review_targets: BTreeSet<String> = touched_all
+        .iter()
+        .filter(|id| store.lock().unwrap().graph.entities.contains_key(*id))
+        .cloned()
+        .collect();
+    for p in &previously_parked {
+        if p.task == "review-entity" {
+            review_targets.insert(p.target.clone());
+        }
+    }
+    let groups = review_groups(&store.lock().unwrap(), &review_targets);
+    let mut run_groups: Vec<Vec<String>> = Vec::new();
+    for g in groups {
+        if (turns as usize) + g.len() <= budget_cap {
+            turns += g.len() as u32;
+            run_groups.push(g);
+        } else {
+            for id in g {
+                parked_all.push(WorkItem { task: "review-entity".into(), target: id, dirty_sections: vec![], stale_anchors: vec![] });
+            }
+        }
+    }
+    if !run_groups.is_empty() {
+        trace.line(
+            "reconcile",
+            &format!(
+                "review wave: {} entity(ies) in {} group(s)",
+                run_groups.iter().map(|g| g.len()).sum::<usize>(),
+                run_groups.len()
+            ),
+        );
+        let applied = Mutex::new(0usize);
+        let parked = Mutex::new(Vec::new());
+        parallel::par_map(&run_groups, workers(), |_, group| {
+            for id in group {
+                // The entity may have been merged away by an earlier turn in this group.
+                if !store.lock().unwrap().graph.entities.contains_key(id) {
+                    continue;
+                }
+                let item = WorkItem {
+                    task: "review-entity".into(),
+                    target: id.clone(),
+                    dirty_sections: vec![],
+                    stale_anchors: vec![],
+                };
+                let (a, _t, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, trace);
+                *applied.lock().unwrap() += a;
+                parked.lock().unwrap().extend(p);
+            }
+        });
+        applied_total += applied.into_inner().unwrap();
+        parked_all.extend(parked.into_inner().unwrap());
         let mut s = store.lock().unwrap();
         s.gc();
     }

@@ -13,6 +13,8 @@ not syntax artifacts:
 - not CLI flags or option names,
 - not markdown constructs (a heading, a table, a link),
 - not generic fragments ("the system", "the input"),
+- not operation or function names (`createUser`, `addProduct`): what the system does is
+  a requirement on the entity that does it, never an entity of its own,
 - not technologies, languages, or third-party tools the system is built with (React,
   Go, PostgreSQL). Those belong in the requirement's statement text: "The gateway shall
   be built with Go" references the entity `gateway` only.

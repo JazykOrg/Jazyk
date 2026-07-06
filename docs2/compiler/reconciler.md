@@ -44,15 +44,20 @@ exactly what changed.
 A build runs in waves:
 
 - Ingest: `reconcile-doc` turns over the dirty documents, level by level.
+- Fix-up, once per build, before judgment: documents holding sections still
+  unprocessed, or requirements whose `quote` no longer locates, re-enqueue once.
+  Coverage outranks review when the budget is tight; a fix-up that no longer fits the
+  turn budget parks instead of vanishing, so the verdict stays honest.
 - Review: `review-entity` turns for every entity whose fact set changed. Entities that
   share requirements or relationships form one review group; groups run in parallel,
   entities within a group run in order, so a judgment sees the merges and diagnostics of
-  its neighbors.
+  its neighbors. Whole groups run while they fit the turn budget; the rest parks and
+  the next build resumes it.
 - Checks: deterministic lint over the whole graph. Uncovered sections, unresolved stale
   anchors, entities with no requirements, unreachable entities from the declared roots
   (reachability follows relationships and shared requirements), and flip detection (a
   natural key deleted and recreated across recent builds becomes an
-  `unstable-extraction` diagnostic). Findings may enqueue one bounded fix-up pass.
+  `unstable-extraction` diagnostic).
 - Document-quality checks, in the same wave: prose problems a human can fix, surfaced
   where the human writes ([LSP](../frontends/lsp.md) shows them inline). A section whose
   body exceeds the configured size (`section-too-large`), a document with too many
@@ -74,10 +79,6 @@ The build is done when:
 A hard per-build turn budget backstops the loop. Work still open when the budget runs out
 is parked in `status.yaml` and reported as an `incomplete-build` diagnostic. The next
 build resumes parked items first. Unfinished work is never silent.
-
-The fix-up pass also re-enqueues documents holding requirements whose `quote` no longer
-locates, so a stale anchor left behind by a failed turn is retried on the next build
-instead of lingering as a `stale-provenance` warning.
 
 ## Coverage
 

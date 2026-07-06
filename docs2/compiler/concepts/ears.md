@@ -83,7 +83,8 @@ ears:  The inventory system shall support an `addProduct` operation that adds a 
 List items are also where entities hide. An item naming an actor, a component, a
 sub-system, or a stored field introduces that concept: "allows 3 roles: Admins,
 Warehouse Manager, Warehouse Staff" introduces three actor entities, each with its own
-requirement. A sub-system list ("the sub-systems are: User Management, Inventory
+requirement. An item naming an operation does not: `addProduct` states what the
+inventory system does, a requirement only, never an entity. A sub-system list ("the sub-systems are: User Management, Inventory
 Management") ties each listed sub-system to its parent; the requirement declares that
 pair in `edges`. An item that is a link still counts: under "The sub-systems are:",
 the item "[User Management](./user.md)" states that the parent includes the User

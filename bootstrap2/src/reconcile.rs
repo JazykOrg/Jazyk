@@ -184,9 +184,66 @@ fn review_groups(store: &Store, targets: &BTreeSet<String>) -> Vec<Vec<String>> 
     groups
 }
 
+// A non-normative claim over text that still reads as obligations. Deliberately cheap
+// and deterministic: `shall`, obligation verbs, access rules, or definition-list
+// bullets (`- \`name\` - description`). Docs rarely say `shall`, so the word alone
+// misses whole documents. Mirrors docs2/compiler/reconciler.md#coverage.
+fn looks_normative(raw: &str) -> bool {
+    let t = raw.to_lowercase();
+    const SIGNALS: [&str; 10] = [
+        " shall ",
+        " supports ",
+        " manages ",
+        " handles ",
+        " provides ",
+        " requires ",
+        " allows ",
+        " stores ",
+        " can be performed ",
+        " is responsible ",
+    ];
+    if SIGNALS.iter().any(|s| t.contains(s)) {
+        return true;
+    }
+    raw.lines().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("- `") && l[3..].contains("` - ")
+    })
+}
+
 // Deterministic whole-graph checks. Returns (rule, subject, severity, message) findings.
 fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, String, String, String)> {
     let mut f = Vec::new();
+    // File-level document quality: an empty file schedules no turns and a link only
+    // feeds scheduling, so neither problem ever reaches a model. These checks own them.
+    for (doc, rec) in &store.docs {
+        let no_content = rec.sections.values().all(|sec| {
+            let skip = if sec.kind == "heading" { 1 } else { 0 };
+            sec.raw.lines().skip(skip).all(|l| l.trim().is_empty())
+        });
+        if no_content {
+            f.push((
+                "empty-file".into(),
+                doc.clone(),
+                "warning".into(),
+                format!("{} is matched by the docs glob but has no content", doc),
+            ));
+        }
+        let mut reported: BTreeSet<String> = BTreeSet::new();
+        for sec in rec.sections.values() {
+            for target in md::doc_links(&sec.raw, doc) {
+                if store.docs.contains_key(&target) || proj.root.join(&target).exists() || !reported.insert(target.clone()) {
+                    continue;
+                }
+                f.push((
+                    "broken-link".into(),
+                    doc.clone(),
+                    "warning".into(),
+                    format!("{} links to {} which does not exist", doc, target),
+                ));
+            }
+        }
+    }
     // Coverage: sections that stayed unprocessed. Sections with no body under the heading
     // carry no content of their own and are skipped.
     for (doc, rec) in &store.docs {
@@ -202,7 +259,7 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
                     "warning".into(),
                     format!("section {}#{} is unprocessed after the build", doc, r),
                 )),
-                Some(c) if c.state == "non-normative" && sec.raw.to_lowercase().contains(" shall ") => f.push((
+                Some(c) if c.state == "non-normative" && looks_normative(&sec.raw) => f.push((
                     "suspicious-non-normative".into(),
                     format!("{}#{}", doc, r),
                     "warning".into(),
@@ -612,5 +669,26 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         errors,
         warnings,
         coverage_pct: if total_secs == 0 { 100 } else { (covered_secs * 100 / total_secs) as u32 },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_normative;
+
+    #[test]
+    fn normative_signals_catch_prose_without_shall() {
+        // The example-erp user.md failure: obligation verbs and access rules, no `shall`.
+        assert!(looks_normative("The user management system handles user accounts and authentication.\n"));
+        assert!(looks_normative("Login operation can be performed by unauthenticated.\n"));
+        // Definition-list bullets: an operations or properties catalog.
+        assert!(looks_normative("# Operations\n- `addProduct` - adds a new product to the inventory\n"));
+        assert!(looks_normative("Sections shall be covered.\n"));
+    }
+
+    #[test]
+    fn navigation_and_changelog_prose_stays_quiet() {
+        assert!(!looks_normative("See the [frontend documentation](./frontend.md) for more information.\n"));
+        assert!(!looks_normative("# Changelog\n- 1.2: fixed typos in the intro\n"));
     }
 }

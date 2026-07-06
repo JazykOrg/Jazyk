@@ -56,9 +56,13 @@ A build runs in waves:
 - Document-quality checks, in the same wave: prose problems a human can fix, surfaced
   where the human writes ([LSP](../frontends/lsp.md) shows them inline). A section whose
   body exceeds the configured size (`section-too-large`), a document with too many
-  sections (`doc-too-large`), and an entity whose requirement count approaches the
+  sections (`doc-too-large`), an entity whose requirement count approaches the
   generation ceiling (`entity-too-dense`, the signal to split the topic into
-  subsections). Thresholds live in [limits](./project-settings.md#limits).
+  subsections), a matched file with no content (`empty-file`), and a relative link
+  whose target file does not exist (`broken-link`). Turns never see these: an empty
+  file has no dirty sections to schedule, and links only feed scheduling, so both
+  problems are invisible to the model. The deterministic checks own them.
+  Thresholds live in [limits](./project-settings.md#limits).
 
 ## Convergence
 

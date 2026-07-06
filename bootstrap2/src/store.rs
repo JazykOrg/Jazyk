@@ -75,7 +75,7 @@ fn normalize(name: &str) -> String {
 
 // Punctuation-insensitive statement normalization: the requirement natural key. A comma
 // or spacing edit to a sentence keeps matching its existing requirement.
-fn normalize_statement(s: &str) -> String {
+pub(crate) fn normalize_statement(s: &str) -> String {
     s.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -924,7 +924,9 @@ impl Store {
             }
         }
         // Deterministic rules whose condition cleared: resolve.
-        const CHECK_RULES: [&str; 11] = [
+        const CHECK_RULES: [&str; 13] = [
+            "empty-file",
+            "broken-link",
             "uncovered-section",
             "suspicious-non-normative",
             "unused-entity",

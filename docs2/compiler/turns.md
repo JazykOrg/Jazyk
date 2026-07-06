@@ -84,7 +84,8 @@ item. See [changesets](./graph.md#changesets).
 
 ## Budgets
 
-- Rounds per turn: default 24. A dense document stages one mutation per round under a
+- Rounds per turn: default 24, raised for dense work items: a turn gets at least 8
+  rounds per dirty section. A dense document stages one mutation per round under a
   model that calls one tool at a time, so the budget scales with extraction density, not
   caution. A model may batch several tool calls in one reply; each reply is one round.
 - Staged mutations per turn: default 64.
@@ -97,6 +98,12 @@ having called `done`: the same commit gates run, and a clean batch commits. Weak
 forget the finish contract more often than they stage bad work; discarding a valid
 changeset over a missing `done` would punish the wrong thing. A turn with nothing staged
 parks as usual.
+
+The same reasoning bounds what one bad claim can sink. When the implicit `done` is
+rejected over a dishonest `covered` claim, the harness drops the offending coverage
+marks and commits the rest: the extracted requirements land, the miscovered sections
+stay unprocessed, and the next build resumes them. Only the explicit `done` holds the
+model to repairing its own claims.
 
 ## Trace events
 

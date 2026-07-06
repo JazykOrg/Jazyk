@@ -49,6 +49,7 @@ checks alike.
 | checks | `duplicate-requirement` | warning | two requirements on one entity whose statements are near identical |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |
 | checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
+| checks | `broken-link` | warning | a relative link whose target file does not exist |
 | checks | `entity-too-dense` | info | an entity's requirement count approaches the generation ceiling; consider subsections |
 | checks | `unreachable-entity` | warning | an entity not reachable from the declared roots |
 | checks | `unstable-extraction` | warning | a natural key deleted and recreated across recent builds |

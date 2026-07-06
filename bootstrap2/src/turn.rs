@@ -59,8 +59,10 @@ trait Codec {
 struct NativeCodec;
 
 impl Codec for NativeCodec {
+    // Pacing is the codec's to give: native batches, text goes one action per reply.
+    // The shared system prompt stays codec-neutral. Mirrors docs2/compiler/turns.md#codecs.
     fn system_suffix(&self, _tools: &[&ToolDef]) -> String {
-        String::new()
+        "\n\nBatch ALL tool calls for one section into a single reply: the searches, the upserts, and its coverage mark together.".to_string()
     }
     fn tools_param(&self, tools: &[&ToolDef]) -> Option<Vec<Value>> {
         Some(
@@ -155,24 +157,26 @@ const RECONCILE_SYSTEM: &str = r#"You are the compilation turn of jazyk, a natur
 
 The graph holds entities (domain concepts), EARS requirements attached to entities, and a coverage mark per section.
 
-Work section by section, finishing one before starting the next. Batch ALL tool calls for one section into a single reply: the searches, the upserts, and its coverage mark together. For ONE section:
-1. Apply this test to every sentence: does it say what the system or one of its parts IS, DOES, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement.
-2. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name: "backend", "backend system", and "the Warehouse backend" are ONE entity. When you reuse under a different wording, record that wording with update_entity add_aliases. Create with upsert_entity only when search finds nothing that means the same thing. Tools take ids (ent:...), never display names.
-3. Record each requirement with upsert_requirement. The quote is copied character for character from the section body shown to you; for a bulleted item, quote that single bullet line exactly as it appears. Never paraphrase, merge, or reflow a quote.
-4. In the same reply, set_coverage for the section: covered when you recorded (or the graph already holds) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossaries defining outside-world terms, changelogs, roadmap wish lists. If any sentence is about the system, extract from it instead.
+Work section by section, finishing one before starting the next. For ONE section:
+1. Apply this test to every sentence: does it say what the system or one of its parts IS, DOES, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement. Access and permission rules pass the test too: "All management operations can be performed by Admins only." IS a requirement ("The user management system shall allow only Admins to perform management operations."), not background.
+2. A sentence ending in a colon followed by a list is a claim about EACH item. The lead-in sentence alone states nothing; never record it as a requirement by itself. Record one requirement per list item, quoting that item's own bullet line verbatim. An item naming an actor, a component, a sub-system, or a stored field also introduces that entity.
+3. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name: "backend", "backend system", and "the Warehouse backend" are ONE entity. When you reuse under a different wording, record that wording with update_entity add_aliases. Create with upsert_entity only when search finds nothing that means the same thing. Tools take ids (ent:...), never display names.
+4. Tag each requirement with the entity the statement is about: its own grammatical subject. Never substitute a broader system for a named part ("The inventory system manages products" is about the inventory system, not the application containing it). One sentence introduces at most one entity for its subject: "This software is a warehouse management system" defines ONE entity, not two.
+5. Record each requirement with upsert_requirement. The quote is copied character for character from the section body shown to you; for a bulleted item, quote that single bullet line exactly as it appears. Never paraphrase, merge, or reflow a quote.
+6. Then set_coverage for the section, exactly once, after its extraction: covered when you recorded (or the pack shows the section already yielded) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossaries defining outside-world terms, changelogs, roadmap wish lists. If any sentence is about the system, extract from it instead.
 
-Then repeat for the next dirty section. Also: if the document no longer supports something listed as a stale anchor, update or delete it; if the content merely moved, re-anchor by updating with a fresh quote. When every dirty section has its coverage mark, call done with a one-line summary. If done is rejected because a covered claim has no requirement sourced from that section, either extract from that section's own sentences or restage it as non-normative with a note, then call done again.
+Then repeat for the next dirty section. Stale anchors are a contract: for each one, if the document still states the fact, re-record it with upsert_requirement (the same statement with a fresh verbatim quote updates it in place); if the fact is gone, delete_requirement. done is rejected while a stale anchor is untouched. When every dirty section has its coverage mark, call done with a one-line summary. If done is rejected, repair exactly what the error names, then call done again.
 
 Rules:
-- Entities are the system's own parts, actors, and domain objects: a component, a user role, a stored record, a product. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
+- Entities are the system's own parts, actors, and domain objects: a component, a type, a field, a user role, a stored record, a product. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
 - Technologies, languages, and third-party tools named in a statement (React, Go, PostgreSQL) belong in the ears text, NOT as entities. "The gateway shall be built with Go" references the entity gateway only.
 - Extract only obligations the source itself states; never invent facts the text does not carry. But grammar does not matter: a plain declarative sentence about the system is an obligation, and a sentence naming what something is built with, composed of, or responsible for is a requirement, not background.
-- When a requirement ties two entities structurally, declare the pair in edges with a relationship type.
-- Prefer attaching detail to a requirement over minting a new entity.
+- When a requirement ties two entities structurally, declare the pair in edges with a relationship type. A sub-system list is the common case: "the sub-systems are: X, Y" ties each sub-system to its parent.
+- Prefer attaching detail to a requirement over minting a new entity; mint a sub-entity only when statements are about it directly.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.
 - The ears text may rephrase the statement into EARS form, but the quote must stay a verbatim copy of the source sentence.
 - A tool error names what was wrong and how to repair the call; fix it and continue.
-- Staging nothing is a correct outcome. If the graph already reflects the sections, set coverage and finish. Prefer a no-op over cosmetic rewording of existing definitions or statements; stability of the graph across builds matters more than polish. Stage only what the document supports."#;
+- Staging nothing is a correct outcome. If the graph already reflects the sections (the pack lists what each section already yielded), set coverage and finish. Prefer a no-op over cosmetic rewording of existing definitions or statements; stability of the graph across builds matters more than polish. Stage only what the document supports."#;
 
 const REVIEW_SYSTEM: &str = r#"You are the review turn of jazyk, a natural language compiler. Your job: judge one entity whose facts changed, by calling tools.
 
@@ -254,6 +258,21 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                     s.push_str(&format!("\n(truncated; read_section {}#{} for the rest)", doc, r));
                 }
                 s.push('\n');
+                // What the section already yielded: an unchanged statement is a no-op,
+                // and a coverage claim must see the requirements anchored here before
+                // judging the section non-normative.
+                let existing: Vec<String> = store
+                    .graph
+                    .requirements
+                    .iter()
+                    .filter(|(_, q)| &q.source.doc == doc && &q.source.section == r)
+                    .map(|(id, q)| format!("- {}: {}", id, q.ears))
+                    .collect();
+                if !existing.is_empty() {
+                    s.push_str("Already extracted from this section (leave unchanged statements alone):\n");
+                    s.push_str(&existing.join("\n"));
+                    s.push('\n');
+                }
             }
         }
     }
@@ -318,8 +337,9 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
             task: item.task.clone(),
             doc: Some(item.target.clone()),
             target_sections: item.dirty_sections.clone(),
+            stale_anchors: item.stale_anchors.clone(),
         },
-        _ => WorkScope { task: item.task.clone(), doc: None, target_sections: Vec::new() },
+        _ => WorkScope { task: item.task.clone(), doc: None, target_sections: Vec::new(), stale_anchors: Vec::new() },
     };
     let (system, pack) = match item.task.as_str() {
         "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(&snapshot, item, limits.context_budget)),
@@ -357,8 +377,12 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         let tools_param = codec.tools_param(&defs);
         let mut invalid_streak = 0u32;
         let mut rounds = 0u32;
+        // The round budget scales with extraction density: a one-action-per-reply model
+        // needs a round per mutation, so a dense work item gets at least 8 rounds per
+        // dirty section. Mirrors docs2/compiler/turns.md#budgets.
+        let round_budget = limits.turn_rounds.max(item.dirty_sections.len() as u32 * 8);
 
-        while rounds < limits.turn_rounds {
+        while rounds < round_budget {
             rounds += 1;
             let label = format!("{} r{}", prefix, rounds);
             let msg = match llm.chat_messages(&messages, tools_param.as_deref(), &label) {
@@ -397,11 +421,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                 if invalid_streak >= 3 {
                     // Implicit done: a model that goes silent with staged work is treated
                     // as having called done; the same commit gates apply.
-                    if !session.staged.is_empty()
-                        && session
-                            .dispatch("done", &json!({"summary": "(implicit: the model stopped calling tools)"}))
-                            .is_ok()
-                    {
+                    if session.finish_implicit("(implicit: the model stopped calling tools)") {
                         trace.line(&prefix, &format!("✓ implicit done ({} staged, {} rounds)", session.staged.len(), rounds));
                         return TurnOutput { session, rounds, failed: None };
                     }
@@ -463,19 +483,15 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
             }
         }
         // Same implicit-done rule at the round budget: commit valid staged work.
-        if !session.staged.is_empty()
-            && session
-                .dispatch("done", &json!({"summary": "(implicit: round budget exhausted)"}))
-                .is_ok()
-        {
+        if session.finish_implicit("(implicit: round budget exhausted)") {
             trace.line(&prefix, &format!("✓ implicit done at round budget ({} staged)", session.staged.len()));
-            return TurnOutput { session, rounds: limits.turn_rounds, failed: None };
+            return TurnOutput { session, rounds: round_budget, failed: None };
         }
         return TurnOutput {
             session,
 
-            rounds: limits.turn_rounds,
-            failed: Some(format!("round budget ({}) exhausted without done", limits.turn_rounds)),
+            rounds: round_budget,
+            failed: Some(format!("round budget ({}) exhausted without done", round_budget)),
         };
     }
 }

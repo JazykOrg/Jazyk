@@ -85,7 +85,13 @@ unknown id `ent:cart`; nearest existing: `ent:shopping-cart`; use it, or create 
 The gates:
 
 - Every referenced id must exist in the graph or earlier in the same changeset.
-- Every `quote` must appear verbatim in its named section.
+  Resolution is lenient toward intent: an id missing its `ent:` prefix, or an entity
+  named by its exact name or alias, resolves to the unique matching node. Only genuine
+  absence or ambiguity is an error, and the error names the nearest candidates.
+- Every `quote` must appear verbatim in its named section. Locating is
+  whitespace-insensitive and forgives markdown escapes (a text-codec model often
+  writes `` \` `` for a backtick inside JSON); the stored quote is the form that
+  locates in the source, so provenance stays verbatim to the document.
 - An entity name that looks like syntax rather than a concept (a file path, a CLI flag,
   a markdown term) is rejected unless the call carries an explaining `note`.
 - A requirement must reference at least one entity. Its `edges` may only tie entities the

@@ -181,6 +181,7 @@ impl McpServer {
                     task: if is_write { "mcp-write".into() } else { "mcp-read".into() },
                     doc: None,
                     target_sections: Vec::new(),
+                    stale_anchors: Vec::new(),
                 };
                 let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project, &self.out);

@@ -9,7 +9,7 @@ The Warehouse interface allows 3 types of roles to interact with the system:
 
 ## Major functionalities
 
-- [Login](./frontend/login.md)
+- [Login](./pages/login.md)
 
 
 

@@ -12,7 +12,10 @@ not syntax artifacts:
 - not file paths or directory names,
 - not CLI flags or option names,
 - not markdown constructs (a heading, a table, a link),
-- not generic fragments ("the system", "the input").
+- not generic fragments ("the system", "the input"),
+- not technologies, languages, or third-party tools the system is built with (React,
+  Go, PostgreSQL). Those belong in the requirement's statement text: "The gateway shall
+  be built with Go" references the entity `gateway` only.
 
 Entities exist because requirements need them. If no statement is about a concept, it is
 not an entity. [`reconcile-doc` turns](../turns.md#task-types) extract requirements first

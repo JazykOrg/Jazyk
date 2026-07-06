@@ -254,6 +254,22 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
     }
 }
 
+// A "built with X and Y" style list inside one statement: several atomic facts bundled
+// into one sentence. Returns the offending clause for the repair message.
+fn bundled_tech_list(ears: &str) -> Option<String> {
+    let lower = ears.to_lowercase();
+    for marker in ["built with ", "built using ", "implemented with ", "implemented using ", "written in ", "composed of "] {
+        if let Some(pos) = lower.find(marker) {
+            let tail = &ears[pos..];
+            let clause: String = tail.chars().take_while(|c| *c != '.' && *c != ';').collect();
+            if clause.to_lowercase().contains(" and ") || clause.contains(',') {
+                return Some(clause.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
 // Names that look like syntax rather than a concept. Rejected without an explaining note.
 fn junk_name(name: &str) -> Option<&'static str> {
     let n = name.trim();
@@ -665,6 +681,18 @@ impl ToolSession {
                 if ears.len() > 400 {
                     return Err(ToolError::new("not-ears", "the statement is too long; one testable sentence, not a paragraph".into()));
                 }
+                // Atomicity: a technology list bundled into one statement is several
+                // requirements wearing one sentence. Mirrors the shape check in
+                // docs2/compiler/concepts/ears.md#shape-check.
+                if let Some(bundle) = bundled_tech_list(&ears) {
+                    return Err(ToolError::new(
+                        "not-ears",
+                        format!(
+                            "the statement bundles several facts ({}); record one requirement per fact, all quoting the same source sentence",
+                            bundle
+                        ),
+                    ));
+                }
                 let entities = Self::str_list(args, "entities");
                 if entities.is_empty() {
                     return Err(ToolError::new("no-entities", "a requirement must reference at least one entity id".into()));
@@ -911,22 +939,14 @@ impl ToolSession {
                     .map_err(|e| ToolError::new("bad-argument", e))
             }
             "done" => {
-                // Batch gate: a `covered` claim on a section containing `shall` is honest
-                // only when a requirement is sourced from that section. This stops a turn
-                // from dropping a rejected requirement and claiming the section anyway.
+                // Batch gate: a `covered` claim is honest only when a requirement is
+                // sourced from that section; a section with nothing to extract is
+                // non-normative with a note, never silently covered. This stops a turn
+                // from dropping a rejected requirement and claiming the section anyway,
+                // and from skimming past declarative prose without extracting.
                 for op in &self.staged {
                     if let Op::SetCoverage { doc, section, state, .. } = op {
                         if state != "covered" {
-                            continue;
-                        }
-                        let normative = self
-                            .snapshot
-                            .docs
-                            .get(doc)
-                            .and_then(|d| d.sections.get(section))
-                            .map(|s| s.raw.to_lowercase().contains(" shall "))
-                            .unwrap_or(false);
-                        if !normative {
                             continue;
                         }
                         let has_req = self
@@ -945,7 +965,7 @@ impl ToolSession {
                             return Err(ToolError::new(
                                 "uncovered-claim",
                                 format!(
-                                    "{}#{} is claimed covered but contains 'shall' and no requirement is sourced from it; extract the requirement (rephrase the ears text, keep the quote verbatim), or mark the section non-normative with a note",
+                                    "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (rephrase into a shall statement, keep the quote verbatim), or mark the section non-normative with a note",
                                     doc, section
                                 ),
                             ));

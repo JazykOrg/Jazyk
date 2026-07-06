@@ -242,6 +242,35 @@ Known weakness, consistent with every gemma result: regeneration quality. A fres
 pass over an entity can re-break compilation, which the ledger reports truthfully as
 failing rows; a capable model or an agent worker closes the loop.
 
+## Prompt iteration: declarative extraction on a weak model
+
+Four measured iterations against a 5-document warehouse-ERP fixture, gemma throughout.
+The target: a weak model must extract atomic requirements from plain declarative prose
+("The frontend is a web application built using React and TypeScript"), never wave
+whole documents through as non-normative.
+
+| iteration | requirements | tech-choice reqs | entities | note |
+| --- | --- | --- | --- | --- |
+| baseline | 4 | 0 | 11 | every top-level section non-normative |
+| v1 sentence test | 11 | 2 | 27 | extraction unlocked; tech names became entities |
+| v2 per-section + strict gate | 19 | 4 bundled | 8 | entities clean; gate bounces parked 3 turns |
+| v3 batching + quote rules | 17 | 5 bundled | 8 | 78% coverage; bundling survived prompting |
+| v4 bundle gate | 18 | 6 atomic | 18 | "shall be built using React." at last |
+
+Findings that changed the harness, docs first as always:
+
+- The sentence test ("does it say what the system is, does, uses, allows, requires, or
+  limits") plus a worked technology-choice example moved gemma from 0 to reliable
+  extraction. Non-normative is now docmented as the exception with a closed list.
+- The covered-claim gate no longer keys on the word `shall`: any `covered` claim
+  requires a requirement sourced from that section, so prose without spec grammar
+  cannot be skimmed past silently.
+- Atomicity would not land by prompting: three phrasings failed. A deterministic shape
+  gate (`bundled_tech_list`) rejecting "built with X and Y" statements with a
+  repair message succeeded on the first run. Prompt doctrine teaches; gates enforce.
+- Residual gemma variance: coverage swings run to run (42% to 78%), and cross-document
+  near-duplicate entities (`backend` vs `backend-system`) remain review-turn work.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

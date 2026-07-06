@@ -99,9 +99,11 @@ The gates:
 
 Batch-level gates run once more when the turn calls `done`: all quotes still locate,
 coverage claims only touch the turn's target sections, and a `covered` claim is honest.
-A section whose text contains `shall` may be claimed `covered` only when at least one
-requirement is sourced from it. This stops a turn from dropping a rejected requirement
-and claiming the section anyway.
+A section may be claimed `covered` only when at least one requirement is sourced from
+it. A section with nothing to extract is `non-normative` with a note, never silently
+`covered`. This stops a turn from dropping a rejected requirement and claiming the
+section anyway, and from skimming past declarative prose without extracting
+([declarative prose states obligations](./concepts/ears.md#declarative-prose-states-obligations)).
 
 ## Derived data
 

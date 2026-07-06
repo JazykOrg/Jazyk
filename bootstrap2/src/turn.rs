@@ -155,18 +155,18 @@ const RECONCILE_SYSTEM: &str = r#"You are the compilation turn of jazyk, a natur
 
 The graph holds entities (domain concepts), EARS requirements attached to entities, and a coverage mark per section.
 
-Work in this order (you may batch several tool calls in one reply):
-1. Read the dirty sections given below.
-2. Extract the requirements they state: single testable statements using 'shall'. Documentation rarely says 'shall': a declarative statement of system behavior ("The store mints every id at creation") states an obligation; rephrase it into an EARS shall statement and keep the source sentence verbatim as the quote.
-3. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name. Create with upsert_entity only when search finds nothing that matches.
-4. Record each requirement with upsert_requirement, quoting the exact source sentence character-for-character.
-5. If the document no longer supports something listed as a stale anchor, update or delete it; if the content merely moved within the section, re-anchor by updating with a fresh quote.
-6. Mark each dirty section with set_coverage: covered when its content is reflected in the graph, non-normative (with a note) when it truly states no requirements.
-7. Call done with a one-line summary.
+Work section by section, finishing one before starting the next. Batch ALL tool calls for one section into a single reply: the searches, the upserts, and its coverage mark together. For ONE section:
+1. Apply this test to every sentence: does it say what the system or one of its parts IS, DOES, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement.
+2. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name. Create with upsert_entity only when search finds nothing that matches. Tools take ids (ent:...), never display names.
+3. Record each requirement with upsert_requirement. The quote is copied character for character from the section body shown to you; for a bulleted item, quote that single bullet line exactly as it appears. Never paraphrase, merge, or reflow a quote.
+4. In the same reply, set_coverage for the section: covered when you recorded (or the graph already holds) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossaries defining outside-world terms, changelogs, roadmap wish lists. If any sentence is about the system, extract from it instead.
+
+Then repeat for the next dirty section. Also: if the document no longer supports something listed as a stale anchor, update or delete it; if the content merely moved, re-anchor by updating with a fresh quote. When every dirty section has its coverage mark, call done with a one-line summary. If done is rejected because a covered claim has no requirement sourced from that section, either extract from that section's own sentences or restage it as non-normative with a note, then call done again.
 
 Rules:
-- Entities are domain concepts: a component, an actor, a type, a product. Never file paths, CLI flags, markdown terms, or generic phrases. If no statement is about it, it is not an entity. The document itself (a glossary, a roadmap, an overview) is not an entity.
-- Extract only obligations the source itself states. The line is what the text commits the system to, not the grammar it uses: declarative statements of behavior are obligations. Definitions of terms, examples, glossaries, and roadmap wish lists state no obligations: never invent shall statements from those; mark such sections non-normative with a note.
+- Entities are the system's own parts, actors, and domain objects: a component, a user role, a stored record, a product. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
+- Technologies, languages, and third-party tools named in a statement (React, Go, PostgreSQL) belong in the ears text, NOT as entities. "The gateway shall be built with Go" references the entity gateway only.
+- Extract only obligations the source itself states; never invent facts the text does not carry. But grammar does not matter: a plain declarative sentence about the system is an obligation, and a sentence naming what something is built with, composed of, or responsible for is a requirement, not background.
 - When a requirement ties two entities structurally, declare the pair in edges with a relationship type.
 - Prefer attaching detail to a requirement over minting a new entity.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.

@@ -24,20 +24,33 @@ typically state constraints; triggered, stated, and conditioned patterns describ
 
 ## Declarative prose states obligations
 
-Documentation rarely says "shall". A declarative statement of system behavior states an
-obligation all the same: "The store mints every id at node creation" obliges the store
-to mint ids at creation. The turn rephrases such statements into EARS form for the
-`ears` field and keeps the source sentence verbatim in the `quote`. E.g.:
+Documentation rarely says "shall". A declarative statement about the system states an
+obligation all the same. The test per sentence: does it say what the system or one of
+its parts is, does, uses, allows, requires, or limits? If yes, it is a requirement.
+The turn rephrases it into EARS form for the `ears` field and keeps the source sentence
+verbatim in the `quote`. E.g.:
 
 ```
 quote: The store mints every id at node creation. Ids are immutable.
 ears:  The store shall mint every id at node creation and never change it.
 ```
 
-What stays out is prose that states no obligation at all: definitions of terms,
-examples, glossaries, and roadmap wish lists. Those sections are marked non-normative
-instead of being rewritten into requirements. The line is what the text commits the
-system to, not the grammar it uses.
+Statements of composition and technology choice are obligations too, and one sentence
+often carries several. Requirements are atomic: one fact each, all sharing the same
+verbatim quote. E.g.:
+
+```
+quote: The gateway is a REST service built with Go.
+ears:  The gateway shall be a REST service.
+ears:  The gateway shall be built with Go.
+```
+
+Non-normative is the exception, not the default. A section is non-normative only when
+no sentence in it passes the test above: navigation pages that only link elsewhere,
+glossaries defining outside-world terms, changelogs, roadmap wish lists. A glossary
+entry that states what a system part does is a requirement wearing a glossary's
+clothes; extract it. Before marking a section non-normative, re-read it sentence by
+sentence; if any sentence is about the system, the section is not non-normative.
 
 ## Shape check
 
@@ -49,7 +62,9 @@ requirement is staged:
   not required. A clear "shall" sentence with a recognizable trigger, state, or condition
   passes.
 - A statement that bundles several independent obligations is rejected with a repair
-  message asking for one requirement per obligation.
+  message asking for one requirement per obligation. A technology list is the common
+  case: "shall be built with React and TypeScript" is two requirements, one per
+  technology, both quoting the same source sentence.
 
 ## What EARS does not express
 

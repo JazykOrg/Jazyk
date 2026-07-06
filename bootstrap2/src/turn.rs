@@ -171,6 +171,7 @@ Rules:
 - Entities are the system's own parts, actors, and domain objects: a component, a type, a field, a user role, a stored record, a product. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
 - Technologies, languages, and third-party tools named in a statement (React, Go, PostgreSQL) belong in the ears text, NOT as entities. "The gateway shall be built with Go" references the entity gateway only.
 - Extract only obligations the source itself states; never invent facts the text does not carry. But grammar does not matter: a plain declarative sentence about the system is an obligation, and a sentence naming what something is built with, composed of, or responsible for is a requirement, not background.
+- The gateway sentences in these instructions are illustrations, not content. Extract only from the section bodies shown in the work pack; a quote that is not in the document will be rejected.
 - When a requirement ties two entities structurally, declare the pair in edges with a relationship type. A sub-system list is the common case: "the sub-systems are: X, Y" ties each sub-system to its parent.
 - Prefer attaching detail to a requirement over minting a new entity; mint a sub-entity only when statements are about it directly.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.

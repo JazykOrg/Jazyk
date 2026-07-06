@@ -512,7 +512,17 @@ impl ToolSession {
             section.to_string()
         };
         let (doc, sec) = split_section_ref(&full).ok_or_else(|| {
-            ToolError::new("bad-section", format!("bad section reference `{}`; expected doc.md#/ref", section))
+            // Repair-oriented: name the sections this turn is actually working on.
+            let hint = if self.scope.target_sections.is_empty() {
+                String::new()
+            } else {
+                let doc = self.scope.doc.as_deref().unwrap_or_default();
+                format!(
+                    "; this turn's sections: {}",
+                    self.scope.target_sections.iter().map(|s| format!("{}#{}", doc, s)).collect::<Vec<_>>().join(", ")
+                )
+            };
+            ToolError::new("bad-section", format!("bad section reference `{}`; expected doc.md#/ref{}", section, hint))
         })?;
         if !self
             .snapshot
@@ -871,21 +881,9 @@ impl ToolSession {
                         ),
                     ));
                 }
-                let raw_entities = Self::str_list(args, "entities");
-                if raw_entities.is_empty() {
-                    return Err(ToolError::new("no-entities", "a requirement must reference at least one entity id".into()));
-                }
-                let mut entities: Vec<String> = Vec::new();
-                for e in &raw_entities {
-                    match self.canon_entity_id(e) {
-                        Some(id) => {
-                            if !entities.contains(&id) {
-                                entities.push(id);
-                            }
-                        }
-                        None => return Err(self.unknown_entity_error(e)),
-                    }
-                }
+                // Provenance is validated first: a quote that does not locate is the
+                // clearest signal a statement was invented, and it must not be masked
+                // by an entity-id error the model would keep retrying around.
                 let section = Self::str_arg(args, "section")?;
                 let quote = Self::str_arg(args, "quote")?;
                 let (doc, sec) = self.resolve_section(&section)?;
@@ -901,6 +899,21 @@ impl ToolSession {
                     }
                 }
                 let quote = self.check_quote(&doc, &sec, &quote)?;
+                let raw_entities = Self::str_list(args, "entities");
+                if raw_entities.is_empty() {
+                    return Err(ToolError::new("no-entities", "a requirement must reference at least one entity id".into()));
+                }
+                let mut entities: Vec<String> = Vec::new();
+                for e in &raw_entities {
+                    match self.canon_entity_id(e) {
+                        Some(id) => {
+                            if !entities.contains(&id) {
+                                entities.push(id);
+                            }
+                        }
+                        None => return Err(self.unknown_entity_error(e)),
+                    }
+                }
                 let mut edges = Vec::new();
                 if let Some(arr) = args["edges"].as_array() {
                     for e in arr {

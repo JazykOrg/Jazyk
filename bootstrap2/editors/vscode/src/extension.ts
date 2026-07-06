@@ -44,12 +44,17 @@ async function startClient(): Promise<void> {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [
-      { scheme: 'file', language: 'jazyk' },
-      { scheme: 'file', language: 'markdown' },
-    ],
+    // Markdown files keep VS Code's built-in markdown language (grammar, link
+    // following, preview); the extension only attaches the LSP client to them.
+    documentSelector: [{ scheme: 'file', language: 'markdown' }],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher('**/*.md'),
+      // The editor owns file watching (native FSEvents/inotify): source documents for
+      // anchoring, and the store's generation file so a committed build repaints
+      // instantly without server-side polling.
+      fileEvents: [
+        vscode.workspace.createFileSystemWatcher('**/*.md'),
+        vscode.workspace.createFileSystemWatcher('**/jazyk-out/status.yaml'),
+      ],
     },
   };
 

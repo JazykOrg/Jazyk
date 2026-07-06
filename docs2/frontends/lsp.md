@@ -30,10 +30,15 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
 
 ## Rebuilds and refresh
 
-The server does not compile. Rebuilds run through the same
-[reconciler](../compiler/reconciler.md) as `jazyk compile` and `jazyk watch`. The store's
-generation counter tells the server when to refresh: when the counter moves, the server reloads
-the graph and republishes (see [concurrency](../compiler/graph.md#concurrency)).
+The server does not compile, and no editor integration starts a build; compiles run
+only when the owner runs `jazyk compile` or `jazyk watch`. Refresh is event-driven the
+LSP way: file watching belongs to the client, so the editor watches the store's
+`status.yaml` with its native file events and notifies the server
+(`workspace/didChangeWatchedFiles`); on any notification the server compares the
+generation counter, reloads, and republishes every open document (see
+[concurrency](../compiler/graph.md#concurrency)). For clients without file watchers the
+server keeps a slow background poll as a fallback, so a committed build always repaints
+eventually.
 
 ## Build activity in the log
 

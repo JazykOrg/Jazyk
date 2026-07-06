@@ -354,6 +354,43 @@ impl ToolSession {
         self.gen.clone()
     }
 
+    // An existing or staged entity whose name tokens contain, or are contained by, the
+    // candidate's tokens (same scope). "backend" vs "backend system" is one concept;
+    // single generic tokens are exempt to keep "id" from matching "user id".
+    fn near_name(&self, name: &str, scope: &str) -> Option<(String, String)> {
+        let tokens = |s: &str| -> BTreeSet<String> {
+            s.to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| !t.is_empty())
+                .map(String::from)
+                .collect()
+        };
+        let cand = tokens(name);
+        if cand.is_empty() {
+            return None;
+        }
+        let check = |ename: &str| -> bool {
+            let ex = tokens(ename);
+            if ex == cand {
+                return false; // exact natural-key match is the upsert path, not a twin
+            }
+            let (small, big) = if ex.len() <= cand.len() { (&ex, &cand) } else { (&cand, &ex) };
+            // Containment of a multi-token name, or of a single specific (long) token.
+            small.is_subset(big) && (small.len() > 1 || small.iter().next().map(|t| t.len() >= 5).unwrap_or(false))
+        };
+        for (id, e) in &self.snapshot.graph.entities {
+            if e.scope == scope && check(&e.name) {
+                return Some((id.clone(), e.name.clone()));
+            }
+        }
+        for (id, e) in &self.staged_entities {
+            if e.scope == scope && check(&e.name) {
+                return Some((id.clone(), e.name.clone()));
+            }
+        }
+        None
+    }
+
     fn known_entity(&self, id: &str) -> bool {
         let rid = self.snapshot.resolve_id(id);
         self.snapshot.graph.entities.contains_key(rid) || self.staged_entities.contains_key(id)
@@ -548,6 +585,21 @@ impl ToolSession {
                             format!(
                                 "`{}` {}; entities are domain concepts. If it truly is one, repeat the call with a `note` explaining why",
                                 name_arg, why
+                            ),
+                        ));
+                    }
+                }
+                // Near-name gate: a qualifier variant of an existing entity is almost
+                // always the same concept. Reuse it and record the wording as an alias
+                // instead of minting a twin; a note overrides when genuinely distinct.
+                // Mirrors docs2/compiler/model/entity.md#what-is-an-entity.
+                if note.is_none() {
+                    if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
+                        return Err(ToolError::new(
+                            "near-duplicate",
+                            format!(
+                                "`{}` is a name variant of existing `{}` ({}); reuse that id and add your wording with update_entity add_aliases. If it truly is a different concept, repeat the call with a `note` saying how they differ",
+                                name_arg, eid, ename
                             ),
                         ));
                     }

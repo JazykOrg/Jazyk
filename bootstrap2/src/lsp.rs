@@ -30,14 +30,33 @@ impl Lsp {
     }
 
     pub fn run(&mut self) {
-        spawn_build_logger(self.out.clone());
-        let stdin = io::stdin();
-        let mut reader = BufReader::new(stdin.lock());
+        // Two producers, one consumer: a stdin reader thread and a store poller thread
+        // feed one channel, so a committed build repaints every open document the
+        // moment it lands, without waiting for editor activity.
+        // Mirrors docs2/frontends/lsp.md#rebuilds-and-refresh.
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let tx_in = tx.clone();
+        std::thread::spawn(move || {
+            let stdin = io::stdin();
+            let mut reader = BufReader::new(stdin.lock());
+            while let Some(m) = read_message(&mut reader) {
+                if tx_in.send(Event::Client(m)).is_err() {
+                    return;
+                }
+            }
+            tx_in.send(Event::Eof).ok();
+        });
+        spawn_store_watcher(self.out.clone(), tx);
         let stdout = io::stdout();
         loop {
-            let msg = match read_message(&mut reader) {
-                Some(m) => m,
-                None => break,
+            let msg = match rx.recv() {
+                Ok(Event::Client(m)) => m,
+                Ok(Event::StoreChanged) => {
+                    let mut out = stdout.lock();
+                    self.refresh(&mut out);
+                    continue;
+                }
+                Ok(Event::Eof) | Err(_) => break,
             };
             let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
             let id = msg.get("id").cloned();
@@ -61,6 +80,9 @@ impl Lsp {
                     }
                 }
                 "textDocument/didSave" => self.publish_all(&mut out),
+                // The client's native file watcher saw the store move; the refresh
+                // before dispatch already reloaded and republished. Nothing more.
+                "workspace/didChangeWatchedFiles" => {}
                 "textDocument/didClose" => {
                     if let Some(doc) = self.param_doc(&params) {
                         self.overlay.remove(&doc);
@@ -535,10 +557,18 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-// Tail build activity into the log channel (stderr): the store lock marks builds
-// starting and ending, and each generation bump replays the new journal entries, one
-// line per committed mutation. Mirrors docs2/frontends/lsp.md#build-activity-in-the-log.
-fn spawn_build_logger(out: PathBuf) {
+// Events feeding the main loop: a client message, a store change, or stdin closing.
+enum Event {
+    Client(Value),
+    StoreChanged,
+    Eof,
+}
+
+// Tail build activity into the log channel (stderr) and nudge the main loop on every
+// generation bump: the store lock marks builds starting and ending, and each bump
+// replays the new journal entries, one line per committed mutation.
+// Mirrors docs2/frontends/lsp.md#build-activity-in-the-log.
+fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
     std::thread::spawn(move || {
         let read_generation = |out: &Path| -> u64 {
             std::fs::read_to_string(out.join("status.yaml"))
@@ -566,6 +596,9 @@ fn spawn_build_logger(out: PathBuf) {
             let gen_now = read_generation(&out);
             if gen_now <= last_gen {
                 continue;
+            }
+            if tx.send(Event::StoreChanged).is_err() {
+                return;
             }
             for g in (last_gen + 1)..=gen_now {
                 let path = out.join("journal").join(format!("g{}.yaml", g));

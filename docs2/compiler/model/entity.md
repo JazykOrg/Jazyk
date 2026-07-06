@@ -26,7 +26,11 @@ Shopping Cart shows a line-item count" is a requirement on `ent:shopping-cart`, 
 `ent:line-item-count`. Mint the sub-entity only when statements are about it directly.
 
 The [validation gates](../graph.md#validation-gates) reject names that look like syntax
-rather than a concept, unless the call carries an explaining `note`.
+rather than a concept, unless the call carries an explaining `note`. They also reject a
+name that is a variant of an existing entity's name ("backend" beside "backend
+system"): one concept, one node; the wording joins the existing entity's `aliases`
+instead. A `note` saying how the concepts differ overrides when the resemblance is
+coincidental.
 
 ## Fields
 

@@ -28,9 +28,12 @@ Compile, then exit non-zero if open [diagnostics](../compiler/model.md#node-type
 
 ### jazyk watch
 
-Recompile on file change. The same loop as `compile`: each change feeds the
-[dirty set](../compiler/reconciler.md#dirty-set), so unchanged documents are not revisited. See
-[incremental builds](../compiler/reconciler.md#incremental-builds).
+Recompile on file change, using native file events (with a polling fallback when no
+watcher is available). Event bursts debounce, and a fingerprint over the matched
+documents decides whether a build actually runs, so editor temp files and the out
+directory's own writes never trigger one. The same loop as `compile`: each change feeds
+the [dirty set](../compiler/reconciler.md#dirty-set), so unchanged documents are not
+revisited. See [incremental builds](../compiler/reconciler.md#incremental-builds).
 
 ### jazyk status
 

@@ -1,9 +1,9 @@
-// Minimal OpenAI-compatible chat client over raw TCP (works against Ollama at /v1).
-// Extended for turns: message-history requests with native tool-calling, plus a sticky
-// capability probe that downgrades to the text codec when the endpoint rejects `tools`.
+// OpenAI-compatible chat client over ureq. What is ours is the provider-behavior
+// handling: message-history requests with native tool-calling, a sticky capability
+// probe that downgrades to the text codec when the endpoint rejects `tools`, sticky
+// temperature and streaming fallbacks, pacing, and retry policy.
 use serde_json::{json, Value};
-use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::io::{BufRead, BufReader, Read};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
@@ -137,6 +137,9 @@ fn is_transient(err: &str) -> bool {
         || e.contains("read:")
         || e.contains("write:")
         || e.contains("no http body")
+        || e.contains("transport")
+        || e.contains("network")
+        || e.contains("io error")
 }
 
 // Whether an error indicates the endpoint or model rejects the `tools` parameter.
@@ -260,56 +263,46 @@ impl Llm {
         let _permit = acquire();
         pace();
 
-        let (host, port, base_path) = parse_url(&self.base_url)?;
-        let path = format!("{}/chat/completions", base_path);
-        let addr = format!("{}:{}", host, port);
-        let mut conn = TcpStream::connect(&addr).map_err(|e| format!("connect {}: {}", addr, e))?;
         // Bounded reads keep a stalled endpoint from holding a turn open indefinitely.
         let read_timeout = std::env::var("JAZYK_READ_TIMEOUT")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(300)
             .max(10);
-        conn.set_read_timeout(Some(Duration::from_secs(read_timeout))).ok();
-        conn.set_write_timeout(Some(Duration::from_secs(60))).ok();
-        let auth = if self.api_key.is_empty() {
-            String::new()
-        } else {
-            format!("Authorization: Bearer {}\r\n", self.api_key)
+        let agent = ureq::AgentBuilder::new()
+            .timeout_read(Duration::from_secs(read_timeout))
+            .timeout_write(Duration::from_secs(60))
+            .build();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let mut req = agent.post(&url).set("Content-Type", "application/json");
+        if !self.api_key.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", self.api_key));
+        }
+        let resp = match req.send_string(&body) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, r)) => {
+                let text = r.into_string().unwrap_or_default();
+                return Err(format!("http error: HTTP {} :: {}", code, truncate(&text, 300)));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                return Err(format!("transport: {}", t));
+            }
         };
-        let req = format!(
-            "POST {} HTTP/1.0\r\nHost: {}\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            path,
-            host,
-            auth,
-            body.as_bytes().len(),
-            body
-        );
-        conn.write_all(req.as_bytes()).map_err(|e| format!("write: {}", e))?;
 
         if streaming {
-            return read_stream_message(&mut conn);
+            return read_stream_message(BufReader::new(resp.into_reader()));
         }
 
-        let mut buf = Vec::new();
-        conn.read_to_end(&mut buf).map_err(|e| format!("read: {}", e))?;
-        let text = String::from_utf8_lossy(&buf).to_string();
-        let sep = text.find("\r\n\r\n").ok_or("no http body separator")?;
-        let head = &text[..sep];
-        let resp_body = &text[sep + 4..];
-        let ok = head.lines().next().map(|l| l.contains(" 200")).unwrap_or(false);
-        if !ok {
-            return Err(format!(
-                "http error: {} :: {}",
-                head.lines().next().unwrap_or(""),
-                truncate(resp_body, 300)
-            ));
-        }
-        let v: Value = serde_json::from_str(resp_body)
-            .map_err(|e| format!("response json: {} :: {}", e, truncate(resp_body, 300)))?;
+        let mut resp_body = String::new();
+        resp.into_reader()
+            .take(64 * 1024 * 1024)
+            .read_to_string(&mut resp_body)
+            .map_err(|e| format!("read: {}", e))?;
+        let v: Value = serde_json::from_str(&resp_body)
+            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
         let msg = v["choices"][0]["message"].clone();
         if msg.is_null() {
-            return Err(format!("no message in response :: {}", truncate(resp_body, 300)));
+            return Err(format!("no message in response :: {}", truncate(&resp_body, 300)));
         }
         let tokens = v["usage"]["completion_tokens"]
             .as_u64()
@@ -321,61 +314,27 @@ impl Llm {
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content
 // deltas concatenate; tool-call deltas accumulate per index (id and name arrive first,
-// arguments append across chunks). Non-`data:` lines (chunk sizes, blanks) are skipped.
-fn read_stream_message(conn: &mut TcpStream) -> Result<Value, String> {
+// arguments append across chunks). Non-`data:` lines (blanks, comments) are skipped.
+fn read_stream_message<R: BufRead>(reader: R) -> Result<Value, String> {
     struct TcAcc {
         id: String,
         name: String,
         args: String,
     }
-    let mut raw: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 8192];
-    let mut headers_done = false;
-    let mut pending = String::new();
     let mut content = String::new();
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
-    let mut done = false;
 
-    loop {
-        let n = match conn.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) => return Err(format!("read: {}", e)),
-        };
-        if !headers_done {
-            raw.extend_from_slice(&buf[..n]);
-            let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
-            let head = String::from_utf8_lossy(&raw[..pos]).to_string();
-            let head_line = head.lines().next().unwrap_or("").to_string();
-            if !head_line.contains(" 200") {
-                // Drain and surface the body so the fallback logic sees the error text.
-                let mut rest = raw[pos + 4..].to_vec();
-                while let Ok(m) = conn.read(&mut buf) {
-                    if m == 0 {
-                        break;
-                    }
-                    rest.extend_from_slice(&buf[..m]);
-                }
-                let body = String::from_utf8_lossy(&rest);
-                return Err(format!("http error: {} :: {}", head_line, truncate(&body, 300)));
-            }
-            headers_done = true;
-            pending.push_str(&String::from_utf8_lossy(&raw[pos + 4..]));
-        } else {
-            pending.push_str(&String::from_utf8_lossy(&buf[..n]));
-        }
-
-        while let Some(nl) = pending.find('\n') {
-            let line = pending[..nl].trim_end_matches('\r').to_string();
-            pending.drain(..nl + 1);
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("read: {}", e))?;
+        {
+            let line = line.trim_end_matches('\r').to_string();
             let Some(data) = line.strip_prefix("data:") else { continue };
             let data = data.trim();
             if data.is_empty() {
                 continue;
             }
             if data == "[DONE]" {
-                done = true;
                 break;
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
@@ -404,9 +363,6 @@ fn read_stream_message(conn: &mut TcpStream) -> Result<Value, String> {
                 }
             }
         }
-        if done {
-            break;
-        }
     }
 
     if content.is_empty() && tcs.is_empty() {
@@ -426,19 +382,6 @@ fn read_stream_message(conn: &mut TcpStream) -> Result<Value, String> {
             .collect::<Vec<_>>());
     }
     Ok(msg)
-}
-
-fn parse_url(u: &str) -> Result<(String, u16, String), String> {
-    let rest = u.strip_prefix("http://").or_else(|| u.strip_prefix("https://")).unwrap_or(u);
-    let (hostport, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, ""),
-    };
-    let (host, port) = match hostport.find(':') {
-        Some(i) => (hostport[..i].to_string(), hostport[i + 1..].parse::<u16>().unwrap_or(80)),
-        None => (hostport.to_string(), 80),
-    };
-    Ok((host, port, path.trim_end_matches('/').to_string()))
 }
 
 // Extract the first balanced JSON object from possibly noisy model output. The text codec

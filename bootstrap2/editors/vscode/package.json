@@ -2,7 +2,7 @@
   "name": "jazyk",
   "displayName": "Jazyk",
   "description": "Language support for Jazyk: natural language compiled into a semantic graph.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "jazyk",
   "engines": {
     "vscode": "^1.75.0"
@@ -13,7 +13,6 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:jazyk",
     "workspaceContains:**/jazyk.toml"
   ],
   "contributes": {
@@ -21,18 +20,6 @@
       {
         "command": "jazyk.restartServer",
         "title": "Jazyk: Restart Language Server"
-      }
-    ],
-    "languages": [
-      {
-        "id": "jazyk",
-        "aliases": [
-          "Jazyk"
-        ],
-        "extensions": [
-          ".md"
-        ],
-        "configuration": "./language-configuration.json"
       }
     ],
     "configuration": {

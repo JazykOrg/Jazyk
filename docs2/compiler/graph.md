@@ -96,6 +96,9 @@ The gates:
   lists the requirements.
 - Diagnostic `subjects` must exist.
 - `set_coverage` with state `non-normative` requires a `note`.
+- `upsert_entity` with a name variant of an existing entity (token containment, same
+  scope) is rejected toward reuse plus an alias, unless a `note` says how they differ.
+  See [entity](./model/entity.md#what-is-an-entity).
 
 Batch-level gates run once more when the turn calls `done`: all quotes still locate,
 coverage claims only touch the turn's target sections, and a `covered` claim is honest.

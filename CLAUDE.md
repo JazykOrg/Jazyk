@@ -55,9 +55,12 @@ turns rephrase it into EARS, keep the quote verbatim (`docs2/compiler/concepts/e
   `journal/`, `status.yaml`.
 - `bootstrap2/src/`: model.rs, store.rs (shards, natural-key upserts, atomic commit, journal,
   GC), context.rs, tools.rs (the registry), turn.rs (codecs, prompts), reconcile.rs, llm.rs
-  (raw-TCP OpenAI-compatible client; sticky fallbacks for tools/temperature/streaming),
+  (OpenAI-compatible client over ureq; sticky fallbacks for tools/temperature/streaming),
   md.rs, project.rs, cli.rs, mcp.rs, lsp.rs (read-only), benchmark.rs, jsonrpc.rs,
-  parallel.rs. Deps: serde, serde_json, serde_norway only.
+  parallel.rs. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
+  events). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
+  crates; hand-roll only domain logic. Do not reimplement transports, parsers for
+  standard formats, or platform APIs.
 - `bootstrap2/example/f1` and `f2`: fixtures (f2 has planted traps, see its EXPECTED.md).
   `bootstrap2/VALIDATION.md`: measured results, scorecard, known weaknesses.
 

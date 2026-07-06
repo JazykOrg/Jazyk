@@ -30,8 +30,10 @@ clever ones.
 
 - `upsert_entity({name, definition?, aliases?, scope?, mention: {section, quote}, note?})`
   → `{id, created}`. Keys on `name` plus `scope`; a match updates instead of duplicating.
-  Omit `scope` unless the documents explicitly name a bounded context. An invented scope
-  splits one concept into two.
+  A name variant of an existing entity is rejected toward reusing that entity and
+  recording the wording as an alias; a `note` overrides. Omit `scope` unless the
+  documents explicitly name a bounded context. An invented scope splits one concept in
+  two.
 - `update_entity({id, name?, definition?, add_aliases?})`: a rename keeps the id.
 - `delete_entity({id, reason})`: rejected while requirements reference the entity.
 - `merge_entities({keep, absorb, reason})`: the store rewires references and leaves a

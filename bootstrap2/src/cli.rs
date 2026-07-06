@@ -176,16 +176,51 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         }
         s
     };
-    let mut last = String::new();
+    // Native file events via the notify crate; the fingerprint over the matched doc
+    // files decides whether a build actually runs, so editor temp files, renames, and
+    // the out directory's own writes never trigger one.
+    use notify::Watcher;
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if res.is_ok() {
+            tx.send(()).ok();
+        }
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("jazyk: file watcher unavailable ({}); falling back to polling", e);
+            let mut last = String::new();
+            loop {
+                let fp = fingerprint(&proj);
+                if fp != last {
+                    last = fp;
+                    run_compile(paths, opts);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
+    };
+    if let Err(e) = watcher.watch(&proj.root, notify::RecursiveMode::Recursive) {
+        eprintln!("jazyk: cannot watch {}: {}", proj.root.display(), e);
+        return 1;
+    }
     println!("jazyk: watching {} (Ctrl-C to stop)", proj.root.display());
+    let mut last = fingerprint(&proj);
+    run_compile(paths, opts);
     loop {
+        if rx.recv().is_err() {
+            break;
+        }
+        // Debounce: editors save in bursts; let the burst finish.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        while rx.try_recv().is_ok() {}
         let fp = fingerprint(&proj);
         if fp != last {
             last = fp;
             run_compile(paths, opts);
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
     }
+    0
 }
 
 pub fn run_status(paths: &[String], opts: &Options) -> i32 {

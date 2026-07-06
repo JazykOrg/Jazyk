@@ -95,13 +95,17 @@ The gates:
 - `delete_entity` is rejected while any requirement still references the entity. The error
   lists the requirements.
 - Diagnostic `subjects` must exist.
-- `set_coverage` with state `non-normative` requires a `note`.
+- `set_coverage` with state `non-normative` requires a `note`. A placeholder note
+  (`<nil>`, `none`, `n/a`) counts as absent. Restaging coverage for a section replaces
+  the earlier staged mark: one coverage mark per section per changeset.
 - `upsert_entity` with a name variant of an existing entity (token containment, same
   scope) is rejected toward reuse plus an alias, unless a `note` says how they differ.
   See [entity](./model/entity.md#what-is-an-entity).
 
 Batch-level gates run once more when the turn calls `done`: all quotes still locate,
-coverage claims only touch the turn's target sections, and a `covered` claim is honest.
+coverage claims only touch the turn's target sections, every stale anchor in the work
+item is addressed (its quote locates again, or a staged mutation re-records it under
+its natural key, revises it, or deletes it), and a `covered` claim is honest.
 A section may be claimed `covered` only when at least one requirement is sourced from
 it. A section with nothing to extract is `non-normative` with a note, never silently
 `covered`. This stops a turn from dropping a rejected requirement and claiming the

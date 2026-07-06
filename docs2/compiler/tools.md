@@ -54,9 +54,13 @@ clever ones.
   findings stay comparable across builds.
 - `resolve_diagnostic({id, reason})`.
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
-  `non-normative` requires the `note`. A `covered` claim on a section containing `shall`
-  requires a requirement sourced from that section; the `done` gate enforces it.
-- `done({summary})`: end the turn and request commit.
+  `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
+  counts as absent. A repeated call for the same section within one turn replaces the
+  earlier mark: a changeset carries at most one coverage mark per section. A `covered`
+  claim requires a requirement sourced from that section; the `done` gate enforces it.
+- `done({summary})`: end the turn and request commit. Rejected while a stale anchor
+  from the work item is untouched: the anchor's quote must locate again, or a staged
+  mutation must re-record, revise, or delete it.
 
 There is no write tool for relationships. Edges exist only as a
 [derived product of requirements](./graph.md#derived-data).

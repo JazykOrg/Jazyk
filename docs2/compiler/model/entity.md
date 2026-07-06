@@ -25,6 +25,11 @@ Granularity guidance: attach detail to a requirement before minting a sub-entity
 Shopping Cart shows a line-item count" is a requirement on `ent:shopping-cart`, not a new
 `ent:line-item-count`. Mint the sub-entity only when statements are about it directly.
 
+One sentence, one subject: a sentence that names its subject twice introduces one
+entity, not two. "This software is a warehouse management system" defines a single
+concept; "this software" and "warehouse management system" are the same node, the
+second wording an alias.
+
 The [validation gates](../graph.md#validation-gates) reject names that look like syntax
 rather than a concept, unless the call carries an explaining `note`. They also reject a
 name that is a variant of an existing entity's name ("backend" beside "backend

@@ -86,7 +86,10 @@ Every section carries a coverage state in the store:
 
 Coverage is the completeness meter of a build and part of its termination criterion.
 Checks flag sections that stay `unprocessed`, and `non-normative` sections whose text
-still looks normative (`suspicious-non-normative`).
+still looks normative (`suspicious-non-normative`). "Looks normative" is a cheap
+deterministic signal: the body says `shall`, uses obligation verbs (supports, manages,
+handles, provides, requires, allows, stores, can be performed, is responsible), or
+holds definition-list bullets (`` - `name` - description ``).
 
 ## Incremental builds
 

@@ -21,7 +21,13 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
 - `reconcile-doc`: bring the graph in line with one document's dirty sections. The model
   reads the sections, extracts requirements and the entities they need, updates what
   drifted, and marks sections covered. The pack includes the dirty section bodies, the
-  known entities of the document's neighborhood, coverage states, and stale anchors.
+  requirements already sourced from each dirty section (so an unchanged statement is a
+  no-op, not a re-extraction, and a coverage claim sees what the section already
+  yielded), the known entities of the document's neighborhood, coverage states, and
+  stale anchors. Stale anchors are a contract: for each one, either the fact still
+  stands and the turn re-records it with a fresh verbatim quote (the natural key
+  updates it in place), or the fact is gone and the turn deletes it. The `done` gate
+  rejects a turn that leaves a stale anchor untouched.
 - `review-entity`: judge one entity whose facts changed. The model checks that the
   requirements form a coherent whole, refreshes the `definition`, merges lookalike
   duplicates, and reports [diagnostics](./model/diagnostic.md). The pack includes the
@@ -45,11 +51,16 @@ as requirements need them. An entity that no statement needs is noise. See
 The loop speaks to the model through a codec. Two codecs exist:
 
 - `native`: OpenAI-style `tools` and `tool_calls`. Used when the endpoint and model
-  support it.
+  support it. The codec asks the model to batch one section's calls (searches, upserts,
+  the coverage mark) into a single reply.
 - `text`: tools are described in the system prompt. The model answers with exactly one
   JSON action object per reply, e.g. `{"tool": "upsert_entity", "args": {...}}`. Results
   come back as a plain message. One action per reply is deliberate: small models cannot
   reliably emit several.
+
+Pacing guidance is the codec's to give, not the shared system prompt's: the two codecs
+contradict each other on batching, so the instruction ships in the codec's own
+system-prompt section.
 
 The harness probes on the first round. If the endpoint rejects the `tools` parameter or
 the model answers prose without tool calls, the run downgrades to `text` and stays there.

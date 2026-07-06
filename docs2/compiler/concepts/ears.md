@@ -45,12 +45,45 @@ ears:  The gateway shall be a REST service.
 ears:  The gateway shall be built with Go.
 ```
 
+Access and permission rules are obligations, the most commonly missed kind. A sentence
+saying who may do something limits the system. E.g.:
+
+```
+quote: All management operations can be performed by Admins only.
+ears:  The user management system shall allow only Admins to perform management operations.
+```
+
+The `ears` subject is the sentence's own subject, and the requirement references that
+entity. Never substitute a broader system for a named part: "The inventory system
+manages products" is a requirement on the inventory system, not on the application
+that contains it.
+
 Non-normative is the exception, not the default. A section is non-normative only when
 no sentence in it passes the test above: navigation pages that only link elsewhere,
 glossaries defining outside-world terms, changelogs, roadmap wish lists. A glossary
 entry that states what a system part does is a requirement wearing a glossary's
-clothes; extract it. Before marking a section non-normative, re-read it sentence by
-sentence; if any sentence is about the system, the section is not non-normative.
+clothes; extract it. Lists of operations, properties, or rules are never non-normative;
+see [enumerations](#enumerations). Before marking a section non-normative, re-read it
+sentence by sentence; if any sentence is about the system, the section is not
+non-normative.
+
+## Enumerations
+
+A sentence ending in a colon followed by a list is a claim about each item. The lead-in
+sentence alone states nothing testable; never record it as a requirement on its own.
+Extract one requirement per item and quote that item's own line verbatim. E.g.:
+
+```
+quote: - `addProduct` - adds a new product to the inventory
+ears:  The inventory system shall support an `addProduct` operation that adds a new product to the inventory.
+```
+
+List items are also where entities hide. An item naming an actor, a component, a
+sub-system, or a stored field introduces that concept: "allows 3 roles: Admins,
+Warehouse Manager, Warehouse Staff" introduces three actor entities, each with its own
+requirement. A sub-system list ("the sub-systems are: User Management, Inventory
+Management") ties each listed sub-system to its parent; the requirement declares that
+pair in `edges`.
 
 ## Shape check
 

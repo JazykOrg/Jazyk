@@ -17,19 +17,20 @@ The deliverable lives outside the out directory, in a directory named by the pro
 ```toml
 [gen]
 deliverable = "../project2"
-lang = "rust"
 ```
 
 - `deliverable` resolves relative to the project root. Everything generation produces
   lands under it.
-- `lang` is a freeform hint passed to generation tasks (a language, a format, a genre).
-  `--lang` overrides it per run.
 
-The generator chooses the layout of the deliverable: a source tree with `src/` and
-`tests/`, chapters of a book, sheets of a schematic. Task packages suggest a default
-layout; the generator may override it. What binds the layout to the graph is the
-manifest: every completed task records which deliverable files implement which
-requirements ([the ledger](#the-ledger)).
+That is the only generation setting. What the deliverable is (a Rust crate, a web app,
+a book, a schematic) is a fact the documents state, so it reaches the generator through
+the graph and the context pack like every other fact. The project file describes where
+things go, never what to build; there are no hints.
+
+The generator chooses everything about the deliverable's form: the medium, the layout,
+the file names, and the build files that make its recorded commands executable. What
+binds the layout to the graph is the manifest: every completed task records which
+deliverable files implement which requirements ([the ledger](#the-ledger)).
 
 ## The entity is the unit of generation
 
@@ -232,7 +233,7 @@ the entities it touched. `--force` regenerates everything. Entity ids are stable
 
 - With no arguments it generates every entity that has at least one requirement, in
   topological order over the relationship edges.
-- `--lang` overrides the project's `lang` hint. `--force` ignores the fact-hash skip.
+- `--force` ignores the fact-hash skip.
 - `jazyk codegen` and `jazyk testgen` remain as deprecated aliases that print a pointer
   to `jazyk gen`.
 

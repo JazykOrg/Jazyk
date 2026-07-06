@@ -1,0 +1,12 @@
+#:schema = ../docs2/compiler/project-settings.schema.yaml
+
+[docs]
+glob = [
+    "**/*.md",
+]
+
+[roots]
+files = ["docs/main.md"]
+
+[gen]
+deliverable = "project"

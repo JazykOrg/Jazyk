@@ -170,18 +170,18 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "gen_instructions",
-            description: "The generation contract every worker follows: one task per entity producing the deliverable files and the tests for its requirements, traceability markers, the two test kinds, the parts protocol for dense entities.",
-            parameters: obj(json!({"lang": {"type": "string"}}), &[]),
+            description: "The generation contract every worker follows: one task per entity producing the deliverable files and the tests for its requirements, traceability markers, the two test kinds, the parts protocol for dense entities. The medium derives from the context; the contract never names one.",
+            parameters: obj(json!({}), &[]),
         },
         ToolDef {
             name: "gen_pending",
             description: "Entities whose facts differ from the ledger, each with the requirement ids added, removed, or reworded since the entity was last generated.",
-            parameters: obj(json!({"lang": {"type": "string"}}), &[]),
+            parameters: obj(json!({}), &[]),
         },
         ToolDef {
             name: "gen_task",
-            description: "The full generation package for one entity: instructions, context pack, requirement groups (with suggested test names), change diff, the deliverable directory, a suggested layout, factHash, and the manifest of already generated files. The worker writes the files itself.",
-            parameters: obj(json!({"entity": {"type": "string"}, "lang": {"type": "string"}}), &["entity"]),
+            description: "The full generation package for one entity: instructions, context pack, requirement groups (with suggested test names), change diff, the deliverable directory, factHash, and the manifest of already generated files. The worker writes the files itself and chooses layout, names, and run commands.",
+            parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
             name: "gen_mark",
@@ -334,13 +334,8 @@ impl ToolSession {
         }
     }
 
-    // The session's [gen] settings, with a per-call `lang` override.
-    fn gen_settings(&self, args: &Value) -> crate::gen::GenSettings {
-        let mut gs = self.gen.clone();
-        if let Some(l) = Self::opt_str(args, "lang") {
-            gs.lang = l;
-        }
-        gs
+    fn gen_settings(&self) -> crate::gen::GenSettings {
+        self.gen.clone()
     }
 
     fn known_entity(&self, id: &str) -> bool {
@@ -863,23 +858,22 @@ impl ToolSession {
                 Ok(json!({"set": true}))
             }
             "gen_instructions" => {
-                let gs = self.gen_settings(args);
-                Ok(json!({"instructions": crate::gen::instructions(&gs.lang)}))
+                Ok(json!({"instructions": crate::gen::instructions()}))
             }
             "gen_pending" => {
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 Ok(json!(crate::gen::pending(&self.snapshot, &gs)))
             }
             "gen_task" => {
                 let entity = Self::str_arg(args, "entity")?;
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 let id = self.snapshot.resolve_id(&entity).to_string();
                 crate::gen::task_package(&self.snapshot, &id, &gs)
                     .map_err(|e| ToolError::new("unknown-id", e))
             }
             "gen_mark" => {
                 let entity = Self::str_arg(args, "entity")?;
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 let id = self.snapshot.resolve_id(&entity).to_string();
                 let Some(seen) = Self::opt_str(args, "factHash") else {
                     return Err(ToolError::new(
@@ -897,20 +891,20 @@ impl ToolSession {
                     .map_err(|e| ToolError::new("unknown-id", e))
             }
             "verify_pending" => {
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 let filter = Self::opt_str(args, "filter");
                 let entity = Self::opt_str(args, "entity");
                 Ok(json!(crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref())))
             }
             "verify_task" => {
                 let rid = Self::str_arg(args, "requirement")?;
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 crate::verify::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
             }
             "verify_mark" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let verdict = Self::str_arg(args, "verdict")?;
-                let gs = self.gen_settings(args);
+                let gs = self.gen_settings();
                 let seen = Self::opt_str(args, "factHash");
                 let evidence = Self::opt_str(args, "evidence");
                 crate::verify::mark(&self.snapshot, &rid, &verdict, seen.as_deref(), evidence.as_deref(), &gs)

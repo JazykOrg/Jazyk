@@ -67,17 +67,19 @@ worker and consumes the same task packages in-process. These tools read the grap
 the [ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
 graph.
 
-- `gen_instructions({lang?})`: the generation contract as text: one bounded task per
+- `gen_instructions({})`: the generation contract as text: one bounded task per
   entity producing both the entity's part of the deliverable and the tests for its
   requirements, the traceability markers, the two test kinds, and the parts protocol
-  for dense entities.
-- `gen_pending({lang?})`: entities whose facts differ from the ledger:
+  for dense entities. The worker derives the medium from the context; the contract
+  never names one.
+- `gen_pending({})`: entities whose facts differ from the ledger:
   `{entity, reason, changed}` where `changed` lists the requirement ids added, removed,
   or reworded since the entity was last generated.
-- `gen_task({entity, lang?})`: the full package for one task: the instructions, the
+- `gen_task({entity})`: the full package for one task: the instructions, the
   entity's context pack, its requirements in generation groups, the change diff, the
-  deliverable directory, a suggested default layout the worker may override, the
-  `factHash`, and the manifest of already generated files.
+  deliverable directory, the `factHash`, and the manifest of already generated files.
+  Layout, file names, and run commands are the worker's choices, recorded in the
+  manifest.
 - `gen_mark({entity, factHash, manifest})`: record the task done. The worker writes the
   deliverable files itself; the `manifest` binds them to the graph:
   `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}]}`.

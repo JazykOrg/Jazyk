@@ -55,7 +55,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk status                   summarize the last build\n");
     s.push_str("  jazyk context <target>         print a context pack (ent:…, req:…, doc.md#/ref, or h:… handle)\n");
     s.push_str("  jazyk query <text>             search entities\n");
-    s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--lang, --force)\n");
+    s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--force)\n");
     s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
@@ -115,10 +115,6 @@ fn main() {
             "--kind" => {
                 i += 1;
                 opts.kind = args.get(i).cloned();
-            }
-            "--lang" => {
-                i += 1;
-                opts.lang = args.get(i).cloned();
             }
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,

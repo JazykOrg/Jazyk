@@ -218,6 +218,12 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<(b
     let Some(row) = ledger.requirements.get(&rid) else {
         return Err(format!("no ledger row for `{}`", rid));
     };
+    if row.test.run.trim().is_empty() {
+        return Err(format!(
+            "`{}` has no recorded run command (audit-rebuilt row); regenerate with `jazyk gen {}`",
+            rid, row.entity
+        ));
+    }
     let artifact = artifact_path(&store.out, gs, &row.test);
     let content = std::fs::read_to_string(&artifact).unwrap_or_default();
     if !content.contains(&row.test.name) {
@@ -318,7 +324,9 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 label: if *is_criteria { "llm".into() } else { "audit".into() },
                 artifact: artifact_rel,
                 name: name.clone(),
-                run: if *is_criteria { format!("jazyk test {}", rid) } else { format!("cargo test {}", name) },
+                // A rebuilt programmatic row has no trustworthy command; the harness
+                // never invents one. Regeneration records the real runner.
+                run: if *is_criteria { format!("jazyk test {}", rid) } else { String::new() },
                 cwd: ".".into(),
             };
             // The artifact carries the live statement hash in the test name, so the
@@ -415,7 +423,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), lang: "rust".into() };
+        let gs = GenSettings { deliverable: out.join("product") };
         std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
         std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");

@@ -161,7 +161,7 @@ mod tests {
         // A stale file for an entity that no longer exists must be pruned.
         std::fs::create_dir_all(out.join("docsgen")).ok();
         std::fs::write(out.join("docsgen/ghost.md"), "old").ok();
-        let n = write_all(&s, &GenSettings { deliverable: out.join("product"), lang: "rust".into() });
+        let n = write_all(&s, &GenSettings { deliverable: out.join("product") });
         assert_eq!(n, 1);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));

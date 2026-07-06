@@ -4,6 +4,22 @@ title: Jazyk Project Settings
 description: Schema for the jazyk.toml project configuration file
 type: object
 properties:
+  redirect:
+    type: string
+    description: >-
+      Delegate discovery to a nested project directory holding the real jazyk.toml.
+      A redirecting file contains only this key. Redirects do not chain
+  gen:
+    type: object
+    description: Generation workflow settings
+    properties:
+      deliverable:
+        type: string
+        description: >-
+          Directory the end product is generated into, resolved relative to the project
+          root. Defaults to <out>/gen/deliverable. The project file never states what
+          the deliverable is; the medium is a fact the documents state
+    additionalProperties: false
   docs:
     type: object
     description: Configuration for documentation processing

@@ -47,9 +47,9 @@ pub struct Project {
     pub root: PathBuf,
     pub docs_glob: Vec<String>,
     pub roots: Vec<String>,
-    // [gen] settings: where the deliverable lives and the lang hint.
+    // [gen] settings: where the deliverable lives. Never what it is; the medium is a
+    // fact the documents state.
     pub gen_deliverable: Option<String>,
-    pub gen_lang: String,
     pub llm: LlmSettings,
     pub linting: Linting,
     pub limits: Limits,
@@ -63,7 +63,6 @@ impl Default for Project {
         Project {
             root: PathBuf::from("."),
             gen_deliverable: None,
-            gen_lang: "rust".into(),
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
             llm: LlmSettings {
@@ -184,9 +183,6 @@ impl Project {
         }
         if let Some(v) = t.string("gen.deliverable") {
             p.gen_deliverable = Some(v);
-        }
-        if let Some(v) = t.string("gen.lang") {
-            p.gen_lang = v;
         }
         if let Some(v) = t.string("llm.base_url") {
             p.llm.base_url = v;

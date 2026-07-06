@@ -69,8 +69,8 @@ bounded task, writes them into the configured
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, skipping entities
 whose facts are unchanged (`--force` regenerates everything). Dense entities generate
-in parts. `--lang` overrides the project's `lang` hint. `jazyk codegen` and
-`jazyk testgen` are deprecated aliases.
+in parts. The medium, layout, and run commands are the generator's choices, derived
+from the documents. `jazyk codegen` and `jazyk testgen` are deprecated aliases.
 
 ### jazyk test
 

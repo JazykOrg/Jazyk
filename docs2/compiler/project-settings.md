@@ -109,15 +109,16 @@ Settings for the [generation workflow](../consumers/gen.md). All optional.
 ```toml
 [gen]
 deliverable = "../project2"
-lang = "rust"
 ```
 
 - `deliverable`: the directory the end product is generated into, resolved relative to
   the project root. Default `<out>/gen/deliverable` when unset, so the workflow runs
   without configuration. Generation metadata (the ledger, criteria files) always stays
   in the out directory; only the product lands here.
-- `lang`: a freeform hint passed to generation tasks (a language, a format, a genre).
-  Default `rust`. `--lang` overrides per run.
+
+The project file never says what the deliverable is. The medium is a fact the documents
+state, reaching workers through the graph; see
+[the deliverable](../consumers/gen.md#the-deliverable).
 
 ## Limits
 

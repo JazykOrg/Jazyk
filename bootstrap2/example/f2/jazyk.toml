@@ -6,4 +6,3 @@ files = ["docs/system.md"]
 
 [gen]
 deliverable = "./product"
-lang = "rust"

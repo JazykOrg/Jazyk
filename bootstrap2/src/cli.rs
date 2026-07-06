@@ -18,7 +18,6 @@ pub struct Options {
     pub write: bool,
     pub focus: Option<String>,
     pub budget: Option<usize>,
-    pub lang: Option<String>,
     pub force: bool,
     pub kind: Option<String>,
     pub list: bool,
@@ -37,7 +36,6 @@ impl Default for Options {
             write: false,
             focus: None,
             budget: None,
-            lang: None,
             force: false,
             kind: None,
             list: false,
@@ -274,18 +272,17 @@ pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
 
 // The built-in generation worker: consumes the same task packages an external MCP
 // worker gets (gen_pending decides what runs, gen_task supplies the package, gen_mark
-// records the manifest). One task per entity produces the product files and the tests.
-// Mirrors docs2/consumers/gen.md.
+// records the manifest). The model owns every choice about the deliverable: the medium
+// (derived from the context), the file paths, and the run commands. The harness only
+// writes what the model returns, validates the manifest deterministically, and records
+// it. Mirrors docs2/consumers/gen.md.
 pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     let (proj, llm, out) = resolve(&[], opts);
     if opts.verbose {
         llm::set_verbose(true);
     }
     let store = Store::load(&out);
-    let mut gs = crate::gen::GenSettings::resolve(&proj, &out);
-    if let Some(l) = &opts.lang {
-        gs.lang = l.clone();
-    }
+    let gs = crate::gen::GenSettings::resolve(&proj, &out);
 
     let mut targets: Vec<String> = if entities.is_empty() {
         store
@@ -369,7 +366,6 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             }
         }
     }
-    scaffold_deliverable(&gs);
     println!(
         "jazyk: gen done — {} regenerated, {} unchanged, {} failure(s)",
         regenerated, skipped, failures
@@ -381,13 +377,28 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     }
 }
 
-// One entity's task: product file (in parts when dense), then the tests file, then the
-// manifest mark. Requirements whose test name is absent from the tests artifact become
-// llm rows with a criteria file.
+// Parse a reply whose first line must be `FILE: <relative path>`; returns (path, body).
+fn parse_file_reply(reply: &str) -> Result<(String, String), String> {
+    let reply = strip_fences(reply);
+    let mut lines = reply.splitn(2, '\n');
+    let first = lines.next().unwrap_or("").trim();
+    let Some(path) = first.strip_prefix("FILE:") else {
+        return Err(format!("first line must be `FILE: <path>`, got `{}`", crate::llm::truncate(first, 80)));
+    };
+    let path = path.trim();
+    if path.is_empty() || path.starts_with('/') || path.contains("..") {
+        return Err(format!("bad file path `{}`", path));
+    }
+    Ok((path.to_string(), lines.next().unwrap_or("").to_string()))
+}
+
+// One entity's task: the model picks the product path (FILE protocol, parts when
+// dense), the tests path, and the manifest with the run commands. Requirements the
+// model declares untestable programmatically, or whose declared test fails validation
+// (name missing from the artifact, empty command), become llm rows with a criteria
+// file. Manifest validation is deterministic; nothing here chooses for the model.
 fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
     let instructions = task["instructions"].as_str().unwrap_or_default();
-    let product_rel = task["suggestedLayout"]["product"].as_str().unwrap_or("src/out.txt").to_string();
-    let tests_rel = task["suggestedLayout"]["tests"].as_str().unwrap_or("tests/out.txt").to_string();
     let header = format!(
         "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nAlready generated files: {}\n",
         id,
@@ -408,28 +419,33 @@ fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str
         )
     };
 
-    // Product file, dense entities in parts.
+    // Product content; the model names the file.
     let mut code = String::new();
+    let mut product_rel = String::new();
     for (k, group) in groups.iter().enumerate() {
         let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
         let user = if k == 0 {
             format!(
-                "{}\nWrite the product file `{}`. Implement every requirement with a marker comment (// req:<id> hash:<hash8> plus the quote) at each implementing site. Requirements (group 1 of {}):\n{}\n",
-                header, product_rel, parts, req_lines.join("\n")
+                "{}\nWrite the implementing content for this entity. Derive the medium from the context; choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put the marker comment (// req:<id> hash:<hash8> plus the quote, in the medium's comment syntax) at each implementing site. Requirements (group 1 of {}):\n{}\n",
+                header, parts, req_lines.join("\n")
             )
         } else {
             format!(
-                "{}\nRequirements (group {} of {}):\n{}\n\nThe product file so far:\n{}\nReturn ONLY additional content to append.",
-                header, k + 1, parts, req_lines.join("\n"), crate::llm::truncate(&code, 20_000)
+                "{}\nRequirements (group {} of {}):\n{}\n\nThe file `{}` so far:\n{}\nReturn ONLY additional content to append, no FILE line.",
+                header, k + 1, parts, req_lines.join("\n"), product_rel, crate::llm::truncate(&code, 20_000)
             )
         };
-        let part = llm
+        let reply = llm
             .chat(instructions, &user, &format!("gen {} product {}/{}", id, k + 1, parts))
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
-        if k > 0 {
-            code.push_str(&format!("\n// --- generated part {} ---\n", k + 1));
+        if k == 0 {
+            let (path, body) = parse_file_reply(&reply)?;
+            product_rel = path;
+            code = body;
+        } else {
+            code.push_str("\n");
+            code.push_str(&strip_fences(&reply));
         }
-        code.push_str(&strip_fences(&part));
         code.push('\n');
     }
     if code.trim().is_empty() {
@@ -441,39 +457,26 @@ fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str
     }
     std::fs::write(&product_path, &code).map_err(|e| e.to_string())?;
 
-    // Tests file: one test per requirement, named by the suggested testName. The model
-    // may omit requirements it cannot test programmatically; those become llm rows.
+    // Tests: the model names the file too, or declares nothing programmatic.
     let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
-    let import_hint = if gs.lang == "rust" {
-        format!(
-            " (import it as `{}::{}`)",
-            deliverable_crate_name(gs),
-            std::path::Path::new(&product_rel).file_stem().map(|s| s.to_string_lossy().replace('-', "_")).unwrap_or_default()
-        )
-    } else {
-        String::new()
-    };
     let tests_user = format!(
-        "{}\nWrite the tests file `{}` for the product file `{}`{}. One test per requirement, function named EXACTLY by the [testName] shown, with the marker comment (// req:<id> hash:<hash8> plus the quote) above it. If a requirement cannot be tested programmatically, omit its test; it will be verified by an agent instead. Requirements:\n{}\n\nThe product file:\n{}\n",
+        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`. Requirements:\n{}\n\nThe product file:\n{}\n",
         header,
-        tests_rel,
         product_rel,
-        import_hint,
         req_lines.join("\n"),
         crate::llm::truncate(&code, 16_000)
     );
-    // A failed tests call fails the task: silently demoting every requirement to llm
-    // would misreport the worker's actual coverage.
-    let tests_code = if run_template(&gs.lang, "x").is_some() {
-        llm.chat(instructions, &tests_user, &format!("gen {} tests", id))
-            .map(|t| strip_fences(&t))
-            .map_err(|e| format!("tests file: {}", e))?
-    } else {
-        String::new()
-    };
+    let tests_reply = llm
+        .chat(instructions, &tests_user, &format!("gen {} tests", id))
+        .map_err(|e| format!("tests file: {}", e))?;
     let mut files = vec![product_rel.clone()];
-    if !tests_code.trim().is_empty() {
+    let mut tests_rel = String::new();
+    let mut tests_code = String::new();
+    if tests_reply.trim() != "NONE" {
+        let (path, body) = parse_file_reply(&tests_reply).map_err(|e| format!("tests reply: {}", e))?;
+        tests_rel = path;
+        tests_code = body;
         let tests_path = gs.deliverable.join(&tests_rel);
         if let Some(p) = tests_path.parent() {
             std::fs::create_dir_all(p).ok();
@@ -482,18 +485,64 @@ fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str
         files.push(tests_rel.clone());
     }
 
-    // Manifest: programmatic rows for tests present in the artifact, llm rows (with a
-    // criteria file) for the rest.
+    // The manifest: the model declares run commands and any support files it needs;
+    // support files are returned inline and written here.
+    let manifest_user = format!(
+        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
+        id,
+        files,
+        task["deliverable"].as_str().unwrap_or_default(),
+        all_reqs.iter().map(|r| format!("- {} [{}]", r["id"].as_str().unwrap_or(""), r["testName"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
+        tests_rel,
+        crate::llm::truncate(&tests_code, 12_000)
+    );
+    let manifest_reply = llm
+        .chat(instructions, &manifest_user, &format!("gen {} manifest", id))
+        .map_err(|e| format!("manifest: {}", e))?;
+    let manifest_json: serde_json::Value = {
+        let text = strip_fences(&manifest_reply);
+        let start = text.find('{').ok_or("manifest reply held no JSON object")?;
+        let end = text.rfind('}').ok_or("manifest reply held no JSON object")?;
+        serde_json::from_str(&text[start..=end]).map_err(|e| format!("manifest JSON: {}", e))?
+    };
+    if let Some(support) = manifest_json["supportFiles"].as_array() {
+        for f in support {
+            let (Some(path), Some(content)) = (f["path"].as_str(), f["content"].as_str()) else { continue };
+            if path.starts_with('/') || path.contains("..") {
+                continue;
+            }
+            let p = gs.deliverable.join(path);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(&p, content).map_err(|e| e.to_string())?;
+            files.push(path.to_string());
+        }
+    }
+
+    // Deterministic validation: a programmatic row needs its declared test present in
+    // the tests artifact and a non-empty command; anything else becomes an llm row.
+    let declared = manifest_json["tests"].as_array().cloned().unwrap_or_default();
     let mut tests_manifest: Vec<serde_json::Value> = Vec::new();
     for r in &all_reqs {
         let rid = r["id"].as_str().unwrap_or_default();
         let name = r["testName"].as_str().unwrap_or_default();
-        let template = run_template(&gs.lang, name);
-        if tests_code.contains(name) && template.is_some() {
+        let row = declared.iter().find(|t| t["requirement"].as_str() == Some(rid));
+        let programmatic = row
+            .map(|t| {
+                t["kind"].as_str() == Some("programmatic")
+                    && !t["run"].as_str().unwrap_or("").trim().is_empty()
+                    && tests_code.contains(name)
+            })
+            .unwrap_or(false);
+        if programmatic {
+            let t = row.unwrap();
             tests_manifest.push(serde_json::json!({
-                "requirement": rid, "kind": "programmatic", "label": "unit",
+                "requirement": rid, "kind": "programmatic",
+                "label": t["label"].as_str().unwrap_or("test"),
                 "artifact": tests_rel, "name": name,
-                "run": template.unwrap(),
+                "run": t["run"].as_str().unwrap_or(""),
+                "cwd": t["cwd"].as_str().unwrap_or("."),
                 "files": [product_rel],
             }));
         } else {
@@ -513,7 +562,8 @@ fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str
             );
             std::fs::write(&crit_path, criteria).ok();
             tests_manifest.push(serde_json::json!({
-                "requirement": rid, "kind": "llm", "label": "llm",
+                "requirement": rid, "kind": "llm",
+                "label": row.and_then(|t| t["label"].as_str()).unwrap_or("llm"),
                 "artifact": crit_rel, "name": name,
                 "run": format!("jazyk test {}", rid),
                 "files": [product_rel],
@@ -525,61 +575,6 @@ fn gen_one(store: &Store, llm: &llm::Llm, gs: &crate::gen::GenSettings, id: &str
     Ok(files.len())
 }
 
-// The default command that runs exactly one named test, per lang. None means the
-// built-in worker has no programmatic runner for the lang and records llm rows.
-fn run_template(lang: &str, name: &str) -> Option<String> {
-    match lang {
-        "rust" => Some(format!("cargo test {}", name)),
-        "python" => Some(format!("python3 -m pytest -k {} -q", name)),
-        "typescript" => Some(format!("npx vitest run -t {}", name)),
-        "go" => Some(format!("go test -run {} ./...", name)),
-        _ => None,
-    }
-}
-
-fn deliverable_crate_name(gs: &crate::gen::GenSettings) -> String {
-    gs.deliverable
-        .file_name()
-        .map(|s| s.to_string_lossy().replace('-', "_"))
-        .unwrap_or_else(|| "product".into())
-}
-
-// Make a rust deliverable runnable: a Cargo.toml and a src/lib.rs naming every module.
-// Deterministic scaffold, not attributed to any entity.
-fn scaffold_deliverable(gs: &crate::gen::GenSettings) {
-    if gs.lang != "rust" {
-        return;
-    }
-    let src = gs.deliverable.join("src");
-    if !src.exists() {
-        return;
-    }
-    let cargo = gs.deliverable.join("Cargo.toml");
-    if !cargo.exists() {
-        std::fs::write(
-            &cargo,
-            format!(
-                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ndoctest = false\n",
-                deliverable_crate_name(gs)
-            ),
-        )
-        .ok();
-    }
-    let mut mods: Vec<String> = std::fs::read_dir(&src)
-        .map(|rd| {
-            rd.flatten()
-                .filter_map(|e| {
-                    let n = e.file_name().to_string_lossy().to_string();
-                    n.strip_suffix(".rs").filter(|s| *s != "lib").map(|s| s.replace('-', "_"))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    mods.sort();
-    let lib: String = mods.iter().map(|m| format!("pub mod {};\n", m)).collect();
-    std::fs::write(src.join("lib.rs"), format!("// generated scaffold: one module per entity\n{}", lib)).ok();
-}
-
 // Verification: run the ledger's tests and record verdicts. Programmatic rows execute
 // their command; llm rows drive the configured model against the verify_task package.
 // Mirrors docs2/consumers/gen.md#runners.
@@ -589,10 +584,7 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
         llm::set_verbose(true);
     }
     let store = Store::load(&out);
-    let mut gs = crate::gen::GenSettings::resolve(&proj, &out);
-    if let Some(l) = &opts.lang {
-        gs.lang = l.clone();
-    }
+    let gs = crate::gen::GenSettings::resolve(&proj, &out);
     if opts.audit {
         let r = crate::verify::audit(&store, &gs);
         println!("jazyk: audit — {}", r);

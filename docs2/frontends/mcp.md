@@ -25,7 +25,7 @@ or verification worker, with no way to mutate the graph.
 
 The server adds one tool of its own:
 
-- `await_changes({timeout_seconds?, lang?})`: a long poll. It returns when the graph's
+- `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
   generation counter moves, a documentation file changes on disk, a manifest or test
   file in the deliverable changes, or the ledger changes, or at the timeout (default
   300 seconds). The reply carries the changed documents, whether the graph is stale

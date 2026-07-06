@@ -12,22 +12,12 @@ use std::path::{Path, PathBuf};
 // Requirements per generation part for dense entities.
 pub const GROUP: usize = 20;
 
-pub fn ext_for(lang: &str) -> &'static str {
-    match lang {
-        "rust" => "rs",
-        "python" => "py",
-        "typescript" => "ts",
-        "go" => "go",
-        _ => "txt",
-    }
-}
-
-// Resolved [gen] settings: where the deliverable lives and the lang hint.
+// Resolved [gen] settings: where the deliverable lives. Nothing else: what the
+// deliverable is comes from the documents through the graph, never from configuration.
 // Mirrors docs2/compiler/project-settings.md#generation.
 #[derive(Clone)]
 pub struct GenSettings {
     pub deliverable: PathBuf,
-    pub lang: String,
 }
 
 impl GenSettings {
@@ -36,11 +26,11 @@ impl GenSettings {
             Some(d) => proj.root.join(d),
             None => out.join("gen").join("deliverable"),
         };
-        GenSettings { deliverable, lang: proj.gen_lang.clone() }
+        GenSettings { deliverable }
     }
 
     pub fn from_out(out: &Path) -> GenSettings {
-        GenSettings { deliverable: out.join("gen").join("deliverable"), lang: "rust".into() }
+        GenSettings { deliverable: out.join("gen").join("deliverable") }
     }
 }
 
@@ -193,18 +183,20 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
     hash_hex(&facts)
 }
 
-// The generation contract, identical for every worker.
-pub fn instructions(lang: &str) -> String {
+// The generation contract, identical for every worker. It never names a medium: what
+// the deliverable is (a language, a format, a genre) is a fact the documents state,
+// carried by the context pack.
+pub fn instructions() -> String {
     format!(
-        "Generate the entity's part of the deliverable AND the tests for its requirements, in {lang}.\n\
-         - The task package names the deliverable directory and suggests a default layout; you may lay out files differently, but every file you write must appear in the manifest you pass to gen_mark.\n\
+        "Generate the entity's part of the deliverable AND the tests for its requirements.\n\
+         - Derive the medium from the requirements and the context: what the documents say the deliverable is decides what you write. You choose the layout, the file names, and the build or support files that make your recorded commands executable; every file you write must appear in the manifest you pass to gen_mark.\n\
          - Every requirement is an obligation; implement each and place a marker comment at the implementing site: the requirement id, hash, and the verbatim quote.\n\
          - Derive one test per requirement. Pick the kind per requirement:\n\
-           - programmatic: any test a command can run (unit, integration, cucumber are examples, not a taxonomy). Write the test into the deliverable and record the exact command that runs only that test. Its exit code is the verdict.\n\
+           - programmatic: any test a command can run (unit, integration, cucumber are examples, not a taxonomy). Write the test into the deliverable and record the exact command that runs only that test, exactly as it must be executed from the deliverable directory. Its exit code is the verdict.\n\
            - llm: the requirement needs judgment, or the deliverable is not executable software. Write a criteria file (the package names its path): front matter with the requirement id and statement hash, then the statement, the quote, the implementing file paths, the steps to confirm, and the verdict contract (PASS or FAIL plus reasoning).\n\
          - Name each test with the suggested testName from the package (requirement id plus hash prefix) and put the marker comment above it.\n\
          - Reference other entities' files through the manifest the package carries.\n\
-         - Dense entities generate in parts of {GROUP} requirements: part 1 is the types, state, and the first group; each later part receives what exists so far and returns ONLY additional content to append.\n\
+         - Dense entities generate in parts of {GROUP} requirements: part 1 is the core plus the first group; each later part receives what exists so far and returns ONLY additional content to append.\n\
          - Return only file content, never fences or prose, when asked for a file."
     )
 }
@@ -268,8 +260,6 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
     let ledger = Ledger::load(&store.out);
     let e = &store.graph.entities[id];
     let slug = slug_of(id);
-    let stem = slug.replace('-', "_");
-    let ext = ext_for(&gs.lang);
     let rids = reqs_of_sorted(store, id);
     let (_, changed) = change_diff(&ledger, &slug, &rids);
     let groups: Vec<Vec<Value>> = rids
@@ -319,13 +309,8 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "entity": id,
         "name": e.name,
         "deliverable": gs.deliverable.to_string_lossy(),
-        "suggestedLayout": {
-            "product": format!("src/{}.{}", stem, ext),
-            "tests": format!("tests/{}.{}", stem, ext),
-        },
         "factHash": fact_hash(store, id),
-        "lang": gs.lang,
-        "instructions": instructions(&gs.lang),
+        "instructions": instructions(),
         "context": pack,
         "relationships": rels,
         "requirementGroups": groups,
@@ -425,7 +410,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), lang: "rust".into() };
+        let gs = GenSettings { deliverable: out.join("product") };
         (s, gs)
     }
 

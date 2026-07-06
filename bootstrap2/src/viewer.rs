@@ -391,7 +391,7 @@ mod tests {
             "shop.md".into(),
             DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
         );
-        let html = render(&s, &GenSettings { deliverable: std::path::PathBuf::from("/nonexistent"), lang: "rust".into() });
+        let html = render(&s, &GenSettings { deliverable: std::path::PathBuf::from("/nonexistent") });
         assert!(html.contains("id=\"n-ent:cart\""));
         assert!(html.contains("Cart &lt;script&gt;"));
         assert!(html.contains("&quot;items&quot; &amp; things"));

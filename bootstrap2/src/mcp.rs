@@ -32,10 +32,7 @@ impl McpServer {
     // changes, or at the timeout. Mirrors docs2/frontends/mcp.md#external-workers.
     fn await_changes(&self, params: &Value) -> Value {
         let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300).clamp(1, 3600);
-        let mut gs = crate::gen::GenSettings::resolve(&self.project, &self.out);
-        if let Some(l) = params["arguments"]["lang"].as_str() {
-            gs.lang = l.to_string();
-        }
+        let gs = crate::gen::GenSettings::resolve(&self.project, &self.out);
         let fingerprint = |path: &std::path::Path| -> String {
             std::fs::metadata(path)
                 .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
@@ -158,7 +155,7 @@ impl McpServer {
                 tools.push(json!({
                     "name": "await_changes",
                     "description": "Long poll: returns when the graph's generation counter moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s). Carries the changed documents, graph staleness, pending generation work, and pending verification counts.",
-                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}, "lang": {"type": "string"}}, "additionalProperties": false}
+                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}, "additionalProperties": false}
                 }));
                 Ok(json!({"tools": tools}))
             }

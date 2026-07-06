@@ -35,6 +35,11 @@ directory's own writes never trigger one. The same loop as `compile`: each chang
 the [dirty set](../compiler/reconciler.md#dirty-set), so unchanged documents are not
 revisited. See [incremental builds](../compiler/reconciler.md#incremental-builds).
 
+A build that ends `incomplete` (work parked, e.g. by a transient endpoint outage)
+retries on its own with backoff (30s doubling to 5 minutes, reset by any file change)
+instead of idling until the next edit. Unfinished work is never silent, and watch is
+the loop that owns resuming it.
+
 ### jazyk status
 
 Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)):

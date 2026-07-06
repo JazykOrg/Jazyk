@@ -161,7 +161,7 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
 }
 
 pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
-    let (proj, _llm, _out) = resolve(paths, opts);
+    let (proj, _llm, out) = resolve(paths, opts);
     let fingerprint = |proj: &Project| -> String {
         let mut s = String::new();
         for f in proj.doc_files() {
@@ -205,11 +205,34 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         return 1;
     }
     println!("jazyk: watching {} (Ctrl-C to stop)", proj.root.display());
+    // An incomplete build (work parked, e.g. by a transient endpoint outage) retries on
+    // its own with backoff instead of idling until the next edit. Unfinished work is
+    // never silent, and watch is the loop that owns resuming it. Mirrors
+    // docs2/frontends/cli.md#jazyk-watch.
+    let incomplete = |out: &std::path::Path| -> bool { Store::load(out).status.verdict == "incomplete" };
+    let mut backoff = std::time::Duration::from_secs(30);
+    let max_backoff = std::time::Duration::from_secs(300);
     let mut last = fingerprint(&proj);
     run_compile(paths, opts);
     loop {
-        if rx.recv().is_err() {
-            break;
+        let retry_due = if incomplete(&out) {
+            eprintln!("jazyk: build incomplete; retrying parked work in {}s", backoff.as_secs());
+            match rx.recv_timeout(backoff) {
+                Ok(()) => false,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            backoff = std::time::Duration::from_secs(30);
+            if rx.recv().is_err() {
+                break;
+            }
+            false
+        };
+        if retry_due {
+            backoff = (backoff * 2).min(max_backoff);
+            run_compile(paths, opts);
+            continue;
         }
         // Debounce: editors save in bursts; let the burst finish.
         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -217,6 +240,7 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         let fp = fingerprint(&proj);
         if fp != last {
             last = fp;
+            backoff = std::time::Duration::from_secs(30);
             run_compile(paths, opts);
         }
     }

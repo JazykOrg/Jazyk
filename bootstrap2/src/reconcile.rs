@@ -189,6 +189,20 @@ fn review_groups(store: &Store, targets: &BTreeSet<String>) -> Vec<Vec<String>> 
 // bullets (`- \`name\` - description`). Docs rarely say `shall`, so the word alone
 // misses whole documents. Mirrors docs2/compiler/reconciler.md#coverage.
 fn looks_normative(raw: &str) -> bool {
+    // A lead-in-only body (one sentence ending in a colon, its items living in child
+    // sections) states nothing by itself; non-normative is the correct mark there.
+    let body: Vec<&str> = raw
+        .lines()
+        .enumerate()
+        .filter(|(i, l)| !(*i == 0 && l.trim_start().starts_with('#')))
+        .map(|(_, l)| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if let [only] = body.as_slice() {
+        if only.ends_with(':') && !only.starts_with('-') {
+            return false;
+        }
+    }
     let t = raw.to_lowercase();
     const SIGNALS: [&str; 10] = [
         " shall ",
@@ -728,5 +742,7 @@ mod tests {
     fn navigation_and_changelog_prose_stays_quiet() {
         assert!(!looks_normative("See the [frontend documentation](./frontend.md) for more information.\n"));
         assert!(!looks_normative("# Changelog\n- 1.2: fixed typos in the intro\n"));
+        // A lead-in-only body defers its items to child sections; nothing to extract here.
+        assert!(!looks_normative("# Operations\n\nThe user management system supports the following operations:\n"));
     }
 }

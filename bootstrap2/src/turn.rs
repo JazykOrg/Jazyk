@@ -184,10 +184,11 @@ Work in this order:
 1. Read the entity and its requirements (gathered across all documents) in the pack below.
 2. If the definition no longer matches the requirements as a whole, refresh it with update_entity.
 3. Judge every lookalike candidate listed below. A name variant ("backend" vs "backend system"), a synonym, or the same thing at different detail is the SAME concept: merge with merge_entities (keep the better-established id) and say why. Merging is the expected outcome for lookalikes; keeping both is the exception and needs a reason. The absorbed name survives as an alias and its requirements follow automatically.
-4. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
-5. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement (keep ears and entities unchanged, supply edges with a relationship type).
-6. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
-7. Call done with a one-line summary.
+4. Judge each requirement listed under "Statements naming this entity without referencing it": when the statement is about this entity, add the entity to the requirement with update_requirement (keep ears unchanged, supply the full entities list including the existing ones). A missing reference is what strands an entity unreachable.
+5. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
+6. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement (keep ears and entities unchanged, supply edges with a relationship type).
+7. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
+8. Call done with a one-line summary.
 
 Rules:
 - Documentation is loose by design. Flag only findings the document author can act on. Do not demand formal-spec completeness (persistence details, versioning, exhaustive cases).
@@ -302,6 +303,39 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
         if !others.is_empty() {
             s.push_str("\n## Lookalike candidates (merge only if truly the same concept)\n");
             s.push_str(&others.join("\n"));
+            s.push('\n');
+        }
+        // Missing-reference candidates: requirements whose statement names this entity
+        // (word-bounded name or alias) but whose entities list omits it. A missing
+        // reference is what strands an entity cluster unreachable from the roots.
+        let contains_word = |hay: &str, word: &str| -> bool {
+            let hay = hay.to_lowercase();
+            let word = word.to_lowercase();
+            let mut start = 0;
+            while let Some(pos) = hay[start..].find(&word) {
+                let (b, e) = (start + pos, start + pos + word.len());
+                let ok_before = b == 0 || !hay.as_bytes()[b - 1].is_ascii_alphanumeric();
+                let ok_after = e >= hay.len() || !hay.as_bytes()[e].is_ascii_alphanumeric();
+                if ok_before && ok_after {
+                    return true;
+                }
+                start = e;
+            }
+            false
+        };
+        let names: Vec<&String> = std::iter::once(&e.name).chain(e.aliases.iter()).collect();
+        let unreferenced: Vec<String> = store
+            .graph
+            .requirements
+            .iter()
+            .filter(|(_, r)| !r.entities.iter().any(|x| store.resolve_id(x) == entity_id))
+            .filter(|(_, r)| names.iter().any(|n| contains_word(&r.ears, n)))
+            .take(6)
+            .map(|(rid, r)| format!("- {}: {}", rid, r.ears))
+            .collect();
+        if !unreferenced.is_empty() {
+            s.push_str("\n## Statements naming this entity without referencing it (add the reference if the statement is about it)\n");
+            s.push_str(&unreferenced.join("\n"));
             s.push('\n');
         }
     }

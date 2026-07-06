@@ -31,7 +31,10 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
 - `review-entity`: judge one entity whose facts changed. The model checks that the
   requirements form a coherent whole, refreshes the `definition`, merges lookalike
   duplicates, and reports [diagnostics](./model/diagnostic.md). The pack includes the
-  entity, its requirements across all documents, and lookalike candidates.
+  entity, its requirements across all documents, lookalike candidates, and requirements
+  whose statement names the entity without referencing it: candidates for a missing
+  reference the review adds with `update_requirement`. A missing reference is what
+  strands an entity cluster unreachable from the roots.
 
 Extraction order inside `reconcile-doc` is deliberate: requirements first, entities only
 as requirements need them. An entity that no statement needs is noise. See

@@ -3,20 +3,53 @@
 use crate::model::{hash_hex, Section};
 use std::collections::{BTreeMap, HashMap};
 
-// Locate `needle` as a verbatim substring of `text` (possibly multi-line). Returns the
-// 0-based (start_line, start_col, end_line, end_col) in character columns, or None.
-// Quotes are located this way; character offsets are never stored.
-#[allow(dead_code)] // used by the future LSP to anchor diagnostics; harness uses contains()
+// Locate `needle` in `text` (possibly multi-line). Returns the 0-based
+// (start_line, start_col, end_line, end_col) in character columns, or None. Exact
+// substring first; a quote wrapped across source lines locates whitespace-insensitively,
+// the same doctrine the store applies to quote containment. Character offsets are never
+// stored.
 pub fn locate(text: &str, needle: &str) -> Option<(usize, usize, usize, usize)> {
     let needle = needle.trim();
     if needle.is_empty() {
         return None;
     }
-    let byte = text.find(needle)?;
-    let end = byte + needle.len();
+    let (byte, end) = match text.find(needle) {
+        Some(b) => (b, b + needle.len()),
+        None => locate_tokens(text, needle)?,
+    };
     let (sl, sc) = line_col(text, byte);
     let (el, ec) = line_col(text, end);
     Some((sl, sc, el, ec))
+}
+
+// Match the needle's whitespace-separated tokens in order, any whitespace between.
+// Returns the matched byte range.
+fn locate_tokens(text: &str, needle: &str) -> Option<(usize, usize)> {
+    let tokens: Vec<&str> = needle.split_whitespace().collect();
+    let first = tokens.first()?;
+    for (start, _) in text.match_indices(first) {
+        let mut pos = start + first.len();
+        let mut ok = true;
+        for token in &tokens[1..] {
+            let rest = &text[pos..];
+            let skipped = rest.len() - rest.trim_start().len();
+            if skipped == 0 {
+                ok = false;
+                break;
+            }
+            let at = pos + skipped;
+            if text[at..].starts_with(token) {
+                pos = at + token.len();
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            return Some((start, pos));
+        }
+    }
+    None
 }
 
 // 0-based (line, char column) of a byte offset within `text`.
@@ -170,6 +203,16 @@ fn resolve_rel(from_doc: &str, target: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn locate_wrapped_quote() {
+        let text = "intro text\nAn Order shall be paid within 21 days of placement; otherwise the system shall\ncancel it.\nmore";
+        let needle = "An Order shall be paid within 21 days of placement; otherwise the system shall cancel it.";
+        let (sl, sc, el, ec) = super::locate(text, needle).expect("wrapped quote locates");
+        assert_eq!((sl, sc), (1, 0));
+        assert_eq!(el, 2);
+        assert_eq!(ec, "cancel it.".chars().count());
+    }
+
     use super::*;
 
     #[test]

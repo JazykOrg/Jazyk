@@ -19,6 +19,11 @@ links every entity occurrence in a source document to its requirements document,
 reader clicks a concept in a source page and lands on everything the project says about
 it, with each statement pointing back at the exact source sentence.
 
+When the [ledger](./gen.md#the-ledger) holds a row for a requirement, its entry carries
+a verification line: the derived status, the test name and kind, the last run time, and
+the evidence. A requirement with no row reads `not generated`. The status derives at
+render time, so the document never shows a stored stale flag.
+
 ## Glossary
 
 The glossary is generated from the graph: every entity's name, aliases, and `definition`,

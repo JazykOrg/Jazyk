@@ -1,5 +1,6 @@
 // The viewer: render the graph store into one self-contained HTML file. Reads the same
 // shards every frontend reads; never compiles. Mirrors docs2/frontends/viewer.md.
+use crate::gen::GenSettings;
 use crate::llm::truncate;
 use crate::store::Store;
 use std::fmt::Write as _;
@@ -26,6 +27,17 @@ fn link(id: &str) -> String {
 
 fn chip(severity: &str) -> String {
     format!("<span class=\"chip sev-{}\">{}</span>", esc(severity), esc(severity))
+}
+
+// Verification status chip. Classes group the seven statuses into four colors.
+fn vchip(status: &str) -> String {
+    let class = match status {
+        "verified" => "v-ok",
+        "failing" => "v-bad",
+        s if s.starts_with("stale") => "v-stale",
+        _ => "v-none",
+    };
+    format!("<span class=\"chip {}\">{}</span>", class, esc(status))
 }
 
 // The searchable text of a card, lowercased into a data attribute.
@@ -59,6 +71,12 @@ input#q:focus { outline: 2px solid var(--accent); }
   padding: 1px 8px; border-radius: 9px; border: 1px solid currentColor; margin-right: 6px; }
 .sev-error { color: var(--err); } .sev-warning { color: var(--warn); }
 .sev-info { color: var(--info); } .sev-none { color: var(--none); }
+.v-ok { color: var(--accent); } .v-bad { color: var(--err); }
+.v-stale { color: var(--warn); } .v-none { color: var(--none); }
+.card.agg-ok { border-left: 4px solid var(--accent); }
+.card.agg-bad { border-left: 4px solid var(--err); }
+.card.agg-stale { border-left: 4px solid var(--warn); }
+.card.agg-none { border-left: 4px solid var(--line); }
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; background: #fff; }
 th { text-align: left; font-family: ui-monospace, Menlo, monospace; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
@@ -79,8 +97,9 @@ q.addEventListener('input', () => {
 });
 ";
 
-pub fn render(store: &Store) -> String {
+pub fn render(store: &Store, gs: &GenSettings) -> String {
     let g = &store.graph;
+    let vmap = crate::verify::status_map(store, gs);
     let mut h = String::with_capacity(64 * 1024);
 
     // Header stats mirror `jazyk status`.
@@ -128,6 +147,26 @@ pub fn render(store: &Store) -> String {
         total_secs,
         store.status.generation
     );
+    // Verification summary, when any ledger row exists.
+    {
+        let (mut ok, mut bad, mut stale, mut unv, mut not_gen) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        for v in vmap.values() {
+            match v["status"].as_str().unwrap_or("") {
+                "verified" => ok += 1,
+                "failing" => bad += 1,
+                s if s.starts_with("stale") => stale += 1,
+                "unverified" => unv += 1,
+                _ => not_gen += 1,
+            }
+        }
+        if ok + bad + stale + unv > 0 {
+            let _ = write!(
+                h,
+                "<p class=\"stats\">verification: <span class=\"v-ok\">{} verified</span> · <span class=\"v-bad\">{} failing</span> · <span class=\"v-stale\">{} stale</span> · {} unverified · {} not generated</p>\n",
+                ok, bad, stale, unv, not_gen
+            );
+        }
+    }
     h.push_str("<input id=\"q\" type=\"search\" placeholder=\"Filter by id, name, or text\" aria-label=\"Filter\">\n");
 
     // Entities.
@@ -158,8 +197,25 @@ pub fn render(store: &Store) -> String {
             let links: Vec<String> = refs.iter().map(|r| link(r)).collect();
             let _ = write!(body, "<p><span class=\"k\">requirements</span> {}</p>", links.join(" "));
         }
+        // Aggregate verification over the entity's requirements: any failing reads
+        // red, any stale amber, all verified green, none generated gray.
+        let agg = {
+            let statuses: Vec<&str> = refs
+                .iter()
+                .filter_map(|r| vmap.get(r).and_then(|v| v["status"].as_str()))
+                .collect();
+            if statuses.iter().any(|s| *s == "failing") {
+                "agg-bad"
+            } else if statuses.iter().any(|s| s.starts_with("stale")) {
+                "agg-stale"
+            } else if !statuses.is_empty() && statuses.iter().all(|s| *s == "verified") {
+                "agg-ok"
+            } else {
+                "agg-none"
+            }
+        };
         let s = search_attr(&[id, &e.name, e.definition.as_deref().unwrap_or(""), &e.aliases.join(" ")]);
-        let _ = write!(h, "<div class=\"card\" data-s=\"{}\">{}</div>\n", s, body);
+        let _ = write!(h, "<div class=\"card {}\" data-s=\"{}\">{}</div>\n", agg, s, body);
     }
 
     // Requirements.
@@ -168,6 +224,20 @@ pub fn render(store: &Store) -> String {
         let mut body = String::new();
         let _ = write!(body, "<h3 id=\"n-{}\">{}</h3>", esc(id), esc(id));
         let _ = write!(body, "<p>{}</p>", esc(&r.ears));
+        if let Some(v) = vmap.get(id) {
+            let status = v["status"].as_str().unwrap_or("missing");
+            let mut line = vchip(status);
+            if let Some(k) = v["kind"].as_str() {
+                let _ = write!(line, " <span class=\"k\">{}</span>", esc(k));
+            }
+            if let Some(run) = v["run"].as_str() {
+                let _ = write!(line, " <span class=\"q\">{}</span>", esc(run));
+            }
+            if let Some(ev) = v["evidence"].as_str() {
+                let _ = write!(line, "<br><span class=\"q\">{}</span>", esc(&truncate(ev, 140)));
+            }
+            let _ = write!(body, "<p>{}</p>", line);
+        }
         let links: Vec<String> = r.entities.iter().map(|e| link(e)).collect();
         let _ = write!(body, "<p><span class=\"k\">entities</span> {}</p>", links.join(" "));
         let _ = write!(
@@ -321,7 +391,7 @@ mod tests {
             "shop.md".into(),
             DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
         );
-        let html = render(&s);
+        let html = render(&s, &GenSettings { deliverable: std::path::PathBuf::from("/nonexistent"), lang: "rust".into() });
         assert!(html.contains("id=\"n-ent:cart\""));
         assert!(html.contains("Cart &lt;script&gt;"));
         assert!(html.contains("&quot;items&quot; &amp; things"));

@@ -118,7 +118,7 @@ fn run_wave(
                     // Requirements documents render after every committed changeset, so
                     // readers and editor links stay fresh during the build.
                     if report.applied > 0 {
-                        crate::docsgen::write_all(&s);
+                        crate::docsgen::write_all(&s, &crate::gen::GenSettings::from_out(&s.out));
                     }
                     *applied.lock().unwrap() += report.applied;
                     touched.lock().unwrap().extend(report.touched_entities);
@@ -574,7 +574,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     // Status and verdict.
     s.status.parked = parked_all.clone();
     s.status.verdict = if parked_all.is_empty() { "converged".into() } else { "incomplete".into() };
-    let n = crate::docsgen::write_all(&s);
+    let n = crate::docsgen::write_all(&s, &crate::gen::GenSettings::resolve(proj, &s.out));
     if n > 0 {
         trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
     }

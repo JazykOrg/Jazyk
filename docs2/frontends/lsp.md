@@ -15,7 +15,11 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
 - References: entity → all mentions across documents.
 - Hover: the entity's definition, requirements, and relationships from the graph. Hover content
   is a rendered pack from the [context engine](../compiler/context.md), so it matches what the
-  compiler and the [MCP server](./mcp.md) show.
+  compiler and the [MCP server](./mcp.md) show. When the
+  [ledger](../consumers/gen.md#the-ledger) exists, the hover appends a verification
+  summary for the entity (verified over total, failing and stale counts), and hovering
+  inside a requirement's located quote shows that requirement's own status, test, and
+  last evidence.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
 - Document links: every whole-word occurrence of an entity name or alias in an open

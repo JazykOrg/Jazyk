@@ -732,9 +732,10 @@ pub fn run_viewer(opts: &Options) -> i32 {
     if html_target.is_some() {
         store_opts.out = None;
     }
-    let (_proj, _llm, out) = resolve(&[], &store_opts);
+    let (proj, _llm, out) = resolve(&[], &store_opts);
     let store = Store::load(&out);
-    let html = crate::viewer::render(&store);
+    let gs = crate::gen::GenSettings::resolve(&proj, &out);
+    let html = crate::viewer::render(&store, &gs);
     let path = html_target
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| out.join("graph.html"));

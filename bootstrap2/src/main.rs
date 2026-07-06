@@ -176,16 +176,17 @@ fn main() {
             cli::run_gen(&opts, &positional)
         }
         "docsgen" => {
-            let (_proj, _llm, out) = cli::resolve(&[], &opts);
+            let (proj, _llm, out) = cli::resolve(&[], &opts);
             let store = store::Store::load(&out);
-            let n = docsgen::write_all(&store);
+            let n = docsgen::write_all(&store, &gen::GenSettings::resolve(&proj, &out));
             println!("jazyk: docsgen — {} requirements document(s) in {}", n, out.join("docsgen").display());
             0
         }
         "viewer" => cli::run_viewer(&opts),
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
-            lsp::Lsp::new(proj.root.clone(), out).run();
+            let gs = gen::GenSettings::resolve(&proj, &out);
+            lsp::Lsp::new(proj.root.clone(), out, gs).run();
             0
         }
         "benchmark" => {

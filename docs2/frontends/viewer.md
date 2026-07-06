@@ -24,6 +24,23 @@ never compiles.
 - Coverage: one row per document with covered, non-normative, and unprocessed section
   counts.
 
+## Verification overlay
+
+When the [ledger](../consumers/gen.md#the-ledger) exists, the viewer overlays
+verification state, derived at render time exactly as
+[`verify_pending`](../compiler/tools.md#verification-tools) derives it:
+
+- The header gains a verification summary: verified, failing, stale, and unverified
+  counts, plus not-generated requirements.
+- Each requirement card carries a status chip (`verified`, `failing`,
+  `stale-requirement`, `stale-test`, `stale-code`, `unverified`, `missing`) with the
+  test kind, the recorded run command, and the last evidence line.
+- Each entity card aggregates its requirements: all verified reads green, any failing
+  reads red, any stale reads amber, none generated reads gray.
+
+The overlay is read-only and deterministic. Rerunning `jazyk test` and re-rendering the
+viewer is the whole refresh loop.
+
 ## Navigation
 
 - One text filter narrows every card at once. Matching is case-insensitive over ids,

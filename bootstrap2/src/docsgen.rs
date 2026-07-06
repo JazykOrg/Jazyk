@@ -1,6 +1,7 @@
 // Deterministic per-entity requirements documents: the reading surface between prose
 // and graph. Rendered on every converged build, no LLM. Mirrors
 // docs2/consumers/docsgen.md#the-requirements-document.
+use crate::gen::GenSettings;
 use crate::store::Store;
 use std::collections::BTreeSet;
 
@@ -8,7 +9,8 @@ fn slug(id: &str) -> String {
     id.strip_prefix("ent:").unwrap_or(id).to_string()
 }
 
-pub fn write_all(store: &Store) -> usize {
+pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
+    let vmap = crate::verify::status_map(store, gs);
     let dir = store.out.join("docsgen");
     std::fs::create_dir_all(&dir).ok();
     // Stale documents for absent entities are removed, so links never mislead.
@@ -63,6 +65,21 @@ pub fn write_all(store: &Store) -> usize {
                     s.push_str(&format!(" · ties: {}", others.join(", ")));
                 }
                 s.push_str("\n\n");
+                if let Some(v) = vmap.get(rid.as_str()) {
+                    let status = v["status"].as_str().unwrap_or("missing");
+                    let mut line = format!("Verification: `{}`", status);
+                    if let Some(name) = v["name"].as_str() {
+                        line.push_str(&format!(" by `{}` ({})", name, v["kind"].as_str().unwrap_or("?")));
+                    }
+                    if let Some(t) = v["lastRun"].as_str() {
+                        line.push_str(&format!(", last run {}", t));
+                    }
+                    if let Some(ev) = v["evidence"].as_str() {
+                        line.push_str(&format!("\n\n> {}", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+                    }
+                    s.push_str(&line);
+                    s.push_str("\n\n");
+                }
             }
         }
 
@@ -113,7 +130,6 @@ pub fn write_all(store: &Store) -> usize {
 mod tests {
     use super::*;
     use crate::model::*;
-    use std::collections::BTreeMap;
 
     #[test]
     fn renders_and_prunes() {
@@ -145,7 +161,7 @@ mod tests {
         // A stale file for an entity that no longer exists must be pruned.
         std::fs::create_dir_all(out.join("docsgen")).ok();
         std::fs::write(out.join("docsgen/ghost.md"), "old").ok();
-        let n = write_all(&s);
+        let n = write_all(&s, &GenSettings { deliverable: out.join("product"), lang: "rust".into() });
         assert_eq!(n, 1);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));

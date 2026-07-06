@@ -93,6 +93,34 @@ pub fn pending(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Op
     out
 }
 
+// One status entry per graph requirement, for renderers (viewer, docsgen, LSP hover).
+// Requirements without a ledger row read missing/not-generated.
+pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {
+    let ledger = Ledger::load(&store.out);
+    let mut out = std::collections::BTreeMap::new();
+    for (rid, _r) in &store.graph.requirements {
+        let entry = match ledger.requirements.get(rid) {
+            Some(row) => {
+                let (status, reason) = status_of(store, rid, row, gs);
+                json!({
+                    "status": status,
+                    "reason": reason,
+                    "kind": row.test.kind,
+                    "label": row.test.label,
+                    "name": row.test.name,
+                    "run": row.test.run,
+                    "lastRun": row.last_run,
+                    "evidence": row.evidence,
+                    "verdict": row.verdict,
+                })
+            }
+            None => json!({"status": "missing", "reason": "not-generated"}),
+        };
+        out.insert(rid.clone(), entry);
+    }
+    out
+}
+
 // Counts by reason, for await_changes.
 pub fn pending_counts(store: &Store, gs: &GenSettings) -> Value {
     let mut counts: std::collections::BTreeMap<String, u64> = Default::default();

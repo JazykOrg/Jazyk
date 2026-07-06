@@ -17,15 +17,16 @@ pub struct Lsp {
     out: PathBuf,
     store: Store,
     generation: u64,
+    gen: crate::gen::GenSettings,
     // Open documents: project-relative doc path -> current editor text.
     overlay: HashMap<String, String>,
 }
 
 impl Lsp {
-    pub fn new(root: PathBuf, out: PathBuf) -> Lsp {
+    pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
         let store = Store::load(&out);
         let generation = store.status.generation;
-        Lsp { root, out, store, generation, overlay: HashMap::new() }
+        Lsp { root, out, store, generation, gen, overlay: HashMap::new() }
     }
 
     pub fn run(&mut self) {
@@ -324,14 +325,74 @@ impl Lsp {
         json!(locs)
     }
 
-    // Hover shows the same rendered pack the compiler and the MCP server see.
+    // Hover shows the same rendered pack the compiler and the MCP server see, with a
+    // verification summary from the ledger. Hovering inside a requirement's located
+    // quote shows that requirement's own status.
+    // Mirrors docs2/frontends/lsp.md#capabilities.
     fn on_hover(&self, params: &Value) -> Value {
         let Some((doc, line, ch)) = self.pos(params) else { return Value::Null };
-        let Some((id, _)) = self.entity_at(&doc, line, ch) else { return Value::Null };
-        match context::assemble(&self.store, &id, &Focus::default(), 4000) {
-            Ok(pack) => json!({ "contents": { "kind": "markdown", "value": pack.pack } }),
-            Err(_) => Value::Null,
+        if let Some((id, _)) = self.entity_at(&doc, line, ch) {
+            let mut value = match context::assemble(&self.store, &id, &Focus::default(), 4000) {
+                Ok(pack) => pack.pack,
+                Err(_) => return Value::Null,
+            };
+            let vmap = crate::verify::status_map(&self.store, &self.gen);
+            let refs = self.store.requirements_referencing(&id);
+            let statuses: Vec<&str> = refs
+                .iter()
+                .filter_map(|r| vmap.get(r).and_then(|v| v["status"].as_str()))
+                .collect();
+            if !statuses.is_empty() {
+                let ok = statuses.iter().filter(|s| **s == "verified").count();
+                let bad = statuses.iter().filter(|s| **s == "failing").count();
+                let stale = statuses.iter().filter(|s| s.starts_with("stale")).count();
+                value.push_str(&format!(
+                    "\n\n---\nverification: {}/{} verified, {} failing, {} stale",
+                    ok,
+                    statuses.len(),
+                    bad,
+                    stale
+                ));
+            }
+            return json!({ "contents": { "kind": "markdown", "value": value } });
         }
+        // No entity under the cursor: a requirement's quote, maybe.
+        if let Some((rid, r)) = self.requirement_at(&doc, line, ch) {
+            let vmap = crate::verify::status_map(&self.store, &self.gen);
+            let mut value = format!("`{}`\n\n{}", rid, r.ears);
+            if let Some(v) = vmap.get(&rid) {
+                value.push_str(&format!("\n\n---\nverification: `{}`", v["status"].as_str().unwrap_or("missing")));
+                if let Some(name) = v["name"].as_str() {
+                    value.push_str(&format!(" by `{}` ({})", name, v["kind"].as_str().unwrap_or("?")));
+                }
+                if let Some(t) = v["lastRun"].as_str() {
+                    value.push_str(&format!(", last run {}", t));
+                }
+                if let Some(ev) = v["evidence"].as_str() {
+                    value.push_str(&format!("\n\n> {}", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+                }
+            }
+            return json!({ "contents": { "kind": "markdown", "value": value } });
+        }
+        Value::Null
+    }
+
+    // The requirement whose located quote contains the position, if any.
+    fn requirement_at(&self, doc: &str, line: usize, character: usize) -> Option<(String, &crate::model::Requirement)> {
+        let text = self.doc_text(doc);
+        for (rid, r) in &self.store.graph.requirements {
+            if r.source.doc != doc {
+                continue;
+            }
+            if let Some((sl, sc, el, ec)) = md::locate(&text, &r.source.quote) {
+                let after_start = line > sl || (line == sl && character >= sc);
+                let before_end = line < el || (line == el && character <= ec);
+                if after_start && before_end {
+                    return Some((rid.clone(), r));
+                }
+            }
+        }
+        None
     }
 
     // Every whole-word occurrence of an entity name or alias links to that entity's

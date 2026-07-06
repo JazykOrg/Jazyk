@@ -83,6 +83,18 @@ pub(crate) fn normalize_statement(s: &str) -> String {
         .join(" ")
 }
 
+// Same fact reworded: one statement's content tokens contained in the other's. A
+// resumed build often re-extracts "shall X" as "shall X using Y" from the same
+// sentence; that is one fact, not two. Distinct atomic facts sharing a sentence
+// ("shall be a REST service" / "shall be built with Go") are not subsets.
+pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
+    let toks = |s: &str| -> std::collections::BTreeSet<String> {
+        normalize_statement(s).split(' ').map(String::from).collect()
+    };
+    let (ta, tb) = (toks(a), toks(b));
+    !ta.is_empty() && !tb.is_empty() && (ta.is_subset(&tb) || tb.is_subset(&ta))
+}
+
 // Whitespace-insensitive containment: a quote wrapped across source lines still locates.
 pub fn text_contains(hay: &str, needle: &str) -> bool {
     let h = hay.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -455,6 +467,9 @@ impl Store {
                     // Natural key for requirements: source section plus the punctuation-
                     // insensitive statement. A same-statement create becomes an update,
                     // never a duplicate; a lightly reworded statement refreshes in place.
+                    // A re-extraction from the same source sentence whose statement
+                    // subsumes (or is subsumed by) the existing one is the same fact
+                    // reworded and also refreshes in place.
                     if let Some(existing) = self
                         .graph
                         .requirements
@@ -462,7 +477,10 @@ impl Store {
                         .find(|(_, r)| {
                             r.source.doc == requirement.source.doc
                                 && r.source.section == requirement.source.section
-                                && normalize_statement(&r.ears) == normalize_statement(&requirement.ears)
+                                && (normalize_statement(&r.ears) == normalize_statement(&requirement.ears)
+                                    || (normalize_statement(&r.source.quote)
+                                        == normalize_statement(&requirement.source.quote)
+                                        && statement_subsumes(&r.ears, &requirement.ears)))
                         })
                         .map(|(rid, _)| rid.clone())
                     {
@@ -1040,6 +1058,44 @@ mod tests {
         s.apply(vec![Op::CreateEntity { id: "ent:cart-x".into(), entity: e2 }], &wi(), 1, 10);
         assert_eq!(s.graph.entities.len(), 1);
         assert_eq!(s.graph.entities["ent:cart"].mentions.len(), 2);
+    }
+
+    #[test]
+    fn same_sentence_subsumed_statement_refreshes_in_place() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        seed_doc(&mut s, "t.md", "# T\n- `createUser` - creates a new user account\n");
+        let base = Requirement {
+            ears: "The user management system shall create a new user account.".into(),
+            entities: vec!["ent:um".into()],
+            edges: Vec::new(),
+            source: mention("t.md", "/t", "- `createUser` - creates a new user account"),
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        };
+        s.apply(
+            vec![
+                Op::CreateEntity { id: "ent:um".into(), entity: Entity { name: "User Management".into(), ..Default::default() } },
+                Op::CreateRequirement { id: "req:t-1".into(), requirement: base.clone() },
+            ],
+            &wi(),
+            1,
+            10,
+        );
+        // A resumed build rewords the same sentence's statement; one fact, one node.
+        let reworded = Requirement {
+            ears: "The user management system shall create a new user account using createUser.".into(),
+            ..base
+        };
+        s.apply(vec![Op::CreateRequirement { id: "req:t-2".into(), requirement: reworded }], &wi(), 1, 10);
+        assert_eq!(s.graph.requirements.len(), 1);
+        assert!(s.graph.requirements["req:t-1"].ears.contains("using createUser"));
+        // Distinct atomic facts from one sentence stay separate.
+        assert!(!statement_subsumes(
+            "The gateway shall be a REST service.",
+            "The gateway shall be built with Go."
+        ));
     }
 
     #[test]

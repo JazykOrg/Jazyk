@@ -377,6 +377,7 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
                 by_entity.entry(e).or_default().push((rid, toks(&r.ears)));
             }
         }
+        let norm = crate::store::normalize_statement;
         for list in by_entity.values() {
             for i in 0..list.len() {
                 for j in i + 1..list.len() {
@@ -384,16 +385,35 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
                     let (b, tb) = &list[j];
                     let inter = ta.intersection(tb).count();
                     let union = ta.union(tb).count();
-                    if union > 0 && inter * 10 >= union * 8 {
-                        let key = if a < b { ((*a).clone(), (*b).clone()) } else { ((*b).clone(), (*a).clone()) };
-                        if flagged.insert(key.clone()) {
+                    if union == 0 || inter * 10 < union * 8 {
+                        continue;
+                    }
+                    let (ra, rb) = (&store.graph.requirements[*a], &store.graph.requirements[*b]);
+                    let key = if a < b { ((*a).clone(), (*b).clone()) } else { ((*b).clone(), (*a).clone()) };
+                    if !flagged.insert(key.clone()) {
+                        continue;
+                    }
+                    if ra.source.doc == rb.source.doc {
+                        // Same sentence extracted twice is a twin. Similar statements
+                        // quoting different sentences are parallel enumeration items
+                        // ("shall have an id" / "shall have a name"), not duplicates.
+                        if ra.source.section == rb.source.section && norm(&ra.source.quote) == norm(&rb.source.quote) {
                             f.push((
                                 "duplicate-requirement".into(),
                                 key.0.clone(),
                                 "warning".into(),
-                                format!("{} and {} state near-identical requirements; keep one", key.0, key.1),
+                                format!("{} and {} extract the same sentence twice; keep one", key.0, key.1),
                             ));
                         }
+                    } else {
+                        // Restating a fact in another document is intentional
+                        // redundancy; the graph keeps both and notes the pairing.
+                        f.push((
+                            "duplicate-requirement".into(),
+                            key.0.clone(),
+                            "info".into(),
+                            format!("{} and {} state the same fact in different documents; both kept", key.0, key.1),
+                        ));
                     }
                 }
             }

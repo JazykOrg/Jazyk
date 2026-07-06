@@ -56,7 +56,9 @@ ears:  The user management system shall allow only Admins to perform management 
 The `ears` subject is the sentence's own subject, and the requirement references that
 entity. Never substitute a broader system for a named part: "The inventory system
 manages products" is a requirement on the inventory system, not on the application
-that contains it.
+that contains it. The requirement also references every other entity the statement
+names: "The user account shall have a `username`" references both the account and the
+`username` field, which is what ties the field into the graph.
 
 Non-normative is the exception, not the default. A section is non-normative only when
 no sentence in it passes the test above: navigation pages that only link elsewhere,
@@ -83,7 +85,9 @@ sub-system, or a stored field introduces that concept: "allows 3 roles: Admins,
 Warehouse Manager, Warehouse Staff" introduces three actor entities, each with its own
 requirement. A sub-system list ("the sub-systems are: User Management, Inventory
 Management") ties each listed sub-system to its parent; the requirement declares that
-pair in `edges`.
+pair in `edges`. An item that is a link still counts: under "The sub-systems are:",
+the item "[User Management](./user.md)" states that the parent includes the User
+Management sub-system. The link is navigation; the item's text is a fact.
 
 ## Shape check
 

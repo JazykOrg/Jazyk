@@ -46,7 +46,7 @@ checks alike.
 | review turns | `missing-link` | warning | a concept the documents rely on but never define |
 | review turns | `ambiguity` | info, warning, or error | a statement open to more than one reading |
 | [checks](../reconciler.md#waves) | `unused-entity` | warning | an entity no requirement references |
-| checks | `duplicate-requirement` | warning | two requirements on one entity whose statements are near identical |
+| checks | `duplicate-requirement` | warning or info | warning: one source sentence extracted twice; info: the same fact intentionally restated in different documents (both kept) |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |
 | checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
 | checks | `broken-link` | warning | a relative link whose target file does not exist |

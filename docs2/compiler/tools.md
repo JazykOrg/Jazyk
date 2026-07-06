@@ -42,7 +42,10 @@ clever ones.
   id; any id supplied is ignored. Idempotency comes from the natural key (the source
   section plus the punctuation-insensitive statement text), so a retried or lightly
   reworded statement updates in place, refreshing its `ears` and `quote`, never minting
-  a duplicate. `edges` name entity pairs the statement ties together, with an optional
+  a duplicate. A statement re-extracted from the same source sentence whose content
+  subsumes or is subsumed by the existing statement is the same fact reworded: it also
+  updates in place. A sentence carrying several atomic facts is unaffected, since those
+  statements are not subsets of each other. `edges` name entity pairs the statement ties together, with an optional
   [relationship type](./model/relationship.md). Real revisions go through
   `update_requirement`.
 - `update_requirement({id, ears?, entities?, edges?})`.

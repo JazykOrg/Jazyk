@@ -271,6 +271,66 @@ Findings that changed the harness, docs first as always:
 - Residual gemma variance: coverage swings run to run (42% to 78%), and cross-document
   near-duplicate entities (`backend` vs `backend-system`) remain review-turn work.
 
+## Harness iteration: the example-erp corpus
+
+Continuation of the prompt iteration on the same warehouse-ERP fixture (grown to 6
+documents with planted traps: an MD5 password line, a link to a nonexistent document,
+an empty file), gemma throughout. Each round is a fresh from-scratch compile resumed to
+convergence; numbers are the converged graph.
+
+| round | requirements | entities | open warnings | note |
+| --- | --- | --- | --- | --- |
+| baseline | 15 | 9 | 5 | all of user.md waved through non-normative; MD5 trap missed; one concept minted as three entities |
+| leniency + budgets | 27 | 22 | 32 | user.md extraction unlocked; operations minted as junk entities; review wave starved the fix-up and the verdict claimed converged at 68% coverage |
+| honesty + dedupe | 28 | 15 | 8 | budget overflow parks instead of vanishing; duplicate pollution reached zero |
+| final | 32 | 17 | 5 | per-bullet extraction incl. the MD5 password; two of the five warnings are the planted doc bugs |
+
+Findings that changed the harness, docs first as always:
+
+- Enumerations were dropped everywhere: the model extracted the colon lead-in and
+  ignored the list under it, losing operations, properties, roles, and the sub-system
+  containment. One requirement per item, quoting the item's own line, is now doctrine
+  (docs2/compiler/concepts/ears.md#enumerations); items that are links still count.
+- Stale anchors are a contract: the `done` gate rejects a turn that leaves one
+  untouched (re-anchor via natural key, revise, or delete). Before the gate, a turn
+  marked coverage around a stale anchor twice and converged with the phantom left in.
+- Gates resolve intent instead of bouncing it: prefix-less ids (`user-management`),
+  unique display names, and markdown-escaped quotes (`` \` ``) all resolve. A 4B model
+  burned entire turns retrying identical calls the error message had already answered.
+- Provenance validates first in `upsert_requirement`: a quote that does not locate is
+  the clearest signal a statement was invented, and it was being masked by entity-id
+  errors. The stuck case: gemma extracting the prompt's own gateway example into
+  backend.md in a loop. The prompt now says the examples are illustrations.
+- The round budget scales with dirty-section count, and an implicit `done` drops
+  dishonest covered claims instead of discarding the whole changeset: one bad mark was
+  sinking 23 rounds of good staging.
+- Coverage outranks review: the fix-up pass runs before the review wave, and any work
+  that no longer fits the turn budget parks, so converged means converged. The failure
+  it fixes: 22 no-op review turns exhausted the cap, the fix-up was silently skipped,
+  and 6 uncovered sections hid behind a converged verdict.
+- One sentence, one fact: a re-extraction from the same source sentence whose statement
+  subsumes the existing one refreshes in place instead of minting a twin.
+  `duplicate-requirement` now separates intent: the same sentence extracted twice is a
+  warning; the same fact restated across documents is intentional redundancy, kept and
+  noted as info; parallel enumeration items are not flagged at all.
+- Operations (`createUser`) are requirement detail, never entities: camelCase code
+  identifiers are rejected by the junk-name gate. A 4B model was minting one entity per
+  operation, flooding reachability with islands.
+- Empty files and broken links were invisible by construction (no sections means no
+  turn; links only feed scheduling), so `empty-file` and `broken-link` are now
+  deterministic checks. Both planted bugs are found with zero LLM calls.
+- `suspicious-non-normative` keys on obligation verbs and definition-list bullets, not
+  the word `shall` (which documentation rarely uses); a lead-in-only body whose items
+  live in child sections is exempt.
+- Review turns repair missing references: the pack lists requirements whose statement
+  names the entity without referencing it. One such miss ("user accounts" naming
+  `ent:user`) had stranded a five-entity cluster unreachable.
+
+Residual, and correctly surfaced rather than hidden: run-to-run judgment variance of
+the 4B model (an orphaned field entity, an operation-as-subject island) lands as
+`unused-entity` and `unreachable-entity` warnings, which is the product behavior, not a
+defect. The two open non-planted warnings in the final run are exactly that class.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

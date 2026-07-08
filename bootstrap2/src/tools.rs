@@ -270,6 +270,30 @@ fn bundled_tech_list(ears: &str) -> Option<String> {
     None
 }
 
+// The lenient EARS shape gate, shared by upsert_requirement and update_requirement so a
+// revision cannot land a statement a fresh upsert would reject. Mirrors
+// docs2/compiler/concepts/ears.md#shape-check.
+fn ears_shape(ears: &str) -> Result<(), ToolError> {
+    if !ears.to_lowercase().contains("shall") {
+        return Err(ToolError::new(
+            "not-ears",
+            "the statement must be a single testable EARS sentence using 'shall' (e.g. 'When X, the system shall Y.')".into(),
+        ));
+    }
+    if ears.len() > 400 {
+        return Err(ToolError::new("not-ears", "the statement is too long; one testable sentence, not a paragraph".into()));
+    }
+    // Atomicity: a technology list bundled into one statement is several requirements
+    // wearing one sentence.
+    if let Some(bundle) = bundled_tech_list(ears) {
+        return Err(ToolError::new(
+            "not-ears",
+            format!("the statement bundles several facts ({}); record one requirement per fact, all quoting the same source sentence", bundle),
+        ));
+    }
+    Ok(())
+}
+
 // Names that look like syntax rather than a concept. Rejected without an explaining note.
 fn junk_name(name: &str) -> Option<&'static str> {
     let n = name.trim();
@@ -422,6 +446,12 @@ impl ToolSession {
                 return Some(self.snapshot.resolve_id(&prefixed).to_string());
             }
             let slug = format!("ent:{}", raw.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-"));
+            if self.known_entity(&slug) {
+                return Some(self.snapshot.resolve_id(&slug).to_string());
+            }
+        } else if let Some(rest) = raw.strip_prefix("ent:") {
+            // A case or spacing variant of an existing id (`ent:factHash`) resolves to it.
+            let slug = format!("ent:{}", rest.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-"));
             if self.known_entity(&slug) {
                 return Some(self.snapshot.resolve_id(&slug).to_string());
             }
@@ -860,27 +890,7 @@ impl ToolSession {
             }
             "upsert_requirement" => {
                 let ears = Self::str_arg(args, "ears")?;
-                if !ears.to_lowercase().contains("shall") {
-                    return Err(ToolError::new(
-                        "not-ears",
-                        "the statement must be a single testable EARS sentence using 'shall' (e.g. 'When X, the system shall Y.')".into(),
-                    ));
-                }
-                if ears.len() > 400 {
-                    return Err(ToolError::new("not-ears", "the statement is too long; one testable sentence, not a paragraph".into()));
-                }
-                // Atomicity: a technology list bundled into one statement is several
-                // requirements wearing one sentence. Mirrors the shape check in
-                // docs2/compiler/concepts/ears.md#shape-check.
-                if let Some(bundle) = bundled_tech_list(&ears) {
-                    return Err(ToolError::new(
-                        "not-ears",
-                        format!(
-                            "the statement bundles several facts ({}); record one requirement per fact, all quoting the same source sentence",
-                            bundle
-                        ),
-                    ));
-                }
+                ears_shape(&ears)?;
                 // Provenance is validated first: a quote that does not locate is the
                 // clearest signal a statement was invented, and it must not be masked
                 // by an entity-id error the model would keep retrying around.
@@ -964,6 +974,10 @@ impl ToolSession {
             }
             "update_requirement" => {
                 let id = self.canon_req_id(&Self::str_arg(args, "id")?)?;
+                let ears = Self::opt_str(args, "ears");
+                if let Some(e) = &ears {
+                    ears_shape(e)?;
+                }
                 let entities = match args["entities"].as_array() {
                     Some(_) => {
                         let mut canon: Vec<String> = Vec::new();
@@ -1004,7 +1018,7 @@ impl ToolSession {
                     }
                     edges = Some(v);
                 }
-                self.stage(Op::UpdateRequirement { id: id.clone(), ears: Self::opt_str(args, "ears"), entities, edges })?;
+                self.stage(Op::UpdateRequirement { id: id.clone(), ears, entities, edges })?;
                 Ok(json!({"id": id, "updated": true}))
             }
             "delete_requirement" => {
@@ -1297,6 +1311,35 @@ mod tests {
             .unwrap_err();
         assert_eq!(err2.rule, "unknown-id");
         assert!(err2.message.contains("upsert_entity"), "repair hint: {}", err2.message);
+    }
+
+    #[test]
+    fn prefixed_case_variant_resolves() {
+        let mut t = session();
+        let v = t.dispatch("update_entity", &json!({"id": "ent:Customer", "add_aliases": ["Buyer"]})).unwrap();
+        assert_eq!(v["id"], "ent:customer");
+    }
+
+    #[test]
+    fn update_requirement_runs_the_shape_gate() {
+        let mut t = session();
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
+        )
+        .unwrap();
+        let r = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+            )
+            .unwrap();
+        let rid = r["id"].as_str().unwrap().to_string();
+        // A revision is not a side door around the shape gate: junk that upsert would
+        // bounce (the req:tools-15 corruption: an edges JSON array as the statement)
+        // bounces here too.
+        let err = t.dispatch("update_requirement", &json!({"id": rid, "ears": "[{\"a\": \"ent:task-type\"}]"})).unwrap_err();
+        assert_eq!(err.rule, "not-ears");
     }
 
     #[test]

@@ -29,9 +29,6 @@ This scratch space is a live document to outline the work for this documentation
   review-turn work; weak models skim. Same-doc rephrase-duplicates are caught
   deterministically (`duplicate-requirement`), and a reworded re-extraction of the same
   sentence refreshes in place.
-- Documents whose prose cites sibling documents heavily can park on the
-  `wrong-document` gate (`compiler/compiler.md` in the dogfood). Decide whether
-  reconcile turns may cite linked documents read-only.
 - Benchmark gaps: density/recall, review judgment (rephrase-duplicate, near-duplicate
   entity, lint application), and generation quality are not gated. No model has been
   graded against the relaxed `turn-converge` case; persist results machine-readably
@@ -47,6 +44,8 @@ This scratch space is a live document to outline the work for this documentation
   (see `bootstrap2/VALIDATION.md`, the density experiment).
 - [x] Stronger-model comparison through LocalRouter (`gpt-5.5`: density, end to end,
   self-hosting, stability; see `bootstrap2/VALIDATION.md`).
-- [ ] Converge the docs2 dogfood: `compiler/compiler.md` parks on sibling-citing prose.
+- [x] Converge the docs2 dogfood: 185/185 sections covered, 0 errors, 0 parked. The
+  `wrong-document` gate held without a read-only citation relaxation; the decision is
+  recorded in [validation gates](./compiler/graph.md#validation-gates).
 - [ ] Full docs2 gen and verify run to verdicts with a capable model
   (`jazyk-out/gen/ledger.yaml` holds 106 rows with no verdicts).

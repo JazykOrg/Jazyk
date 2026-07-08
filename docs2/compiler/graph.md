@@ -85,9 +85,10 @@ unknown id `ent:cart`; nearest existing: `ent:shopping-cart`; use it, or create 
 The gates:
 
 - Every referenced id must exist in the graph or earlier in the same changeset.
-  Resolution is lenient toward intent: an id missing its `ent:` prefix, or an entity
-  named by its exact name or alias, resolves to the unique matching node. Only genuine
-  absence or ambiguity is an error, and the error names the nearest candidates.
+  Resolution is lenient toward intent: an id missing its `ent:` prefix, a case or
+  spacing variant of an existing id, or an entity named by its exact name or alias,
+  resolves to the unique matching node. Only genuine absence or ambiguity is an error,
+  and the error names the nearest candidates.
 - Every `quote` must appear verbatim in its named section. Locating is
   whitespace-insensitive and forgives markdown escapes (a text-codec model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that

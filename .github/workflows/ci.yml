@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'bootstrap2/**'
+      - 'docs2/benchmark/cases/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'bootstrap2/**'
+      - 'docs2/benchmark/cases/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bootstrap2
+      - name: Build
+        run: cargo build --release
+        working-directory: bootstrap2
+      - name: Test
+        run: cargo test --release
+        working-directory: bootstrap2

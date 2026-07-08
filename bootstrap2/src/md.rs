@@ -105,6 +105,25 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
     }
 
     let mut sections: BTreeMap<String, Section> = BTreeMap::new();
+    // Content before the first heading, or a whole document without headings, forms a
+    // preamble section at `/`, so no prose is invisible to extraction. Mirrors
+    // docs2/compiler/parsing.md#section-tree.
+    let pre_end = heads.first().map(|h| h.line).unwrap_or(lines.len());
+    if lines[..pre_end].iter().any(|l| !l.trim().is_empty()) {
+        let raw = lines[..pre_end].join("\n");
+        sections.insert(
+            "/".to_string(),
+            Section {
+                title: String::new(),
+                kind: "preamble".to_string(),
+                order: 0,
+                parent: None,
+                hash: hash_hex(&raw),
+                raw,
+                lines: [0, pre_end],
+            },
+        );
+    }
     let mut stack: Vec<(usize, String)> = Vec::new();
     let mut sibling_counts: HashMap<String, usize> = HashMap::new();
     for (idx, h) in heads.iter().enumerate() {
@@ -234,6 +253,22 @@ mod tests {
         let text = "# Top\n```\n# not a heading\n```\n## Real\n";
         let s = parse_sections(text);
         assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn preamble_and_headingless_content_is_captured() {
+        // Prose before the first heading lands in a preamble section at `/`.
+        let s = parse_sections("Intro line before any heading.\n\n# Top\nbody\n");
+        assert_eq!(s["/"].kind, "preamble");
+        assert!(s["/"].raw.contains("Intro line"));
+        assert_eq!(s["/top"].kind, "root");
+        assert_eq!(s.len(), 2);
+        // A heading-less document is one preamble holding everything.
+        let n = parse_sections("Just prose, no headings at all.\n");
+        assert_eq!(n.len(), 1);
+        assert!(n["/"].raw.contains("Just prose"));
+        // A blank-only file still yields no sections: empty-file check territory.
+        assert!(parse_sections("\n\n").is_empty());
     }
 
     #[test]

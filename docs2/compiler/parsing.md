@@ -21,10 +21,16 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 A section is a heading and its body, a list item, a code block, a blockquote, or a
 diagram. Sections form a tree per document.
 
+Content before the first heading, and a document with no headings at all, forms a
+`preamble` section referenced `/`, with no title and no parent. No prose is invisible
+to extraction because of where it sits. A file of only blank lines yields no sections
+(that is [`empty-file`](./reconciler.md#waves) territory).
+
 Each section carries:
 
 - `title`: the heading or item text.
-- `kind`: `root`, `heading`, `list-item`, `code-block`, `blockquote`, or `diagram`.
+- `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
+  `diagram`.
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent. The root section has none.
 - `raw`: the verbatim source text. Concatenating `raw` in tree order reconstructs the

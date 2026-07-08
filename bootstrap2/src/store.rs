@@ -118,6 +118,21 @@ fn write_yaml<T: Serialize>(path: &Path, value: &T) {
 
 impl Store {
     pub fn load(out: &Path) -> Store {
+        // Readers never take the lock: read the generation counter, load every shard,
+        // and retry if the counter moved mid-read (a commit landed between shards).
+        // Mirrors docs2/compiler/graph.md#concurrency.
+        let counter = || yaml_to::<Status>(&out.join("status.yaml")).map(|s| s.generation).unwrap_or(0);
+        for _ in 0..4 {
+            let before = counter();
+            let store = Self::load_once(out);
+            if counter() == before {
+                return store;
+            }
+        }
+        Self::load_once(out)
+    }
+
+    fn load_once(out: &Path) -> Store {
         let g = out.join("graph");
         let mut store = Store {
             out: out.to_path_buf(),

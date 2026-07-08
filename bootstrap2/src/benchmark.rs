@@ -12,24 +12,38 @@ use crate::turn::{run_turn, Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 6] = [
+const CASE_FILES: [&str; 11] = [
     include_str!("../../docs2/benchmark/cases/turn-extract.md"),
     include_str!("../../docs2/benchmark/cases/turn-declarative.md"),
+    include_str!("../../docs2/benchmark/cases/turn-density.md"),
+    include_str!("../../docs2/benchmark/cases/turn-edges.md"),
     include_str!("../../docs2/benchmark/cases/turn-reuse.md"),
     include_str!("../../docs2/benchmark/cases/turn-converge.md"),
     include_str!("../../docs2/benchmark/cases/turn-repair.md"),
     include_str!("../../docs2/benchmark/cases/turn-review.md"),
+    include_str!("../../docs2/benchmark/cases/turn-review-duplicate.md"),
+    include_str!("../../docs2/benchmark/cases/turn-review-lookalike.md"),
+    include_str!("../../docs2/benchmark/cases/turn-review-lint.md"),
 ];
 
 struct Case {
     name: String,
+    tier: String,
     task_type: String,
     target: String,
     docs: BTreeMap<String, String>,
     entities: BTreeMap<String, Value>,
     requirements: BTreeMap<String, Value>,
     coverage: BTreeMap<String, String>,
+    lint: Linting,
     checks: Vec<(String, Value)>,
+}
+
+// The results file compares only within one case set: hash every embedded case
+// definition. Mirrors docs2/benchmark/benchmark.md#results-file.
+fn case_set_hash() -> String {
+    let blocks: Vec<String> = CASE_FILES.iter().flat_map(|f| yaml_blocks(f)).collect();
+    hash_hex(&blocks.join("\n---\n"))
 }
 
 // Pull every fenced ```yaml block out of a markdown file.
@@ -69,8 +83,14 @@ fn parse_cases() -> Vec<Case> {
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                     .unwrap_or_default()
             };
+            let strs = |x: &Value| -> Vec<String> {
+                x.as_array()
+                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .unwrap_or_default()
+            };
             cases.push(Case {
                 name: v["name"].as_str().unwrap_or("unnamed").to_string(),
+                tier: v["tier"].as_str().unwrap_or("extraction").to_string(),
                 task_type: v["task"]["type"].as_str().unwrap_or_default().to_string(),
                 target: v["task"]["target"].as_str().unwrap_or_default().to_string(),
                 docs: obj(&v["given"]["docs"])
@@ -83,6 +103,10 @@ fn parse_cases() -> Vec<Case> {
                     .into_iter()
                     .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
                     .collect(),
+                lint: Linting {
+                    warnings: strs(&v["given"]["lint"]["warnings"]),
+                    errors: strs(&v["given"]["lint"]["errors"]),
+                },
                 checks: v["assert"]
                     .as_array()
                     .map(|a| {
@@ -164,67 +188,27 @@ fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
     s
 }
 
-// Minimal pattern matcher for the check patterns: literals, one level of (a|b|c)
-// alternation groups, top-level |, a leading ^ anchor, and \. escapes. Case-insensitive.
-// Full regular expressions are deliberately out of scope (no dependencies).
-fn expand_alternatives(pat: &str) -> Vec<String> {
-    if let (Some(open), Some(close)) = (pat.find('('), pat.find(')')) {
-        if open < close {
-            let (head, rest) = (&pat[..open], &pat[close + 1..]);
-            let mut out = Vec::new();
-            for alt in pat[open + 1..close].split('|') {
-                for tail in expand_alternatives(rest) {
-                    out.push(format!("{}{}{}", head, alt, tail));
-                }
-            }
-            return out;
-        }
-    }
-    vec![pat.to_string()]
+// Check patterns are regular expressions per case.schema.yaml, matched
+// case-insensitively. An invalid pattern is a check failure, never a silent pass.
+fn compile(pattern: &str) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("bad pattern `{}`: {}", pattern, e))
 }
 
-fn mini_match(pattern: &str, text: &str) -> bool {
-    let text = text.to_lowercase();
-    for top in split_top_level(pattern) {
-        for alt in expand_alternatives(&top) {
-            let (anchored, body) = match alt.strip_prefix('^') {
-                Some(b) => (true, b),
-                None => (false, alt.as_str()),
-            };
-            let needle = body.replace("\\.", ".").to_lowercase();
-            if needle.is_empty() {
-                continue;
-            }
-            let hit = if anchored { text.starts_with(&needle) } else { text.contains(&needle) };
-            if hit {
-                return true;
-            }
-        }
+// Resolve a check's entity reference: an id, or a unique exact name/alias match.
+fn find_entity(store: &Store, ident: &str) -> Option<String> {
+    if store.graph.entities.contains_key(ident) {
+        return Some(ident.to_string());
     }
-    false
-}
-
-// Split on | that is not inside a () group.
-fn split_top_level(pat: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0;
-    let mut cur = String::new();
-    for c in pat.chars() {
-        match c {
-            '(' => {
-                depth += 1;
-                cur.push(c);
-            }
-            ')' => {
-                depth -= 1;
-                cur.push(c);
-            }
-            '|' if depth == 0 => out.push(std::mem::take(&mut cur)),
-            _ => cur.push(c),
-        }
-    }
-    out.push(cur);
-    out
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    store
+        .graph
+        .entities
+        .iter()
+        .find(|(_, e)| norm(&e.name) == norm(ident) || e.aliases.iter().any(|a| norm(a) == norm(ident)))
+        .map(|(id, _)| id.clone())
 }
 
 // Evaluate one check against the resulting store and the staged-mutation count.
@@ -241,11 +225,15 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
         }
         "entityAbsent" => {
             let pat = arg["namePattern"].as_str().unwrap_or_default();
+            let re = match compile(pat) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
+            };
             store
                 .graph
                 .entities
                 .values()
-                .find(|e| mini_match(pat, &e.name))
+                .find(|e| re.is_match(&e.name))
                 .map(|e| format!("entity `{}` matches forbidden pattern {}", e.name, pat))
         }
         "entityCount" => {
@@ -265,23 +253,69 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
         "requirementExists" => {
             let pat = arg["earsPattern"].as_str().unwrap_or_default();
             let ent = arg["entity"].as_str().unwrap_or_default();
-            let ent_id = if store.graph.entities.contains_key(ent) {
-                Some(ent.to_string())
-            } else {
-                store
-                    .graph
-                    .entities
-                    .iter()
-                    .find(|(_, e)| norm(&e.name) == norm(ent) || e.aliases.iter().any(|a| norm(a) == norm(ent)))
-                    .map(|(id, _)| id.clone())
+            let re = match compile(pat) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
             };
-            let Some(ent_id) = ent_id else {
+            let Some(ent_id) = find_entity(store, ent) else {
                 return Some(format!("entity {} not found", ent));
             };
             let found = store.graph.requirements.values().any(|r| {
-                mini_match(pat, &r.ears) && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
+                re.is_match(&r.ears) && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
             });
             (!found).then(|| format!("no requirement matching `{}` on {}", pat, ent_id))
+        }
+        "requirementCount" => {
+            let n = match arg["entity"].as_str() {
+                Some(ent) => {
+                    let Some(ent_id) = find_entity(store, ent) else {
+                        return Some(format!("entity {} not found", ent));
+                    };
+                    store
+                        .graph
+                        .requirements
+                        .values()
+                        .filter(|r| r.entities.iter().any(|e| store.resolve_id(e) == ent_id))
+                        .count()
+                }
+                None => store.graph.requirements.len(),
+            };
+            if let Some(max) = arg["max"].as_u64() {
+                if n as u64 > max {
+                    return Some(format!("{} requirements, max {}", n, max));
+                }
+            }
+            if let Some(min) = arg["min"].as_u64() {
+                if (n as u64) < min {
+                    return Some(format!("{} requirements, min {}", n, min));
+                }
+            }
+            None
+        }
+        "relationshipExists" => {
+            let a = arg["a"].as_str().unwrap_or_default();
+            let b = arg["b"].as_str().unwrap_or_default();
+            let Some(a_id) = find_entity(store, a) else {
+                return Some(format!("entity {} not found", a));
+            };
+            let Some(b_id) = find_entity(store, b) else {
+                return Some(format!("entity {} not found", b));
+            };
+            let want_type = arg["type"].as_str();
+            let found = store.graph.relationships.values().any(|r| {
+                let members: Vec<String> = r.members.iter().map(|m| store.resolve_id(m).to_string()).collect();
+                members.contains(&a_id)
+                    && members.contains(&b_id)
+                    && want_type.map(|t| r.rel_type == t).unwrap_or(true)
+            });
+            (!found).then(|| {
+                format!(
+                    "no {} relationship between {} and {}",
+                    want_type.unwrap_or("derived"),
+                    a_id,
+                    b_id
+                )
+            })
         }
         "mutationCount" => {
             if let Some(max) = arg["max"].as_u64() {
@@ -298,13 +332,15 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
         }
         "diagnosticExists" => {
             let rule = arg["rule"].as_str().unwrap_or_default();
-            let subject = arg["subject"].as_str().unwrap_or_default();
+            let subject = arg["subject"].as_str();
             let found = store.graph.diagnostics.values().any(|d| {
                 d.lifecycle == "open"
                     && d.rule == rule
-                    && d.subjects.iter().any(|s| store.resolve_id(s) == store.resolve_id(subject))
+                    && subject
+                        .map(|want| d.subjects.iter().any(|s| store.resolve_id(s) == store.resolve_id(want)))
+                        .unwrap_or(true)
             });
-            (!found).then(|| format!("no open {} diagnostic on {}", rule, subject))
+            (!found).then(|| format!("no open {} diagnostic on {}", rule, subject.unwrap_or("any subject")))
         }
         "diagnosticAbsent" => {
             let rule = arg["rule"].as_str().unwrap_or_default();
@@ -333,24 +369,26 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
     }
 }
 
-pub fn run(llm: &Llm) -> i32 {
+pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
     let cases = parse_cases();
     if cases.is_empty() {
         eprintln!("jazyk: no benchmark cases parsed");
         return 2;
     }
     let limits = Limits::default();
-    let lint = Linting::default();
     let trace = Trace { level: TraceLevel::Quiet };
     println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
-    let mut any_capable = false;
+    let mut any_usable = false;
+    let mut codec_reports: Vec<(String, Value)> = Vec::new();
 
     for (codec_name, mode) in [("native", 1u8), ("text", 2u8)] {
         let started = std::time::Instant::now();
         let tokens_before = llm::tokens_spent();
-        let mut passed_cases = 0usize;
+        let mut extraction_ok = true;
+        let mut review_ok = true;
         let mut checks_passed = 0usize;
         let mut checks_total = 0usize;
+        let mut case_results: Vec<(String, String)> = Vec::new();
         println!("\ncodec: {}", codec_name);
 
         for case in &cases {
@@ -373,7 +411,7 @@ pub fn run(llm: &Llm) -> i32 {
                 stale_anchors: Vec::new(),
             };
             let case_start = std::time::Instant::now();
-            let out = run_turn(llm, store.clone(), &item, &limits, &lint, &trace);
+            let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &trace);
             let staged = out.session.staged.len();
             let mut fail: Option<String> = None;
             // A native case that silently downgraded mid-turn did not pass natively.
@@ -398,44 +436,98 @@ pub fn run(llm: &Llm) -> i32 {
             std::fs::remove_dir_all(&tmp).ok();
             match &fail {
                 None => {
-                    passed_cases += 1;
+                    case_results.push((case.name.clone(), "pass".into()));
                     println!(
-                        "  {:16} pass  ({} rounds, {} staged, {:.0}s)",
+                        "  {:22} pass  ({} rounds, {} staged, {:.0}s)",
                         case.name,
                         out.rounds,
                         staged,
                         case_start.elapsed().as_secs_f32()
                     );
                 }
-                Some(why) => println!(
-                    "  {:16} FAIL  {} ({} rounds, {:.0}s)",
-                    case.name,
-                    why,
-                    out.rounds,
-                    case_start.elapsed().as_secs_f32()
-                ),
+                Some(why) => {
+                    if case.tier == "review" {
+                        review_ok = false;
+                    } else {
+                        extraction_ok = false;
+                    }
+                    case_results.push((case.name.clone(), why.clone()));
+                    println!(
+                        "  {:22} FAIL  {} ({} rounds, {:.0}s)",
+                        case.name,
+                        why,
+                        out.rounds,
+                        case_start.elapsed().as_secs_f32()
+                    );
+                }
             }
         }
 
-        let capable = passed_cases == cases.len();
-        any_capable |= capable;
+        // The verdict is the highest tier whose cases all pass; review implies
+        // extraction. Mirrors docs2/benchmark/benchmark.md#report.
+        let verdict = match (extraction_ok, review_ok) {
+            (true, true) => "review",
+            (true, false) => "extraction",
+            _ => "not capable",
+        };
+        any_usable |= extraction_ok;
         let secs = started.elapsed().as_secs_f64();
         let tokens = llm::tokens_spent() - tokens_before;
+        let throughput = if secs > 0.0 { tokens as f64 / secs } else { 0.0 };
         println!(
-            "  verdict: {}  score {}/{} checks ({} of {} cases)  throughput ~{:.0} tok/s",
-            if capable { "capable" } else { "not capable" },
-            checks_passed,
-            checks_total,
-            passed_cases,
-            cases.len(),
-            if secs > 0.0 { tokens as f64 / secs } else { 0.0 }
+            "  verdict: {}  score {}/{} checks  throughput ~{:.0} tok/s",
+            verdict, checks_passed, checks_total, throughput
         );
+        codec_reports.push((
+            codec_name.to_string(),
+            serde_json::json!({
+                "verdict": verdict,
+                "score": format!("{}/{}", checks_passed, checks_total),
+                "throughput": throughput.round() as u64,
+                "cases": case_results.iter().cloned().collect::<BTreeMap<String, String>>(),
+            }),
+        ));
     }
     llm::set_tools_mode(0);
-    if any_capable {
+    write_results(out, &llm.model, &codec_reports);
+    if any_usable {
         0
     } else {
         1
+    }
+}
+
+// One entry per model in <out>/benchmark/results.yaml, updated in place. Mirrors
+// docs2/benchmark/benchmark.md#results-file.
+fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, Value)]) {
+    let path = out.join("benchmark").join("results.yaml");
+    let mut all: BTreeMap<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_norway::from_str(&s).ok())
+        .unwrap_or_default();
+    let graded_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    all.insert(
+        model.to_string(),
+        serde_json::json!({
+            "gradedAt": graded_at,
+            "caseSetHash": case_set_hash(),
+            "codecs": codec_reports.iter().cloned().collect::<BTreeMap<String, Value>>(),
+        }),
+    );
+    if std::fs::create_dir_all(path.parent().unwrap()).is_ok() {
+        match serde_norway::to_string(&all) {
+            Ok(y) => {
+                if let Err(e) = std::fs::write(&path, y) {
+                    eprintln!("jazyk: could not write {}: {}", path.display(), e);
+                } else {
+                    println!("\nresults: {}", path.display());
+                }
+            }
+            Err(e) => eprintln!("jazyk: could not serialize results: {}", e),
+        }
     }
 }
 
@@ -446,22 +538,60 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        assert_eq!(cases.len(), 7); // six files, turn-review holds two blocks
+        assert_eq!(cases.len(), 12); // eleven files, turn-review holds two blocks
         assert!(cases.iter().any(|c| c.name == "turn-declarative"));
         assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
         let extract = cases.iter().find(|c| c.name == "turn-extract").unwrap();
         assert_eq!(extract.task_type, "reconcile-doc");
         assert_eq!(extract.checks.len(), 6);
+        // Tier defaults to extraction; the five review cases declare theirs.
+        assert_eq!(extract.tier, "extraction");
+        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 5);
+        let lint = cases.iter().find(|c| c.name == "turn-review-lint").unwrap();
+        assert_eq!(lint.lint.warnings.len(), 1);
+        // Every embedded pattern must compile, or a case is unwinnable.
+        for case in &cases {
+            for (kind, arg) in &case.checks {
+                let pat = match kind.as_str() {
+                    "entityAbsent" => arg["namePattern"].as_str(),
+                    "requirementExists" => arg["earsPattern"].as_str(),
+                    _ => None,
+                };
+                if let Some(pat) = pat {
+                    assert!(compile(pat).is_ok(), "{}: {}", case.name, pat);
+                }
+            }
+        }
     }
 
     #[test]
-    fn mini_match_covers_case_patterns() {
-        assert!(mini_match("empt(y|ies|ied)", "the system shall empty the Cart"));
-        assert!(mini_match("^--|/|\\.md", "--api-key"));
-        assert!(mini_match("^--|/|\\.md", "src/link.rs"));
-        assert!(mini_match("^--|/|\\.md", "notes.md"));
-        assert!(!mini_match("^--|/|\\.md", "Shopping Cart"));
-        assert!(mini_match("places an order", "When the Customer places an order, ..."));
+    fn results_file_updates_in_place_per_model() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "review"}))]);
+        write_results(&tmp, "model-b", &[("text".into(), serde_json::json!({"verdict": "extraction"}))]);
+        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "extraction"}))]);
+        let s = std::fs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
+        let all: BTreeMap<String, Value> = serde_norway::from_str(&s).unwrap();
+        assert_eq!(all.len(), 2);
+        // The re-grade replaced model-a's entry; model-b survived untouched.
+        assert_eq!(all["model-a"]["codecs"]["native"]["verdict"], "extraction");
+        assert_eq!(all["model-b"]["codecs"]["text"]["verdict"], "extraction");
+        assert_eq!(all["model-a"]["caseSetHash"], all["model-b"]["caseSetHash"]);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn patterns_are_regexes_matched_case_insensitively() {
+        let re = |p: &str| compile(p).unwrap();
+        assert!(re("empt(y|ies|ied)").is_match("the system shall EMPTY the Cart"));
+        assert!(re("^--|/|\\.md").is_match("--api-key"));
+        assert!(re("^--|/|\\.md").is_match("src/link.rs"));
+        assert!(re("^--|/|\\.md").is_match("notes.md"));
+        assert!(!re("^--|/|\\.md").is_match("Shopping Cart"));
+        assert!(re("^addProduct$").is_match("addproduct"));
+        // An invalid pattern is a check failure, never a silent pass.
+        assert!(compile("(unclosed").is_err());
     }
 
     #[test]

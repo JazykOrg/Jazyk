@@ -15,6 +15,13 @@ properties:
   description:
     description: One sentence stating the skill the case grades
     type: string
+  tier:
+    description: >-
+      The verdict tier the case gates. The verdict is the highest tier whose cases all
+      pass
+    type: string
+    enum: [extraction, review]
+    default: extraction
   task:
     description: The turn the harness runs
     type: object
@@ -62,6 +69,19 @@ properties:
             additionalProperties:
               type: string
               enum: [covered, non-normative]
+      lint:
+        description: Project lint rules the turn runs under
+        type: object
+        additionalProperties: false
+        properties:
+          warnings:
+            type: array
+            items:
+              type: string
+          errors:
+            type: array
+            items:
+              type: string
   assert:
     description: Deterministic checks. All must pass for the case to pass
     type: array
@@ -84,6 +104,10 @@ definitions:
         $ref: '#/definitions/entityCount'
       requirementExists:
         $ref: '#/definitions/requirementExists'
+      requirementCount:
+        $ref: '#/definitions/requirementCount'
+      relationshipExists:
+        $ref: '#/definitions/relationshipExists'
       mutationCount:
         $ref: '#/definitions/mutationCount'
       diagnosticExists:
@@ -135,6 +159,39 @@ definitions:
       entity:
         description: An entity the requirement must reference, by id or exact name
         type: string
+  requirementCount:
+    description: >-
+      The number of requirements in the resulting graph is within bounds, optionally
+      counting only requirements referencing one entity
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      entity:
+        description: Count only requirements referencing this entity, by id or exact name
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  relationshipExists:
+    description: >-
+      A derived relationship exists between the two entities, optionally of this type
+    type: object
+    required: [a, b]
+    additionalProperties: false
+    properties:
+      a:
+        description: One member entity, by id or exact name
+        type: string
+      b:
+        description: The other member entity, by id or exact name
+        type: string
+      type:
+        description: The relationship type the derived edge must carry
+        type: string
   mutationCount:
     description: The number of mutations staged by the turn is within bounds
     type: object
@@ -149,9 +206,10 @@ definitions:
         minimum: 0
   diagnosticExists:
     description: >-
-      An open diagnostic with this rule exists and its subjects include the subject
+      An open diagnostic with this rule exists. With a subject, its subjects must
+      include it
     type: object
-    required: [rule, subject]
+    required: [rule]
     additionalProperties: false
     properties:
       rule:

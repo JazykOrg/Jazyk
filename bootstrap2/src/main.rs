@@ -186,8 +186,8 @@ fn main() {
             0
         }
         "benchmark" => {
-            let (_proj, llm, _out) = cli::resolve(&[], &opts);
-            benchmark::run(&llm)
+            let (_proj, llm, out) = cli::resolve(&[], &opts);
+            benchmark::run(&llm, &out)
         }
         _ => usage(),
     };

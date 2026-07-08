@@ -14,3 +14,4 @@ serde_norway = "0.9"
 # Infrastructure comes from crates; only domain logic is hand-rolled (owner decision).
 ureq = "2"
 notify = "6"
+regex = "1.12.4"

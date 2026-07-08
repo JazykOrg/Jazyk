@@ -59,9 +59,9 @@ non-convergence, incremental cross-contamination, local model unable to complete
 ## Known weaknesses (open)
 
 - Semantic judgment quality (extraction density, review calibration, lint application)
-  is the model's, not the harness's. `jazyk benchmark` is the gate, but it does not yet
-  grade density or review judgment, so a passing model can still produce a sparse graph.
-  No model has been graded against the relaxed `turn-converge` case.
+  is the model's, not the harness's. `jazyk benchmark` now gates density and review
+  judgment behind tiered verdicts; generation quality is still ungated. No model has
+  reached the `extraction` tier against the current case set.
 - Cross-document near-duplicate entities (`backend` vs `backend-system`) remain
   review-turn work, which weak models skim. Same-doc rephrase-duplicates are now caught
   deterministically (`duplicate-requirement`), and a reworded re-extraction of the same
@@ -331,6 +331,35 @@ Residual, and correctly surfaced rather than hidden: run-to-run judgment varianc
 the 4B model (an orphaned field entity, an operation-as-subject island) lands as
 `unused-entity` and `unreachable-entity` warnings, which is the product behavior, not a
 defect. The two open non-planted warnings in the final run are exactly that class.
+
+## The benchmark gates what the project depends on
+
+The benchmark grew from 7 to 12 cases and the binary verdict became tiers that route
+work instead of rejecting models (`not capable`, `extraction`, `review`), per
+docs2/benchmark/benchmark.md. New graded skills: extraction density on plain
+declarative prose, edge declaration from a sub-system list, rephrase-duplicate
+collapse below the deterministic token-overlap threshold, lookalike entity merge, and
+project lint application. Check patterns are real regular expressions now (the schema
+always said so; the hand-rolled matcher fell short). Results persist to
+`<out>/benchmark/results.yaml` keyed by model with a case-set hash; a verdict quoted
+without its hash is stale by definition.
+
+`gemma4:e4b-mlx`, re-graded against case set `fee6d1af`:
+
+| codec | score | verdict | notable |
+| --- | --- | --- | --- |
+| native | 29/41 | not capable | fails extract, declarative, density, edges, review, duplicate |
+| text | 30/41 | not capable | passes declarative and edges; density misses one fact (5 of 6); duplicate skimmed |
+
+- The new review cases measure judgment the old set could not see: gemma merges the
+  lookalike entities and applies the lint rule on both codecs, but never collapses
+  the rephrase-duplicate pair, the exact weakness the dogfood recorded.
+- Density fails as designed: under text gemma lands 5 of the 6 planted facts; under
+  native it waves the frontend section through unprocessed. The F3 failure mode is
+  now caught before a build instead of inside one.
+- No model has reached the `extraction` tier under the extended set. The prior
+  gpt-5.5 18/19 score predates the case-set hash and does not compare; re-grading
+  stronger models is the open next step.
 
 ## Cost
 

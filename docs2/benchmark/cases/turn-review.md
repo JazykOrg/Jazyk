@@ -11,6 +11,7 @@ both means the model judges, not pattern-matches. See
 ```yaml
 name: turn-review
 description: Flag a planted contradiction between two requirements on one entity.
+tier: review
 task:
   type: review-entity
   target: ent:abc
@@ -62,6 +63,7 @@ assert:
 ```yaml
 name: turn-review-clean
 description: Stay quiet when an entity's requirements are compatible.
+tier: review
 task:
   type: review-entity
   target: ent:xyz

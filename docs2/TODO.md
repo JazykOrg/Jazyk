@@ -29,10 +29,13 @@ This scratch space is a live document to outline the work for this documentation
   review-turn work; weak models skim. Same-doc rephrase-duplicates are caught
   deterministically (`duplicate-requirement`), and a reworded re-extraction of the same
   sentence refreshes in place.
-- Benchmark gaps: density/recall, review judgment (rephrase-duplicate, near-duplicate
-  entity, lint application), and generation quality are not gated. No model has been
-  graded against the relaxed `turn-converge` case; persist results machine-readably
-  with a case-set hash.
+- Grade stronger models against the extended benchmark (results persist to
+  `jazyk-out/benchmark/results.yaml` with a case-set hash). No model has reached the
+  `extraction` tier yet; `gemma4:e4b-mlx` scores 29-30 of 41 checks. Remote runs cost
+  money, approve per run.
+- A generation capability probe (does a generated unit compile and pass its named
+  test) remains unbuilt; the [gen workflow](./consumers/gen.md) is gated only by the
+  ledger after the fact.
 
 ## NOW
 

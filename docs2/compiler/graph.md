@@ -20,7 +20,7 @@ jazyk-out/
   docs/
     <mirrored doc path>.yaml   # per document: content hash, section tree, coverage
   journal/
-    <build>-<seq>.yaml   # one file per committed changeset
+    g<generation>.yaml   # one file per committed changeset
   status.yaml            # generation counter, parked work, budgets spent, verdict
   .lock                  # single-writer lock
 ```
@@ -92,6 +92,10 @@ The gates:
   whitespace-insensitive and forgives markdown escapes (a text-codec model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that
   locates in the source, so provenance stays verbatim to the document.
+- In a `reconcile-doc` turn, a mention or requirement source must cite the document
+  being reconciled. A quote from a document the prose merely links to is rejected
+  (`wrong-document`): the fact is anchored by this document's own sentence, e.g. a
+  link item's text. See [enumerations](./concepts/ears.md#enumerations).
 - An entity name that looks like syntax rather than a concept (a file path, a CLI flag,
   a markdown term) is rejected unless the call carries an explaining `note`.
 - A requirement must reference at least one entity. Its `edges` may only tie entities the

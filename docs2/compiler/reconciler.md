@@ -63,8 +63,8 @@ A build runs in waves:
   body exceeds the configured size (`section-too-large`), a document with too many
   sections (`doc-too-large`), an entity whose requirement count approaches the
   generation ceiling (`entity-too-dense`, the signal to split the topic into
-  subsections), a matched file with no content (`empty-file`), and a relative link
-  whose target file does not exist (`broken-link`). Turns never see these: an empty
+  subsections), a matched file with no content (`empty-file`), and a relative link to
+  a `.md` file whose target does not exist (`broken-link`). Turns never see these: an empty
   file has no dirty sections to schedule, and links only feed scheduling, so both
   problems are invisible to the model. The deterministic checks own them.
   Thresholds live in [limits](./project-settings.md#limits).

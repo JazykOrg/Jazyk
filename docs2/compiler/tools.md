@@ -138,7 +138,8 @@ Turns see subsets, not the whole catalog:
   `merge_entities`, `update_requirement` (a review adds missing `edges` when
   requirements tie entities structurally), `delete_requirement`, `report_diagnostic`,
   `resolve_diagnostic`, `done`.
-- `jazyk mcp graph` (default): the read tools.
+- `jazyk mcp graph` (default): the read, generation, and verification tools, plus
+  `await_changes`. See [MCP](../frontends/mcp.md#default-serving).
 - `jazyk mcp graph --write`: everything.
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).

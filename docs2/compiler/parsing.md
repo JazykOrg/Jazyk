@@ -12,7 +12,9 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
   configuration format is specified in
   [project settings](./project-settings.md).
 - A file matched by the docs glob with no handler yields an `unsupported-format`
-  diagnostic. A handler failure yields `parse-error`. An empty file yields `empty-file`.
+  diagnostic. A handler failure yields `parse-error`. An empty file yields `empty-file`,
+  raised by the [deterministic checks](./reconciler.md#waves): with no sections there is
+  nothing for parsing to attach a diagnostic to.
 
 ## Section tree
 

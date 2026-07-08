@@ -684,7 +684,7 @@ impl ToolSession {
             }
             "get_entity" => {
                 let id = Self::str_arg(args, "id")?;
-                let rid = self.snapshot.resolve_id(&id).to_string();
+                let rid = self.canon_entity_id(&id).ok_or_else(|| self.unknown_entity_error(&id))?;
                 let e = self
                     .snapshot
                     .graph
@@ -801,9 +801,9 @@ impl ToolSession {
             }
             "update_entity" => {
                 let id = Self::str_arg(args, "id")?;
-                if !self.known_entity(&id) {
+                let Some(rid) = self.canon_entity_id(&id) else {
                     return Err(self.unknown_entity_error(&id));
-                }
+                };
                 let name = Self::opt_str(args, "name");
                 if let Some(n) = &name {
                     if let Some(why) = junk_name(n) {
@@ -811,13 +811,13 @@ impl ToolSession {
                     }
                 }
                 self.stage(Op::UpdateEntity {
-                    id: id.clone(),
+                    id: rid.clone(),
                     name,
                     definition: Self::opt_str(args, "definition"),
                     add_aliases: Self::str_list(args, "add_aliases"),
                     add_mention: None,
                 })?;
-                Ok(json!({"id": id, "updated": true}))
+                Ok(json!({"id": rid, "updated": true}))
             }
             "delete_entity" => {
                 let id = Self::str_arg(args, "id")?;
@@ -1297,6 +1297,25 @@ mod tests {
             .unwrap_err();
         assert_eq!(err2.rule, "unknown-id");
         assert!(err2.message.contains("upsert_entity"), "repair hint: {}", err2.message);
+    }
+
+    #[test]
+    fn implicit_done_drops_dishonest_coverage_and_commits_the_rest() {
+        let mut t = session();
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Shopping Cart", "definition": "holds items", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
+        )
+        .unwrap();
+        // A covered claim with no requirement sourced from the section is dishonest;
+        // the explicit done bounces it.
+        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        assert!(t.dispatch("done", &json!({"summary": "covered"})).is_err());
+        // The implicit done drops the offending mark and commits the rest.
+        assert!(t.finish_implicit("(implicit: test)"));
+        assert!(t.done.is_some());
+        assert!(t.staged.iter().any(|op| matches!(op, Op::CreateEntity { .. })));
+        assert!(!t.staged.iter().any(|op| matches!(op, Op::SetCoverage { state, .. } if state == "covered")));
     }
 
     #[test]

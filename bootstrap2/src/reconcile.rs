@@ -111,7 +111,7 @@ fn run_wave(
                         return;
                     }
                     let mut s = store.lock().unwrap();
-                    let report = s.apply(out.session.staged, item, out.rounds, 0);
+                    let report = s.apply(out.session.staged, item, out.rounds, out.tokens);
                     for sk in &report.skipped {
                         trace.line(&format!("{} {}", item.task, item.target), &format!("skipped at commit: {}", sk));
                     }
@@ -726,7 +726,98 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
 
 #[cfg(test)]
 mod tests {
-    use super::looks_normative;
+    use super::{checks, looks_normative};
+    use crate::model::{hash_hex, DocRecord, Requirement, SourceRef};
+    use crate::project::Project;
+    use crate::store::Store;
+    use std::collections::BTreeMap;
+
+    fn seed_doc(store: &mut Store, doc: &str, text: &str) {
+        store.docs.insert(
+            doc.to_string(),
+            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+        );
+    }
+
+    fn req(ears: &str, entity: &str, doc: &str, section: &str, quote: &str) -> Requirement {
+        Requirement {
+            ears: ears.into(),
+            entities: vec![entity.into()],
+            edges: Vec::new(),
+            source: SourceRef { doc: doc.into(), section: section.into(), quote: quote.into() },
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    fn rules_for<'a>(f: &'a [(String, String, String, String)], rule: &str) -> Vec<&'a (String, String, String, String)> {
+        f.iter().filter(|(r, _, _, _)| r == rule).collect()
+    }
+
+    #[test]
+    fn empty_file_flagged_with_zero_llm_calls() {
+        let mut s = Store::default();
+        seed_doc(&mut s, "empty.md", "");
+        seed_doc(&mut s, "blank.md", "\n\n  \n");
+        seed_doc(&mut s, "full.md", "# Full\nThe system shall respond.\n");
+        let f = checks(&s, &Project::default(), &[]);
+        let hits = rules_for(&f, "empty-file");
+        assert_eq!(hits.len(), 2, "{:?}", hits);
+        assert!(hits.iter().all(|(_, subj, sev, _)| sev == "warning" && subj != "full.md"));
+    }
+
+    #[test]
+    fn broken_link_flagged_only_for_missing_md_targets() {
+        let mut s = Store::default();
+        seed_doc(&mut s, "a.md", "# A\nSee [b](./b.md) and [gone](./no-such-doc-xyz.md).\n");
+        seed_doc(&mut s, "b.md", "# B\ncontent\n");
+        let f = checks(&s, &Project::default(), &[]);
+        let hits = rules_for(&f, "broken-link");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, "a.md");
+        assert_eq!(hits[0].2, "warning");
+        assert!(hits[0].3.contains("no-such-doc-xyz.md"));
+    }
+
+    #[test]
+    fn duplicate_requirement_splits_warning_and_info() {
+        let mut s = Store::default();
+        // Same sentence extracted twice: a twin, warning.
+        s.graph.requirements.insert(
+            "req:a-1".into(),
+            req("The system shall archive completed orders.", "ent:one", "a.md", "/a", "archives completed orders"),
+        );
+        s.graph.requirements.insert(
+            "req:a-2".into(),
+            req("The system shall archive completed orders.", "ent:one", "a.md", "/a", "archives completed orders"),
+        );
+        // The same fact restated in another document: intentional redundancy, info.
+        s.graph.requirements.insert(
+            "req:b-1".into(),
+            req("The store shall mint every id at creation.", "ent:two", "a.md", "/a", "mints every id at creation"),
+        );
+        s.graph.requirements.insert(
+            "req:b-2".into(),
+            req("The store shall mint every id at creation.", "ent:two", "b.md", "/b", "the store mints every id"),
+        );
+        // Parallel enumeration items in one document: similar statements, different
+        // sentences, not duplicates.
+        s.graph.requirements.insert(
+            "req:c-1".into(),
+            req("The record shall have an id field.", "ent:three", "c.md", "/c", "- `id` - the identifier"),
+        );
+        s.graph.requirements.insert(
+            "req:c-2".into(),
+            req("The record shall have a name field.", "ent:three", "c.md", "/c", "- `name` - the display name"),
+        );
+        let f = checks(&s, &Project::default(), &[]);
+        let hits = rules_for(&f, "duplicate-requirement");
+        assert_eq!(hits.len(), 2, "{:?}", hits);
+        assert!(hits.iter().any(|(_, subj, sev, msg)| subj == "req:a-1" && sev == "warning" && msg.contains("keep one")));
+        assert!(hits.iter().any(|(_, subj, sev, msg)| subj == "req:b-1" && sev == "info" && msg.contains("both kept")));
+    }
 
     #[test]
     fn normative_signals_catch_prose_without_shall() {

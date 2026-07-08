@@ -4,12 +4,11 @@ This scratch space is a live document to outline the work for this documentation
 
 ## IDEAS
 
-- Non-code usages (e.g. writing a book, hardware, CAD, 3d printing).
+- Non-code usages (e.g. writing a book, hardware, CAD, 3d printing). The gen design is
+  already medium-agnostic; no non-code corpus has been run yet.
 
 ## LATER
 
-- Viewer for the graph: browse entities, requirements, and diagnostics from
-  `jazyk-out/graph/`.
 - Embeddings-backed search behind the same [`search` tool](./compiler/tools.md#read-tools),
   same interface, no schema change.
 - Relationship cardinality on [derived edges](./compiler/graph.md#derived-data).
@@ -24,20 +23,19 @@ This scratch space is a live document to outline the work for this documentation
 
 ## NEXT
 
-- Entity mentions accumulate only on `upsert_entity`; a turn that reuses an entity in a
-  requirement adds no mention, so cross-doc presence reads better from requirement
-  sources. Consider a derived mention on reuse.
-- Models rarely declare requirement `edges`, so typed relationships stay sparse and
-  reachability leans on shared requirements. Consider stronger prompting or a review
-  pass that proposes edges.
-- Rephrase-duplicates (same statement, different word order) pass the requirement
-  natural key; review turns should catch them, weak models skim.
+- Typed relationships stay sparse under weak models despite the prompt guidance and the
+  review repair pass. Add a benchmark case that gates edge declaration.
+- Cross-document near-duplicate entities (`backend` vs `backend-system`) remain
+  review-turn work; weak models skim. Same-doc rephrase-duplicates are caught
+  deterministically (`duplicate-requirement`), and a reworded re-extraction of the same
+  sentence refreshes in place.
 - Documents whose prose cites sibling documents heavily can park on the
-  `wrong-document` gate (`compiler/model/diagnostic.md`, `compiler/concepts/identity.md`
-  in the dogfood). Decide whether reconcile turns may cite linked documents read-only.
-- Every graded model fails [turn-converge](./benchmark/cases/turn-converge.md) by staging
-  harmless coverage re-claims. Decide whether the case is over-strict (allow idempotent
-  re-claims) or the discipline is worth keeping.
+  `wrong-document` gate (`compiler/compiler.md` in the dogfood). Decide whether
+  reconcile turns may cite linked documents read-only.
+- Benchmark gaps: density/recall, review judgment (rephrase-duplicate, near-duplicate
+  entity, lint application), and generation quality are not gated. No model has been
+  graded against the relaxed `turn-converge` case; persist results machine-readably
+  with a case-set hash.
 
 ## NOW
 
@@ -45,5 +43,10 @@ This scratch space is a live document to outline the work for this documentation
   `bootstrap2/VALIDATION.md`).
 - [x] Benchmark local models for capability (`qwen3:4b-instruct`, `gemma4:12b-mlx`:
   not capable; the harness holds regardless).
-- [ ] Measure the declarative-obligation doctrine: re-dogfood density vs the strict run.
-- [ ] Stronger-model comparison through LocalRouter.
+- [x] Measure the declarative-obligation doctrine: re-dogfood density vs the strict run
+  (see `bootstrap2/VALIDATION.md`, the density experiment).
+- [x] Stronger-model comparison through LocalRouter (`gpt-5.5`: density, end to end,
+  self-hosting, stability; see `bootstrap2/VALIDATION.md`).
+- [ ] Converge the docs2 dogfood: `compiler/compiler.md` parks on sibling-citing prose.
+- [ ] Full docs2 gen and verify run to verdicts with a capable model
+  (`jazyk-out/gen/ledger.yaml` holds 106 rows with no verdicts).

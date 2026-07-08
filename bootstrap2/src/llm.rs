@@ -161,9 +161,10 @@ pub struct Llm {
 impl Llm {
     // One turn round: send the full message history, optionally with tool definitions, and
     // return the assistant message object (`content` and, when the model called tools,
-    // `tool_calls`). Transport failures retry immediately; a `tools` rejection surfaces as
-    // Err so the turn harness can downgrade the codec.
-    pub fn chat_messages(&self, messages: &[Value], tools: Option<&[Value]>, label: &str) -> Result<Value, String> {
+    // `tool_calls`) plus the completion tokens the call spent. Transport failures retry
+    // immediately; a `tools` rejection surfaces as Err so the turn harness can downgrade
+    // the codec.
+    pub fn chat_messages(&self, messages: &[Value], tools: Option<&[Value]>, label: &str) -> Result<(Value, u64), String> {
         let max = max_retries();
         let mut last = String::new();
         let started = std::time::Instant::now();
@@ -172,11 +173,11 @@ impl Llm {
         }
         for attempt in 0..=max {
             match self.chat_once(messages, tools) {
-                Ok(msg) => {
+                Ok(out) => {
                     if verbose() {
                         eprintln!("[jazyk] ✓ {} ({} ms)", label, started.elapsed().as_millis());
                     }
-                    return Ok(msg);
+                    return Ok(out);
                 }
                 Err(e) => {
                     // An endpoint that only serves streaming responses says so; switch
@@ -235,11 +236,11 @@ impl Llm {
     #[allow(dead_code)]
     pub fn chat(&self, system: &str, user: &str, label: &str) -> Result<String, String> {
         let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
-        let msg = self.chat_messages(&messages, None, label)?;
+        let (msg, _tokens) = self.chat_messages(&messages, None, label)?;
         Ok(msg["content"].as_str().unwrap_or("").to_string())
     }
 
-    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>) -> Result<Value, String> {
+    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>) -> Result<(Value, u64), String> {
         let streaming = STREAM_REQUIRED.load(Ordering::Relaxed);
         let mut payload = json!({
             "model": self.model,
@@ -308,14 +309,14 @@ impl Llm {
             .as_u64()
             .unwrap_or_else(|| (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4));
         SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-        Ok(msg)
+        Ok((msg, tokens))
     }
 }
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content
 // deltas concatenate; tool-call deltas accumulate per index (id and name arrive first,
 // arguments append across chunks). Non-`data:` lines (blanks, comments) are skipped.
-fn read_stream_message<R: BufRead>(reader: R) -> Result<Value, String> {
+fn read_stream_message<R: BufRead>(reader: R) -> Result<(Value, u64), String> {
     struct TcAcc {
         id: String,
         name: String,
@@ -381,7 +382,7 @@ fn read_stream_message<R: BufRead>(reader: R) -> Result<Value, String> {
             })
             .collect::<Vec<_>>());
     }
-    Ok(msg)
+    Ok((msg, tokens))
 }
 
 // Extract the first balanced JSON object from possibly noisy model output. The text codec

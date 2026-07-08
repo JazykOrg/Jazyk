@@ -108,6 +108,10 @@ marks and commits the rest: the extracted requirements land, the miscovered sect
 stay unprocessed, and the next build resumes them. Only the explicit `done` holds the
 model to repairing its own claims.
 
+An untouched stale anchor is different: the turn parks and stages nothing. Stale
+anchors are a contract only the model can honor, and the harness never commits around
+one. The next build lists the anchor again.
+
 ## Trace events
 
 The harness emits a structured event per round: the tool call with condensed arguments,

@@ -358,6 +358,9 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
 pub struct TurnOutput {
     pub session: ToolSession,
     pub rounds: u32,
+    // Completion tokens the turn spent, journaled per changeset
+    // (docs2/compiler/graph.md#journal).
+    pub tokens: u64,
     pub failed: Option<String>,
 }
 
@@ -403,6 +406,8 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         }
     }
 
+    // Accumulates across codec downgrades: a probe round costs tokens too.
+    let mut tokens = 0u64;
     'codec: loop {
         let codec: Box<dyn Codec> = if mode == 2 { Box::new(TextCodec) } else { Box::new(NativeCodec) };
         let mut messages = vec![
@@ -421,7 +426,10 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
             rounds += 1;
             let label = format!("{} r{}", prefix, rounds);
             let msg = match llm.chat_messages(&messages, tools_param.as_deref(), &label) {
-                Ok(m) => m,
+                Ok((m, t)) => {
+                    tokens += t;
+                    m
+                }
                 Err(e) if e.starts_with("tools-rejected:") && mode != 2 => {
                     trace.line(&prefix, "endpoint rejected native tools; downgrading to the text codec for this run");
                     llm::set_tools_mode(2);
@@ -429,7 +437,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                     continue 'codec;
                 }
                 Err(e) => {
-                    return TurnOutput { session, rounds, failed: Some(e) };
+                    return TurnOutput { session, rounds, tokens, failed: Some(e) };
                 }
             };
             let actions = codec.parse(&msg);
@@ -458,12 +466,12 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                     // as having called done; the same commit gates apply.
                     if session.finish_implicit("(implicit: the model stopped calling tools)") {
                         trace.line(&prefix, &format!("✓ implicit done ({} staged, {} rounds)", session.staged.len(), rounds));
-                        return TurnOutput { session, rounds, failed: None };
+                        return TurnOutput { session, rounds, tokens, failed: None };
                     }
                     return TurnOutput {
                         session,
-
                         rounds,
+                        tokens,
                         failed: Some("three consecutive replies without a usable tool call".into()),
                     };
                 }
@@ -498,7 +506,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                         messages.push(codec.result_msg(&id, &name, &result));
                         if session.done.is_some() {
                             trace.line(&prefix, &format!("✓ done ({} staged, {} rounds): {}", session.staged.len(), rounds, session.done.clone().unwrap_or_default()));
-                            return TurnOutput { session, rounds, failed: None };
+                            return TurnOutput { session, rounds, tokens, failed: None };
                         }
                     }
                 }
@@ -508,8 +516,8 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                 if invalid_streak >= 3 {
                     return TurnOutput {
                         session,
-
                         rounds,
+                        tokens,
                         failed: Some("three consecutive rounds with rejected tool calls".into()),
                     };
                 }
@@ -520,12 +528,12 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         // Same implicit-done rule at the round budget: commit valid staged work.
         if session.finish_implicit("(implicit: round budget exhausted)") {
             trace.line(&prefix, &format!("✓ implicit done at round budget ({} staged)", session.staged.len()));
-            return TurnOutput { session, rounds: round_budget, failed: None };
+            return TurnOutput { session, rounds: round_budget, tokens, failed: None };
         }
         return TurnOutput {
             session,
-
             rounds: round_budget,
+            tokens,
             failed: Some(format!("round budget ({}) exhausted without done", round_budget)),
         };
     }

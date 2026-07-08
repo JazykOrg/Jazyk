@@ -584,13 +584,10 @@ impl Store {
                                 d.reasoning = diagnostic.reasoning;
                             }
                             d.updated = Some(build.clone());
-                            applied.push(Op::UpdateEntity {
-                                id: did,
-                                name: None,
-                                definition: None,
-                                add_aliases: Vec::new(),
-                                add_mention: None,
-                            });
+                            // Journal the update as what it is: the merged diagnostic,
+                            // not an entity op carrying a diagnostic id.
+                            let merged = d.clone();
+                            applied.push(Op::ReportDiagnostic { id: did, diagnostic: merged });
                         }
                         None => {
                             diagnostic.created = Some(build.clone());

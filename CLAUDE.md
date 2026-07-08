@@ -47,17 +47,19 @@ turns rephrase it into EARS, keep the quote verbatim (`docs2/compiler/concepts/e
   `model/`, graph.md, context.md, turns.md, reconciler.md, tools.md, `concepts/`,
   project-settings.md, schemas (draft-07 JSON Schema in YAML, `$id`
   `https://jazyk.org/schemas/*.json`).
-- `docs2/frontends/`: cli.md, mcp.md, lsp.md. `docs2/consumers/`: codegen.md, testgen.md,
-  pm.md, docsgen.md. `docs2/benchmark/`: benchmark.md, cases.md, `cases/` (the case files are
-  embedded into the binary at compile time; they are fixtures, excluded from the docs glob).
+- `docs2/frontends/`: cli.md, mcp.md, lsp.md, viewer.md. `docs2/consumers/`: gen.md
+  (generation + verification ledger), pm.md, docsgen.md. `docs2/benchmark/`: benchmark.md,
+  cases.md, `cases/` (the case files are embedded into the binary at compile time; they are
+  fixtures, excluded from the docs glob).
 - `docs2/jazyk.toml`: the live project file (docs glob, roots, lint rules). The graph lands in
   `docs2/jazyk-out/` (gitignored): `graph/*.yaml` shards, `docs/` section trees + coverage,
   `journal/`, `status.yaml`.
 - `bootstrap2/src/`: model.rs, store.rs (shards, natural-key upserts, atomic commit, journal,
   GC), context.rs, tools.rs (the registry), turn.rs (codecs, prompts), reconcile.rs, llm.rs
   (OpenAI-compatible client over ureq; sticky fallbacks for tools/temperature/streaming),
-  md.rs, project.rs, cli.rs, mcp.rs, lsp.rs (read-only), benchmark.rs, jsonrpc.rs,
-  parallel.rs. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
+  md.rs, project.rs, cli.rs, gen.rs + verify.rs (generation ledger, verification statuses),
+  docsgen.rs, viewer.rs, mcp.rs, lsp.rs (read-only), benchmark.rs, jsonrpc.rs,
+  parallel.rs. `bootstrap2/editors/vscode`: LSP client extension. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
   events). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
   crates; hand-roll only domain logic. Do not reimplement transports, parsers for
   standard formats, or platform APIs.
@@ -69,8 +71,8 @@ turns rephrase it into EARS, keep the quote verbatim (`docs2/compiler/concepts/e
 - `cd bootstrap2 && cargo build --release` (binary at `bootstrap2/target/release/jazyk`),
   `cargo test`.
 - `jazyk compile [path...]` (live trace; `--verbose` full packs, `--quiet` summary),
-  `check`, `watch`, `status`, `context <target>`, `query <text>`, `codegen [entity...]
-  [--lang L]`, `mcp graph [--write]`, `lsp`, `benchmark`.
+  `check`, `watch`, `status`, `context <target>`, `query <text>`, `gen [entity...]`,
+  `test [--audit]`, `docsgen`, `viewer`, `mcp graph [--write]`, `lsp`, `benchmark`.
 - A project is a directory with `jazyk.toml` (walk-up discovery). Run the dogfood from
   `docs2/`.
 - Always run `jazyk benchmark` before trusting a new model: it grades turn capability per

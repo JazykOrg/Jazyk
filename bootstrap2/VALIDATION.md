@@ -58,16 +58,17 @@ non-convergence, incremental cross-contamination, local model unable to complete
 
 ## Known weaknesses (open)
 
-- A 4B model rewrites non-normative prose (glossaries, roadmaps) into shall statements
-  despite prompt doctrine. Semantic judgment quality is the model's, not the harness's;
-  `jazyk benchmark` (documented, not yet implemented) is the gate, and a stronger-model
-  comparison is the next experiment.
-- Rephrase-duplicates (same statement, different word order) pass the requirement
-  natural key; catching them is review-turn work, which weak models skim.
-- Models rarely declare `edges`, so typed relationships stay sparse; reachability
-  falls back to shared requirements.
-- Entity mentions accumulate only on upsert; cross-doc presence is currently better read
-  from requirement sources.
+- Semantic judgment quality (extraction density, review calibration, lint application)
+  is the model's, not the harness's. `jazyk benchmark` is the gate, but it does not yet
+  grade density or review judgment, so a passing model can still produce a sparse graph.
+  No model has been graded against the relaxed `turn-converge` case.
+- Cross-document near-duplicate entities (`backend` vs `backend-system`) remain
+  review-turn work, which weak models skim. Same-doc rephrase-duplicates are now caught
+  deterministically (`duplicate-requirement`), and a reworded re-extraction of the same
+  sentence refreshes in place.
+- Weak models declare few requirement `edges` despite the prompt guidance and the review
+  repair pass, so their typed relationships stay sparse and reachability falls back to
+  shared requirements. Dense models land them (305 relationships in the gpt-5.5 dogfood).
 
 ## F3: the docs2 dogfood
 

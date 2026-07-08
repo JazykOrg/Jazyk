@@ -73,11 +73,11 @@ graph TD;
     CLI[CLI];
     MCP[MCP Server];
     LSP[Language Server];
+    Viewer[Viewer];
   end
 
   subgraph Consumers
-    CodeGen[Code Generation];
-    TestGen[Test Generation];
+    Gen[Generation];
     PM[Project Management];
     DocsFeedback[Docs Feedback];
   end
@@ -91,8 +91,8 @@ graph TD;
   Context --> CLI;
   Context --> MCP;
   Context --> LSP;
-  Store --> CodeGen;
-  Store --> TestGen;
+  Store --> Viewer;
+  Store --> Gen;
   Store --> PM;
   Store --> DocsFeedback;
 ```
@@ -118,6 +118,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 - [CLI](./frontends/cli.md)
 - [MCP Server](./frontends/mcp.md)
 - [Language Server](./frontends/lsp.md)
+- [Viewer](./frontends/viewer.md)
 
 ## Consumers
 

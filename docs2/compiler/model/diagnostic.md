@@ -38,7 +38,6 @@ checks alike.
 | --- | --- | --- | --- |
 | [parsing](../parsing.md#format-handlers) | `unsupported-format` | warning | a matched file with no format handler |
 | parsing | `parse-error` | error | a format handler failed on the file |
-| parsing | `empty-file` | warning | a matched file with no content |
 | [coverage](../reconciler.md#coverage) | `uncovered-section` | warning | a section still `unprocessed` after the build |
 | coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | review turns | `contradiction` | warning or error | requirements on an entity that cannot all hold |
@@ -49,7 +48,8 @@ checks alike.
 | checks | `duplicate-requirement` | warning or info | warning: one source sentence extracted twice; info: the same fact intentionally restated in different documents (both kept) |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |
 | checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
-| checks | `broken-link` | warning | a relative link whose target file does not exist |
+| checks | `empty-file` | warning | a matched file with no content |
+| checks | `broken-link` | warning | a relative link to a `.md` file whose target does not exist; links that escape the project root are ignored |
 | checks | `entity-too-dense` | info | an entity's requirement count approaches the generation ceiling; consider subsections |
 | checks | `unreachable-entity` | warning | an entity not reachable from the declared roots |
 | checks | `unstable-extraction` | warning | a natural key deleted and recreated across recent builds |

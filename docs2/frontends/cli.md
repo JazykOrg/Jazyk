@@ -106,10 +106,15 @@ demand, without compiling. The same render runs after every committed changeset.
 Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds the
 [write tools](../compiler/tools.md#write-tools).
 
+### jazyk lsp
+
+`jazyk lsp` starts the [language server](./lsp.md) on stdio. Read-only: it serves the last
+committed graph, and a `compile` or `watch` rebuild refreshes it.
+
 ### jazyk benchmark
 
 Grade whether the configured model is good enough to compile Jazyk. See
-[benchmark](../benchmark/benchmark.md).
+[benchmark](../benchmark/benchmark.md). Results land in `<out>/benchmark/results.yaml`.
 
 ## Common options
 
@@ -117,6 +122,16 @@ Grade whether the configured model is good enough to compile Jazyk. See
 - `--model M`: the model to use.
 - `--api-key K`: sent as a bearer token.
 - `--out DIR`: the out directory (default `jazyk-out/`).
+
+## Help
+
+- `jazyk --help` (or `-h`, or bare `jazyk help`) prints the top-level usage: one line per
+  command plus the common options.
+- `jazyk <command> --help` prints that command's usage: its arguments, the options it
+  honors (only those), and its exit codes where they carry meaning. `jazyk help <command>`
+  is equivalent.
+- Help prints to stdout and exits `0`. A missing or unknown command prints the top-level
+  usage to stderr and exits `2`.
 
 ## Project discovery
 

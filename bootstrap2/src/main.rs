@@ -76,6 +76,129 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --out DIR";
+const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/jazyk-out/)";
+
+fn cmd_usage(cmd: &str) -> Option<String> {
+    let s = match cmd {
+        "compile" => format!(
+            "usage: jazyk compile [path...]\n\n\
+             Reconcile the graph with the documents, running turns to a fixed point.\n\
+             Explicit paths skip project discovery and run ad hoc on those files.\n\n\
+             options:\n  \
+             --verbose, -v   full context packs and payloads in the trace\n  \
+             --quiet, -q     only the final summary\n\
+             {}\n\n\
+             exit: 0 on convergence, non-zero when work was parked",
+            COMMON_LLM
+        ),
+        "check" => format!(
+            "usage: jazyk check [path...]\n\n\
+             Compile, then exit non-zero if open diagnostics of severity error exist.\n\
+             The CI gate.\n\n\
+             options:\n  \
+             --verbose, -v   full context packs and payloads in the trace\n  \
+             --quiet, -q     only the final summary\n\
+             {}",
+            COMMON_LLM
+        ),
+        "watch" => format!(
+            "usage: jazyk watch [path...]\n\n\
+             Recompile on file change. Event bursts debounce, and a fingerprint over the\n\
+             matched documents decides whether a build runs. An incomplete build retries\n\
+             on its own with backoff until a file change resets it.\n\n\
+             options:\n  \
+             --verbose, -v   full context packs and payloads in the trace\n  \
+             --quiet, -q     only the final summary\n\
+             {}",
+            COMMON_LLM
+        ),
+        "status" => format!(
+            "usage: jazyk status\n\n\
+             Summarize the last build: generation counter, coverage percentage, open\n\
+             diagnostics by severity, parked work.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "context" => format!(
+            "usage: jazyk context <ent:…|req:…|doc.md#/ref|h:…>\n\n\
+             Print the rendered context pack for a target, with its expansion handles.\n\
+             What this prints is exactly what a turn sees.\n\n\
+             options:\n  \
+             --focus k=n,…   context hop quotas (parents, mentions, requirements)\n  \
+             --budget N      context size budget in characters (default 12000)\n\
+             {}",
+            COMMON_OUT
+        ),
+        "query" => format!(
+            "usage: jazyk query <text>\n\n\
+             Search entities. Prints one {{id, name, definition}} line per match.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "gen" => format!(
+            "usage: jazyk gen [entity...]\n\n\
+             Generate the deliverable and its tests from the graph, and record the\n\
+             manifest in the ledger. With no arguments, cover every entity that has at\n\
+             least one requirement, leaf entities first, skipping entities whose facts\n\
+             are unchanged.\n\n\
+             options:\n  \
+             --force   regenerate even when facts are unchanged\n\
+             {}",
+            COMMON_LLM
+        ),
+        "test" => format!(
+            "usage: jazyk test [target...]\n\n\
+             Run verification over the generation ledger. Entity ids select their\n\
+             requirements' rows; requirement ids select rows directly.\n\n\
+             options:\n  \
+             --kind programmatic|llm   only rows of this kind\n  \
+             --list                    print the derived status table without running\n  \
+             --audit                   rebuild the ledger from the artifact markers\n  \
+             --force                   also rerun verified rows\n\
+             {}\n\n\
+             exit: 0 when every targeted row is verified, 1 otherwise",
+            COMMON_LLM
+        ),
+        "docsgen" => format!(
+            "usage: jazyk docsgen\n\n\
+             Render the per-entity requirements documents into <out>/docsgen/ without\n\
+             compiling.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "viewer" => "usage: jazyk viewer [--out FILE]\n\n\
+             Render the graph to one self-contained HTML page. An --out ending in .html\n\
+             names the file (default <out>/graph.html); otherwise --out is the out\n\
+             directory."
+            .to_string(),
+        "mcp" => format!(
+            "usage: jazyk mcp graph [--write]\n\n\
+             Serve the graph MCP server over stdio. Read tools by default; --write adds\n\
+             the write tools.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "lsp" => format!(
+            "usage: jazyk lsp\n\n\
+             Language server over stdio. Read-only: serves the last committed graph, and\n\
+             a compile or watch rebuild refreshes it.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "benchmark" => format!(
+            "usage: jazyk benchmark\n\n\
+             Grade the configured model: every benchmark case runs under both codecs\n\
+             (native tool calls and the text codec) in a sandbox store, scored by\n\
+             deterministic checks. Results land in <out>/benchmark/results.yaml.\n\n\
+             {}",
+            COMMON_LLM
+        ),
+        _ => return None,
+    };
+    Some(s)
+}
+
 fn main() {
     load_dotenv();
     let args: Vec<String> = std::env::args().collect();
@@ -128,9 +251,19 @@ fn main() {
         i += 1;
     }
 
-    if want_help || cmd.is_empty() {
-        println!("{}", top_usage());
-        std::process::exit(if want_help { 0 } else { 2 });
+    if want_help {
+        let key = match cmd.as_str() {
+            "codegen" | "testgen" => "gen",
+            c => c,
+        };
+        match cmd_usage(key) {
+            Some(u) => println!("{}", u),
+            None => println!("{}", top_usage()),
+        }
+        std::process::exit(0);
+    }
+    if cmd.is_empty() {
+        usage();
     }
 
     let code = match cmd.as_str() {
@@ -141,13 +274,13 @@ fn main() {
         "context" => match positional.first() {
             Some(target) => cli::run_context(&positional[1..], &opts, target),
             None => {
-                eprintln!("usage: jazyk context <ent:…|req:…|doc.md#/ref|h:…> [--focus k=n,…] [--budget N]");
+                eprintln!("{}", cmd_usage("context").unwrap());
                 2
             }
         },
         "query" => {
             if positional.is_empty() {
-                eprintln!("usage: jazyk query <text>");
+                eprintln!("{}", cmd_usage("query").unwrap());
                 2
             } else {
                 let q = positional.join(" ");
@@ -161,7 +294,7 @@ fn main() {
                 0
             }
             _ => {
-                eprintln!("usage: jazyk mcp graph [--write]");
+                eprintln!("{}", cmd_usage("mcp").unwrap());
                 2
             }
         },

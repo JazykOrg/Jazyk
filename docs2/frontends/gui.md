@@ -119,7 +119,7 @@ refetches its snapshots.
 - `docs.changed`: matched documents changed on disk, with whether the graph is now
   stale.
 - `pending.changed`: the generation or verification worklists changed size.
-- `watch.state`: the watch toggle changed.
+- `watch.state`: the watch mode changed.
 
 External activity surfaces the same way: a `jazyk compile` run from a terminal, or an
 [MCP](./mcp.md) agent committing through write tools, moves the lock and the counter,
@@ -145,15 +145,23 @@ completion, document links.
 
 ## Watch
 
-The GUI always watches the documents (that is what `docs.changed` reports). Whether a
-change triggers a compile is a toggle: `GET /api/watch` and `PUT /api/watch` with
-`{enabled}`, initialized from `--watch`, default off. Compiling spends LLM budget, so
-the automatic loop is opt-in.
+The GUI always watches the documents (that is what `docs.changed` reports). What a
+change triggers is the watch mode: `GET /api/watch` and `PUT /api/watch` with
+`{mode}`, one of:
 
-With watch on, the GUI runs the same loop as
-[`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, and
-backoff retries for `incomplete` builds. Changes during a running build queue one
-follow-up compile. Running `jazyk watch` in a terminal beside the GUI is safe: commits
+- `off`: changes update the document badges and nothing else.
+- `queue` (the default): changes queue visibly. The status bar counts the documents
+  that drifted from the graph and lists them on demand; compiling stays an explicit
+  click. The queue is derived, not stored: a document is queued while its on-disk
+  hash differs from the reconciled hash, so a commit drains it and an external build
+  drains it too.
+- `watch`: changes compile automatically, the same loop as
+  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, and
+  backoff retries for `incomplete` builds. Changes during a running build queue one
+  follow-up compile.
+
+`--watch` starts in `watch` mode. Compiling spends LLM budget, so the automatic loop
+is opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: commits
 serialize on the store lock, and the second build finds nothing dirty.
 
 ## What it shows

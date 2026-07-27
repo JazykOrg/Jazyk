@@ -130,16 +130,17 @@ pub async fn triage(
 }
 
 pub async fn watch_get(State(st): State<SharedState>) -> Json<Value> {
-    Json(json!({ "enabled": st.watch.load(std::sync::atomic::Ordering::Relaxed) }))
+    Json(json!({ "mode": st.watch_mode.lock().unwrap().clone() }))
 }
 
 pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
-    let Some(enabled) = body["enabled"].as_bool() else {
-        return err(StatusCode::BAD_REQUEST, "body must be {\"enabled\": bool}");
-    };
-    st.watch.store(enabled, std::sync::atomic::Ordering::Relaxed);
-    st.events.emit("watch.state", json!({ "enabled": enabled }));
-    Json(json!({ "enabled": enabled })).into_response()
+    let mode = body["mode"].as_str().unwrap_or_default();
+    if !["off", "queue", "watch"].contains(&mode) {
+        return err(StatusCode::BAD_REQUEST, "mode must be off, queue, or watch");
+    }
+    *st.watch_mode.lock().unwrap() = mode.to_string();
+    st.events.emit("watch.state", json!({ "mode": mode }));
+    Json(json!({ "mode": mode })).into_response()
 }
 
 pub async fn graph(State(st): State<SharedState>) -> Response {

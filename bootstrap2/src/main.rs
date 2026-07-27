@@ -183,7 +183,7 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              options:\n  \
              --port N        the port (default 4680)\n  \
              --no-open       do not open the browser\n  \
-             --watch         start with the compile-on-change toggle on\n  \
+             --watch         start in watch mode: compile on change (default: queue)\n  \
              --gui-dist DIR  serve frontend assets from DIR instead of the embedded build\n  \
              --no-token      disable the session token check (frontend development)\n\
              {}",

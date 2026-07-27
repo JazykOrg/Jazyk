@@ -156,3 +156,27 @@ details > summary {
   padding: 4px 12px;
   font-size: 12px;
 }
+
+.queue-pop {
+  position: fixed;
+  bottom: 34px;
+  right: 12px;
+  max-height: 50vh;
+  overflow: auto;
+  min-width: 260px;
+  z-index: 10;
+}
+
+.queue-pop p {
+  margin: 2px 0;
+}
+
+.statusbar select {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 4px;
+}

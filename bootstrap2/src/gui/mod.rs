@@ -12,9 +12,14 @@ mod state;
 
 use state::SharedState;
 
-// Watch-mode hook: with the compile toggle on, a document change enqueues a build.
+fn watch_mode(st: &SharedState) -> String {
+    st.watch_mode.lock().unwrap().clone()
+}
+
+// Watch-mode hook: in `watch` mode a document change enqueues a build. The other
+// modes only surface the change (docs.changed already fired).
 fn jobs_hook_on_docs_changed(st: &SharedState) {
-    if st.watch.load(std::sync::atomic::Ordering::Relaxed) {
+    if watch_mode(st) == "watch" {
         st.jobs.submit(st, jobs::JobKind::Compile);
     }
 }
@@ -23,7 +28,7 @@ fn jobs_hook_on_docs_changed(st: &SharedState) {
 // endpoint outage) retries with backoff, the same loop `jazyk watch` runs. A document
 // change resets the backoff by queueing a fresh compile through the hook above.
 fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
-    if !matches!(kind, jobs::JobKind::Compile) || !st.watch.load(std::sync::atomic::Ordering::Relaxed) {
+    if !matches!(kind, jobs::JobKind::Compile) || watch_mode(st) != "watch" {
         return;
     }
     let verdict = crate::store::Store::load(&st.out).status.verdict.clone();
@@ -36,7 +41,7 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     let st = st.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
-        if st.watch.load(std::sync::atomic::Ordering::Relaxed) && st.jobs.running_job().is_none() {
+        if watch_mode(&st) == "watch" && st.jobs.running_job().is_none() {
             st.jobs.submit(&st, jobs::JobKind::Compile);
         }
     });
@@ -76,7 +81,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         events: events::EventHub::new(),
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
         jobs: jobs::JobManager::new(),
-        watch: std::sync::atomic::AtomicBool::new(gopts.watch),
+        watch_mode: std::sync::Mutex::new(if gopts.watch { "watch" } else { "queue" }.to_string()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
     let worker = jobs::spawn_worker(st.clone());

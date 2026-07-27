@@ -106,7 +106,8 @@ demand, without compiling. The same render runs after every committed changeset.
 `jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts the
 [GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
 the language server over WebSocket, then opens the browser. `--no-open` skips opening
-the browser. Binds `127.0.0.1` only.
+the browser. `--watch` starts in the automatic [watch mode](./gui.md#watch) (default:
+changes queue and compiling is an explicit click). Binds `127.0.0.1` only.
 
 ### jazyk mcp graph
 

@@ -32,7 +32,7 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       qc.invalidateQueries({ queryKey: ['matrix'] })
       break
     case 'watch.state':
-      app.setWatch(ev.enabled as boolean)
+      app.setWatchMode(ev.mode as 'off' | 'queue' | 'watch')
       break
     case 'job.queued':
       app.upsertJob(ev.job as Job)
@@ -114,8 +114,8 @@ export function startEventStream(qc: QueryClient) {
   get<{ jobs: Job[] }>(`/api/jobs`)
     .then((r) => r.jobs.forEach((j) => app.upsertJob(j)))
     .catch(() => {})
-  get<{ enabled: boolean }>(`/api/watch`)
-    .then((r) => app.setWatch(r.enabled))
+  get<{ mode: 'off' | 'queue' | 'watch' }>(`/api/watch`)
+    .then((r) => app.setWatchMode(r.mode))
     .catch(() => {})
 
   connect()

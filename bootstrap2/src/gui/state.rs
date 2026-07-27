@@ -21,9 +21,10 @@ pub struct AppState {
     // Last emitted pending.changed payload, to emit only on movement.
     pub last_pending: std::sync::Mutex<serde_json::Value>,
     pub jobs: super::jobs::JobManager,
-    // The compile-on-change toggle (docs2/frontends/gui.md#watch). Default off:
-    // compiling spends LLM budget, so the automatic loop is opt-in.
-    pub watch: std::sync::atomic::AtomicBool,
+    // The watch mode: off | queue | watch (docs2/frontends/gui.md#watch). Default
+    // queue: changes queue visibly, compiling stays an explicit click; the automatic
+    // loop spends LLM budget, so it is opt-in.
+    pub watch_mode: std::sync::Mutex<String>,
     // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
     pub backoff: std::sync::atomic::AtomicU64,
 }

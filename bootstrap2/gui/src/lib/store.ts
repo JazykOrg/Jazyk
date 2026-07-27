@@ -15,14 +15,14 @@ interface AppStore {
   connected: boolean
   jobs: Record<number, Job>
   trace: JobTraceRow[]
-  watch: boolean
+  watchMode: 'off' | 'queue' | 'watch'
   theme: 'auto' | 'light' | 'dark'
   lastCommit: { generation: number; at: number } | null
   setConnected: (v: boolean) => void
   upsertJob: (j: Job) => void
   setJobState: (id: number, state: string, result?: Job['result']) => void
   pushTrace: (row: JobTraceRow) => void
-  setWatch: (v: boolean) => void
+  setWatchMode: (v: 'off' | 'queue' | 'watch') => void
   setTheme: (t: 'auto' | 'light' | 'dark') => void
   setLastCommit: (generation: number) => void
 }
@@ -31,7 +31,7 @@ export const useApp = create<AppStore>((set) => ({
   connected: false,
   jobs: {},
   trace: [],
-  watch: false,
+  watchMode: 'queue',
   theme: (localStorage.getItem('jazyk-theme') as 'auto' | 'light' | 'dark') || 'auto',
   lastCommit: null,
   setConnected: (v) => set({ connected: v }),
@@ -46,7 +46,7 @@ export const useApp = create<AppStore>((set) => ({
     set((s) => ({
       trace: [...s.trace.slice(Math.max(0, s.trace.length - TRACE_RING + 1)), row],
     })),
-  setWatch: (v) => set({ watch: v }),
+  setWatchMode: (v) => set({ watchMode: v }),
   setTheme: (t) => {
     localStorage.setItem('jazyk-theme', t)
     if (t === 'auto') delete document.documentElement.dataset.theme

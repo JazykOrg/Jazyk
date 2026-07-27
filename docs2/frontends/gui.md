@@ -61,14 +61,24 @@ Project and store reads:
 
 Documents:
 
-- `GET /api/docs`: the matched documents with their content hashes and whether each is
-  stale against the graph (on-disk hash differs from the reconciled hash).
+- `GET /api/docs`: the matched documents with their content hashes, whether each is
+  stale against the graph (on-disk hash differs from the reconciled hash), and its
+  open diagnostics counted by severity. A diagnostic counts toward a document when a
+  subject anchors there: a requirement whose source is the document, an entity with a
+  mention in it, or a section reference into it. Suppressed diagnostics never count.
 - `GET /api/docs/content?path=`: the raw document text and its hash.
 - `PUT /api/docs/content?path=` with `{text, baseHash}`: write the document. When the
   on-disk hash no longer matches `baseHash`, the write is rejected with `409` and the
   client re-reads. Paths are validated: inside the project root, matching the docs
   glob, never inside the out directory, no traversal, no symlink escape. A path that
   matches the glob but does not exist yet creates a new document.
+- `POST /api/docs/rename` with `{from, to}`: move a document. Both paths pass the
+  same validation; the target must not exist. The graph is not touched: the next
+  build's dirty set sees the move, and the reconciler rewrites references
+  mechanically.
+- `DELETE /api/docs/content?path=`: delete the document. The graph is not touched:
+  the next build reconciles the disappearance, and garbage collection removes what
+  nothing mentions anymore.
 
 Generation and verification:
 
@@ -138,10 +148,18 @@ completion, document links.
   `GET /api/project`.
 - When a build commits, the server republishes diagnostics for every open document on
   every connection, the same refresh the [LSP](./lsp.md#rebuilds-and-refresh) does.
+- Entity mentions are visibly marked in the text (a subtle accent underline), not
+  only on hover, so what is clickable is discoverable. The marks come from the
+  language server's document links.
 - Coverage renders beside the text from the section tree: covered, non-normative, and
   unprocessed sections are visually distinct.
 - Saving writes through the documents API with the conditional hash, so an edit made
   outside the GUI is never silently overwritten.
+- The document tree is a small file explorer. Each document shows its open
+  diagnostics as a severity-colored badge and a drift dot when it is stale against
+  the graph. Documents can be created, renamed, and deleted from the tree, through
+  the documents API and its validation; a delete asks for a second click, never a
+  dialog. Directories exist implicitly through paths.
 
 ## Watch
 
@@ -176,9 +194,12 @@ serialize on the store lock, and the second build finds nothing dirty.
   relationships, diagnostics (with triage actions), coverage. One text filter plus
   facets. Suppressed diagnostics never render.
 - Map: the entity graph drawn as nodes and edges. Nodes are entities; edges are the
-  [derived relationships](../compiler/graph.md#derived-data), styled by type rank.
-  Selecting an edge lists the contributing requirements. Filters cover scope, edge
-  type, and neighborhood focus.
+  [derived relationships](../compiler/graph.md#derived-data), drawn with UML
+  notation: a hollow triangle for generalization, a hollow triangle on a dashed line
+  for realization, a filled diamond for composition, a hollow diamond for
+  aggregation, a plain line for association, an open arrow on a dashed line for
+  dependency, a dotted line for reference. Selecting an edge lists the contributing
+  requirements. Filters cover scope, edge type, and neighborhood focus.
 - Journal: the changeset timeline, one changeset per generation with its work item,
   mutations, and reasoning; and the release diff between any two generations.
 - Work: the generation worklist and per-entity task packages; the verification matrix

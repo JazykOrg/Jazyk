@@ -111,6 +111,53 @@ pub async fn doc_write(
     Json(json!({ "path": p.path, "hash": crate::model::hash_hex(&body.text) })).into_response()
 }
 
+#[derive(Deserialize)]
+pub struct DocRename {
+    from: String,
+    to: String,
+}
+
+// Move a document. The graph is untouched: the next build's dirty set sees the move
+// and the reconciler rewrites references mechanically.
+pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRename>) -> Response {
+    let Some(from) = safe_doc_path(&st.proj, &body.from) else {
+        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.from));
+    };
+    let Some(to) = safe_doc_path(&st.proj, &body.to) else {
+        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.to));
+    };
+    if !from.exists() {
+        return err(StatusCode::NOT_FOUND, format!("no document {}", body.from));
+    }
+    if to.exists() {
+        return err(StatusCode::CONFLICT, format!("{} already exists", body.to));
+    }
+    if let Some(parent) = to.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot create {}: {}", parent.display(), e));
+        }
+    }
+    if let Err(e) = std::fs::rename(&from, &to) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot rename: {}", e));
+    }
+    Json(json!({ "from": body.from, "to": body.to })).into_response()
+}
+
+// Delete a document. The graph is untouched: the next build reconciles the
+// disappearance and garbage collection removes what nothing mentions anymore.
+pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
+    let Some(abs) = safe_doc_path(&st.proj, &p.path) else {
+        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
+    };
+    if !abs.exists() {
+        return err(StatusCode::NOT_FOUND, format!("no document {}", p.path));
+    }
+    if let Err(e) = std::fs::remove_file(&abs) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot delete {}: {}", p.path, e));
+    }
+    Json(json!({ "deleted": p.path })).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

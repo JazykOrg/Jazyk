@@ -21,24 +21,97 @@
   font-size: 11px;
 }
 
+.ide-row {
+  display: flex;
+  align-items: center;
+  border-left: 3px solid transparent;
+  padding-right: 6px;
+}
+
+.ide-row.active {
+  border-left-color: var(--accent);
+}
+
+.ide-row.active a.ide-doc {
+  color: var(--accent);
+}
+
+.ide-row:hover {
+  background: var(--bg);
+}
+
 .ide-tree a.ide-doc {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 12px;
+  padding: 3px 6px 3px 9px;
   color: var(--ink);
   text-decoration: none;
-  border-left: 3px solid transparent;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .ide-tree a.ide-doc:hover {
   color: var(--accent);
 }
 
-.ide-tree a.ide-doc.active {
-  border-left-color: var(--accent);
+.ide-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ide-diag {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ide-row-actions {
+  display: none;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ide-row:hover .ide-row-actions {
+  display: flex;
+}
+
+.ide-mini {
+  font-size: 11px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--panel);
+  border-radius: 3px;
+}
+
+.ide-mini:hover {
   color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.ide-confirm,
+.ide-confirm:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.ide-tree-top {
+  padding: 0 12px 6px;
+}
+
+.ide-tree-err {
+  margin: 4px 12px;
+  font-size: 12px;
+}
+
+/* Inline path inputs sit inside tree rows; shrink the global input style. */
+.ide-tree input[type='text'] {
+  padding: 2px 6px;
+  font-size: 12px;
+  border-width: 1px;
 }
 
 .dot-stale {
@@ -142,6 +215,13 @@
 
 .cov-unprocessed {
   border-left: 3px solid var(--warn);
+}
+
+/* Always-visible entity mentions (LSP document link ranges). */
+.entity-mark {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
 }
 
 /* Located quote highlight for ?section=&quote= navigation. */

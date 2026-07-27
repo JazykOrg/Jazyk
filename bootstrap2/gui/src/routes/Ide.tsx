@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type * as monaco from 'monaco-editor'
-import { get, put, tokenParam, type DocInfo } from '../lib/api'
+import { get, post, put, tokenParam, type DocInfo } from '../lib/api'
 import { useCoverage, useDocs, useProject } from '../lib/queries'
 import MonacoHost, { docUri, type MonacoHandle } from '../ide/MonacoHost'
 import { LspClient } from '../ide/lsp-client'
@@ -19,6 +19,22 @@ interface DocContent {
 
 function contentPath(path: string): string {
   return `/api/docs/content?path=${encodeURIComponent(path)}`
+}
+
+// api.ts has no delete verb; the token rides the query string instead.
+async function deleteDoc(path: string): Promise<void> {
+  const qs = tokenParam()
+  const res = await fetch(`${contentPath(path)}${qs ? `&${qs}` : ''}`, { method: 'DELETE' })
+  if (!res.ok) {
+    let msg = `${res.status}`
+    try {
+      const j = (await res.json()) as { error?: string }
+      if (j.error) msg = j.error
+    } catch {
+      // no body
+    }
+    throw new Error(msg)
+  }
 }
 
 // Marker severity values (monaco.MarkerSeverity), kept numeric so this file needs
@@ -46,26 +62,110 @@ function buildTree(docs: DocInfo[]): Tree {
   return root
 }
 
-function TreeLevel({ node, depth, current }: { node: Tree; depth: number; current: string }) {
+// Total open diagnostics per doc, colored by the worst severity present.
+function DiagBadge({ doc }: { doc: DocInfo }) {
+  const diag = doc.diagnostics
+  if (!diag) return null
+  const total = Object.values(diag).reduce((a, b) => a + b, 0)
+  if (total === 0) return null
+  const cls = diag.error ? 'sev-error' : diag.warning ? 'sev-warning' : diag.info ? 'sev-info' : 'sev-none'
+  return <span className={`ide-diag mono ${cls}`}>{total}</span>
+}
+
+function InlineInput({
+  initial,
+  placeholder,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string
+  placeholder?: string
+  onSubmit: (v: string) => void
+  onCancel: () => void
+}) {
+  const [v, setV] = useState(initial ?? '')
+  return (
+    <input
+      className="mono"
+      type="text"
+      value={v}
+      placeholder={placeholder}
+      autoFocus
+      onChange={(e) => setV(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onSubmit(v)
+        else if (e.key === 'Escape') onCancel()
+      }}
+    />
+  )
+}
+
+interface TreeOps {
+  renamePath: string | null
+  confirmDelete: string | null
+  startRename: (p: string) => void
+  armDelete: (p: string) => void
+  doDelete: (p: string) => void
+  doRename: (from: string, to: string) => void
+  cancel: () => void
+}
+
+function TreeLevel({
+  node,
+  depth,
+  current,
+  ops,
+}: {
+  node: Tree
+  depth: number
+  current: string
+  ops: TreeOps
+}) {
   return (
     <>
-      {node.files.map((d) => (
-        <Link
-          key={d.path}
-          to={`/docs/${d.path}`}
-          className={`ide-doc${d.path === current ? ' active' : ''}`}
-          style={{ paddingLeft: 12 + depth * 12 }}
-        >
-          <span className="ide-doc-name">{d.path.split('/').pop()}</span>
-          {d.stale && <span className="dot-stale" title="stale against the graph" />}
-        </Link>
-      ))}
+      {node.files.map((d) =>
+        ops.renamePath === d.path ? (
+          <div key={d.path} className="ide-row" style={{ paddingLeft: depth * 12 }}>
+            <InlineInput
+              initial={d.path}
+              onSubmit={(v) => ops.doRename(d.path, v)}
+              onCancel={ops.cancel}
+            />
+          </div>
+        ) : (
+          <div
+            key={d.path}
+            className={`ide-row${d.path === current ? ' active' : ''}`}
+            style={{ paddingLeft: depth * 12 }}
+          >
+            <Link to={`/docs/${d.path}`} className="ide-doc">
+              <span className="ide-doc-name">{d.path.split('/').pop()}</span>
+              <DiagBadge doc={d} />
+              {d.stale && <span className="dot-stale" title="stale against the graph" />}
+            </Link>
+            <span className="ide-row-actions">
+              <button className="ide-mini" title="rename" onClick={() => ops.startRename(d.path)}>
+                ✎
+              </button>
+              {ops.confirmDelete === d.path ? (
+                <button className="ide-mini ide-confirm" onClick={() => ops.doDelete(d.path)}>
+                  delete?
+                </button>
+              ) : (
+                <button className="ide-mini" title="delete" onClick={() => ops.armDelete(d.path)}>
+                  ✕
+                </button>
+              )}
+            </span>
+          </div>
+        ),
+      )}
       {Object.entries(node.dirs).map(([name, child]) => (
         <div key={name}>
           <div className="ide-dir mono" style={{ paddingLeft: 12 + depth * 12 }}>
             {name}/
           </div>
-          <TreeLevel node={child} depth={depth + 1} current={current} />
+          <TreeLevel node={child} depth={depth + 1} current={current} ops={ops} />
         </div>
       ))}
     </>
@@ -104,6 +204,11 @@ export default function Ide() {
   const savingRef = useRef(false)
   const pendingLine = useRef<{ path: string; line: number } | null>(null)
   const revealedKey = useRef('')
+  // Tree file ops: one inline input (create or rename) and a two-click delete.
+  const [treeEdit, setTreeEdit] = useState<{ mode: 'create' } | { mode: 'rename'; path: string } | null>(null)
+  const [treeErr, setTreeErr] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const deleteTimer = useRef<number | null>(null)
 
   const rootRef = useRef<string | undefined>(undefined)
   rootRef.current = projectQ.data?.root
@@ -267,6 +372,104 @@ export default function Ide() {
     requestAnimationFrame(() => hostRef.current?.revealSection(sec.lines[0], quote ?? undefined))
   }, [section, quote, coverageQ.data, loaded, docPath])
 
+  // ---- tree file operations ----
+
+  const cancelTreeEdit = useCallback(() => {
+    setTreeEdit(null)
+    setTreeErr(null)
+  }, [])
+
+  const doCreate = useCallback(
+    async (path: string) => {
+      const p = path.trim()
+      if (!p) {
+        cancelTreeEdit()
+        return
+      }
+      const name = (p.split('/').pop() ?? p).replace(/\.md$/, '').replace(/[-_]+/g, ' ')
+      const title = name ? name.charAt(0).toUpperCase() + name.slice(1) : ''
+      try {
+        await put(contentPath(p), { text: `# ${title}\n`, baseHash: null })
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        cancelTreeEdit()
+        navigate(`/docs/${p}`)
+      } catch (e) {
+        setTreeErr((e as Error).message)
+      }
+    },
+    [qc, navigate, cancelTreeEdit],
+  )
+
+  const doRename = useCallback(
+    async (from: string, to: string) => {
+      const t = to.trim()
+      if (!t || t === from) {
+        cancelTreeEdit()
+        return
+      }
+      if (from === docPathRef.current && dirtyRef.current) {
+        setTreeErr('save the open document first')
+        return
+      }
+      try {
+        await post('/api/docs/rename', { from, to: t })
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        cancelTreeEdit()
+        if (from === docPathRef.current) navigate(`/docs/${t}`)
+      } catch (e) {
+        setTreeErr((e as Error).message)
+      }
+    },
+    [qc, navigate, cancelTreeEdit],
+  )
+
+  const armDelete = useCallback((path: string) => {
+    setConfirmDelete(path)
+    if (deleteTimer.current !== null) window.clearTimeout(deleteTimer.current)
+    deleteTimer.current = window.setTimeout(() => setConfirmDelete(null), 4000)
+  }, [])
+  useEffect(
+    () => () => {
+      if (deleteTimer.current !== null) window.clearTimeout(deleteTimer.current)
+    },
+    [],
+  )
+
+  const doDelete = useCallback(
+    async (path: string) => {
+      setConfirmDelete(null)
+      try {
+        await deleteDoc(path)
+        void qc.invalidateQueries({ queryKey: ['docs'] })
+        setTreeErr(null)
+        baseHashes.current.delete(path)
+        if (path === docPathRef.current) {
+          // The open document is gone: discard the editor state and step back.
+          setLoaded(null)
+          onDirty(false)
+          setConflict(false)
+          navigate('/docs')
+        }
+      } catch (e) {
+        setTreeErr((e as Error).message)
+      }
+    },
+    [qc, navigate, onDirty],
+  )
+
+  const treeOps: TreeOps = {
+    renamePath: treeEdit?.mode === 'rename' ? treeEdit.path : null,
+    confirmDelete,
+    startRename: (p) => {
+      setTreeEdit({ mode: 'rename', path: p })
+      setTreeErr(null)
+    },
+    armDelete,
+    doDelete: (p) => void doDelete(p),
+    doRename: (from, to) => void doRename(from, to),
+    cancel: cancelTreeEdit,
+  }
+
   const root = projectQ.data?.root
   const sortedMarkers = useMemo(
     () => [...markers].sort((a, b) => a.startLineNumber - b.startLineNumber),
@@ -276,9 +479,31 @@ export default function Ide() {
   return (
     <div className="ide">
       <div className="ide-tree">
+        <div className="ide-tree-top">
+          {treeEdit?.mode === 'create' ? (
+            <InlineInput
+              placeholder="path/to/doc.md"
+              onSubmit={(v) => void doCreate(v)}
+              onCancel={cancelTreeEdit}
+            />
+          ) : (
+            <button
+              className="ide-mini"
+              onClick={() => {
+                setTreeEdit({ mode: 'create' })
+                setTreeErr(null)
+              }}
+            >
+              + new
+            </button>
+          )}
+        </div>
+        {treeErr && <p className="error-inline ide-tree-err">{treeErr}</p>}
         {docsQ.isLoading && <p className="empty ide-pad">loading…</p>}
         {docsQ.isError && <p className="empty ide-pad">could not load the document list</p>}
-        {docsQ.data && <TreeLevel node={buildTree(docsQ.data.docs)} depth={0} current={docPath} />}
+        {docsQ.data && (
+          <TreeLevel node={buildTree(docsQ.data.docs)} depth={0} current={docPath} ops={treeOps} />
+        )}
       </div>
       <div className="ide-main">
         {!docPath ? (

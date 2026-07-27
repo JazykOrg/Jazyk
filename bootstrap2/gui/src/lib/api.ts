@@ -135,6 +135,7 @@ export interface DocInfo {
   contentHash: string
   graphHash: string | null
   stale: boolean
+  diagnostics?: Record<string, number>
 }
 
 export interface Section {

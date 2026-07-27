@@ -111,10 +111,24 @@
   margin: 7px 0;
 }
 
-.legend-line {
-  width: 44px;
-  border-top: 3px solid var(--muted);
-  display: inline-block;
+.legend-glyph {
+  flex-shrink: 0;
+  display: block;
+}
+
+.legend-glyph .l {
+  stroke: var(--muted);
+  fill: none;
+}
+
+.legend-glyph .hollow {
+  stroke: var(--muted);
+  fill: var(--panel);
+}
+
+.legend-glyph .filled {
+  stroke: var(--muted);
+  fill: var(--muted);
 }
 
 .map-hint {

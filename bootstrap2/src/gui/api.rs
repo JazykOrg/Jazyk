@@ -300,9 +300,47 @@ pub fn rel_doc(root: &std::path::Path, f: &std::path::Path) -> String {
         .unwrap_or_else(|_| f.to_string_lossy().to_string())
 }
 
-// The matched documents with their on-disk hash, the reconciled hash, and staleness.
+// Open non-suppressed diagnostics counted per document. A diagnostic counts toward a
+// document when a subject anchors there, the same mapping the LSP publishes:
+// a requirement whose source is the document, an entity with a mention in it, or a
+// section reference into it.
+fn diag_counts_by_doc(store: &Store) -> BTreeMap<String, BTreeMap<&'static str, usize>> {
+    let mut out: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    for d in store.graph.diagnostics.values() {
+        if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+            continue;
+        }
+        let sev: &'static str = match d.severity.as_str() {
+            "error" => "error",
+            "warning" => "warning",
+            "info" => "info",
+            _ => "none",
+        };
+        let mut docs_hit: std::collections::BTreeSet<String> = Default::default();
+        for subject in &d.subjects {
+            let resolved = store.resolve_id(subject).to_string();
+            if let Some(r) = store.graph.requirements.get(&resolved) {
+                docs_hit.insert(r.source.doc.clone());
+            } else if let Some(e) = store.graph.entities.get(&resolved) {
+                for m in &e.mentions {
+                    docs_hit.insert(m.doc.clone());
+                }
+            } else if let Some((sdoc, _)) = crate::model::split_section_ref(&resolved) {
+                docs_hit.insert(sdoc);
+            }
+        }
+        for doc in docs_hit {
+            *out.entry(doc).or_default().entry(sev).or_default() += 1;
+        }
+    }
+    out
+}
+
+// The matched documents with their on-disk hash, the reconciled hash, staleness, and
+// open diagnostics by severity.
 pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
+    let by_doc = diag_counts_by_doc(&store);
     let mut list: Vec<Value> = Vec::new();
     for f in st.proj.doc_files() {
         let rel = rel_doc(&st.proj.root, &f);
@@ -310,7 +348,13 @@ pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
         let hash = crate::model::hash_hex(&text);
         let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
         let stale = graph_hash.as_deref() != Some(hash.as_str());
-        list.push(json!({ "path": rel, "contentHash": hash, "graphHash": graph_hash, "stale": stale }));
+        list.push(json!({
+            "path": rel,
+            "contentHash": hash,
+            "graphHash": graph_hash,
+            "stale": stale,
+            "diagnostics": by_doc.get(&rel).cloned().unwrap_or_default(),
+        }));
     }
     Json(json!({ "docs": list }))
 }

@@ -13,7 +13,7 @@ import './map.css'
 
 cytoscape.use(fcose)
 
-// Relationship types, strongest first. Rank drives edge width.
+// Relationship types, strongest first.
 const EDGE_TYPES = [
   'generalization',
   'realization',
@@ -24,11 +24,24 @@ const EDGE_TYPES = [
   'reference',
 ] as const
 type EdgeType = (typeof EDGE_TYPES)[number]
-const DASHED = new Set<string>(['dependency', 'reference'])
 
-const edgeWidth = (type: string): number => {
-  const rank = (EDGE_TYPES as readonly string[]).indexOf(type)
-  return rank < 0 ? 1 : 3.4 - rank * 0.35
+// UML notation per type. members[0] is the source `a`, members[1] the target `b`:
+// the triangle points at the general entity (target), the diamond sits at the
+// owning end (source).
+interface EdgeSpec {
+  line: 'solid' | 'dashed' | 'dotted'
+  width: number
+  target?: { shape: 'triangle' | 'vee'; fill: cytoscape.Css.ArrowFill }
+  source?: { shape: 'diamond'; fill: cytoscape.Css.ArrowFill }
+}
+const EDGE_STYLE: Record<EdgeType, EdgeSpec> = {
+  generalization: { line: 'solid', width: 2, target: { shape: 'triangle', fill: 'hollow' } },
+  realization: { line: 'dashed', width: 2, target: { shape: 'triangle', fill: 'hollow' } },
+  composition: { line: 'solid', width: 2, source: { shape: 'diamond', fill: 'filled' } },
+  aggregation: { line: 'solid', width: 2, source: { shape: 'diamond', fill: 'hollow' } },
+  association: { line: 'solid', width: 1.5 },
+  dependency: { line: 'dashed', width: 1.5, target: { shape: 'vee', fill: 'filled' } },
+  reference: { line: 'dotted', width: 1.5 },
 }
 
 const nonPublic = (ent: Entity): boolean => !!ent.scope && ent.scope !== 'public'
@@ -84,17 +97,32 @@ function buildStyle(p: Palette): cytoscape.StylesheetStyle[] {
         'curve-style': 'bezier',
         'line-color': p.muted,
         opacity: 0.55,
-        width: (e: cytoscape.EdgeSingular) => edgeWidth(e.data('type') as string),
-        'line-style': (e: cytoscape.EdgeSingular) =>
-          DASHED.has(e.data('type') as string) ? 'dashed' : 'solid',
-        'target-arrow-shape': 'triangle',
+        'source-arrow-color': p.muted,
         'target-arrow-color': p.muted,
-        'arrow-scale': 0.65,
+        'arrow-scale': 1.2,
       },
     },
+    ...EDGE_TYPES.map((t): cytoscape.StylesheetStyle => {
+      const s = EDGE_STYLE[t]
+      const style: cytoscape.Css.Edge = {
+        width: s.width,
+        'line-style': s.line,
+        'target-arrow-shape': s.target?.shape ?? 'none',
+        'source-arrow-shape': s.source?.shape ?? 'none',
+      }
+      if (s.target) style['target-arrow-fill'] = s.target.fill
+      if (s.source) style['source-arrow-fill'] = s.source.fill
+      return { selector: `edge[type = "${t}"]`, style }
+    }),
     {
       selector: 'edge:selected',
-      style: { 'line-color': p.accent, 'target-arrow-color': p.accent, opacity: 1, 'z-index': 10 },
+      style: {
+        'line-color': p.accent,
+        'source-arrow-color': p.accent,
+        'target-arrow-color': p.accent,
+        opacity: 1,
+        'z-index': 10,
+      },
     },
     { selector: '.dim', style: { opacity: 0.12 } },
     { selector: '.hidden', style: { display: 'none' } },
@@ -447,22 +475,56 @@ function Detail({ graph, sel, degree }: { graph: Graph; sel: NonNullable<Sel>; d
   )
 }
 
+// One legend sample per type, drawn with the same UML markers as the canvas:
+// diamond at the source (left) end, triangle or vee at the target (right) end.
+function EdgeGlyph({ type }: { type: EdgeType }) {
+  const s = EDGE_STYLE[type]
+  const w = 56
+  const y = 7
+  const dash = s.line === 'dashed' ? '6 4' : s.line === 'dotted' ? '1.5 3' : undefined
+  const x1 = s.source ? 14 : 1
+  const x2 = s.target ? w - 10 : w - 1
+  return (
+    <svg width={w} height={14} className="legend-glyph" aria-hidden="true">
+      <line className="l" x1={x1} y1={y} x2={x2} y2={y} strokeWidth={s.width} strokeDasharray={dash} />
+      {s.source && (
+        <polygon
+          className={s.source.fill}
+          points={`1,${y} 8,${y - 4.5} 15,${y} 8,${y + 4.5}`}
+          strokeWidth={1.2}
+        />
+      )}
+      {s.target?.shape === 'triangle' && (
+        <polygon
+          className={s.target.fill}
+          points={`${w - 1},${y} ${w - 11},${y - 5} ${w - 11},${y + 5}`}
+          strokeWidth={1.2}
+        />
+      )}
+      {s.target?.shape === 'vee' && (
+        <polyline
+          className="l"
+          points={`${w - 9},${y - 5} ${w - 1},${y} ${w - 9},${y + 5}`}
+          strokeWidth={1.5}
+        />
+      )}
+    </svg>
+  )
+}
+
 function Legend() {
   return (
     <>
       <h3>edge types</h3>
       {EDGE_TYPES.map((t) => (
         <div className="legend-row" key={t}>
-          <span
-            className="legend-line"
-            style={{
-              borderTopWidth: edgeWidth(t),
-              borderTopStyle: DASHED.has(t) ? 'dashed' : 'solid',
-            }}
-          />
+          <EdgeGlyph type={t} />
           <span className="mono">{t}</span>
         </div>
       ))}
+      <p className="muted map-hint">
+        UML notation: the diamond sits at the owning end, the triangle points at the general entity.
+      </p>
       <p className="muted map-hint">
         <code>reference</code> edges are off by default: the weakest type would hairball the view.
       </p>

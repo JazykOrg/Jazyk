@@ -5,7 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as monaco from 'monaco-editor'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import type { DocRecord } from '../lib/api'
-import type { LspClient, LspDiagnostic, LspRange } from './lsp-client'
+import type { LspClient, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
 
 ;(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
@@ -115,9 +115,30 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
   const baselines = useRef(new Map<string, string>())
   const created = useRef(new Map<string, { model: monaco.editor.ITextModel; unsub: () => void }>())
   const covDecorations = useRef(new Map<string, string[]>())
+  const linkDecorations = useRef(new Map<string, string[]>())
   const quoteDecorations = useRef<string[]>([])
   const propsRef = useRef(props)
   propsRef.current = props
+
+  // Always-visible entity marks over LSP document link ranges; kept apart from the
+  // coverage gutter so the two never clobber each other.
+  const decorateLinks = (model: monaco.editor.ITextModel, links: LspDocumentLink[]) => {
+    if (model.isDisposed()) return
+    const uri = model.uri.toString()
+    const old = linkDecorations.current.get(uri) ?? []
+    const next = links.map((l) => ({
+      range: toMonacoRange(l.range),
+      options: { inlineClassName: 'entity-mark' },
+    }))
+    linkDecorations.current.set(uri, model.deltaDecorations(old, next))
+  }
+  const refreshLinkMarks = async (model: monaco.editor.ITextModel) => {
+    try {
+      decorateLinks(model, await propsRef.current.lsp.documentLinks(model.uri.toString()))
+    } catch {
+      // offline; marks stay as they were
+    }
+  }
 
   // Editor, providers, and theme watcher live for the component's lifetime.
   useEffect(() => {
@@ -201,6 +222,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
         provideLinks: async (model) => {
           try {
             const links = await propsRef.current.lsp.documentLinks(lspUri(model))
+            decorateLinks(model, links)
             return {
               links: links.map((l) => ({
                 range: toMonacoRange(l.range),
@@ -264,6 +286,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       created.current.clear()
       baselines.current.clear()
       covDecorations.current.clear()
+      linkDecorations.current.clear()
       editor.dispose()
       editorRef.current = null
     }
@@ -288,6 +311,8 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       })
       const unsubDiag = propsRef.current.lsp.onDiagnostics(uri, (diags) => {
         monaco.editor.setModelMarkers(model, 'jazyk', diags.map(toMarker))
+        // The server republishes on generation bumps; entity marks refresh with it.
+        void refreshLinkMarks(model)
       })
       entry = {
         model,
@@ -301,6 +326,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     editor.setModel(entry.model)
     propsRef.current.onDirty(entry.model.getValue() !== baselines.current.get(uri))
     propsRef.current.onMarkers(monaco.editor.getModelMarkers({ resource: muri }))
+    void refreshLinkMarks(entry.model)
   }, [props.root, props.path])
 
   // Coverage gutter from the section tree. Section lines refer to the last

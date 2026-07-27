@@ -17,6 +17,12 @@ endpoint, the same configuration a build would use. See [CLI](../frontends/cli.m
   tool registry, same [validation gates](../compiler/graph.md#validation-gates), same
   budgets. Only the store and the fixture differ from a build.
 - Cases never touch the project graph. See [execution](./cases.md#execution).
+- A case passes only when its turn completes. An aborted turn (endpoint error, a
+  rejected-call streak, an exhausted round budget) fails the case with the abort
+  reason. Its checks are skipped and count as failed in the score: an aborted turn
+  stages nothing, and an untouched fixture satisfying a check is not evidence. In
+  particular, cases whose expected outcome is zero staged mutations must not pass
+  vacuously on a turn that never ran.
 
 ## Report
 
@@ -30,6 +36,10 @@ Per codec, the benchmark reports:
     `reconcile-doc` turns.
   - `review`: extraction plus every review-tier case passes. The model can also be
     trusted with `review-entity` judgment.
+- A codec where no turn ever produced a completion (e.g. the endpoint rejects every
+  call) is reported as `unmeasured`, not `not capable`. Nothing was graded, so the
+  codec gets no verdict and no results entry. When both codecs are unmeasured the
+  run writes no results and exits non-zero.
 - a score: the fraction of checks passed across all cases,
 - per-case results: pass or fail, with the first failing check named,
 - throughput: a blended token rate (tokens/s), completion tokens over wall time across
@@ -53,6 +63,10 @@ Every run writes `<out>/benchmark/results.yaml`, one entry per model:
 
 The entry updates in place per model. History lives in the scorecard
 (`bootstrap2/VALIDATION.md`), not the artifact.
+
+Unmeasured codecs are omitted from the entry, and a run where both codecs are
+unmeasured does not touch the file. A dead endpoint never overwrites a real grade.
+See [report](#report).
 
 ## Graded skills
 

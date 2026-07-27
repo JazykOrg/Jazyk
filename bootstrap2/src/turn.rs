@@ -17,24 +17,130 @@ pub enum TraceLevel {
     Verbose,
 }
 
+// One structured event per emission. The CLI renders these to stderr; the GUI streams
+// them to the browser. Mirrors docs2/compiler/turns.md#trace-events.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "kind")]
+pub enum TraceEvent {
+    #[serde(rename = "turnStart")]
+    TurnStart { label: String, dirty: usize, stale: usize },
+    #[serde(rename = "toolCall")]
+    ToolCall { label: String, name: String, summary: String },
+    #[serde(rename = "toolResult")]
+    ToolResult { label: String, name: String, summary: String },
+    #[serde(rename = "toolError")]
+    ToolError { label: String, rule: String, message: String },
+    #[serde(rename = "modelText")]
+    ModelText { label: String, text: String },
+    // mode: "done" (explicit, with the model's summary), "implicit" (the model went
+    // silent with staged work), or "budget" (implicit at the round budget).
+    #[serde(rename = "turnDone")]
+    TurnDone { label: String, staged: usize, rounds: u32, mode: String, summary: String },
+    #[serde(rename = "turnFailed")]
+    TurnFailed { label: String, attempt: u32, error: String },
+    #[serde(rename = "note")]
+    Note { label: String, text: String, verbose: bool },
+    // Generation worker events, one entity per bounded task.
+    #[serde(rename = "genEntityStart")]
+    GenEntityStart { entity: String },
+    #[serde(rename = "genEntitySkipped")]
+    GenEntitySkipped { entity: String, reason: String },
+    #[serde(rename = "genEntityDone")]
+    GenEntityDone { entity: String, files: usize },
+    // stage: "task" (the task package failed to assemble) or "generate".
+    #[serde(rename = "genEntityFailed")]
+    GenEntityFailed { entity: String, stage: String, error: String },
+    // Verification worker events, one ledger row at a time.
+    #[serde(rename = "verifyRowStart")]
+    VerifyRowStart { requirement: String, test: String },
+    #[serde(rename = "verifyRowDone")]
+    VerifyRowDone { requirement: String, verdict: String, run: String, evidence: String },
+    #[serde(rename = "verifyRowStale")]
+    VerifyRowStale { requirement: String, entity: String, status: String, reason: String },
+    #[serde(rename = "verifyRowError")]
+    VerifyRowError { requirement: String, message: String },
+}
+
+// Render an event exactly as the pre-event trace printed it, so `jazyk compile`
+// output is unchanged.
+fn render_stderr(ev: &TraceEvent) {
+    match ev {
+        TraceEvent::TurnStart { label, dirty, stale } => {
+            eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
+        }
+        TraceEvent::ToolCall { label, name, summary } => eprintln!("[{}] → {} {}", label, name, summary),
+        TraceEvent::ToolResult { label, summary, .. } => eprintln!("[{}] ← {}", label, summary),
+        TraceEvent::ToolError { label, rule, message } => eprintln!("[{}] ✗ {}: {}", label, rule, message),
+        TraceEvent::ModelText { label, text } => eprintln!("[{}] · {}", label, llm::truncate(text, 200)),
+        TraceEvent::TurnDone { label, staged, rounds, mode, summary } => match mode.as_str() {
+            "implicit" => eprintln!("[{}] ✓ implicit done ({} staged, {} rounds)", label, staged, rounds),
+            "budget" => eprintln!("[{}] ✓ implicit done at round budget ({} staged)", label, staged),
+            _ => eprintln!("[{}] ✓ done ({} staged, {} rounds): {}", label, staged, rounds, summary),
+        },
+        TraceEvent::TurnFailed { label, attempt, error } => {
+            eprintln!("[{}] turn failed (attempt {}): {}", label, attempt, error)
+        }
+        TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
+        // Worker events reach stderr only outside the CLI wrappers (which render them
+        // themselves, on the exact historical format); keep these plain.
+        TraceEvent::GenEntityStart { entity } => eprintln!("[gen {}] start", entity),
+        TraceEvent::GenEntitySkipped { entity, reason } => eprintln!("[gen {}] skipped ({})", entity, reason),
+        TraceEvent::GenEntityDone { entity, files } => eprintln!("[gen {}] done ({} file(s))", entity, files),
+        TraceEvent::GenEntityFailed { entity, error, .. } => eprintln!("[gen {}] failed: {}", entity, error),
+        TraceEvent::VerifyRowStart { requirement, test } => eprintln!("[test {}] start ({})", requirement, test),
+        TraceEvent::VerifyRowDone { requirement, verdict, run, .. } => {
+            eprintln!("[test {}] {} ({})", requirement, verdict, run)
+        }
+        TraceEvent::VerifyRowStale { requirement, status, reason, .. } => {
+            eprintln!("[test {}] {} ({})", requirement, status, reason)
+        }
+        TraceEvent::VerifyRowError { requirement, message } => eprintln!("[test {}]{}", requirement, message),
+    }
+}
+
 #[derive(Clone)]
 pub struct Trace {
     pub level: TraceLevel,
+    // None renders to stderr. A sink receives the structured events instead.
+    sink: Option<std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>>,
+    // Best-effort cancellation, checked between waves, entities, and rows. It rides
+    // in the trace because the trace is already threaded through every runner.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Trace {
-    fn on(&self) -> bool {
-        self.level != TraceLevel::Quiet
+    pub fn stderr(level: TraceLevel) -> Trace {
+        Trace { level, sink: None, cancel: Default::default() }
+    }
+    pub fn to_sink(
+        level: TraceLevel,
+        sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Trace {
+        Trace { level, sink: Some(sink), cancel }
+    }
+    pub fn event(&self, ev: TraceEvent) {
+        let keep = match self.level {
+            TraceLevel::Quiet => false,
+            TraceLevel::Normal => !matches!(&ev, TraceEvent::Note { verbose: true, .. }),
+            TraceLevel::Verbose => true,
+        };
+        if !keep {
+            return;
+        }
+        match &self.sink {
+            Some(s) => s(&ev),
+            None => render_stderr(&ev),
+        }
     }
     pub fn line(&self, prefix: &str, s: &str) {
-        if self.on() {
-            eprintln!("[{}] {}", prefix, s);
-        }
+        self.event(TraceEvent::Note { label: prefix.into(), text: s.into(), verbose: false });
     }
     fn verbose(&self, prefix: &str, s: &str) {
-        if self.level == TraceLevel::Verbose {
-            eprintln!("[{}] {}", prefix, s);
-        }
+        self.event(TraceEvent::Note { label: prefix.into(), text: s.into(), verbose: true });
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -388,7 +494,11 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
     let defs: Vec<&ToolDef> = all_defs.iter().filter(|t| names.contains(&t.name)).collect();
     let mut session = ToolSession::new(snapshot, scope, limits.turn_mutations, limits.context_budget);
 
-    trace.line(&prefix, &format!("turn start ({} dirty, {} stale)", item.dirty_sections.len(), item.stale_anchors.len()));
+    trace.event(TraceEvent::TurnStart {
+        label: prefix.clone(),
+        dirty: item.dirty_sections.len(),
+        stale: item.stale_anchors.len(),
+    });
     trace.verbose(&prefix, &format!("--- context pack ---\n{}\n--- end pack ---", pack));
 
     // Codec selection with a first-round probe: native unless the run already learned otherwise.
@@ -465,7 +575,13 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                     // Implicit done: a model that goes silent with staged work is treated
                     // as having called done; the same commit gates apply.
                     if session.finish_implicit("(implicit: the model stopped calling tools)") {
-                        trace.line(&prefix, &format!("✓ implicit done ({} staged, {} rounds)", session.staged.len(), rounds));
+                        trace.event(TraceEvent::TurnDone {
+                            label: prefix.clone(),
+                            staged: session.staged.len(),
+                            rounds,
+                            mode: "implicit".into(),
+                            summary: String::new(),
+                        });
                         return TurnOutput { session, rounds, tokens, failed: None };
                     }
                     return TurnOutput {
@@ -485,27 +601,45 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                     Action::Text(t) => {
                         let t = t.trim();
                         if !t.is_empty() {
-                            trace.line(&prefix, &format!("· {}", llm::truncate(t, 200)));
+                            trace.event(TraceEvent::ModelText { label: prefix.clone(), text: t.to_string() });
                         }
                     }
                     Action::Call { id, name, args } => {
-                        trace.line(&prefix, &format!("→ {} {}", name, condense(&args, 160)));
+                        trace.event(TraceEvent::ToolCall {
+                            label: prefix.clone(),
+                            name: name.clone(),
+                            summary: condense(&args, 160),
+                        });
                         trace.verbose(&prefix, &format!("full args: {}", args));
                         let result = match session.dispatch(&name, &args) {
                             Ok(v) => {
-                                trace.line(&prefix, &format!("← {}", condense(&v, 160)));
+                                trace.event(TraceEvent::ToolResult {
+                                    label: prefix.clone(),
+                                    name: name.clone(),
+                                    summary: condense(&v, 160),
+                                });
                                 trace.verbose(&prefix, &format!("full result: {}", v));
                                 v
                             }
                             Err(e) => {
                                 errored = true;
-                                trace.line(&prefix, &format!("✗ {}: {}", e.rule, e.message));
+                                trace.event(TraceEvent::ToolError {
+                                    label: prefix.clone(),
+                                    rule: e.rule.clone(),
+                                    message: e.message.clone(),
+                                });
                                 e.to_value()
                             }
                         };
                         messages.push(codec.result_msg(&id, &name, &result));
                         if session.done.is_some() {
-                            trace.line(&prefix, &format!("✓ done ({} staged, {} rounds): {}", session.staged.len(), rounds, session.done.clone().unwrap_or_default()));
+                            trace.event(TraceEvent::TurnDone {
+                                label: prefix.clone(),
+                                staged: session.staged.len(),
+                                rounds,
+                                mode: "done".into(),
+                                summary: session.done.clone().unwrap_or_default(),
+                            });
                             return TurnOutput { session, rounds, tokens, failed: None };
                         }
                     }
@@ -527,7 +661,13 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         }
         // Same implicit-done rule at the round budget: commit valid staged work.
         if session.finish_implicit("(implicit: round budget exhausted)") {
-            trace.line(&prefix, &format!("✓ implicit done at round budget ({} staged)", session.staged.len()));
+            trace.event(TraceEvent::TurnDone {
+                label: prefix.clone(),
+                staged: session.staged.len(),
+                rounds: round_budget,
+                mode: "budget".into(),
+                summary: String::new(),
+            });
             return TurnOutput { session, rounds: round_budget, tokens, failed: None };
         }
         return TurnOutput {

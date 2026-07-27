@@ -3,11 +3,15 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+// Project-level [llm] table. Every field is optional; unset fields fall through to the
+// global config, then the built-in default (see cli::resolve_llm).
 #[derive(Clone, Default)]
 pub struct LlmSettings {
-    pub base_url: String,
-    pub model: String,
-    pub api_key_env: String,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Clone, Default)]
@@ -45,6 +49,8 @@ impl Default for Limits {
 #[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
+    // Resolved output directory. Never doc input, even when moved with --out.
+    pub out: PathBuf,
     pub docs_glob: Vec<String>,
     pub roots: Vec<String>,
     // [gen] settings: where the deliverable lives. Never what it is; the medium is a
@@ -62,14 +68,11 @@ impl Default for Project {
     fn default() -> Self {
         Project {
             root: PathBuf::from("."),
+            out: PathBuf::from("./jazyk-out"),
             gen_deliverable: None,
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
-            llm: LlmSettings {
-                base_url: "http://localhost:11434/v1".to_string(),
-                model: "llama3.1".to_string(),
-                api_key_env: "JAZYK_API_KEY".to_string(),
-            },
+            llm: LlmSettings::default(),
             linting: Linting::default(),
             limits: Limits::default(),
             explicit_files: None,
@@ -119,6 +122,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_dirs_are_never_doc_input() {
+        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        for d in ["docs", "jazyk-out/docsgen", "jazyk-out-backup-local/docsgen", "elsewhere"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
+        std::fs::write(dir.join("docs/a.md"), "# A\n").unwrap();
+        std::fs::write(dir.join("jazyk-out/docsgen/x.md"), "# X\n").unwrap();
+        std::fs::write(dir.join("jazyk-out-backup-local/docsgen/y.md"), "# Y\n").unwrap();
+        std::fs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
+        let mut p = Project::load(&dir);
+        assert_eq!(p.doc_files(), vec![dir.join("docs/a.md"), dir.join("elsewhere/z.md")]);
+        // A relocated out directory (--out) is skipped by path, whatever its name.
+        p.out = dir.join("elsewhere");
+        assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn redirect_delegates_to_nested_project() {
         let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
@@ -161,6 +184,7 @@ impl Project {
     fn load_inner(root: &Path, follow_redirect: bool) -> Project {
         let mut p = Project::default();
         p.root = root.to_path_buf();
+        p.out = root.join("jazyk-out");
         let toml_path = root.join("jazyk.toml");
         let text = match std::fs::read_to_string(&toml_path) {
             Ok(t) => t,
@@ -184,15 +208,11 @@ impl Project {
         if let Some(v) = t.string("gen.deliverable") {
             p.gen_deliverable = Some(v);
         }
-        if let Some(v) = t.string("llm.base_url") {
-            p.llm.base_url = v;
-        }
-        if let Some(v) = t.string("llm.model") {
-            p.llm.model = v;
-        }
-        if let Some(v) = t.string("llm.api_key_env") {
-            p.llm.api_key_env = v;
-        }
+        p.llm.base_url = t.string("llm.base_url");
+        p.llm.model = t.string("llm.model");
+        p.llm.api_key = t.string("llm.api_key");
+        p.llm.api_key_env = t.string("llm.api_key_env");
+        p.llm.temperature = t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok());
         if let Some(v) = t.array("docs.linting.rules.warnings") {
             p.linting.warnings = v;
         }
@@ -230,7 +250,7 @@ impl Project {
             return files.clone();
         }
         let mut all = Vec::new();
-        collect_files(&self.root, &mut all);
+        collect_files(&self.root, &self.out, &mut all);
         let mut out: Vec<PathBuf> = Vec::new();
         for f in all {
             let rel = match f.strip_prefix(&self.root) {
@@ -272,16 +292,23 @@ impl Project {
     }
 }
 
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "target" || name == "node_modules" || name == "jazyk-out" {
+            // Generated output is never doc input: the resolved out directory (wherever
+            // --out put it) and anything named like it (e.g. a jazyk-out backup copy).
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name.starts_with("jazyk-out")
+                || p == out_dir
+            {
                 continue;
             }
             if p.is_dir() {
-                collect_files(&p, out);
+                collect_files(&p, out_dir, out);
             } else {
                 out.push(p);
             }

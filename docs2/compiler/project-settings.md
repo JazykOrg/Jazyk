@@ -32,6 +32,14 @@ included when the last pattern to match it is an inclusion. A matched file with 
 glob = ["docs/**/*.md", "!docs/LICENSE.md"]
 ```
 
+Some paths are never doc input, regardless of the glob:
+
+- The resolved [output directory](../frontends/cli.md) (default `jazyk-out`, or the
+  `--out` override). The compiler never reads its own output as source.
+- Any directory whose name starts with `jazyk-out` (e.g. a local backup of generated
+  output).
+- Hidden directories (name starting with `.`), `target`, and `node_modules`.
+
 ### Handlers
 
 Custom [format handlers](./parsing.md#format-handlers) are registered per project. A
@@ -71,7 +79,10 @@ temperature = 0
 
 - `base_url`: any OpenAI-compatible server. Endpoints that only answer streaming
   responses are handled transparently: on a "stream must be set to true" rejection the
-  client switches to streaming for the rest of the run.
+  client switches to streaming for the rest of the run. A transient HTTP failure on a
+  non-streaming request also retries the same request over streaming (some proxies fail
+  to relay non-streaming tool call responses); if the streaming retry succeeds,
+  streaming stays on for the rest of the run.
 - `model`: the model id.
 - `api_key_env`: the environment variable holding the API key. A literal `api_key` may be
   given instead. Prefer `api_key_env` in tracked files.
@@ -81,12 +92,14 @@ temperature = 0
 
 The endpoint, model, and credentials describe the machine, not the project, so their
 recommended home is a global config at `~/.jazyk/config.toml` (or `~/.jazyk.toml`) with
-the same `[llm]` table. Effective values resolve per field, highest priority first:
+the same `[llm]` table. The global config is the machine default; a project `[llm]`
+overrides it, so a project that names its own model wins. Effective values resolve per
+field, highest priority first:
 
 1. CLI flag: `--llm-base-url`, `--model`, `--api-key`.
 2. Environment variable: `JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JAZYK_API_KEY`.
-3. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
-4. Project `[llm]` in `jazyk.toml`.
+3. Project `[llm]` in `jazyk.toml`.
+4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
 5. Built-in default.
 
 ## Roots

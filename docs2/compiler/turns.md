@@ -116,5 +116,9 @@ one. The next build lists the anchor again.
 
 The harness emits a structured event per round: the tool call with condensed arguments,
 the condensed result, and any reasoning text the model produced. The `compile` command
-renders these live. Verbose mode includes the full context pack and raw payloads. The
-committed changeset with the same information persists in the [journal](./graph.md#journal).
+renders these live, and the [GUI](../frontends/gui.md) streams them to the browser. The
+event kinds: turn start, tool call, tool result, tool error, model text, turn done,
+turn failed, and a plain note. The [generation](../consumers/gen.md) and verification
+workers emit their own kinds per entity and per ledger row. Verbose mode includes the
+full context pack and raw payloads. The committed changeset with the same information
+persists in the [journal](./graph.md#journal).

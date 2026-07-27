@@ -37,6 +37,13 @@ pub enum Op {
     DeleteRequirement { id: String, reason: String },
     ReportDiagnostic { id: String, diagnostic: Diagnostic },
     ResolveDiagnostic { id: String, reason: String },
+    // The human triage decision (acknowledged | suppressed | wontfix, None to clear).
+    // Only humans set it; the compiler never overwrites it.
+    TriageDiagnostic {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        triage: Option<String>,
+    },
     SetCoverage {
         doc: String,
         section: String,
@@ -625,6 +632,17 @@ impl Store {
                             applied.push(Op::ResolveDiagnostic { id: rid, reason });
                         }
                         None => skipped.push(format!("resolve_diagnostic: unknown id {}", rid)),
+                    }
+                }
+                Op::TriageDiagnostic { id, triage } => {
+                    let rid = resolve(&remap, self, &id);
+                    match self.graph.diagnostics.get_mut(&rid) {
+                        Some(d) => {
+                            d.triage = triage.clone();
+                            d.updated = Some(build.clone());
+                            applied.push(Op::TriageDiagnostic { id: rid, triage });
+                        }
+                        None => skipped.push(format!("triage_diagnostic: unknown id {}", rid)),
                     }
                 }
                 Op::SetCoverage { doc, section, state, note } => {

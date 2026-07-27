@@ -74,6 +74,7 @@ graph TD;
     MCP[MCP Server];
     LSP[Language Server];
     Viewer[Viewer];
+    GUI[GUI];
   end
 
   subgraph Consumers
@@ -91,7 +92,9 @@ graph TD;
   Context --> CLI;
   Context --> MCP;
   Context --> LSP;
+  Context --> GUI;
   Store --> Viewer;
+  Store --> GUI;
   Store --> Gen;
   Store --> PM;
   Store --> DocsFeedback;
@@ -119,6 +122,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 - [MCP Server](./frontends/mcp.md)
 - [Language Server](./frontends/lsp.md)
 - [Viewer](./frontends/viewer.md)
+- [GUI](./frontends/gui.md)
 
 ## Consumers
 

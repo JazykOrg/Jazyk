@@ -1,0 +1,150 @@
+/* IDE layout: document tree | editor stack, in the app palette. */
+.ide {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ide-tree {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow: auto;
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.ide-dir {
+  padding: 4px 12px 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ide-tree a.ide-doc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  color: var(--ink);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  white-space: nowrap;
+}
+
+.ide-tree a.ide-doc:hover {
+  color: var(--accent);
+}
+
+.ide-tree a.ide-doc.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.dot-stale {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.ide-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ide-pad {
+  padding: 16px 24px;
+}
+
+.ide-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.ide-topbar .ide-inline {
+  margin: 0;
+}
+
+.ide-dirty {
+  color: var(--warn);
+}
+
+.ide-topbar-right {
+  margin-left: auto;
+}
+
+.ide-conflict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--warn);
+  background: var(--panel);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.ide-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.ide-problems {
+  max-height: 140px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.ide-problem {
+  display: flex;
+  gap: 10px;
+  padding: 2px 12px;
+  cursor: pointer;
+  align-items: baseline;
+}
+
+.ide-problem:hover {
+  background: var(--bg);
+}
+
+.ide-problem-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-problem-none {
+  padding: 2px 12px;
+}
+
+/* Coverage gutter (monaco lines-decorations margin). */
+.cov-covered {
+  border-left: 3px solid var(--accent);
+}
+
+.cov-nonnorm {
+  border-left: 3px solid var(--none);
+}
+
+.cov-unprocessed {
+  border-left: 3px solid var(--warn);
+}
+
+/* Located quote highlight for ?section=&quote= navigation. */
+.quote-hit {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}

@@ -474,3 +474,312 @@ mod tests {
         assert!(g0[0]["testName"].as_str().unwrap().starts_with("req_shop_1_"));
     }
 }
+
+// ---- the built-in worker ----
+// Moved out of the CLI so the GUI job runner drives the same loop. The CLI wrapper
+// renders the worker events on the historical output format; the GUI streams them.
+
+// Run generation over the given entities (all entities with requirements when empty),
+// leaf-first over the relationship graph, skipping entities whose facts are unchanged
+// unless forced. Returns {regenerated, skipped, failures}.
+pub fn run_all(
+    store: &Store,
+    llm: &crate::llm::Llm,
+    gs: &GenSettings,
+    entities: &[String],
+    force: bool,
+    trace: &crate::turn::Trace,
+) -> Result<Value, String> {
+    use crate::turn::TraceEvent;
+    let mut targets: Vec<String> = if entities.is_empty() {
+        store
+            .graph
+            .entities
+            .keys()
+            .filter(|id| !store.requirements_referencing(id).is_empty())
+            .cloned()
+            .collect()
+    } else {
+        let mut v = Vec::new();
+        for e in entities {
+            let id = store.resolve_id(e).to_string();
+            if store.graph.entities.contains_key(&id) {
+                v.push(id);
+            } else {
+                return Err(format!("unknown entity `{}`", e));
+            }
+        }
+        v
+    };
+    if targets.is_empty() {
+        return Err("no entities with requirements; run `jazyk compile` first".into());
+    }
+
+    // Leaf-first ordering: repeatedly emit the entity with the fewest ungenerated
+    // neighbors over the relationship graph (ties by name).
+    let neighbors = |id: &str| -> Vec<String> {
+        store
+            .graph
+            .relationships
+            .values()
+            .filter(|r| r.members.iter().any(|m| m == id))
+            .flat_map(|r| r.members.iter().filter(|m| *m != id).cloned())
+            .collect()
+    };
+    let mut ordered: Vec<String> = Vec::new();
+    while !targets.is_empty() {
+        let (i, _) = targets
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, id)| {
+                let pending = neighbors(id).iter().filter(|n| targets.contains(n)).count();
+                (pending, (*id).clone())
+            })
+            .unwrap();
+        ordered.push(targets.remove(i));
+    }
+
+    std::fs::create_dir_all(&gs.deliverable).ok();
+    let pending_set: std::collections::BTreeSet<String> =
+        pending(store, gs).iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
+    let (mut regenerated, mut skipped, mut failures) = (0u64, 0u64, 0u64);
+    for id in &ordered {
+        if trace.is_cancelled() {
+            break;
+        }
+        if !force && !pending_set.contains(id) {
+            skipped += 1;
+            trace.event(TraceEvent::GenEntitySkipped { entity: id.clone(), reason: "unchanged".into() });
+            continue;
+        }
+        trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
+        let task = match task_package(store, id, gs) {
+            Ok(t) => t,
+            Err(e) => {
+                trace.event(TraceEvent::GenEntityFailed { entity: id.clone(), stage: "task".into(), error: e });
+                failures += 1;
+                continue;
+            }
+        };
+        match gen_one(store, llm, gs, id, &task) {
+            Ok(files) => {
+                trace.event(TraceEvent::GenEntityDone { entity: id.clone(), files });
+                regenerated += 1;
+            }
+            Err(e) => {
+                trace.event(TraceEvent::GenEntityFailed { entity: id.clone(), stage: "generate".into(), error: e });
+                failures += 1;
+            }
+        }
+    }
+    Ok(json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures }))
+}
+
+pub fn parse_file_reply(reply: &str) -> Result<(String, String), String> {
+    let reply = strip_fences(reply);
+    let mut lines = reply.splitn(2, '\n');
+    let first = lines.next().unwrap_or("").trim();
+    let Some(path) = first.strip_prefix("FILE:") else {
+        return Err(format!("first line must be `FILE: <path>`, got `{}`", crate::llm::truncate(first, 80)));
+    };
+    let path = path.trim();
+    if path.is_empty() || path.starts_with('/') || path.contains("..") {
+        return Err(format!("bad file path `{}`", path));
+    }
+    Ok((path.to_string(), lines.next().unwrap_or("").to_string()))
+}
+
+// Models wrap code in markdown fences despite instructions; strip one outer fence.
+pub fn strip_fences(s: &str) -> String {
+    let t = s.trim();
+    if let Some(rest) = t.strip_prefix("```") {
+        if let Some(end) = rest.rfind("```") {
+            let body = &rest[..end];
+            return body.split_once('\n').map(|(_, b)| b).unwrap_or(body).to_string();
+        }
+    }
+    t.to_string()
+}
+
+// One entity's task: the model picks the product path (FILE protocol, parts when
+// dense), the tests path, and the manifest with the run commands. Requirements the
+// model declares untestable programmatically, or whose declared test fails validation
+// (name missing from the artifact, empty command), become llm rows with a criteria
+// file. Manifest validation is deterministic; nothing here chooses for the model.
+pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
+    let instructions = task["instructions"].as_str().unwrap_or_default();
+    let header = format!(
+        "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nAlready generated files: {}\n",
+        id,
+        task["name"].as_str().unwrap_or_default(),
+        task["context"].as_str().unwrap_or_default(),
+        task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+        serde_json::to_string(&task["generatedFiles"]).unwrap_or_default(),
+    );
+    let groups = task["requirementGroups"].as_array().cloned().unwrap_or_default();
+    let parts = groups.len();
+    let req_line = |r: &serde_json::Value| {
+        format!(
+            "- {} [{}]: {}\n  quote: {}",
+            r["id"].as_str().unwrap_or(""),
+            r["testName"].as_str().unwrap_or(""),
+            r["ears"].as_str().unwrap_or(""),
+            r["quote"].as_str().unwrap_or("")
+        )
+    };
+
+    // Product content; the model names the file.
+    let mut code = String::new();
+    let mut product_rel = String::new();
+    for (k, group) in groups.iter().enumerate() {
+        let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
+        let user = if k == 0 {
+            format!(
+                "{}\nWrite the implementing content for this entity. Derive the medium from the context; choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put the marker comment (// req:<id> hash:<hash8> plus the quote, in the medium's comment syntax) at each implementing site. Requirements (group 1 of {}):\n{}\n",
+                header, parts, req_lines.join("\n")
+            )
+        } else {
+            format!(
+                "{}\nRequirements (group {} of {}):\n{}\n\nThe file `{}` so far:\n{}\nReturn ONLY additional content to append, no FILE line.",
+                header, k + 1, parts, req_lines.join("\n"), product_rel, crate::llm::truncate(&code, 20_000)
+            )
+        };
+        let reply = llm
+            .chat(instructions, &user, &format!("gen {} product {}/{}", id, k + 1, parts))
+            .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
+        if k == 0 {
+            let (path, body) = parse_file_reply(&reply)?;
+            product_rel = path;
+            code = body;
+        } else {
+            code.push_str("\n");
+            code.push_str(&strip_fences(&reply));
+        }
+        code.push('\n');
+    }
+    if code.trim().is_empty() {
+        return Err("empty product".into());
+    }
+    let product_path = gs.deliverable.join(&product_rel);
+    if let Some(p) = product_path.parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    std::fs::write(&product_path, &code).map_err(|e| e.to_string())?;
+
+    // Tests: the model names the file too, or declares nothing programmatic.
+    let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
+    let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
+    let tests_user = format!(
+        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`. Requirements:\n{}\n\nThe product file:\n{}\n",
+        header,
+        product_rel,
+        req_lines.join("\n"),
+        crate::llm::truncate(&code, 16_000)
+    );
+    let tests_reply = llm
+        .chat(instructions, &tests_user, &format!("gen {} tests", id))
+        .map_err(|e| format!("tests file: {}", e))?;
+    let mut files = vec![product_rel.clone()];
+    let mut tests_rel = String::new();
+    let mut tests_code = String::new();
+    if tests_reply.trim() != "NONE" {
+        let (path, body) = parse_file_reply(&tests_reply).map_err(|e| format!("tests reply: {}", e))?;
+        tests_rel = path;
+        tests_code = body;
+        let tests_path = gs.deliverable.join(&tests_rel);
+        if let Some(p) = tests_path.parent() {
+            std::fs::create_dir_all(p).ok();
+        }
+        std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
+        files.push(tests_rel.clone());
+    }
+
+    // The manifest: the model declares run commands and any support files it needs;
+    // support files are returned inline and written here.
+    let manifest_user = format!(
+        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
+        id,
+        files,
+        task["deliverable"].as_str().unwrap_or_default(),
+        all_reqs.iter().map(|r| format!("- {} [{}]", r["id"].as_str().unwrap_or(""), r["testName"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
+        tests_rel,
+        crate::llm::truncate(&tests_code, 12_000)
+    );
+    let manifest_reply = llm
+        .chat(instructions, &manifest_user, &format!("gen {} manifest", id))
+        .map_err(|e| format!("manifest: {}", e))?;
+    let manifest_json: serde_json::Value = {
+        let text = strip_fences(&manifest_reply);
+        let start = text.find('{').ok_or("manifest reply held no JSON object")?;
+        let end = text.rfind('}').ok_or("manifest reply held no JSON object")?;
+        serde_json::from_str(&text[start..=end]).map_err(|e| format!("manifest JSON: {}", e))?
+    };
+    if let Some(support) = manifest_json["supportFiles"].as_array() {
+        for f in support {
+            let (Some(path), Some(content)) = (f["path"].as_str(), f["content"].as_str()) else { continue };
+            if path.starts_with('/') || path.contains("..") {
+                continue;
+            }
+            let p = gs.deliverable.join(path);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(&p, content).map_err(|e| e.to_string())?;
+            files.push(path.to_string());
+        }
+    }
+
+    // Deterministic validation: a programmatic row needs its declared test present in
+    // the tests artifact and a non-empty command; anything else becomes an llm row.
+    let declared = manifest_json["tests"].as_array().cloned().unwrap_or_default();
+    let mut tests_manifest: Vec<serde_json::Value> = Vec::new();
+    for r in &all_reqs {
+        let rid = r["id"].as_str().unwrap_or_default();
+        let name = r["testName"].as_str().unwrap_or_default();
+        let row = declared.iter().find(|t| t["requirement"].as_str() == Some(rid));
+        let programmatic = row
+            .map(|t| {
+                t["kind"].as_str() == Some("programmatic")
+                    && !t["run"].as_str().unwrap_or("").trim().is_empty()
+                    && tests_code.contains(name)
+            })
+            .unwrap_or(false);
+        if programmatic {
+            let t = row.unwrap();
+            tests_manifest.push(serde_json::json!({
+                "requirement": rid, "kind": "programmatic",
+                "label": t["label"].as_str().unwrap_or("test"),
+                "artifact": tests_rel, "name": name,
+                "run": t["run"].as_str().unwrap_or(""),
+                "cwd": t["cwd"].as_str().unwrap_or("."),
+                "files": [product_rel],
+            }));
+        } else {
+            let crit_rel = r["criteriaPath"].as_str().unwrap_or_default().to_string();
+            let crit_path = store.out.join("gen").join(&crit_rel);
+            if let Some(p) = crit_path.parent() {
+                std::fs::create_dir_all(p).ok();
+            }
+            let criteria = format!(
+                "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n- {}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
+                rid,
+                r["hash"].as_str().unwrap_or_default(),
+                rid,
+                r["ears"].as_str().unwrap_or_default(),
+                r["quote"].as_str().unwrap_or_default(),
+                product_rel,
+            );
+            std::fs::write(&crit_path, criteria).ok();
+            tests_manifest.push(serde_json::json!({
+                "requirement": rid, "kind": "llm",
+                "label": row.and_then(|t| t["label"].as_str()).unwrap_or("llm"),
+                "artifact": crit_rel, "name": name,
+                "run": format!("jazyk test {}", rid),
+                "files": [product_rel],
+            }));
+        }
+    }
+    let manifest = serde_json::json!({"files": files, "tests": tests_manifest});
+    crate::gen::mark(store, id, task["factHash"].as_str(), &manifest, gs)?;
+    Ok(files.len())
+}

@@ -58,63 +58,72 @@ impl Lsp {
                 }
                 Ok(Event::Eof) | Err(_) => break,
             };
-            let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
-            let id = msg.get("id").cloned();
-            let params = msg.get("params").cloned().unwrap_or(Value::Null);
             let mut out = stdout.lock();
-            // The store is the single source of truth: reload when a compile moved it.
-            self.refresh(&mut out);
-            match method.as_str() {
-                "initialize" => reply(&mut out, id, self.capabilities()),
-                "initialized" => {}
-                "shutdown" => reply(&mut out, id, Value::Null),
-                "exit" => break,
-                "textDocument/didOpen" => {
-                    if let Some(doc) = self.sync_open(&params) {
-                        self.publish(&mut out, &doc);
-                    }
+            if !self.handle(msg, &mut out) {
+                break;
+            }
+        }
+    }
+
+    // Dispatch one client message. Transport-agnostic: the GUI serves the same
+    // sessions over WebSocket. Returns false on `exit`.
+    pub(crate) fn handle<W: Write>(&mut self, msg: Value, out: &mut W) -> bool {
+        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+        let id = msg.get("id").cloned();
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        // The store is the single source of truth: reload when a compile moved it.
+        self.refresh(out);
+        match method.as_str() {
+            "initialize" => reply(out, id, self.capabilities()),
+            "initialized" => {}
+            "shutdown" => reply(out, id, Value::Null),
+            "exit" => return false,
+            "textDocument/didOpen" => {
+                if let Some(doc) = self.sync_open(&params) {
+                    self.publish(out, &doc);
                 }
-                "textDocument/didChange" => {
-                    if let Some(doc) = self.sync_change(&params) {
-                        self.publish(&mut out, &doc);
-                    }
+            }
+            "textDocument/didChange" => {
+                if let Some(doc) = self.sync_change(&params) {
+                    self.publish(out, &doc);
                 }
-                "textDocument/didSave" => self.publish_all(&mut out),
-                // The client's native file watcher saw the store move; the refresh
-                // before dispatch already reloaded and republished. Nothing more.
-                "workspace/didChangeWatchedFiles" => {}
-                "textDocument/didClose" => {
-                    if let Some(doc) = self.param_doc(&params) {
-                        self.overlay.remove(&doc);
-                    }
+            }
+            "textDocument/didSave" => self.publish_all(out),
+            // The client's native file watcher saw the store move; the refresh
+            // before dispatch already reloaded and republished. Nothing more.
+            "workspace/didChangeWatchedFiles" => {}
+            "textDocument/didClose" => {
+                if let Some(doc) = self.param_doc(&params) {
+                    self.overlay.remove(&doc);
                 }
-                "textDocument/definition" => {
-                    let r = self.on_definition(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/references" => {
-                    let r = self.on_references(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/hover" => {
-                    let r = self.on_hover(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/completion" => {
-                    let r = self.on_completion();
-                    reply(&mut out, id, r);
-                }
-                "textDocument/documentLink" => {
-                    let r = self.on_document_links(&params);
-                    reply(&mut out, id, r);
-                }
-                _ => {
-                    if id.is_some() {
-                        reply(&mut out, id, Value::Null);
-                    }
+            }
+            "textDocument/definition" => {
+                let r = self.on_definition(&params);
+                reply(out, id, r);
+            }
+            "textDocument/references" => {
+                let r = self.on_references(&params);
+                reply(out, id, r);
+            }
+            "textDocument/hover" => {
+                let r = self.on_hover(&params);
+                reply(out, id, r);
+            }
+            "textDocument/completion" => {
+                let r = self.on_completion();
+                reply(out, id, r);
+            }
+            "textDocument/documentLink" => {
+                let r = self.on_document_links(&params);
+                reply(out, id, r);
+            }
+            _ => {
+                if id.is_some() {
+                    reply(out, id, Value::Null);
                 }
             }
         }
+        true
     }
 
     fn capabilities(&self) -> Value {
@@ -133,7 +142,7 @@ impl Lsp {
 
     // Reload the store when the generation counter moved, and republish every open
     // document so the editor reflects the new build.
-    fn refresh<W: Write>(&mut self, out: &mut W) {
+    pub(crate) fn refresh<W: Write>(&mut self, out: &mut W) {
         let current = Store::load(&self.out);
         if current.status.generation != self.generation {
             eprintln!(

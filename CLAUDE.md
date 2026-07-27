@@ -83,7 +83,7 @@ turns rephrase it into EARS, keep the quote verbatim (`docs2/compiler/concepts/e
 ## LLM config
 
 Precedence per field: CLI flag → env (`JAZYK_LLM_BASE_URL`, `JAZYK_MODEL`, `JAZYK_API_KEY`) →
-`~/.jazyk/config.toml` → project `[llm]` → default. The repo `.env` points
+project `[llm]` → `~/.jazyk/config.toml` → default. The repo `.env` points
 `JAZYK_LLM_BASE_URL` at LocalRouter (`http://127.0.0.1:3625`), which proxies local Ollama
 models and remote providers; the global config picks the model (`gemma4:e4b-mlx`). Use
 LocalRouter; do not override the endpoint unless asked. Tuning: `JAZYK_MAX_CONCURRENCY`,

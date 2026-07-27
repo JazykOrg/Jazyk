@@ -10,3 +10,6 @@ files = ["docs/main.md"]
 
 [gen]
 deliverable = "project"
+
+[llm]
+model = "gpt-5.5"

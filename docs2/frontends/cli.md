@@ -101,6 +101,13 @@ demand, without compiling. The same render runs after every committed changeset.
 `jazyk viewer [--out FILE]` renders the graph into one self-contained HTML file
 (default `<out>/graph.html`). See [viewer](./viewer.md).
 
+### jazyk gui
+
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts the
+[GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
+the language server over WebSocket, then opens the browser. `--no-open` skips opening
+the browser. Binds `127.0.0.1` only.
+
 ### jazyk mcp graph
 
 Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds the

@@ -1,0 +1,120 @@
+/* Route-specific styling app.css does not cover. */
+
+.statrow {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin: 8px 0 16px;
+}
+
+.statrow b {
+  font-size: 18px;
+}
+
+.actionrow {
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+  align-items: center;
+}
+
+/* Build console */
+.joblist .card {
+  cursor: pointer;
+}
+
+.joblist .card.job-sel {
+  border-color: var(--accent);
+}
+
+.trace {
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+}
+
+.trace-row {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 0;
+}
+
+.trace-row.t-muted {
+  color: var(--muted);
+}
+
+.trace-row.t-model {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.trace-row.t-err {
+  color: var(--err);
+}
+
+.trace-row.t-ok {
+  color: var(--accent);
+}
+
+.trace-row.t-warn {
+  color: var(--warn);
+}
+
+/* Release diff */
+.diff-line {
+  display: block;
+}
+
+.diff-del {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+}
+
+.diff-add {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Command palette */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 50;
+}
+
+.palette {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(600px, 90vw);
+  z-index: 51;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3);
+}
+
+.palette-hits {
+  margin-top: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.palette-hit {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.palette-hit.sel {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.oneline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

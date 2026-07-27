@@ -1,0 +1,158 @@
+/* App shell layout: nav rail, route content, persistent status bar. */
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.nav {
+  width: 92px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+
+.nav a {
+  padding: 7px 14px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+  border-left: 3px solid transparent;
+}
+
+.nav a.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nav a:hover {
+  color: var(--accent);
+}
+
+.nav .nav-bottom {
+  margin-top: auto;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 24px 40px;
+  min-width: 0;
+}
+
+.content.full {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.statusbar {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 5px 14px;
+  font-size: 12px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.statusbar a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.statusbar a:hover {
+  color: var(--accent);
+}
+
+.statusbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+/* Shared bits */
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.filterbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 12px;
+  flex-wrap: wrap;
+}
+
+.filterbar input {
+  max-width: 420px;
+}
+
+.facet {
+  cursor: pointer;
+  user-select: none;
+}
+
+.facet.off {
+  opacity: 0.45;
+}
+
+pre.pack {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 10px 14px;
+  font-size: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.empty {
+  color: var(--muted);
+  margin: 16px 0;
+}
+
+.error-inline {
+  color: var(--err);
+  margin: 16px 0;
+}
+
+.commit-note {
+  position: fixed;
+  bottom: 40px;
+  right: 18px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+}

@@ -3,6 +3,7 @@ mod cli;
 mod context;
 mod docsgen;
 mod gen;
+mod gui;
 mod jsonrpc;
 mod llm;
 mod lsp;
@@ -59,6 +60,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
+    s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
     s.push_str("  jazyk mcp graph [--write]      the graph MCP server over stdio\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
@@ -172,6 +174,21 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              names the file (default <out>/graph.html); otherwise --out is the out\n\
              directory."
             .to_string(),
+        "gui" => format!(
+            "usage: jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]\n\n\
+             Start the GUI: one local server with the web app, the JSON API, the event\n\
+             stream, and the language server over WebSocket, then open the browser.\n\
+             Binds 127.0.0.1 only. The busy default port falls back to an ephemeral one;\n\
+             an explicit --port that is busy is an error.\n\n\
+             options:\n  \
+             --port N        the port (default 4680)\n  \
+             --no-open       do not open the browser\n  \
+             --watch         start with the compile-on-change toggle on\n  \
+             --gui-dist DIR  serve frontend assets from DIR instead of the embedded build\n  \
+             --no-token      disable the session token check (frontend development)\n\
+             {}",
+            COMMON_LLM
+        ),
         "mcp" => format!(
             "usage: jazyk mcp graph [--write]\n\n\
              Serve the graph MCP server over stdio. Read tools by default; --write adds\n\
@@ -239,6 +256,17 @@ fn main() {
                 i += 1;
                 opts.kind = args.get(i).cloned();
             }
+            "--port" => {
+                i += 1;
+                opts.port = args.get(i).and_then(|s| s.parse::<u16>().ok());
+            }
+            "--gui-dist" => {
+                i += 1;
+                opts.gui_dist = args.get(i).cloned();
+            }
+            "--no-open" => opts.no_open = true,
+            "--watch" => opts.watch = true,
+            "--no-token" => opts.no_token = true,
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
@@ -312,6 +340,7 @@ fn main() {
             0
         }
         "viewer" => cli::run_viewer(&opts),
+        "gui" => cli::run_gui(&positional, &opts),
         "lsp" => {
             let (proj, _llm, out) = cli::resolve(&positional, &opts);
             let gs = gen::GenSettings::resolve(&proj, &out);

@@ -15,3 +15,10 @@ serde_norway = "0.9"
 ureq = "2"
 notify = "6"
 regex = "1.12.4"
+# GUI server (async runtime is scoped inside src/gui/; the rest of the binary stays sync).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+include_dir = "0.7"
+open = "5"

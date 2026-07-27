@@ -41,8 +41,9 @@ one `yaml` block; each block is one case.
   [task toolset](../compiler/tools.md#task-toolsets),
   [budgets](../compiler/turns.md#budgets), and
   [validation gates](../compiler/graph.md#validation-gates).
-- Checks run after the turn commits or aborts. An aborted turn stages nothing, so the
-  checks see the fixture as-is.
+- Checks run after the turn commits. An aborted turn fails the case with the abort
+  reason; its checks are skipped and count as failed. See
+  [runs](./benchmark.md#runs).
 
 ## Index
 

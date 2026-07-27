@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BuildReport {
     pub verdict: String,
     pub dirty_docs: usize,
@@ -101,6 +103,11 @@ fn run_wave(
     let touched = Mutex::new(BTreeSet::new());
     let parked = Mutex::new(Vec::new());
     parallel::par_map(items, workers(), |_, item| {
+        // Best-effort cancellation: an unstarted item parks; the next build resumes it.
+        if trace.is_cancelled() {
+            parked.lock().unwrap().push(item.clone());
+            return;
+        }
         for attempt in 0..2 {
             let snapshot = store.lock().unwrap().clone();
             let out: TurnOutput = run_turn(llm, snapshot, item, limits, lint, trace);
@@ -125,10 +132,11 @@ fn run_wave(
                     return;
                 }
                 Some(e) => {
-                    trace.line(
-                        &format!("{} {}", item.task, item.target),
-                        &format!("turn failed (attempt {}): {}", attempt + 1, e),
-                    );
+                    trace.event(crate::turn::TraceEvent::TurnFailed {
+                        label: format!("{} {}", item.task, item.target),
+                        attempt: attempt + 1,
+                        error: e,
+                    });
                 }
             }
         }
@@ -527,7 +535,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         if level_items.is_empty() {
             continue;
         }
-        if turns as usize >= budget_cap {
+        if turns as usize >= budget_cap || trace.is_cancelled() {
             parked_all.extend(level_items);
             continue;
         }
@@ -600,7 +608,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             .collect()
     };
     if !fixup.is_empty() {
-        if (turns as usize) >= budget_cap {
+        if (turns as usize) >= budget_cap || trace.is_cancelled() {
             parked_all.extend(fixup);
         } else {
             trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
@@ -632,7 +640,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let groups = review_groups(&store.lock().unwrap(), &review_targets);
     let mut run_groups: Vec<Vec<String>> = Vec::new();
     for g in groups {
-        if (turns as usize) + g.len() <= budget_cap {
+        if (turns as usize) + g.len() <= budget_cap && !trace.is_cancelled() {
             turns += g.len() as u32;
             run_groups.push(g);
         } else {

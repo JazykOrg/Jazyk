@@ -369,7 +369,7 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
         let path = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if !matches!(name.as_str(), "target" | "node_modules" | ".git" | "jazyk-out") {
+            if !matches!(name.as_str(), "target" | "node_modules" | ".git") && !name.starts_with("jazyk-out") {
                 collect_files(&path, v, is_criteria);
             }
         } else if std::fs::metadata(&path).map(|m| m.len() <= 512 * 1024).unwrap_or(false) {
@@ -529,4 +529,159 @@ mod tests {
         assert!(t.ends_with('Z'));
         assert!(t.starts_with("20"));
     }
+}
+
+// ---- the built-in worker ----
+// Moved out of the CLI so the GUI job runner drives the same loop. The CLI wrapper
+// renders the worker events on the historical output format; the GUI streams them.
+
+// Row selection shared by the worker and `jazyk test --list`: pending rows (all rows
+// when forced), narrowed by targets (entity ids select their rows, requirement ids
+// select directly) and by test kind.
+pub fn select_rows(
+    store: &Store,
+    gs: &GenSettings,
+    targets: &[String],
+    kind: Option<&str>,
+    force: bool,
+) -> Vec<Value> {
+    let filter = if force { "all" } else { "stale" };
+    pending(store, gs, Some(filter), None)
+        .into_iter()
+        .filter(|r| {
+            if targets.is_empty() {
+                return true;
+            }
+            targets.iter().any(|t| {
+                let t = store.resolve_id(t);
+                r["requirement"].as_str() == Some(t) || store.resolve_id(r["entity"].as_str().unwrap_or("")) == t
+            })
+        })
+        .filter(|r| match kind {
+            Some(k) => r["test"]["kind"].as_str() == Some(k),
+            None => true,
+        })
+        .collect()
+}
+
+// Run verification over the selected rows and record verdicts. Programmatic rows
+// execute their command; llm rows drive the configured model against the verify_task
+// package. Returns {rows, verified, failing, stale, skipped}.
+// Mirrors docs2/consumers/gen.md#runners.
+pub fn run_all(
+    store: &Store,
+    llm: &crate::llm::Llm,
+    gs: &GenSettings,
+    targets: &[String],
+    kind: Option<&str>,
+    force: bool,
+    trace: &crate::turn::Trace,
+) -> Result<Value, String> {
+    use crate::turn::TraceEvent;
+    let selected = select_rows(store, gs, targets, kind, force);
+    if !targets.is_empty() && selected.is_empty() {
+        return Err("no ledger rows match the given target(s); run `jazyk gen` first or check the ids".into());
+    }
+    let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
+    for r in &selected {
+        if trace.is_cancelled() {
+            break;
+        }
+        let rid = r["requirement"].as_str().unwrap_or_default().to_string();
+        let status = r["status"].as_str().unwrap_or_default();
+        if status == "stale-requirement" || status == "missing" {
+            trace.event(TraceEvent::VerifyRowStale {
+                requirement: rid.clone(),
+                entity: r["entity"].as_str().unwrap_or("").to_string(),
+                status: status.to_string(),
+                reason: r["reason"].as_str().unwrap_or("").to_string(),
+            });
+            stale += 1;
+            continue;
+        }
+        let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
+        trace.event(TraceEvent::VerifyRowStart { requirement: rid.clone(), test: row_kind.to_string() });
+        let verdict = if row_kind == "llm" {
+            match task(store, &rid, gs) {
+                Ok(task_pkg) => {
+                    let mut evidence_input = String::new();
+                    for f in task_pkg["files"].as_array().cloned().unwrap_or_default() {
+                        if let Some(f) = f.as_str() {
+                            if let Ok(content) = std::fs::read_to_string(gs.deliverable.join(f)) {
+                                evidence_input
+                                    .push_str(&format!("\n=== {} ===\n{}", f, crate::llm::truncate(&content, 12_000)));
+                            }
+                        }
+                    }
+                    let user = format!(
+                        "{}\n\nContext:\n{}\n\nImplementing files:{}\n\nReply with a verdict line `PASS` or `FAIL`, then your reasoning.",
+                        task_pkg["criteria"].as_str().unwrap_or_default(),
+                        task_pkg["context"].as_str().unwrap_or_default(),
+                        evidence_input
+                    );
+                    match llm.chat(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid)) {
+                        Ok(reply) => {
+                            let up = reply.to_uppercase();
+                            match (up.find("PASS"), up.find("FAIL")) {
+                                (Some(p), Some(f)) => Some((p < f, crate::llm::truncate(reply.trim(), 300).to_string())),
+                                (Some(_), None) => Some((true, crate::llm::truncate(reply.trim(), 300).to_string())),
+                                (None, Some(_)) => Some((false, crate::llm::truncate(reply.trim(), 300).to_string())),
+                                (None, None) => {
+                                    trace.event(TraceEvent::VerifyRowError {
+                                        requirement: rid.clone(),
+                                        message: " verdict unparseable (no PASS or FAIL in reply)".into(),
+                                    });
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            trace.event(TraceEvent::VerifyRowError {
+                                requirement: rid.clone(),
+                                message: format!(" llm run failed: {}", e),
+                            });
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: format!(": {}", e) });
+                    None
+                }
+            }
+        } else {
+            match run_programmatic(store, &rid, gs) {
+                Ok((pass, evidence)) => Some((pass, evidence)),
+                Err(e) => {
+                    trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: format!(": {}", e) });
+                    None
+                }
+            }
+        };
+        match verdict {
+            Some((pass, evidence)) => {
+                let v = if pass { "pass" } else { "fail" };
+                mark(store, &rid, v, None, Some(&evidence), gs).ok();
+                trace.event(TraceEvent::VerifyRowDone {
+                    requirement: rid.clone(),
+                    verdict: v.to_string(),
+                    run: r["test"]["run"].as_str().unwrap_or("").to_string(),
+                    evidence,
+                });
+                if pass {
+                    verified += 1;
+                } else {
+                    failing += 1;
+                }
+            }
+            None => skipped += 1,
+        }
+    }
+    Ok(json!({
+        "rows": selected.len(),
+        "verified": verified,
+        "failing": failing,
+        "stale": stale,
+        "skipped": skipped,
+    }))
 }

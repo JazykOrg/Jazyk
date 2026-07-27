@@ -171,9 +171,16 @@ impl Llm {
         if verbose() {
             eprintln!("[jazyk] → {}", label);
         }
+        let mut try_stream = false;
         for attempt in 0..=max {
-            match self.chat_once(messages, tools) {
+            let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
+            match self.chat_once(messages, tools, streaming) {
                 Ok(out) => {
+                    // A streaming probe that succeeds after a non-streaming failure
+                    // sticks for the run.
+                    if try_stream && !STREAM_REQUIRED.swap(true, Ordering::Relaxed) {
+                        eprintln!("[jazyk] streaming retry succeeded; using SSE for the rest of the run");
+                    }
                     if verbose() {
                         eprintln!("[jazyk] ✓ {} ({} ms)", label, started.elapsed().as_millis());
                     }
@@ -200,6 +207,14 @@ impl Llm {
                     }
                     last = e;
                     if attempt < max && is_transient(&last) {
+                        // Some proxies fail relaying a non-streaming response (e.g. tool
+                        // calls through a router); probe the retry over SSE. Sticky only
+                        // if the streaming attempt succeeds; a failed probe reverts.
+                        if !streaming {
+                            try_stream = true;
+                        } else if try_stream {
+                            try_stream = false;
+                        }
                         // A rate limit is not a hiccup: pause before retrying instead of
                         // hammering the window shut.
                         if last.to_lowercase().contains("rate limit") {
@@ -240,8 +255,7 @@ impl Llm {
         Ok(msg["content"].as_str().unwrap_or("").to_string())
     }
 
-    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>) -> Result<(Value, u64), String> {
-        let streaming = STREAM_REQUIRED.load(Ordering::Relaxed);
+    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>, streaming: bool) -> Result<(Value, u64), String> {
         let mut payload = json!({
             "model": self.model,
             "stream": streaming,

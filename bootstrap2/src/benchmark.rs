@@ -376,7 +376,7 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
         return 2;
     }
     let limits = Limits::default();
-    let trace = Trace { level: TraceLevel::Quiet };
+    let trace = Trace::stderr(TraceLevel::Quiet);
     println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
     let mut any_usable = false;
     let mut codec_reports: Vec<(String, Value)> = Vec::new();
@@ -389,6 +389,10 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
         let mut checks_passed = 0usize;
         let mut checks_total = 0usize;
         let mut case_results: Vec<(String, String)> = Vec::new();
+        // A codec where no turn ever produces a completion is unmeasured, not graded.
+        // Mirrors docs2/benchmark/benchmark.md#report.
+        let mut any_completion = false;
+        let mut first_abort: Option<String> = None;
         println!("\ncodec: {}", codec_name);
 
         for case in &cases {
@@ -413,22 +417,33 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
             let case_start = std::time::Instant::now();
             let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &trace);
             let staged = out.session.staged.len();
+            any_completion |= out.tokens > 0;
             let mut fail: Option<String> = None;
-            // A native case that silently downgraded mid-turn did not pass natively.
-            if mode == 1 && llm::tools_mode() == 2 {
-                fail = Some("endpoint or model rejected native tool calls".into());
-            }
-            if out.failed.is_none() && staged > 0 {
-                store.apply(out.session.staged, &item, out.rounds, 0);
-            }
-            // An aborted turn stages nothing; the checks see the fixture as-is.
-            for (kind, arg) in &case.checks {
-                checks_total += 1;
-                match eval_check(kind, arg, &store, staged) {
-                    None => checks_passed += 1,
-                    Some(why) => {
-                        if fail.is_none() {
-                            fail = Some(format!("{}: {}", kind, why));
+            // An aborted turn fails the case with the abort reason. Its checks are
+            // skipped and count as failed: an untouched fixture satisfying a check is
+            // not evidence. Mirrors docs2/benchmark/benchmark.md#runs.
+            if let Some(why) = &out.failed {
+                fail = Some(format!("turn aborted: {}", why));
+                if first_abort.is_none() {
+                    first_abort = Some(why.clone());
+                }
+                checks_total += case.checks.len();
+            } else {
+                // A native case that silently downgraded mid-turn did not pass natively.
+                if mode == 1 && llm::tools_mode() == 2 {
+                    fail = Some("endpoint or model rejected native tool calls".into());
+                }
+                if staged > 0 {
+                    store.apply(out.session.staged, &item, out.rounds, 0);
+                }
+                for (kind, arg) in &case.checks {
+                    checks_total += 1;
+                    match eval_check(kind, arg, &store, staged) {
+                        None => checks_passed += 1,
+                        Some(why) => {
+                            if fail.is_none() {
+                                fail = Some(format!("{}: {}", kind, why));
+                            }
                         }
                     }
                 }
@@ -463,6 +478,15 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
             }
         }
 
+        // No completion ever arrived: nothing was graded, so the codec gets no
+        // verdict and no results entry. Mirrors docs2/benchmark/benchmark.md#report.
+        if !any_completion {
+            println!(
+                "  verdict: unmeasured  no completion ever arrived ({})",
+                first_abort.as_deref().unwrap_or("no turns ran")
+            );
+            continue;
+        }
         // The verdict is the highest tier whose cases all pass; review implies
         // extraction. Mirrors docs2/benchmark/benchmark.md#report.
         let verdict = match (extraction_ok, review_ok) {
@@ -489,6 +513,12 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
         ));
     }
     llm::set_tools_mode(0);
+    // Both codecs unmeasured: a dead endpoint never overwrites a real grade.
+    // Mirrors docs2/benchmark/benchmark.md#results-file.
+    if codec_reports.is_empty() {
+        eprintln!("jazyk: benchmark measured nothing: the endpoint never returned a completion; results not written");
+        return 2;
+    }
     write_results(out, &llm.model, &codec_reports);
     if any_usable {
         0

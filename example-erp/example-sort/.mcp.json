@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "jazyk": {
+      "args": [
+        "mcp",
+        "graph"
+      ],
+      "command": "jazyk"
+    }
+  }
+}

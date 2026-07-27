@@ -1,4 +1,0 @@
-# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.
-
-[docs]
-glob = ["**/*.md"]

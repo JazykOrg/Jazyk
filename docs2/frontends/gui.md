@@ -110,6 +110,17 @@ Settings:
   so hand-maintained settings are never silently dropped; the editor still works on
   it.
 
+Deliverable:
+
+- `GET /api/deliverable`: the generated product as a file listing, each file with the
+  entities and requirements the [ledger](../consumers/gen.md#the-ledger) binds to it,
+  and the test artifacts pointing at it.
+- `GET /api/deliverable/file?path=`: one file's text plus its parsed
+  [traceability markers](../consumers/gen.md#traceability): the requirement each
+  marker names, the line it sits on, and whether it is stale (the marker's statement
+  hash no longer matches the live requirement). A file that is not text reports its
+  size instead. Reads are confined to the deliverable directory.
+
 Diagnostics:
 
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
@@ -235,6 +246,12 @@ serialize on the store lock, and the second build finds nothing dirty.
   requirements. Filters cover scope, edge type, and neighborhood focus.
 - Journal: the changeset timeline, one changeset per generation with its work item,
   mutations, and reasoning; and the release diff between any two generations.
+- Deliverable: the generated product, browsable beside the prose that produced it. A
+  file tree with per-file ownership badges; a read-only viewer where every
+  traceability marker links to its requirement, stale markers are flagged, and the
+  file's requirements show their verification chips. From the other side, an entity
+  or requirement page names the files implementing it. The docs say what the system
+  is; this view shows where that became code.
 - Settings: the project settings as a form: the docs glob, the roots, the deliverable
   directory, the LLM endpoint and model, the lint rules, and the limits, each with
   its effective default when unset. Saving rewrites `jazyk.toml` and applies live.

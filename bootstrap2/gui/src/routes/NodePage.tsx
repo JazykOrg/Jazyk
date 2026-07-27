@@ -2,7 +2,8 @@
 // plus context, backlinks, and verification for entities.
 import { Link, useParams } from 'react-router'
 import { useMemo } from 'react'
-import type { VerifyRow } from '../lib/api'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { get, type VerifyRow } from '../lib/api'
 import { useContextPack, useGraph, useJournal, useMatrix } from '../lib/queries'
 import NodeLink, { useResolveId } from '../components/NodeLink'
 import SectionLink from '../components/SectionLink'
@@ -16,6 +17,44 @@ import {
   reverseIndex,
 } from './Ir'
 import './routes.css'
+
+interface DelivOwners {
+  entities: string[]
+  requirements: string[]
+  tests: string[]
+}
+
+// One muted line naming the deliverable files the ledger binds to this node.
+function ImplementedIn({ id }: { id: string }) {
+  const q = useQuery({
+    queryKey: ['deliverable'],
+    queryFn: () => get<{ files: { path: string; owners: DelivOwners }[] }>('/api/deliverable'),
+    placeholderData: keepPreviousData,
+    staleTime: 5_000,
+  })
+  const paths = (q.data?.files ?? [])
+    .filter(
+      (f) =>
+        f.owners.entities.includes(id) ||
+        f.owners.requirements.includes(id) ||
+        f.owners.tests.includes(id),
+    )
+    .map((f) => f.path)
+  if (paths.length === 0) return null
+  return (
+    <p className="muted">
+      implemented in{' '}
+      {paths.map((p, i) => (
+        <span key={p}>
+          {i > 0 && ', '}
+          <Link className="mono" to={`/deliverable/${p}`}>
+            {p}
+          </Link>
+        </span>
+      ))}
+    </p>
+  )
+}
 
 function VerifyLine({ id, row }: { id: string; row?: VerifyRow }) {
   return (
@@ -73,6 +112,7 @@ export default function NodePage() {
           <Link to={`/map?focus=${encodeURIComponent(id)}`}>open in map</Link>
         </p>
         <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} />
+        <ImplementedIn id={id} />
 
         <h2>context pack</h2>
         {pack.error && <p className="error-inline">{pack.error.message}</p>}
@@ -125,6 +165,7 @@ export default function NodePage() {
       <div>
         <h1 className="mono">{id}</h1>
         <RequirementCard id={id} r={req} row={row} />
+        <ImplementedIn id={id} />
         <h2>verification</h2>
         <VerifyLine id={id} row={row} />
         {row?.entity && (

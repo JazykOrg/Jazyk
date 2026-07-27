@@ -2,6 +2,7 @@
 // stream, and the language server over WebSocket. Mirrors docs2/frontends/gui.md.
 mod api;
 mod assets;
+mod deliverable;
 mod diff;
 mod docs;
 mod events;

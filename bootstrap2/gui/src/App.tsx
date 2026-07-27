@@ -14,6 +14,7 @@ import Work from './routes/Work'
 import GenTask from './routes/GenTask'
 import VerifyMatrix from './routes/VerifyMatrix'
 import Settings from './routes/Settings'
+import Deliverable from './routes/Deliverable'
 import CommandPalette from './components/CommandPalette'
 
 const NAV = [
@@ -24,6 +25,7 @@ const NAV = [
   ['/map', 'Map'],
   ['/journal', 'Journal'],
   ['/work', 'Work'],
+  ['/deliverable', 'Deliverable'],
   ['/settings', 'Settings'],
 ] as const
 
@@ -77,6 +79,7 @@ export default function App() {
           <Route path="/work/gen/:id" element={<Page><GenTask /></Page>} />
           <Route path="/work/verify" element={<Page><VerifyMatrix /></Page>} />
           <Route path="/settings" element={<Page><Settings /></Page>} />
+          <Route path="/deliverable/*" element={<div className="content full"><Deliverable /></div>} />
           <Route path="*" element={<Page><p className="empty">no such page</p></Page>} />
         </Routes>
       </div>

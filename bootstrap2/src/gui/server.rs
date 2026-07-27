@@ -1,6 +1,6 @@
 // Router assembly, session-token check, bind with port fallback, graceful shutdown.
 use super::state::SharedState;
-use super::{api, assets, diff, docs, events, jobs, lsp_ws};
+use super::{api, assets, deliverable, diff, docs, events, jobs, lsp_ws};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -64,6 +64,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/jobs", get(jobs::list_jobs).post(jobs::post_job))
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
+        .route("/deliverable", get(deliverable::listing))
+        .route("/deliverable/file", get(deliverable::file))
         .route("/trace", get(jobs::list_traces))
         .route("/trace/{stem}", get(jobs::get_trace))
         .route("/settings", get(api::settings_get).put(api::settings_put))

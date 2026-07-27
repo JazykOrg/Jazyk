@@ -53,7 +53,7 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       break
     case 'job.finished':
       app.setJobState(ev.jobId as number, ev.state as string, ev.result as Job['result'])
-      for (const key of ['jobs', 'pending', 'matrix', 'status'])
+      for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable'])
         qc.invalidateQueries({ queryKey: [key] })
       break
     // Settings changed the project itself; anything derived may differ.

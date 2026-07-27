@@ -120,6 +120,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         watch_mode: std::sync::Mutex::new(if gopts.watch { "watch" } else { "queue" }.to_string()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
+    jobs::sweep_traces(&st.out);
     let worker = jobs::spawn_worker(st.clone());
 
     let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {

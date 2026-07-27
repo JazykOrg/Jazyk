@@ -24,10 +24,24 @@ pub enum TraceLevel {
 pub enum TraceEvent {
     #[serde(rename = "turnStart")]
     TurnStart { label: String, dirty: usize, stale: usize },
+    // `summary` is the condensed line the CLI prints; `full` carries the payload
+    // behind it (capped) when condensing cut something, so the GUI expands in place.
     #[serde(rename = "toolCall")]
-    ToolCall { label: String, name: String, summary: String },
+    ToolCall {
+        label: String,
+        name: String,
+        summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<String>,
+    },
     #[serde(rename = "toolResult")]
-    ToolResult { label: String, name: String, summary: String },
+    ToolResult {
+        label: String,
+        name: String,
+        summary: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        full: Option<String>,
+    },
     #[serde(rename = "toolError")]
     ToolError { label: String, rule: String, message: String },
     #[serde(rename = "modelText")]
@@ -68,7 +82,7 @@ fn render_stderr(ev: &TraceEvent) {
         TraceEvent::TurnStart { label, dirty, stale } => {
             eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
         }
-        TraceEvent::ToolCall { label, name, summary } => eprintln!("[{}] → {} {}", label, name, summary),
+        TraceEvent::ToolCall { label, name, summary, .. } => eprintln!("[{}] → {} {}", label, name, summary),
         TraceEvent::ToolResult { label, summary, .. } => eprintln!("[{}] ← {}", label, summary),
         TraceEvent::ToolError { label, rule, message } => eprintln!("[{}] ✗ {}: {}", label, rule, message),
         TraceEvent::ModelText { label, text } => eprintln!("[{}] · {}", label, llm::truncate(text, 200)),
@@ -474,6 +488,17 @@ fn condense(v: &Value, n: usize) -> String {
     llm::truncate(&v.to_string(), n)
 }
 
+// The payload behind a condensed line, only when condensing cut something, capped so
+// a huge context pack cannot flood the trace file.
+fn full_payload(v: &Value) -> Option<String> {
+    let s = v.to_string();
+    if s.len() <= 160 {
+        None
+    } else {
+        Some(llm::truncate(&s, 8_000).to_string())
+    }
+}
+
 pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, lint: &Linting, trace: &Trace) -> TurnOutput {
     let prefix = format!("{} {}", item.task, item.target);
     let scope = match item.task.as_str() {
@@ -569,6 +594,16 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
             }
             messages.push(msg.clone());
 
+            // Reasoning carried in a dedicated field is model text too; content prose
+            // reaches the trace through the codec's Action::Text.
+            for field in ["reasoning_content", "reasoning"] {
+                if let Some(r) = msg[field].as_str() {
+                    if !r.trim().is_empty() {
+                        trace.event(TraceEvent::ModelText { label: prefix.clone(), text: r.trim().to_string() });
+                    }
+                }
+            }
+
             if !actions.iter().any(|a| matches!(a, Action::Call { .. })) {
                 invalid_streak += 1;
                 if invalid_streak >= 3 {
@@ -609,6 +644,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                             label: prefix.clone(),
                             name: name.clone(),
                             summary: condense(&args, 160),
+                            full: full_payload(&args),
                         });
                         trace.verbose(&prefix, &format!("full args: {}", args));
                         let result = match session.dispatch(&name, &args) {
@@ -617,6 +653,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                                     label: prefix.clone(),
                                     name: name.clone(),
                                     summary: condense(&v, 160),
+                                    full: full_payload(&v),
                                 });
                                 trace.verbose(&prefix, &format!("full result: {}", v));
                                 v

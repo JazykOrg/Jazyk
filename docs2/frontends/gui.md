@@ -122,9 +122,17 @@ Diagnostics:
 The GUI runs builds and workers itself. `POST /api/jobs` with
 `{kind: compile | gen | verify | audit}` (plus targets and `force` where the kind takes
 them) queues a job and returns its id. `GET /api/jobs` lists jobs,
-`GET /api/jobs/{id}` returns one job with its state, result, and buffered trace
-events. `POST /api/jobs/{id}/cancel` requests cancellation.
+`GET /api/jobs/{id}` returns one job with its state, result, and its whole trace: the
+server keeps every event a job emitted, numbered per job, so a reloaded page shows the
+same history the live stream showed. Tool calls and results carry the condensed line
+and, when it was cut, the full payload beside it. `POST /api/jobs/{id}/cancel`
+requests cancellation.
 
+- Every job's trace persists as one JSON-lines file under `<out>/trace/`: a metadata
+  line, one line per numbered event, and a final line with the outcome. The Build
+  view lists past jobs from these files, so the history survives server restarts and
+  page reloads, and any tool can load a transcript programmatically. Files older
+  than 30 days are removed when the server starts.
 - Jobs run in-process, one at a time, in submission order. Every kind contends on the
   store lock and the LLM budget, so serializing them is the point.
 - Submitting a `compile` while one is already queued returns the queued job's id.
@@ -209,8 +217,12 @@ serialize on the store lock, and the second build finds nothing dirty.
   top open diagnostics), recent changesets, and the run actions.
 - Docs: the document tree and the editor, with per-document diagnostic and coverage
   badges.
-- Build: the running job with its waves, turns, tool calls, and the model's reasoning,
-  live; past jobs with their reports.
+- Build: the job history, newest first, and the selected job's trace as turns, newest
+  turn first. The turn being worked on stays highlighted at the top with its tool
+  calls streaming in. Every turn shows its command sequence inline (the tool, the
+  condensed arguments, the condensed result); a row expands to the full payloads (a
+  search's hits, a result body, the model's reasoning). Selecting a job pins it: a
+  new job starting does not steal the view.
 - IR: the graph browser, the viewer's cards served live: entities, requirements,
   relationships, diagnostics (with triage actions), coverage. One text filter plus
   facets. Suppressed diagnostics never render.

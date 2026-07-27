@@ -45,7 +45,9 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
     case 'job.trace':
       app.pushTrace({
         jobId: ev.jobId as number,
-        seq: (ev.seq as number) ?? 0,
+        // The per-job event number (not the global stream seq): rows merge exactly
+        // onto a fetched transcript baseline.
+        seq: (ev.n as number) ?? 0,
         event: ev.event as { kind: string },
       })
       break

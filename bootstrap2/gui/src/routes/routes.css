@@ -28,9 +28,26 @@
   border-color: var(--accent);
 }
 
-.trace {
-  max-height: calc(100vh - 240px);
-  overflow: auto;
+.card.turn-active {
+  border-left: 4px solid var(--accent);
+}
+
+.trace-row .expand {
+  border: none;
+  background: none;
+  padding: 0 4px 0 0;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.trace-row .expand:hover {
+  color: var(--accent);
+  outline: none;
+}
+
+.trace-full {
+  margin: 2px 0 6px 18px;
 }
 
 .trace-row {

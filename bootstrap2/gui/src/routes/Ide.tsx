@@ -545,6 +545,7 @@ export default function Ide() {
               record={coverageQ.data?.[loaded.path]}
               onDirty={onDirty}
               onNavigate={onNavigate}
+              onOpenNode={(id) => navigate(`/n/${encodeURIComponent(id)}`)}
               onMarkers={setMarkers}
               onSave={() => void save()}
             />

@@ -411,7 +411,7 @@ export default function Ir() {
               .sort(([a], [b]) => a.localeCompare(b))
               .map(([doc, rec]) => {
                 const secs = Object.entries(rec.sections).sort((a, b) => a[1].order - b[1].order)
-                const state = (sec: string) => rec.coverage[sec]?.state ?? 'unprocessed'
+                const state = (sec: string) => (rec.coverage ?? {})[sec]?.state ?? 'unprocessed'
                 const count = (want: string) => secs.filter(([sid]) => state(sid) === want).length
                 return (
                   <tr key={doc}>

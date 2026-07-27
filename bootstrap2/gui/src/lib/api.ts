@@ -151,7 +151,8 @@ export interface Section {
 export interface DocRecord {
   contentHash: string
   sections: Record<string, Section>
-  coverage: Record<string, { state: string; note?: string; claimedBy?: string }>
+  // Absent when nothing is covered yet: the server skips empty maps.
+  coverage?: Record<string, { state: string; note?: string; claimedBy?: string }>
 }
 
 export interface JournalEntry {

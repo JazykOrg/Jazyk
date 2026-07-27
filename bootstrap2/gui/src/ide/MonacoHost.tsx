@@ -3,7 +3,10 @@
 // 0-based positions and monaco 1-based ones.
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as monaco from 'monaco-editor'
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+// Inline the worker as a blob: Firefox refuses cross-context worker URLs from the
+// bundled chunk (it mangles the base to https://[ff00::]/), and the main-thread
+// fallback stutters on large docs.
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
 import type { DocRecord } from '../lib/api'
 import type { LspClient, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
 
@@ -104,6 +107,8 @@ interface Props {
   record?: DocRecord
   onDirty: (dirty: boolean) => void
   onNavigate: (path: string, line?: number) => void
+  // Route a node id (e.g. a docsgen link's entity) to its app page.
+  onOpenNode?: (id: string) => void
   onMarkers: (markers: monaco.editor.IMarker[]) => void
   onSave: () => void
 }
@@ -255,10 +260,21 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       // the path is an editable document.
       monaco.editor.registerLinkOpener({
         open: (resource) => {
-          const rel = uriToPath(propsRef.current.root, resource.toString())
-          if (!rel) return false
-          propsRef.current.onNavigate(rel)
-          return true
+          const target = resource.toString()
+          const rel = uriToPath(propsRef.current.root, target)
+          if (rel) {
+            propsRef.current.onNavigate(rel)
+            return true
+          }
+          // A docsgen link names an entity's requirements document; land on the
+          // entity page instead of a file the browser cannot open.
+          const docsgen = target.match(/\/docsgen\/([a-z0-9-]+)\.md$/)
+          if (docsgen && propsRef.current.onOpenNode) {
+            propsRef.current.onOpenNode(`ent:${docsgen[1]}`)
+            return true
+          }
+          // Never hand a file:// target to the browser; it is blocked and noisy.
+          return target.startsWith('file://')
         },
       }),
       monaco.editor.onDidChangeMarkers((uris) => {
@@ -340,7 +356,8 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     if (props.record) {
       const lineCount = model.getLineCount()
       for (const [secRef, sec] of Object.entries(props.record.sections)) {
-        const cov = props.record.coverage[secRef]
+        // A reconciled doc with nothing covered serializes without a coverage map.
+        const cov = (props.record.coverage ?? {})[secRef]
         const cls = cov ? (cov.state === 'covered' ? 'cov-covered' : 'cov-nonnorm') : 'cov-unprocessed'
         const [start, end] = sec.lines
         if (start > lineCount) continue

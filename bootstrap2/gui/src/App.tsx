@@ -13,6 +13,7 @@ import ReleaseDiff from './routes/ReleaseDiff'
 import Work from './routes/Work'
 import GenTask from './routes/GenTask'
 import VerifyMatrix from './routes/VerifyMatrix'
+import Settings from './routes/Settings'
 import CommandPalette from './components/CommandPalette'
 
 const NAV = [
@@ -23,6 +24,7 @@ const NAV = [
   ['/map', 'Map'],
   ['/journal', 'Journal'],
   ['/work', 'Work'],
+  ['/settings', 'Settings'],
 ] as const
 
 export default function App() {
@@ -74,6 +76,7 @@ export default function App() {
           <Route path="/work" element={<Page><Work /></Page>} />
           <Route path="/work/gen/:id" element={<Page><GenTask /></Page>} />
           <Route path="/work/verify" element={<Page><VerifyMatrix /></Page>} />
+          <Route path="/settings" element={<Page><Settings /></Page>} />
           <Route path="*" element={<Page><p className="empty">no such page</p></Page>} />
         </Routes>
       </div>

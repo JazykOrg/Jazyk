@@ -64,6 +64,7 @@ pub fn router(st: SharedState) -> Router {
         .route("/jobs", get(jobs::list_jobs).post(jobs::post_job))
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))
+        .route("/settings", get(api::settings_get).put(api::settings_put))
         .route("/watch", get(api::watch_get).put(api::watch_put))
         .route("/events", get(events::sse))
         .route("/shutdown", post(api::shutdown));

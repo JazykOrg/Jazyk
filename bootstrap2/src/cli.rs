@@ -186,6 +186,7 @@ pub fn run_gui(paths: &[String], opts: &Options) -> i32 {
             watch: opts.watch,
             gui_dist: opts.gui_dist.clone(),
             no_token: opts.no_token,
+            cli_opts: opts.clone(),
         },
     )
 }
@@ -239,7 +240,7 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
 
 // Per-field precedence: CLI flag → env → project [llm] → global config → built-in default.
 // Mirrors docs2/compiler/project-settings.md#llm. `env` is injected for testability.
-fn resolve_llm(
+pub(crate) fn resolve_llm(
     opts: &Options,
     proj: &project::LlmSettings,
     global: &project::GlobalLlm,

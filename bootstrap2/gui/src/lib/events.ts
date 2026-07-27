@@ -54,6 +54,10 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       for (const key of ['jobs', 'pending', 'matrix', 'status'])
         qc.invalidateQueries({ queryKey: [key] })
       break
+    // Settings changed the project itself; anything derived may differ.
+    case 'settings.changed':
+      qc.invalidateQueries()
+      break
     case 'resync':
       qc.invalidateQueries()
       break

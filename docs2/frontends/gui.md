@@ -96,6 +96,20 @@ Generation and verification:
   [derived status](../consumers/gen.md#status-is-derived-never-stored), plus rollup
   counts.
 
+Settings:
+
+- `GET /api/settings`: the [project settings](../compiler/project-settings.md) as
+  parsed from `jazyk.toml`: which keys the file sets, the effective defaults for the
+  rest, and the file hash. The API key is reported only as set or unset, never its
+  value.
+- `PUT /api/settings` with `{baseHash, settings}`: regenerate `jazyk.toml` from the
+  form values and apply them to the running server without a restart. The write is
+  conditional on `baseHash` like a document write. The file is rewritten in canonical
+  form: comments do not survive, and a `redirect` or an `api_key` already in the file
+  is carried over untouched. A file holding keys the form does not know is refused,
+  so hand-maintained settings are never silently dropped; the editor still works on
+  it.
+
 Diagnostics:
 
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
@@ -209,6 +223,9 @@ serialize on the store lock, and the second build finds nothing dirty.
   requirements. Filters cover scope, edge type, and neighborhood focus.
 - Journal: the changeset timeline, one changeset per generation with its work item,
   mutations, and reasoning; and the release diff between any two generations.
+- Settings: the project settings as a form: the docs glob, the roots, the deliverable
+  directory, the LLM endpoint and model, the lint rules, and the limits, each with
+  its effective default when unset. Saving rewrites `jazyk.toml` and applies live.
 - Work: the generation worklist and per-entity task packages; the verification matrix
   with per-requirement status chips, the
   [staleness cascade](../consumers/gen.md#the-cascade) explained per row, and run

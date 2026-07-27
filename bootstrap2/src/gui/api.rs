@@ -27,18 +27,18 @@ pub async fn ping(State(st): State<SharedState>) -> Json<Value> {
     Json(json!({
         "app": "jazyk-gui",
         "version": env!("CARGO_PKG_VERSION"),
-        "root": st.proj.root.to_string_lossy(),
+        "root": st.proj().root.to_string_lossy(),
     }))
 }
 
 pub async fn project(State(st): State<SharedState>) -> Json<Value> {
-    let p = &st.proj;
+    let p = st.proj();
     Json(json!({
         "root": p.root.to_string_lossy(),
         "out": st.out.to_string_lossy(),
         "docsGlob": p.docs_glob,
         "roots": p.roots,
-        "deliverable": st.gs.deliverable.to_string_lossy(),
+        "deliverable": st.gs().deliverable.to_string_lossy(),
         "limits": {
             "turnRounds": p.limits.turn_rounds,
             "turnMutations": p.limits.turn_mutations,
@@ -46,7 +46,7 @@ pub async fn project(State(st): State<SharedState>) -> Json<Value> {
             "buildTurnFactor": p.limits.build_turn_factor,
         },
         // Never the api key.
-        "llm": { "model": st.llm.model, "baseUrl": st.llm.base_url },
+        "llm": { "model": st.llm().model, "baseUrl": st.llm().base_url },
         "version": env!("CARGO_PKG_VERSION"),
     }))
 }
@@ -94,6 +94,50 @@ pub fn status_value(store: &Store) -> Value {
 pub async fn shutdown(State(st): State<SharedState>) -> Json<Value> {
     st.shutdown.notify_waiters();
     Json(json!({ "ok": true }))
+}
+
+// The project settings for the form: set keys, effective defaults, unknown keys, and
+// the file hash for the conditional write. Mirrors docs2/frontends/gui.md#api.
+pub async fn settings_get(State(st): State<SharedState>) -> Json<Value> {
+    let root = st.root.clone();
+    Json(tokio::task::spawn_blocking(move || crate::project::settings_read(&root)).await.expect("settings read"))
+}
+
+// Rewrite jazyk.toml from the form values and apply live: the running server reloads
+// the project, the LLM resolution, and the generation settings without a restart.
+pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    let root = st.root.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let current = crate::project::settings_read(&root);
+        if current["hash"] != body["baseHash"] {
+            return Err((StatusCode::CONFLICT, "jazyk.toml changed on disk since it was read".to_string()));
+        }
+        let unknown = current["unknown"].as_array().cloned().unwrap_or_default();
+        if !unknown.is_empty() {
+            return Err((
+                StatusCode::CONFLICT,
+                format!(
+                    "jazyk.toml holds keys the settings form does not know ({}); edit the file directly",
+                    unknown.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+        let text = crate::project::settings_render(&root, &body["settings"])
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        std::fs::write(root.join("jazyk.toml"), &text)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot write jazyk.toml: {}", e)))?;
+        Ok(crate::project::settings_read(&root))
+    })
+    .await
+    .expect("settings write");
+    match result {
+        Ok(v) => {
+            super::reload_project(&st);
+            st.events.emit("settings.changed", json!({}));
+            Json(v).into_response()
+        }
+        Err((code, msg)) => err(code, msg),
+    }
 }
 
 // The human triage decision on a diagnostic, committed through the store as a
@@ -183,7 +227,7 @@ pub async fn entity(State(st): State<SharedState>, UrlPath(id): UrlPath<String>)
         .iter()
         .filter(|(_, rel)| rel.members.contains(&id))
         .collect();
-    let statuses = crate::verify::status_map(&store, &st.gs);
+    let statuses = crate::verify::status_map(&store, &st.gs());
     let verify: BTreeMap<&String, &Value> =
         req_ids.iter().filter_map(|r| statuses.get(r).map(|v| (r, v))).collect();
     Json(json!({
@@ -202,7 +246,7 @@ pub async fn requirement(State(st): State<SharedState>, UrlPath(id): UrlPath<Str
     let Some(req) = store.graph.requirements.get(&id) else {
         return err(StatusCode::NOT_FOUND, format!("no requirement {}", id));
     };
-    let statuses = crate::verify::status_map(&store, &st.gs);
+    let statuses = crate::verify::status_map(&store, &st.gs());
     Json(json!({ "id": id, "requirement": req, "verify": statuses.get(&id) })).into_response()
 }
 
@@ -231,7 +275,7 @@ pub struct ContextQ {
 pub async fn context(State(st): State<SharedState>, Query(p): Query<ContextQ>) -> Response {
     let store = load_store(&st).await;
     let focus = p.focus.as_deref().map(crate::context::Focus::parse).unwrap_or_default();
-    let budget = p.budget.unwrap_or(st.proj.limits.context_budget);
+    let budget = p.budget.unwrap_or(st.proj().limits.context_budget);
     let result = if p.target.starts_with("h:") {
         crate::context::expand(&store, &p.target, budget)
     } else {
@@ -252,7 +296,7 @@ pub async fn coverage(State(st): State<SharedState>) -> Json<Value> {
 // Viewer-style rollup: the status summary plus verification counts by status.
 pub async fn overview(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
-    let statuses = crate::verify::status_map(&store, &st.gs);
+    let statuses = crate::verify::status_map(&store, &st.gs());
     let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
     for v in statuses.values() {
         let s = v["status"].as_str().unwrap_or("unknown").to_string();
@@ -352,8 +396,8 @@ pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
     let by_doc = diag_counts_by_doc(&store);
     let mut list: Vec<Value> = Vec::new();
-    for f in st.proj.doc_files() {
-        let rel = rel_doc(&st.proj.root, &f);
+    for f in st.proj().doc_files() {
+        let rel = rel_doc(&st.proj().root, &f);
         let text = std::fs::read_to_string(&f).unwrap_or_default();
         let hash = crate::model::hash_hex(&text);
         let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
@@ -375,7 +419,7 @@ pub struct DocQ {
 }
 
 pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
-    let Some(abs) = super::docs::safe_doc_path(&st.proj, &p.path) else {
+    let Some(abs) = super::docs::safe_doc_path(&st.proj(), &p.path) else {
         return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
     };
     match std::fs::read_to_string(&abs) {
@@ -389,12 +433,12 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
 
 pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
-    Json(json!({ "pending": crate::gen::pending(&store, &st.gs) }))
+    Json(json!({ "pending": crate::gen::pending(&store, &st.gs()) }))
 }
 
 pub async fn gen_task(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
     let store = load_store(&st).await;
-    match crate::gen::task_package(&store, &id, &st.gs) {
+    match crate::gen::task_package(&store, &id, &st.gs()) {
         Ok(v) => Json(v).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
     }
@@ -411,8 +455,8 @@ pub async fn verify_pending(
     Query(p): Query<VerifyPendingQ>,
 ) -> Json<Value> {
     let store = load_store(&st).await;
-    let pending = crate::verify::pending(&store, &st.gs, p.filter.as_deref(), p.entity.as_deref());
-    Json(json!({ "pending": pending, "counts": crate::verify::pending_counts(&store, &st.gs) }))
+    let pending = crate::verify::pending(&store, &st.gs(), p.filter.as_deref(), p.entity.as_deref());
+    Json(json!({ "pending": pending, "counts": crate::verify::pending_counts(&store, &st.gs()) }))
 }
 
 // Every requirement with its derived status, plus rollup counts. Rows are the
@@ -420,7 +464,7 @@ pub async fn verify_pending(
 // matrix view can group by entity.
 pub async fn verify_matrix(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
-    let statuses = crate::verify::status_map(&store, &st.gs);
+    let statuses = crate::verify::status_map(&store, &st.gs());
     let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
     let mut rows: BTreeMap<String, Value> = BTreeMap::new();
     for (rid, v) in statuses {

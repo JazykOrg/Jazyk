@@ -134,8 +134,8 @@ fn entry_summary(g: u64, entry: &Value) -> Value {
 // Recompute the worklist sizes and emit pending.changed when they moved.
 pub fn recompute_pending(st: &SharedState) {
     let store = crate::store::Store::load(&st.out);
-    let gen_n = crate::gen::pending(&store, &st.gs).len();
-    let verify = crate::verify::pending_counts(&store, &st.gs);
+    let gen_n = crate::gen::pending(&store, &st.gs()).len();
+    let verify = crate::verify::pending_counts(&store, &st.gs());
     let now = json!({ "gen": gen_n, "verify": verify });
     let mut last = st.last_pending.lock().unwrap();
     if *last != now {
@@ -189,11 +189,11 @@ pub fn spawn_docs_watcher(st: SharedState) {
     std::thread::spawn(move || {
         use notify::Watcher;
         let fingerprints = |st: &SharedState| -> std::collections::BTreeMap<String, String> {
-            st.proj
+            st.proj()
                 .doc_files()
                 .iter()
                 .map(|f| {
-                    let rel = super::api::rel_doc(&st.proj.root, f);
+                    let rel = super::api::rel_doc(&st.proj().root, f);
                     let fp = std::fs::metadata(f)
                         .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
                         .unwrap_or_default();
@@ -211,7 +211,7 @@ pub fn spawn_docs_watcher(st: SharedState) {
             Ok(w) => w,
             Err(_) => return, // no watcher available: docs.changed simply never fires
         };
-        if watcher.watch(&st.proj.root, notify::RecursiveMode::Recursive).is_err() {
+        if watcher.watch(&st.proj().root, notify::RecursiveMode::Recursive).is_err() {
             return;
         }
         loop {
@@ -237,8 +237,8 @@ pub fn spawn_docs_watcher(st: SharedState) {
             }
             last = now;
             let store = crate::store::Store::load(&st.out);
-            let graph_stale = st.proj.doc_files().iter().any(|f| {
-                let rel = super::api::rel_doc(&st.proj.root, f);
+            let graph_stale = st.proj().doc_files().iter().any(|f| {
+                let rel = super::api::rel_doc(&st.proj().root, f);
                 match (std::fs::read_to_string(f), store.docs.get(&rel)) {
                     (Ok(text), Some(rec)) => crate::model::hash_hex(&text) != rec.content_hash,
                     (Ok(_), None) => true,

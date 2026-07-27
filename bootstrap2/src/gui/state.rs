@@ -6,10 +6,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct AppState {
-    pub proj: Project,
-    pub llm: Llm,
+    // The project root is fixed for the process; the settings behind it can be
+    // rewritten from the GUI and reload live (see gui/mod.rs reload_project).
+    pub root: PathBuf,
+    pub proj: std::sync::RwLock<Project>,
+    pub llm: std::sync::RwLock<Llm>,
     pub out: PathBuf,
-    pub gs: GenSettings,
+    pub gs: std::sync::RwLock<GenSettings>,
+    // The original invocation, so a settings reload re-resolves the LLM with the
+    // same flag and env precedence.
+    pub cli_opts: crate::cli::Options,
     // None when --no-token: every request passes the auth check.
     pub token: Option<String>,
     // Set by --gui-dist / JAZYK_GUI_DIST: serve frontend assets from disk instead of
@@ -30,6 +36,20 @@ pub struct AppState {
 }
 
 pub type SharedState = Arc<AppState>;
+
+// Cheap snapshots: settings are small, and a clone per request keeps every reader
+// consistent without holding a lock across IO.
+impl AppState {
+    pub fn proj(&self) -> Project {
+        self.proj.read().unwrap().clone()
+    }
+    pub fn llm(&self) -> Llm {
+        self.llm.read().unwrap().clone()
+    }
+    pub fn gs(&self) -> GenSettings {
+        self.gs.read().unwrap().clone()
+    }
+}
 
 // A random hex token from the OS entropy source. No rand crate: this is the one place
 // the binary needs randomness.

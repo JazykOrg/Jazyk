@@ -399,6 +399,31 @@ struct Toml {
     arrays: BTreeMap<String, Vec<String>>,
 }
 
+// Split a TOML array body on commas outside quotes, so a quoted item may contain
+// commas (lint rules are plain English sentences).
+fn split_array_items(inner: &str) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_str = false;
+    let mut quote = '"';
+    for c in inner.chars() {
+        match c {
+            '"' | '\'' if !in_str => {
+                in_str = true;
+                quote = c;
+            }
+            c if in_str && c == quote => in_str = false,
+            ',' if !in_str => {
+                items.push(cur.trim().to_string());
+                cur.clear();
+            }
+            c => cur.push(c),
+        }
+    }
+    items.push(cur.trim().to_string());
+    items.into_iter().filter(|s| !s.is_empty()).collect()
+}
+
 impl Toml {
     fn string(&self, key: &str) -> Option<String> {
         self.strings.get(key).cloned()
@@ -446,12 +471,7 @@ impl Toml {
                 }
                 let inner = buf.trim_start_matches('[');
                 let inner = inner.rsplit_once(']').map(|(a, _)| a).unwrap_or(inner);
-                let items: Vec<String> = inner
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                arrays.insert(full, items);
+                arrays.insert(full, split_array_items(inner));
             } else {
                 let v = val.trim_matches('"').trim_matches('\'').to_string();
                 strings.insert(full, v);
@@ -499,5 +519,239 @@ mod discovery_tests {
         assert_eq!(find_root(&dir.join("side")), None);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+// ---- settings io for the GUI ----
+// Read jazyk.toml into a form-friendly shape, and write it back in canonical form.
+// Mirrors docs2/frontends/gui.md#api (settings) and docs2/compiler/project-settings.md.
+
+const KNOWN_STRINGS: &[&str] = &[
+    "redirect",
+    "gen.deliverable",
+    "llm.base_url",
+    "llm.model",
+    "llm.api_key",
+    "llm.api_key_env",
+    "llm.temperature",
+    "limits.turn_rounds",
+    "limits.turn_mutations",
+    "limits.context_budget",
+    "limits.build_turn_factor",
+    "limits.max_section_chars",
+    "limits.max_doc_sections",
+    "limits.max_entity_requirements",
+];
+const KNOWN_ARRAYS: &[&str] =
+    &["docs.glob", "roots.files", "docs.linting.rules.warnings", "docs.linting.rules.errors"];
+
+// The parsed file for the settings form: set keys, effective defaults, unknown keys
+// (which make the form refuse to write), and the file hash for the conditional write.
+// The api key is reported as set or unset, never its value.
+pub fn settings_read(root: &Path) -> serde_json::Value {
+    use serde_json::json;
+    let path = root.join("jazyk.toml");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let t = Toml::parse(&text);
+    let unknown: Vec<String> = t
+        .strings
+        .keys()
+        .filter(|k| !KNOWN_STRINGS.contains(&k.as_str()))
+        .chain(t.arrays.keys().filter(|k| !KNOWN_ARRAYS.contains(&k.as_str())))
+        .cloned()
+        .collect();
+    let d = Limits::default();
+    json!({
+        "exists": path.exists(),
+        "hash": crate::model::hash_hex(&text),
+        "redirect": t.string("redirect"),
+        "unknown": unknown,
+        "settings": {
+            "docsGlob": t.array("docs.glob"),
+            "roots": t.array("roots.files"),
+            "deliverable": t.string("gen.deliverable"),
+            "llm": {
+                "baseUrl": t.string("llm.base_url"),
+                "model": t.string("llm.model"),
+                "apiKeyEnv": t.string("llm.api_key_env"),
+                "temperature": t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok()),
+                "apiKeySet": t.string("llm.api_key").is_some(),
+            },
+            "linting": {
+                "warnings": t.array("docs.linting.rules.warnings").unwrap_or_default(),
+                "errors": t.array("docs.linting.rules.errors").unwrap_or_default(),
+            },
+            "limits": {
+                "turnRounds": t.integer("limits.turn_rounds"),
+                "turnMutations": t.integer("limits.turn_mutations"),
+                "contextBudget": t.integer("limits.context_budget"),
+                "buildTurnFactor": t.integer("limits.build_turn_factor"),
+                "maxSectionChars": t.integer("limits.max_section_chars"),
+                "maxDocSections": t.integer("limits.max_doc_sections"),
+                "maxEntityRequirements": t.integer("limits.max_entity_requirements"),
+            },
+        },
+        "defaults": {
+            "docsGlob": Project::default().docs_glob,
+            "deliverable": "<out>/gen/deliverable",
+            "limits": {
+                "turnRounds": d.turn_rounds,
+                "turnMutations": d.turn_mutations,
+                "contextBudget": d.context_budget,
+                "buildTurnFactor": d.build_turn_factor,
+                "maxSectionChars": d.max_section_chars,
+                "maxDocSections": d.max_doc_sections,
+                "maxEntityRequirements": d.max_entity_requirements,
+            },
+        },
+    })
+}
+
+fn toml_str(v: &str) -> String {
+    format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn toml_list(items: &[String]) -> String {
+    let inner: Vec<String> = items.iter().map(|s| toml_str(s)).collect();
+    format!("[{}]", inner.join(", "))
+}
+
+// Regenerate jazyk.toml from form values, in canonical section order. Comments do
+// not survive; a redirect or an api_key already in the file is carried over
+// untouched. Returns the new file text.
+pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, String> {
+    let old = Toml::parse(&std::fs::read_to_string(root.join("jazyk.toml")).unwrap_or_default());
+    let list = |v: &serde_json::Value| -> Option<Vec<String>> {
+        v.as_array().map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+    };
+    let mut out = String::new();
+    if let Some(r) = old.string("redirect") {
+        out.push_str(&format!("redirect = {}\n\n", toml_str(&r)));
+    }
+    let glob = list(&s["docsGlob"]).unwrap_or_default();
+    if !glob.is_empty() {
+        out.push_str(&format!("[docs]\nglob = {}\n\n", toml_list(&glob)));
+    }
+    let warnings = list(&s["linting"]["warnings"]).unwrap_or_default();
+    let errors = list(&s["linting"]["errors"]).unwrap_or_default();
+    if !warnings.is_empty() || !errors.is_empty() {
+        out.push_str("[docs.linting.rules]\n");
+        if !warnings.is_empty() {
+            out.push_str(&format!("warnings = {}\n", toml_list(&warnings)));
+        }
+        if !errors.is_empty() {
+            out.push_str(&format!("errors = {}\n", toml_list(&errors)));
+        }
+        out.push('\n');
+    }
+    let roots = list(&s["roots"]).unwrap_or_default();
+    if !roots.is_empty() {
+        out.push_str(&format!("[roots]\nfiles = {}\n\n", toml_list(&roots)));
+    }
+    if let Some(d) = s["deliverable"].as_str().map(str::trim).filter(|d| !d.is_empty()) {
+        out.push_str(&format!("[gen]\ndeliverable = {}\n\n", toml_str(d)));
+    }
+    let llm = &s["llm"];
+    let mut llm_lines: Vec<String> = Vec::new();
+    for (key, field) in [("base_url", "baseUrl"), ("model", "model"), ("api_key_env", "apiKeyEnv")] {
+        if let Some(v) = llm[field].as_str().map(str::trim).filter(|v| !v.is_empty()) {
+            llm_lines.push(format!("{} = {}", key, toml_str(v)));
+        }
+    }
+    if let Some(k) = old.string("llm.api_key") {
+        llm_lines.push(format!("api_key = {}", toml_str(&k)));
+    }
+    if !llm["temperature"].is_null() {
+        let t = llm["temperature"].as_f64().ok_or("temperature must be a number")?;
+        llm_lines.push(format!("temperature = {}", t));
+    }
+    if !llm_lines.is_empty() {
+        out.push_str(&format!("[llm]\n{}\n\n", llm_lines.join("\n")));
+    }
+    let limits = &s["limits"];
+    let mut limit_lines: Vec<String> = Vec::new();
+    for (key, field) in [
+        ("turn_rounds", "turnRounds"),
+        ("turn_mutations", "turnMutations"),
+        ("context_budget", "contextBudget"),
+        ("build_turn_factor", "buildTurnFactor"),
+        ("max_section_chars", "maxSectionChars"),
+        ("max_doc_sections", "maxDocSections"),
+        ("max_entity_requirements", "maxEntityRequirements"),
+    ] {
+        if !limits[field].is_null() {
+            let v = limits[field].as_u64().filter(|v| *v > 0).ok_or_else(|| {
+                format!("limits.{} must be a positive integer", key)
+            })?;
+            limit_lines.push(format!("{} = {}", key, v));
+        }
+    }
+    if !limit_lines.is_empty() {
+        out.push_str(&format!("[limits]\n{}\n\n", limit_lines.join("\n")));
+    }
+    Ok(out.trim_end().to_string() + "\n")
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn settings_roundtrip_preserves_secret_and_redirect() {
+        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"**/*.md\"]\n\n[llm]\nmodel = \"m1\"\napi_key = \"sekret\"\n",
+        )
+        .unwrap();
+        let read = settings_read(&dir);
+        assert_eq!(read["settings"]["llm"]["apiKeySet"], true);
+        assert!(read["unknown"].as_array().unwrap().is_empty());
+        // The form never sees the key; the writer carries it over.
+        let text = settings_render(
+            &dir,
+            &serde_json::json!({
+                "docsGlob": ["**/*.md", "!drafts/**"],
+                "llm": { "model": "m2" },
+                "limits": { "turnRounds": 30 },
+            }),
+        )
+        .unwrap();
+        assert!(text.contains("glob = [\"**/*.md\", \"!drafts/**\"]"));
+        assert!(text.contains("api_key = \"sekret\""));
+        assert!(text.contains("model = \"m2\""));
+        assert!(text.contains("turn_rounds = 30"));
+        std::fs::write(dir.join("jazyk.toml"), &text).unwrap();
+        let p = Project::load(&dir);
+        assert_eq!(p.llm.model.as_deref(), Some("m2"));
+        assert_eq!(p.limits.turn_rounds, 30);
+        // Unknown keys are surfaced so the form refuses instead of dropping them.
+        std::fs::write(dir.join("jazyk.toml"), "[custom]\nthing = \"x\"\n").unwrap();
+        let read2 = settings_read(&dir);
+        assert_eq!(read2["unknown"].as_array().unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod toml_array_tests {
+    use super::*;
+
+    #[test]
+    fn quoted_array_items_keep_their_commas() {
+        let t = Toml::parse(
+            "[docs.linting.rules]\nwarnings = [\"An em dash appears in prose. Use commas, periods, or colons instead.\", \"Second rule\"]\n",
+        );
+        let rules = t.array("docs.linting.rules.warnings").unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].contains("commas, periods, or colons"));
+        assert_eq!(rules[1], "Second rule");
     }
 }

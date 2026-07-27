@@ -60,6 +60,22 @@ pub struct GuiOptions {
     pub watch: bool,
     pub gui_dist: Option<String>,
     pub no_token: bool,
+    // The original invocation, kept so a settings reload re-resolves the LLM with
+    // the same flag and env precedence.
+    pub cli_opts: crate::cli::Options,
+}
+
+// Re-read jazyk.toml and apply it to the running server: the project, the resolved
+// LLM, and the generation settings swap in place; every reader takes fresh
+// snapshots. Called after PUT /api/settings.
+pub(crate) fn reload_project(st: &SharedState) {
+    let mut proj = Project::load(&st.root);
+    proj.out = st.out.clone();
+    let global = crate::project::load_global_llm();
+    let llm = crate::cli::resolve_llm(&st.cli_opts, &proj.llm, &global, |n| std::env::var(n).ok());
+    *st.gs.write().unwrap() = GenSettings::resolve(&proj, &st.out);
+    *st.llm.write().unwrap() = llm;
+    *st.proj.write().unwrap() = proj;
 }
 
 // Ask whoever holds the default port to identify itself (the unauthenticated ping).
@@ -89,10 +105,12 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         .map(PathBuf::from);
     let token = if gopts.no_token { None } else { Some(state::mint_token()) };
     let st = Arc::new(AppState {
-        proj,
-        llm,
+        root: proj.root.clone(),
+        proj: std::sync::RwLock::new(proj),
+        llm: std::sync::RwLock::new(llm),
         out,
-        gs,
+        gs: std::sync::RwLock::new(gs),
+        cli_opts: gopts.cli_opts.clone(),
         token,
         dist_dir,
         shutdown: tokio::sync::Notify::new(),
@@ -125,7 +143,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         // Fell back off the busy default port: say who owns it, so a stale tab or
         // bookmark on the default port is explainable at a glance.
         if gopts.port.is_none() && addr.port() != server::DEFAULT_PORT {
-            let root = st.proj.root.clone();
+            let root = st.proj().root.clone();
             let occupant = tokio::task::spawn_blocking(move || probe_occupant(server::DEFAULT_PORT, &root))
                 .await
                 .unwrap_or_default();
@@ -135,7 +153,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
             Some(t) => format!("http://127.0.0.1:{}/#token={}", addr.port(), t),
             None => format!("http://127.0.0.1:{}/", addr.port()),
         };
-        println!("jazyk: gui — serving {} at {}", st.proj.root.display(), url);
+        println!("jazyk: gui — serving {} at {}", st.proj().root.display(), url);
         if !gopts.no_open {
             if let Err(e) = open::that_detached(&url) {
                 eprintln!("jazyk: gui: cannot open browser: {} (open {} yourself)", e, url);

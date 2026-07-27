@@ -92,7 +92,7 @@ async fn session(st: SharedState, socket: WebSocket) {
         }
     });
 
-    let (root, out_dir, gs) = (st.proj.root.clone(), st.out.clone(), st.gs.clone());
+    let (root, out_dir, gs) = (st.proj().root.clone(), st.out.clone(), st.gs().clone());
     let session = tokio::task::spawn_blocking(move || {
         let mut lsp = crate::lsp::Lsp::new(root, out_dir, gs);
         let mut sink = FrameSink { buf: Vec::new(), tx: out_tx };

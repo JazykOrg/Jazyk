@@ -86,7 +86,7 @@ pub async fn doc_write(
     Query(p): Query<DocPathQ>,
     Json(body): Json<DocWrite>,
 ) -> Response {
-    let Some(abs) = safe_doc_path(&st.proj, &p.path) else {
+    let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
         return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
     };
     let on_disk = std::fs::read_to_string(&abs).ok().map(|t| crate::model::hash_hex(&t));
@@ -120,10 +120,10 @@ pub struct DocRename {
 // Move a document. The graph is untouched: the next build's dirty set sees the move
 // and the reconciler rewrites references mechanically.
 pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRename>) -> Response {
-    let Some(from) = safe_doc_path(&st.proj, &body.from) else {
+    let Some(from) = safe_doc_path(&st.proj(), &body.from) else {
         return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.from));
     };
-    let Some(to) = safe_doc_path(&st.proj, &body.to) else {
+    let Some(to) = safe_doc_path(&st.proj(), &body.to) else {
         return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.to));
     };
     if !from.exists() {
@@ -146,7 +146,7 @@ pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRenam
 // Delete a document. The graph is untouched: the next build reconciles the
 // disappearance and garbage collection removes what nothing mentions anymore.
 pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
-    let Some(abs) = safe_doc_path(&st.proj, &p.path) else {
+    let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
         return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
     };
     if !abs.exists() {

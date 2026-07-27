@@ -246,20 +246,20 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
 fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, String> {
     match kind {
         JobKind::Compile => {
-            let report = crate::reconcile::compile(&st.proj, &st.llm, &st.out, trace);
+            let report = crate::reconcile::compile(&st.proj(), &st.llm(), &st.out, trace);
             Ok(json!(report))
         }
         JobKind::Gen { entities, force } => {
             let store = crate::store::Store::load(&st.out);
-            crate::gen::run_all(&store, &st.llm, &st.gs, entities, *force, trace)
+            crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, trace)
         }
         JobKind::Verify { targets, test_kind, force } => {
             let store = crate::store::Store::load(&st.out);
-            crate::verify::run_all(&store, &st.llm, &st.gs, targets, test_kind.as_deref(), *force, trace)
+            crate::verify::run_all(&store, &st.llm(), &st.gs(), targets, test_kind.as_deref(), *force, trace)
         }
         JobKind::Audit => {
             let store = crate::store::Store::load(&st.out);
-            Ok(crate::verify::audit(&store, &st.gs))
+            Ok(crate::verify::audit(&store, &st.gs()))
         }
     }
 }

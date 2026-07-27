@@ -16,6 +16,11 @@ snapshot; the GUI serves the same shards, updated as builds commit.
 - The server binds `127.0.0.1` only. It is never exposed beyond the local machine.
 - Default port `4680`. When the default port is busy, the server binds an ephemeral port
   and prints the actual URL. An explicit `--port` that is busy is an error.
+- `GET /api/ping` answers without a token: the app name, version, and the served
+  project root. A server per project is normal, so when the default port is busy the
+  startup line probes the occupant and names which project it serves. A stale tab is
+  self-evident too: the app titles itself with the project directory and shows the
+  root in the status bar.
 - The web app is embedded in the binary at compile time from the built frontend
   (`bootstrap2/gui/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
   a directory on disk instead, for frontend development.
@@ -26,8 +31,10 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   parameter). Requests without it get `401`. The token keeps other local processes from
   spending LLM budget or writing documents through the API. `--no-token` disables the
   check, for frontend development.
-- `POST /api/shutdown` and Ctrl-C stop the server. Shutdown cancels the running job and
-  waits for it, so no stale store lock is left behind.
+- `POST /api/shutdown` and Ctrl-C stop the server immediately. Open browser
+  connections (the event stream, the editor's WebSocket) never delay shutdown; they
+  drop with the process. Shutdown cancels the running job and waits briefly for it,
+  so no stale store lock is left behind.
 
 ## API
 

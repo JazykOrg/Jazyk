@@ -18,6 +18,12 @@ real project, so tools launched from the root (editors, MCP clients) resolve the
 project as tools launched inside it. Redirects do not chain: the target must hold a real
 `jazyk.toml`.
 
+A redirect applies where it stands. Discovery starting in the redirecting directory
+follows it. Discovery walking up from a subdirectory stops at the redirecting file
+instead of following it: the redirect declares that the tree's project lives in the
+target, so a subdirectory outside the target is its own place, and commands run there
+fall back to an ad hoc project at the working directory.
+
 ## Docs
 
 ### Glob

@@ -21,6 +21,16 @@ pub async fn load_store(st: &SharedState) -> Store {
         .expect("store load task panicked")
 }
 
+// Unauthenticated: lets a second instance (and a curious human) see which project a
+// running server owns. Nothing secret: the root path of a localhost-only process.
+pub async fn ping(State(st): State<SharedState>) -> Json<Value> {
+    Json(json!({
+        "app": "jazyk-gui",
+        "version": env!("CARGO_PKG_VERSION"),
+        "root": st.proj.root.to_string_lossy(),
+    }))
+}
+
 pub async fn project(State(st): State<SharedState>) -> Json<Value> {
     let p = &st.proj;
     Json(json!({

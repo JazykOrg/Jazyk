@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 // and the app sends it back as a bearer header (or `token` query for SSE/WS).
 async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let guarded = path.starts_with("/api") || path == "/lsp";
+    let guarded = (path.starts_with("/api") || path == "/lsp") && path != "/api/ping";
     let Some(expect) = st.token.as_deref() else {
         return next.run(req).await;
     };
@@ -40,6 +40,7 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
 
 pub fn router(st: SharedState) -> Router {
     let api = Router::new()
+        .route("/ping", get(api::ping))
         .route("/project", get(api::project))
         .route("/status", get(api::status))
         .route("/graph", get(api::graph))
@@ -89,15 +90,14 @@ pub async fn bind(port: Option<u16>) -> Result<tokio::net::TcpListener, String> 
     }
 }
 
+// Serve until ctrl-c or /api/shutdown. No graceful drain: the event stream and the
+// editor WebSocket stay open as long as a tab lives, so waiting on them would keep
+// ctrl-c hanging until the browser closes. Dropping the server closes everything.
 pub async fn serve(listener: tokio::net::TcpListener, st: SharedState) -> Result<(), String> {
     let app = router(st.clone());
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = st.shutdown.notified() => {}
-            }
-        })
-        .await
-        .map_err(|e| format!("server error: {}", e))
+    tokio::select! {
+        r = axum::serve(listener, app) => r.map_err(|e| format!("server error: {}", e)),
+        _ = tokio::signal::ctrl_c() => Ok(()),
+        _ = st.shutdown.notified() => Ok(()),
+    }
 }

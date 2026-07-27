@@ -50,6 +50,7 @@ fn top_usage() -> String {
     let mut s = String::new();
     s.push_str("jazyk — natural language compiler (turn-based)\n\n");
     s.push_str("usage:\n");
+    s.push_str("  jazyk init                     write a minimal jazyk.toml into the current directory\n");
     s.push_str("  jazyk compile [path...]        reconcile the graph with the documents\n");
     s.push_str("  jazyk check [path...]          compile, exit non-zero on error diagnostics (CI)\n");
     s.push_str("  jazyk watch [path...]          recompile on change\n");
@@ -83,6 +84,13 @@ const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/
 
 fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
+        "init" => "usage: jazyk init [--mcp claude|cursor|vscode|gemini|none]\n\n\
+             Initialize the current directory as a project root: write a minimal\n\
+             jazyk.toml and offer MCP integration for a coding agent. Existing files\n\
+             are merged or left unchanged with a warning, never overwritten. --mcp\n\
+             skips the prompt; a non-interactive stdin skips the MCP step.\n\n\
+             exit: 0 when something was set up, 1 when nothing was written"
+            .to_string(),
         "compile" => format!(
             "usage: jazyk compile [path...]\n\n\
              Reconcile the graph with the documents, running turns to a fixed point.\n\
@@ -264,6 +272,10 @@ fn main() {
                 i += 1;
                 opts.gui_dist = args.get(i).cloned();
             }
+            "--mcp" => {
+                i += 1;
+                opts.mcp = args.get(i).cloned();
+            }
             "--no-open" => opts.no_open = true,
             "--watch" => opts.watch = true,
             "--no-token" => opts.no_token = true,
@@ -295,6 +307,7 @@ fn main() {
     }
 
     let code = match cmd.as_str() {
+        "init" => cli::run_init(&opts),
         "compile" => cli::run_compile(&positional, &opts),
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),

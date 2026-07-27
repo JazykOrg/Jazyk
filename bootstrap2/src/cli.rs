@@ -27,6 +27,7 @@ pub struct Options {
     pub watch: bool,
     pub gui_dist: Option<String>,
     pub no_token: bool,
+    pub mcp: Option<String>,
 }
 
 impl Default for Options {
@@ -50,8 +51,127 @@ impl Default for Options {
             watch: false,
             gui_dist: None,
             no_token: false,
+            mcp: None,
         }
     }
+}
+
+// Initialize the current directory as a project root: a minimal jazyk.toml plus
+// optional MCP integration for a coding agent. Warns instead of overwriting.
+// Mirrors docs2/frontends/cli.md#jazyk-init.
+pub fn run_init(opts: &Options) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let path = cwd.join("jazyk.toml");
+    let mut wrote_something = false;
+    if path.exists() {
+        eprintln!("jazyk: jazyk.toml already exists in {}; leaving it unchanged", cwd.display());
+    } else {
+        let previous = project::find_root(&cwd);
+        let content = "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
+                       [docs]\nglob = [\"**/*.md\"]\n";
+        if let Err(e) = std::fs::write(&path, content) {
+            eprintln!("jazyk: cannot write {}: {}", path.display(), e);
+            return 1;
+        }
+        println!("jazyk: initialized {}", path.display());
+        wrote_something = true;
+        if let Some(root) = previous {
+            if root != cwd {
+                println!(
+                    "jazyk: note: this directory previously resolved to {}; the nearest jazyk.toml wins, so it now stands alone",
+                    root.display()
+                );
+            }
+        }
+    }
+    match init_mcp(&cwd, opts.mcp.as_deref()) {
+        Ok(true) => wrote_something = true,
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            return 1;
+        }
+    }
+    if wrote_something {
+        0
+    } else {
+        1
+    }
+}
+
+// The agents init knows how to wire: display name, config path, and the JSON key that
+// holds the server map.
+const MCP_AGENTS: &[(&str, &str, &str, &str)] = &[
+    ("claude", "Claude Code", ".mcp.json", "mcpServers"),
+    ("cursor", "Cursor", ".cursor/mcp.json", "mcpServers"),
+    ("vscode", "VS Code", ".vscode/mcp.json", "servers"),
+    ("gemini", "Gemini CLI", ".gemini/settings.json", "mcpServers"),
+];
+
+// Offer MCP integration: `--mcp` skips the prompt, a non-interactive stdin skips the
+// whole step so scripts never hang. Existing files are merged, never overwritten.
+fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
+    use std::io::IsTerminal;
+    let choice = match flag {
+        Some("none") => return Ok(false),
+        Some(a) => a.to_string(),
+        None => {
+            if !std::io::stdin().is_terminal() {
+                println!("jazyk: skipping MCP setup (no interactive stdin); rerun with --mcp claude|cursor|vscode|gemini");
+                return Ok(false);
+            }
+            println!("\nSet up MCP integration? The agent gets the graph tools over `jazyk mcp graph`.");
+            println!("  1) none");
+            for (i, (_, name, file, _)) in MCP_AGENTS.iter().enumerate() {
+                println!("  {}) {:<12} ({})", i + 2, name, file);
+            }
+            print!("choose [1-{}] (default 1): ", MCP_AGENTS.len() + 1);
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok();
+            match line.trim().parse::<usize>() {
+                Ok(n) if (2..=MCP_AGENTS.len() + 1).contains(&n) => MCP_AGENTS[n - 2].0.to_string(),
+                _ => return Ok(false),
+            }
+        }
+    };
+    let Some((_, name, rel, key)) = MCP_AGENTS.iter().find(|(id, ..)| *id == choice) else {
+        return Err(format!("unknown MCP agent `{}`; one of claude, cursor, vscode, gemini, none", choice));
+    };
+    let path = cwd.join(rel);
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{} is not valid JSON: {}", rel, e))?,
+        Err(_) => serde_json::json!({}),
+    };
+    if !root.is_object() {
+        return Err(format!("{} does not hold a JSON object", rel));
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry(key.to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        return Err(format!("{}.{} does not hold a JSON object", rel, key));
+    }
+    if servers.get("jazyk").is_some() {
+        eprintln!("jazyk: {} already has a `jazyk` server entry; leaving it unchanged", rel);
+        return Ok(false);
+    }
+    // Read-only by default; adding --write to args hands the agent the write tools.
+    let mut entry = serde_json::json!({ "command": "jazyk", "args": ["mcp", "graph"] });
+    if *key == "servers" {
+        entry["type"] = serde_json::json!("stdio"); // the VS Code shape names the transport
+    }
+    servers["jazyk"] = entry;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
+    println!("jazyk: wrote a read-only `jazyk` MCP server into {} for {}", rel, name);
+    Ok(true)
 }
 
 pub fn run_gui(paths: &[String], opts: &Options) -> i32 {

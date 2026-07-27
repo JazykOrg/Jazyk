@@ -62,6 +62,24 @@ pub struct GuiOptions {
     pub no_token: bool,
 }
 
+// Ask whoever holds the default port to identify itself (the unauthenticated ping).
+fn probe_occupant(port: u16, our_root: &std::path::Path) -> String {
+    let resp = ureq::get(&format!("http://127.0.0.1:{}/api/ping", port))
+        .timeout(std::time::Duration::from_millis(400))
+        .call();
+    match resp.ok().and_then(|r| r.into_string().ok()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+        Some(v) if v["app"] == "jazyk-gui" => {
+            let root = v["root"].as_str().unwrap_or("?");
+            if root == our_root.to_string_lossy() {
+                "another jazyk gui already serves this project there".to_string()
+            } else {
+                format!("a jazyk gui serving {}", root)
+            }
+        }
+        _ => "another process".to_string(),
+    }
+}
+
 pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
     let gs = GenSettings::resolve(&proj, &out);
     let dist_dir = gopts
@@ -104,6 +122,15 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         events::spawn_store_watcher(st.clone());
         events::spawn_docs_watcher(st.clone());
         let addr = listener.local_addr().expect("listener addr");
+        // Fell back off the busy default port: say who owns it, so a stale tab or
+        // bookmark on the default port is explainable at a glance.
+        if gopts.port.is_none() && addr.port() != server::DEFAULT_PORT {
+            let root = st.proj.root.clone();
+            let occupant = tokio::task::spawn_blocking(move || probe_occupant(server::DEFAULT_PORT, &root))
+                .await
+                .unwrap_or_default();
+            eprintln!("jazyk: gui: port {} is busy: {}", server::DEFAULT_PORT, occupant);
+        }
         let url = match &st.token {
             Some(t) => format!("http://127.0.0.1:{}/#token={}", addr.port(), t),
             None => format!("http://127.0.0.1:{}/", addr.port()),
@@ -121,13 +148,17 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
                 1
             }
         };
-        // Let a cancelled job reach a boundary and release the store lock before exit.
+        // Let a cancelled job reach a boundary and release the store lock before exit,
+        // but never hang shutdown on a slow LLM call: the lock is only held during the
+        // brief commit, so a bounded wait covers the risky window.
         st.jobs.cancel_running();
         st.jobs.stop();
-        let _ = tokio::task::spawn_blocking(move || {
+        let join = tokio::task::spawn_blocking(move || {
             let _ = worker.join();
-        })
-        .await;
+        });
+        if tokio::time::timeout(std::time::Duration::from_secs(10), join).await.is_err() {
+            eprintln!("jazyk: gui: a job is still finishing its current step; exiting anyway");
+        }
         code
     })
 }

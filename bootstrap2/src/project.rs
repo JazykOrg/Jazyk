@@ -162,12 +162,30 @@ mod tests {
     }
 }
 
+// Does this jazyk.toml delegate elsewhere? Used by discovery: a redirect found above
+// the starting directory is a boundary, not a capture.
+fn redirects(toml_path: &Path) -> bool {
+    std::fs::read_to_string(toml_path)
+        .map(|t| Toml::parse(&t).string("redirect").is_some())
+        .unwrap_or(false)
+}
+
 pub fn find_root(start: &Path) -> Option<PathBuf> {
     let mut dir = Some(start.to_path_buf());
+    let mut walked_up = false;
     while let Some(d) = dir {
-        if d.join("jazyk.toml").exists() {
+        let toml = d.join("jazyk.toml");
+        if toml.exists() {
+            // A redirect applies where it stands: followed when discovery starts in
+            // its directory, a boundary when reached from a subdirectory. The
+            // subdirectory then stands alone as an ad hoc project.
+            // Mirrors docs2/compiler/project-settings.md#redirect.
+            if walked_up && redirects(&toml) {
+                return None;
+            }
             return Some(d);
         }
+        walked_up = true;
         dir = d.parent().map(|p| p.to_path_buf());
     }
     None
@@ -457,4 +475,29 @@ fn strip_comment(line: &str) -> String {
         out.push(c);
     }
     out
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[test]
+    fn redirect_above_is_a_boundary_not_a_capture() {
+        let dir = std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("inner")).unwrap();
+        std::fs::create_dir_all(dir.join("inner/deep")).unwrap();
+        std::fs::create_dir_all(dir.join("side")).unwrap();
+        std::fs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
+        std::fs::write(dir.join("inner/jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
+
+        // Starting at the redirecting directory follows it (via Project::load).
+        assert_eq!(find_root(&dir), Some(dir.clone()));
+        // Starting inside the target finds the target's own file.
+        assert_eq!(find_root(&dir.join("inner/deep")), Some(dir.join("inner")));
+        // A sibling subdirectory is its own place: the redirect above is a boundary.
+        assert_eq!(find_root(&dir.join("side")), None);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

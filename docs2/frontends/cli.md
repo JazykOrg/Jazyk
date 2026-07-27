@@ -5,6 +5,26 @@ build, inspects the [graph store](../compiler/graph.md), and hosts the other fro
 
 ## Commands
 
+### jazyk init
+
+`jazyk init [--mcp AGENT]` initializes the current directory as a project root:
+
+- Writes a minimal `jazyk.toml`. When one already exists there, it warns and leaves
+  the file unchanged. When discovery previously resolved to a parent project, the
+  note says so: the nearest `jazyk.toml` wins, so the new file takes over from here
+  down.
+- Offers [MCP](./mcp.md) integration for a coding agent: a numbered choice of
+  `none`, Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code
+  (`.vscode/mcp.json`), or Gemini CLI (`.gemini/settings.json`). The chosen file
+  gains a `jazyk` server entry running `jazyk mcp graph`; an existing file is merged,
+  never overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
+  (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
+  non-interactive stdin skips it too, so scripts never hang.
+
+The server entry is read-only; add `--write` to its `args` to hand the agent the
+[write tools](../compiler/tools.md#write-tools). Exit `0` when something was set up,
+`1` when nothing was written.
+
 ### jazyk compile
 
 `jazyk compile [path...]` runs the [reconciler](../compiler/reconciler.md) to a
@@ -144,5 +164,8 @@ Grade whether the configured model is good enough to compile Jazyk. See
 ## Project discovery
 
 The CLI walks up from the working directory to the nearest `jazyk.toml` and treats that
-directory as the project root. Explicit `[path...]` arguments skip discovery and run ad hoc on
-those files. The out directory defaults to `<root>/jazyk-out/`.
+directory as the project root. A [redirect](../compiler/project-settings.md#redirect)
+found above the working directory is a boundary, not a capture: discovery stops there
+and the command runs ad hoc at the working directory. Explicit `[path...]` arguments
+skip discovery and run ad hoc on those files. The out directory defaults to
+`<root>/jazyk-out/`.

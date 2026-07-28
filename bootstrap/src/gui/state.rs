@@ -31,6 +31,9 @@ pub struct AppState {
     // queue: changes queue visibly, compiling stays an explicit click; the automatic
     // loop spends LLM budget, so it is opt-in.
     pub watch_mode: std::sync::Mutex<String>,
+    // The generation mode: manual | auto (docs/frontends/gui.md#generation). In auto,
+    // a finished compile with a non-empty worklist queues a gen job behind it.
+    pub gen_mode: std::sync::Mutex<String>,
     // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
     pub backoff: std::sync::atomic::AtomicU64,
 }

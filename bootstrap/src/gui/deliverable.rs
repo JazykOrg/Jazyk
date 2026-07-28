@@ -85,21 +85,25 @@ pub async fn listing(State(st): State<SharedState>) -> Json<Value> {
     Json(v)
 }
 
-// Resolve a client path strictly inside the deliverable directory.
-fn safe_path(gs: &crate::gen::GenSettings, rel: &str) -> Option<PathBuf> {
+// Resolve a client path strictly inside the given root directory.
+fn safe_under(root_dir: &Path, rel: &str) -> Option<PathBuf> {
     if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
         return None;
     }
     if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
         return None;
     }
-    let abs = gs.deliverable.join(rel);
-    let root = gs.deliverable.canonicalize().ok()?;
+    let abs = root_dir.join(rel);
+    let root = root_dir.canonicalize().ok()?;
     let canon = abs.canonicalize().ok()?;
     if !canon.starts_with(&root) {
         return None;
     }
     Some(canon)
+}
+
+fn safe_path(gs: &crate::gen::GenSettings, rel: &str) -> Option<PathBuf> {
+    safe_under(&gs.deliverable, rel)
 }
 
 #[derive(Deserialize)]
@@ -145,6 +149,33 @@ fn sites(store: &Store, out_dir: &Path, path: &str, text: &str) -> Vec<Value> {
         }
     }
     out
+}
+
+// The file as it stood before the last generation run rewrote it, from the snapshot
+// generation takes at write time. 404 when generation never rewrote the file.
+// Mirrors docs/frontends/gui.md#api (deliverable) and
+// docs/consumers/gen.md#incremental-regeneration.
+pub async fn baseline(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Response {
+    let out_dir = st.out.clone();
+    let path = p.path.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<Value, (StatusCode, String)> {
+        let root = out_dir.join("deliverable-baseline");
+        let Some(abs) = safe_under(&root, &path) else {
+            return Err((StatusCode::NOT_FOUND, format!("no baseline for {}", path)));
+        };
+        let bytes = std::fs::read(&abs)
+            .map_err(|_| (StatusCode::NOT_FOUND, format!("no baseline for {}", path)))?;
+        match String::from_utf8(bytes) {
+            Ok(text) => Ok(json!({ "path": path, "text": text })),
+            Err(e) => Ok(json!({ "path": path, "binary": true, "size": e.as_bytes().len() })),
+        }
+    })
+    .await
+    .expect("baseline read");
+    match result {
+        Ok(v) => Json(v).into_response(),
+        Err((code, msg)) => err(code, msg),
+    }
 }
 
 pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Response {

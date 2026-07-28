@@ -48,8 +48,8 @@ Live trace:
 
 Every build leaves a transcript: `compile`, `check`, `gen`, and `test` persist their
 trace as one JSON-lines file under `<out>/trace/`, the same format the
-[GUI](./gui.md#jobs) writes and lists, so a CLI build shows up in the GUI's Build
-view. The metadata line carries `source: cli` and no job id. `--quiet` still
+[GUI](./gui.md#jobs) writes and lists, so a CLI build shows up in the GUI's activity
+panel. The metadata line carries `source: cli` and no job id. `--quiet` still
 persists the transcript; only the terminal rendering is quiet.
 
 Exit code: `0` on convergence, non-zero when work was parked.

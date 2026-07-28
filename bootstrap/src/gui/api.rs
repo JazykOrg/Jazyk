@@ -184,17 +184,37 @@ pub async fn triage(
 }
 
 pub async fn watch_get(State(st): State<SharedState>) -> Json<Value> {
-    Json(json!({ "mode": st.watch_mode.lock().unwrap().clone() }))
+    Json(json!({
+        "mode": st.watch_mode.lock().unwrap().clone(),
+        "gen": st.gen_mode.lock().unwrap().clone(),
+    }))
 }
 
+// The watch mode and the generation mode share the endpoint; either field alone
+// leaves the other untouched. Mirrors docs/frontends/gui.md#watch and #generation.
 pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
-    let mode = body["mode"].as_str().unwrap_or_default();
-    if !["off", "queue", "watch"].contains(&mode) {
-        return err(StatusCode::BAD_REQUEST, "mode must be off, queue, or watch");
+    if let Some(mode) = body["mode"].as_str() {
+        if !["off", "queue", "watch"].contains(&mode) {
+            return err(StatusCode::BAD_REQUEST, "mode must be off, queue, or watch");
+        }
+        *st.watch_mode.lock().unwrap() = mode.to_string();
+    } else if !body["mode"].is_null() {
+        return err(StatusCode::BAD_REQUEST, "mode must be a string");
     }
-    *st.watch_mode.lock().unwrap() = mode.to_string();
-    st.events.emit("watch.state", json!({ "mode": mode }));
-    Json(json!({ "mode": mode })).into_response()
+    if let Some(gen) = body["gen"].as_str() {
+        if !["manual", "auto"].contains(&gen) {
+            return err(StatusCode::BAD_REQUEST, "gen must be manual or auto");
+        }
+        *st.gen_mode.lock().unwrap() = gen.to_string();
+    } else if !body["gen"].is_null() {
+        return err(StatusCode::BAD_REQUEST, "gen must be a string");
+    }
+    let state = json!({
+        "mode": st.watch_mode.lock().unwrap().clone(),
+        "gen": st.gen_mode.lock().unwrap().clone(),
+    });
+    st.events.emit("watch.state", state.clone());
+    Json(state).into_response()
 }
 
 pub async fn graph(State(st): State<SharedState>) -> Response {
@@ -429,6 +449,31 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
         }
         Err(e) => err(StatusCode::NOT_FOUND, format!("cannot read {}: {}", p.path, e)),
     }
+}
+
+// The last reconciled text, reconstructed from the stored section tree: sections
+// ordered by their line spans, raw bodies joined, blank gap lines restored. The
+// difference between this and the on-disk text is what the next build's dirty set
+// sees. Mirrors docs/frontends/gui.md#api.
+pub async fn doc_baseline(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
+    let store = load_store(&st).await;
+    let Some(rec) = store.docs.get(&p.path) else {
+        return err(StatusCode::NOT_FOUND, format!("{} has never reconciled", p.path));
+    };
+    let mut secs: Vec<&crate::model::Section> = rec.sections.values().collect();
+    secs.sort_by_key(|s| s.lines[0]);
+    let mut parts: Vec<&str> = Vec::new();
+    let mut expected = 0usize;
+    for s in &secs {
+        // Blank lines before the first heading belong to no section; restore them.
+        for _ in expected..s.lines[0] {
+            parts.push("");
+        }
+        parts.push(s.raw.as_str());
+        expected = s.lines[1];
+    }
+    let text = parts.join("\n");
+    Json(json!({ "path": p.path, "text": text, "hash": rec.content_hash })).into_response()
 }
 
 pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {

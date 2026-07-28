@@ -797,7 +797,31 @@ pub fn strip_fences(s: &str) -> String {
 // model declares untestable programmatically, or whose declared test fails validation
 // (name missing from the artifact, empty command), become llm rows with a criteria
 // file. Manifest validation is deterministic; nothing here chooses for the model.
+// Snapshot the previous content of a deliverable file before this run rewrites or
+// removes it: the diff baseline frontends show against. A file the run creates fresh
+// has no baseline, so a stale snapshot from an earlier run is dropped. File ownership
+// keeps a path with one entity, so a per-gen_one set is once per run per file.
+// Mirrors docs/consumers/gen.md#incremental-regeneration.
+fn snapshot_baseline(out: &Path, gs: &GenSettings, rel: &str, seen: &mut std::collections::HashSet<String>) {
+    if !seen.insert(rel.to_string()) {
+        return;
+    }
+    let dst = out.join("deliverable-baseline").join(rel);
+    match std::fs::read(gs.deliverable.join(rel)) {
+        Ok(bytes) => {
+            if let Some(p) = dst.parent() {
+                std::fs::create_dir_all(p).ok();
+            }
+            std::fs::write(&dst, bytes).ok();
+        }
+        Err(_) => {
+            std::fs::remove_file(&dst).ok();
+        }
+    }
+}
+
 pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
+    let mut baselined: std::collections::HashSet<String> = Default::default();
     let instructions = task["instructions"].as_str().unwrap_or_default();
     let run_commands = task["runCommands"]
         .as_array()
@@ -887,6 +911,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     if let Some(p) = product_path.parent() {
         std::fs::create_dir_all(p).ok();
     }
+    snapshot_baseline(&store.out, gs, &product_rel, &mut baselined);
     std::fs::write(&product_path, &code).map_err(|e| e.to_string())?;
 
     // Tests: the model names the file too, or declares nothing programmatic.
@@ -928,6 +953,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         if let Some(p) = tests_path.parent() {
             std::fs::create_dir_all(p).ok();
         }
+        snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
         std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
         files.push(tests_rel.clone());
     }
@@ -1027,6 +1053,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent).ok();
             }
+            snapshot_baseline(&store.out, gs, path, &mut baselined);
             std::fs::write(&p, content).map_err(|e| e.to_string())?;
             files.push(path.to_string());
         }
@@ -1094,6 +1121,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             let kept = files.contains(f)
                 || ledger.entities.iter().any(|(slug, e)| slug != &own_slug && e.files.contains(f));
             if !kept {
+                snapshot_baseline(&store.out, gs, f, &mut baselined);
                 std::fs::remove_file(gs.deliverable.join(f)).ok();
             }
         }

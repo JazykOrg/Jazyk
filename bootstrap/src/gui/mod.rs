@@ -29,7 +29,19 @@ fn jobs_hook_on_docs_changed(st: &SharedState) {
 // endpoint outage) retries with backoff, the same loop `jazyk watch` runs. A document
 // change resets the backoff by queueing a fresh compile through the hook above.
 fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
-    if !matches!(kind, jobs::JobKind::Compile) || watch_mode(st) != "watch" {
+    if !matches!(kind, jobs::JobKind::Compile) {
+        return;
+    }
+    // Auto generation: a finished compile with a non-empty worklist queues a gen job
+    // behind it. Only compile jobs trigger it, so the chain never loops.
+    // Mirrors docs/frontends/gui.md#generation.
+    if st.gen_mode.lock().unwrap().as_str() == "auto" {
+        let store = crate::store::Store::load(&st.out);
+        if !crate::gen::pending(&store, &st.gs()).is_empty() {
+            st.jobs.submit(st, jobs::JobKind::Gen { entities: vec![], force: false });
+        }
+    }
+    if watch_mode(st) != "watch" {
         return;
     }
     let verdict = crate::store::Store::load(&st.out).status.verdict.clone();
@@ -119,6 +131,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
         jobs: jobs::JobManager::new(),
         watch_mode: std::sync::Mutex::new(if gopts.watch { "watch" } else { "queue" }.to_string()),
+        gen_mode: std::sync::Mutex::new("manual".to_string()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
     jobs::sweep_traces(&st.out);

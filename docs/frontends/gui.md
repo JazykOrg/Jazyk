@@ -80,6 +80,11 @@ Documents:
   subject anchors there: a requirement whose source is the document, an entity with a
   mention in it, or a section reference into it. Suppressed diagnostics never count.
 - `GET /api/docs/content?path=`: the raw document text and its hash.
+- `GET /api/docs/baseline?path=`: the last reconciled text, reconstructed from the
+  stored [section tree](../compiler/parsing.md) (sections in order, raw bodies
+  joined). This is the diff baseline the editor marks changes against: the difference
+  between it and the on-disk text is exactly what the next build's dirty set sees.
+  `404` when the document has never reconciled.
 - `PUT /api/docs/content?path=` with `{text, baseHash}`: write the document. When the
   on-disk hash no longer matches `baseHash`, the write is rejected with `409` and the
   client re-reads. Paths are validated: inside the project root, matching the docs
@@ -129,6 +134,11 @@ Deliverable:
   whose artifact is this path, located by its embedded test name. Every entry names
   its requirement and current verification status. A file that is not text reports its
   size instead. Reads are confined to the deliverable directory.
+- `GET /api/deliverable/baseline?path=`: the file as it stood before the last
+  generation run rewrote it, from the snapshot generation takes at write time (see
+  [incremental regeneration](../consumers/gen.md#incremental-regeneration)). `404`
+  when generation never rewrote the file. Reads are confined to the baseline
+  directory.
 
 Diagnostics:
 
@@ -149,14 +159,14 @@ and, when it was cut, the full payload beside it. `POST /api/jobs/{id}/cancel`
 requests cancellation.
 
 - Every job's trace persists as one JSON-lines file under `<out>/trace/`: a metadata
-  line, one line per numbered event, and a final line with the outcome. The Build
-  view lists past jobs from these files, so the history survives server restarts and
+  line, one line per numbered event, and a final line with the outcome. The activity
+  panel lists past jobs from these files, so the history survives server restarts and
   page reloads, and any tool can load a transcript programmatically. Files older
   than 30 days are removed when the server starts.
 - Every build leaves a transcript, whichever frontend ran it: the CLI `compile`,
   `check`, `gen`, and `test` commands persist the same file (the metadata line carries
-  `source: cli` and no job id), so the Build view also lists builds that ran outside
-  the GUI. See [CLI](./cli.md).
+  `source: cli` and no job id), so the activity panel also lists builds that ran
+  outside the GUI. See [CLI](./cli.md).
 - Jobs run in-process, one at a time, in submission order. Every kind contends on the
   store lock and the LLM budget, so serializing them is the point.
 - Submitting a `compile` while one is already queued returns the queued job's id.
@@ -187,11 +197,174 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
 - `docs.changed`: matched documents changed on disk, with whether the graph is now
   stale.
 - `pending.changed`: the generation or verification worklists changed size.
-- `watch.state`: the watch mode changed.
+- `watch.state`: the watch mode or the generation mode changed. Carries both.
 
 External activity surfaces the same way: a `jazyk compile` run from a terminal, or an
 [MCP](./mcp.md) agent committing through write tools, moves the lock and the counter,
 and the GUI renders it live without owning the job.
+
+## Layout
+
+One workbench page. Navigation swaps panes, never the page. Five regions:
+
+- The rail: a narrow icon strip on the far left: `files`, `graph`, `work`,
+  `settings`. A rail item picks what the sidebar shows; it never navigates away.
+- The sidebar: the navigator for the active rail item. Clicking an entry opens it in
+  the center.
+- The center: the open item. The document editor, the deliverable viewer, the map,
+  the work views, the settings form.
+- The inspector: the detail pane on the right. Selecting a node anywhere (a code
+  lens, a map node, a list row, an id chip) shows its detail here, beside the
+  center, never replacing it. Closable; the center keeps its state under it.
+- The activity panel: the bottom strip, always present. Collapsed it is one line:
+  the run controls and the live build state. Expanded it is the run history and the
+  selected run's transcript. See [activity](#activity).
+
+Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`, `/graph`,
+`/work`, and `/settings` pick the center; `?node=` holds the inspector selection;
+`?run=` the selected run. Routes from the earlier tabbed layout redirect to their new
+homes.
+
+### Files
+
+One explorer over both trees, in two labeled sections:
+
+- Documents: the docs tree. Each document shows its open diagnostics as a
+  severity-colored badge and a drift dot when it is stale against the graph.
+  Documents can be created, renamed, and deleted from the tree, through the
+  documents API and its validation; a delete asks for a second click, never a
+  dialog. Directories exist implicitly through paths.
+- Deliverable: the generated product files, each with its ownership count badge
+  (the entities and requirements the ledger binds to it) and a stale dot when a
+  bound requirement's verification is stale.
+- Linkage: the two sections light each other up. Selecting a document highlights
+  the deliverable files bound to it: the requirements whose source anchors in the
+  document, joined through the ledger to the files that implement them. Selecting
+  a deliverable file highlights the documents its requirements anchor in. The
+  highlight is a tint on the related rows, so the prose and the code it produced
+  are visibly one system.
+
+### Deliverable viewer
+
+Opening a deliverable file shows it read-only in the center:
+
+- Every resolved [site](../consumers/gen.md#traceability) shows as a code lens above
+  its line (the requirement id and verification status). Clicking the lens opens
+  the requirement in the inspector. Lost sites are flagged in the inspector.
+- The viewer diffs against the file's generation baseline
+  (`GET /api/deliverable/baseline`): gutter marks on the lines the last generation
+  changed, and a `diff` toggle that swaps the viewer for a side-by-side diff of
+  baseline against current text. A file with no baseline shows no marks and no
+  toggle.
+
+### Graph
+
+The `graph` rail item is the whole graph surface: the sidebar navigates it, the
+center draws it.
+
+- The sidebar: one text filter plus facet lists, the viewer's cards served live:
+  entities, requirements, diagnostics (with triage actions), coverage. Suppressed
+  diagnostics never render. A row opens the node in the inspector and focuses it on
+  the map.
+- The center: the map. Nodes are typed: entities, documents, requirements, and
+  deliverable files. Edges are typed too:
+  - The [derived relationships](../compiler/graph.md#derived-data) between
+    entities, drawn with UML notation: a hollow triangle for generalization, a
+    hollow triangle on a dashed line for realization, a filled diamond for
+    composition, a hollow diamond for aggregation, a plain line for association,
+    an open arrow on a dashed line for dependency, a dotted line for reference.
+  - A requirement to the entities it names (membership).
+  - A requirement to the document its source anchors in.
+  - A requirement to the deliverable files whose ledger sites implement it.
+- Type chips filter which node types draw. The overview default shows entities and
+  documents only: every requirement and file at once would drown the picture.
+- Focus: selecting a node and focusing (or double-tapping it) pulls in every
+  adjacent node of every type, chips notwithstanding: one neighborhood is never
+  busy, so it shows everything, including the requirements and files the overview
+  hides. Hops extend to 2 for the wider neighborhood.
+- Selecting an edge lists the contributing requirements in the inspector.
+- Entity scope and edge-type filters carry over from the overview.
+
+### Work
+
+The generation worklist and per-entity task packages; the verification matrix with
+per-requirement status chips and the
+[staleness cascade](../consumers/gen.md#the-cascade) explained per row. Rows open
+the inspector. Run actions submit jobs to the activity panel.
+
+### Inspector
+
+The detail pane for one node, opened from anywhere, layered over nothing:
+
+- An entity: name, definition, scope, mentions (each opens the editor at the
+  quote), the requirements referencing it, its relationships, the files
+  implementing it, and its verification rollup.
+- A requirement: the EARS sentence, the source quote (opens the editor at the
+  quote), its entities and edges, its implementing sites (each opens the
+  deliverable file at the located line), and its verification status.
+- A diagnostic: message, severity, subjects, reasoning, and the triage actions.
+- Every node id anywhere in the app opens the inspector. The center never changes
+  under it; the click-through from a requirement to its implementation is: open the
+  inspector, then open a site.
+
+### Activity
+
+The bottom panel merges what were the Build and Journal tabs: a run is one job plus
+what it committed. Collapsed, the panel is a single control line; expanded, it is
+two parts:
+
+- The run list: newest first, live jobs and the transcripts on disk (CLI runs
+  included), each with kind, state, timing, and its one-line result. Selecting a
+  run pins it: a new job starting does not steal the view.
+- The selected run: the transcript as turn groups, newest turn first, the running
+  turn pinned and highlighted with its tool calls streaming in. Every turn shows
+  its command sequence inline (the tool, the condensed arguments, the condensed
+  result); a row expands to the full payloads. The changesets the run committed
+  (the journal entries whose build matches) render inline in order, each
+  expandable to its mutations and reasoning: the trace says what the model did,
+  the changesets say what landed.
+- The control line, visible even collapsed: compile now (with the changed-document
+  count), generate now (with the pending-entity count), verify, the
+  [watch mode](#watch) select, and the [generation mode](#generation) select. The
+  running job shows its kind and progress here; cancel is one click.
+- The changeset timeline is still addressable per generation, and the release diff
+  between any two generations stays reachable from the panel (the journal range
+  diff).
+
+## Watch
+
+The GUI always watches the documents (that is what `docs.changed` reports). What a
+change triggers is the watch mode: `GET /api/watch` and `PUT /api/watch` with
+`{mode}`, one of:
+
+- `off`: changes update the document badges and nothing else.
+- `queue` (the default): changes queue visibly. The control line counts the documents
+  that drifted from the graph and lists them on demand; compiling stays an explicit
+  click. The queue is derived, not stored: a document is queued while its on-disk
+  hash differs from the reconciled hash, so a commit drains it and an external build
+  drains it too.
+- `watch`: changes compile automatically, the same loop as
+  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, and
+  backoff retries for `incomplete` builds. Changes during a running build queue one
+  follow-up compile.
+
+`--watch` starts in `watch` mode. Compiling spends LLM budget, so the automatic loop
+is opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: commits
+serialize on the store lock, and the second build finds nothing dirty.
+
+### Generation
+
+The same endpoint carries the generation mode: `{gen}`, one of:
+
+- `manual` (the default): generation runs on click.
+- `auto`: when a compile job finishes and the
+  [generation worklist](../consumers/gen.md#incremental-regeneration) is non-empty,
+  a `gen` job for the pending entities queues itself behind it.
+
+Auto generation spends LLM budget, so it is opt-in, like `watch`. With both automatic
+(`watch` + `auto`), a document change compiles and regenerates code end to end. The
+chain never loops: generation does not touch the documents, so it triggers no
+compile; only compile jobs trigger auto generation.
 
 ## Editor
 
@@ -211,79 +384,15 @@ completion, document links, code lens.
   language server's document links.
 - Requirement attachments show as the language server's [code
   lenses](./lsp.md#capabilities) above their quotes, so where a requirement anchors
-  is visible without hovering. Clicking a lens opens the requirement's node page,
-  the richer view inside the app, instead of the generated requirements document.
+  is visible without hovering. Clicking a lens opens the requirement in the
+  inspector, beside the text.
 - Coverage renders beside the text from the section tree: covered, non-normative, and
   unprocessed sections are visually distinct.
+- The editor diffs against the reconciled baseline (`GET /api/docs/baseline`):
+  changed, added, and deleted lines mark the gutter, updated live as the text
+  changes. The marks answer what the next compile will see as dirty. A `diff`
+  toggle swaps the editor for a side-by-side diff of baseline against current text;
+  the current side stays editable. A never-reconciled document shows no marks and
+  no toggle.
 - Saving writes through the documents API with the conditional hash, so an edit made
   outside the GUI is never silently overwritten.
-- The document tree is a small file explorer. Each document shows its open
-  diagnostics as a severity-colored badge and a drift dot when it is stale against
-  the graph. Documents can be created, renamed, and deleted from the tree, through
-  the documents API and its validation; a delete asks for a second click, never a
-  dialog. Directories exist implicitly through paths.
-
-## Watch
-
-The GUI always watches the documents (that is what `docs.changed` reports). What a
-change triggers is the watch mode: `GET /api/watch` and `PUT /api/watch` with
-`{mode}`, one of:
-
-- `off`: changes update the document badges and nothing else.
-- `queue` (the default): changes queue visibly. The status bar counts the documents
-  that drifted from the graph and lists them on demand; compiling stays an explicit
-  click. The queue is derived, not stored: a document is queued while its on-disk
-  hash differs from the reconciled hash, so a commit drains it and an external build
-  drains it too.
-- `watch`: changes compile automatically, the same loop as
-  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, and
-  backoff retries for `incomplete` builds. Changes during a running build queue one
-  follow-up compile.
-
-`--watch` starts in `watch` mode. Compiling spends LLM budget, so the automatic loop
-is opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: commits
-serialize on the store lock, and the second build finds nothing dirty.
-
-## What it shows
-
-- Home: the build stats, the attention list (pending generation, pending verification,
-  top open diagnostics), recent changesets, and the run actions.
-- Docs: the document tree and the editor, with per-document diagnostic and coverage
-  badges.
-- Build: the job history, newest first, and the selected job's trace as turns, newest
-  turn first. The turn being worked on stays highlighted at the top with its tool
-  calls streaming in. Every turn shows its command sequence inline (the tool, the
-  condensed arguments, the condensed result); a row expands to the full payloads (a
-  search's hits, a result body, the model's reasoning). Selecting a job pins it: a
-  new job starting does not steal the view.
-- IR: the graph browser, the viewer's cards served live: entities, requirements,
-  relationships, diagnostics (with triage actions), coverage. One text filter plus
-  facets. Suppressed diagnostics never render.
-- Map: the entity graph drawn as nodes and edges. Nodes are entities; edges are the
-  [derived relationships](../compiler/graph.md#derived-data), drawn with UML
-  notation: a hollow triangle for generalization, a hollow triangle on a dashed line
-  for realization, a filled diamond for composition, a hollow diamond for
-  aggregation, a plain line for association, an open arrow on a dashed line for
-  dependency, a dotted line for reference. Selecting an edge lists the contributing
-  requirements. Filters cover scope, edge type, and neighborhood focus.
-- Journal: the changeset timeline, one changeset per generation with its work item,
-  mutations, and reasoning; and the release diff between any two generations.
-- Deliverable: the generated product, browsable beside the prose that produced it. A
-  file tree with per-file ownership badges; a read-only viewer where every resolved
-  [site](../consumers/gen.md#traceability) shows as a code lens above its line (the
-  requirement id and verification status), clicking the lens opens the requirement's
-  node page, and lost sites are flagged in the sidebar. The file's requirements show
-  their verification chips. From the other side, an entity or requirement page names
-  the files implementing it. The docs say what the system is; this view shows where
-  that became code.
-- Settings: the project settings as a form: the docs glob, the roots, the deliverable
-  directory, the LLM endpoint and model, the lint rules, and the limits, each with
-  its effective default when unset. Saving rewrites `jazyk.toml` and applies live.
-- Work: the generation worklist and per-entity task packages; the verification matrix
-  with per-requirement status chips, the
-  [staleness cascade](../consumers/gen.md#the-cascade) explained per row, and run
-  actions.
-
-Every node id links to its detail view, every source reference opens the editor at the
-located quote, and the verification chips use the same statuses and colors as the
-[viewer](./viewer.md#verification-overlay).

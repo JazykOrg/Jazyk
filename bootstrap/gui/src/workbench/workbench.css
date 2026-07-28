@@ -152,11 +152,31 @@
   margin-left: auto;
 }
 
-/* The selected row fills (hover is already a light background); the doc <->
-   deliverable linkage moves to the left border. */
+/* Explorer rows breathe: the tree defaults are tighter than the workbench wants. */
+.wb-side a.ide-doc,
+.wb-side a.deliv-file {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.wb-side .ide-dir,
+.wb-side .deliv-dir {
+  padding-top: 7px;
+  padding-bottom: 2px;
+}
+
+.wb-explorer-section + .wb-explorer-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* The selected row fills (hover is already a light background); the left border
+   marks the doc <-> deliverable linkage only, never the selection. */
 .wb-side .ide-row.active,
 .wb-side .deliv-row.active {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-left-color: transparent;
 }
 
 .wb-side .ide-row.related,

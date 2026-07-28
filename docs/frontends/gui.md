@@ -199,7 +199,7 @@ over `GET /lsp` (WebSocket, one JSON-RPC message per text frame, no Content-Leng
 framing). Each connection is its own session with its own open-document overlay. The
 [capabilities](./lsp.md#capabilities) are the LSP's: anchored diagnostics, hover with
 the rendered context pack and verification summary, go to definition, references,
-completion, document links.
+completion, document links, code lens.
 
 - Document URIs are `file://` paths under the project root, as reported by
   `GET /api/project`.
@@ -208,6 +208,10 @@ completion, document links.
 - Entity mentions are visibly marked in the text (a subtle accent underline), not
   only on hover, so what is clickable is discoverable. The marks come from the
   language server's document links.
+- Requirement attachments show as the language server's [code
+  lenses](./lsp.md#capabilities) above their quotes, so where a requirement anchors
+  is visible without hovering. Clicking a lens opens the requirement's node page,
+  the richer view inside the app, instead of the generated requirements document.
 - Coverage renders beside the text from the section tree: covered, non-normative, and
   unprocessed sections are visually distinct.
 - Saving writes through the documents API with the conditional hash, so an edit made

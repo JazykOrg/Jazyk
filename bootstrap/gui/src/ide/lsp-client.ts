@@ -46,6 +46,11 @@ export interface LspDocumentLink {
   tooltip?: string
 }
 
+export interface LspCodeLens {
+  range: LspRange
+  command?: { title: string; command: string; arguments?: unknown[] }
+}
+
 interface RpcMessage {
   jsonrpc?: string
   id?: number | string | null
@@ -282,6 +287,13 @@ export class LspClient {
 
   async documentLinks(uri: string): Promise<LspDocumentLink[]> {
     const r = await this.request<LspDocumentLink[] | null>('textDocument/documentLink', {
+      textDocument: { uri },
+    })
+    return r ?? []
+  }
+
+  async codeLens(uri: string): Promise<LspCodeLens[]> {
+    const r = await this.request<LspCodeLens[] | null>('textDocument/codeLens', {
       textDocument: { uri },
     })
     return r ?? []

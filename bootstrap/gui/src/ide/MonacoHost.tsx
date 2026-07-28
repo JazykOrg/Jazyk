@@ -8,7 +8,7 @@ import * as monaco from 'monaco-editor'
 // fallback stutters on large docs.
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
 import type { DocRecord } from '../lib/api'
-import type { LspClient, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
+import type { LspClient, LspCodeLens, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
 
 ;(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
@@ -124,6 +124,9 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
   const quoteDecorations = useRef<string[]>([])
   const propsRef = useRef(props)
   propsRef.current = props
+  // Re-queries requirement lenses; wired to the code lens provider's change event so
+  // a committed build refreshes lens titles (verification status) without an edit.
+  const lensRefresh = useRef<() => void>(() => {})
 
   // Always-visible entity marks over LSP document link ranges; kept apart from the
   // coverage gutter so the two never clobber each other.
@@ -162,7 +165,36 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     const lspUri = (model: monaco.editor.ITextModel) => model.uri.toString()
     const disposables: monaco.IDisposable[] = []
 
+    // Requirement attachments as code lenses over their quotes. The lens command
+    // routes to the requirement's node page, the richer view inside the app.
+    const lensEmitter = new monaco.Emitter<monaco.languages.CodeLensProvider>()
+    const lensProvider: monaco.languages.CodeLensProvider = {
+      onDidChange: lensEmitter.event,
+      provideCodeLenses: async (model) => {
+        try {
+          const lenses: LspCodeLens[] = await propsRef.current.lsp.codeLens(lspUri(model))
+          return {
+            lenses: lenses.map((l) => ({
+              range: toMonacoRange(l.range),
+              command: l.command
+                ? { id: l.command.command, title: l.command.title, arguments: l.command.arguments }
+                : undefined,
+            })),
+            dispose: () => {},
+          }
+        } catch {
+          return { lenses: [], dispose: () => {} }
+        }
+      },
+    }
+    lensRefresh.current = () => lensEmitter.fire(lensProvider)
+
     disposables.push(
+      lensEmitter,
+      monaco.languages.registerCodeLensProvider('markdown', lensProvider),
+      monaco.editor.registerCommand('jazyk.openRequirement', (_accessor, rid) => {
+        if (typeof rid === 'string') propsRef.current.onOpenNode?.(rid)
+      }),
       monaco.languages.registerHoverProvider('markdown', {
         provideHover: async (model, position) => {
           try {
@@ -293,6 +325,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     return () => {
       mo.disconnect()
       mql.removeEventListener('change', applyMonacoTheme)
+      lensRefresh.current = () => {}
       for (const d of disposables) d.dispose()
       for (const [uri, e] of created.current) {
         e.unsub()
@@ -327,8 +360,10 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       })
       const unsubDiag = propsRef.current.lsp.onDiagnostics(uri, (diags) => {
         monaco.editor.setModelMarkers(model, 'jazyk', diags.map(toMarker))
-        // The server republishes on generation bumps; entity marks refresh with it.
+        // The server republishes on generation bumps; entity marks and requirement
+        // lenses refresh with it.
         void refreshLinkMarks(model)
+        lensRefresh.current()
       })
       entry = {
         model,

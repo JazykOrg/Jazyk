@@ -22,6 +22,15 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
   last evidence.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
+- Code lens: every requirement sourced in the open document shows one lens above its
+  located quote: the requirement id, plus its verification status when the
+  [ledger](../consumers/gen.md#the-ledger) exists. The attachment is visible without
+  hovering. A lens is emitted only where the quote locates, so a broken quote never
+  shows a misplaced lens. Clicking runs `jazyk.openRequirement` (declared under
+  `executeCommandProvider`); the server answers with a `window/showDocument` request
+  that opens the requirement's heading in its entity's requirements document at
+  `<out>/docsgen/<slug>.md` (see [documentation generation](../consumers/docsgen.md)).
+  Navigation is server-driven, so any LSP client gets it without client-side commands.
 - Document links: every whole-word occurrence of an entity name or alias in an open
   document links to that entity's requirements document at `<out>/docsgen/<slug>.md`
   (see [documentation generation](../consumers/docsgen.md)). A reader clicks any mention

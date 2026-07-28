@@ -20,13 +20,16 @@ pub struct Lsp {
     gen: crate::gen::GenSettings,
     // Open documents: project-relative doc path -> current editor text.
     overlay: HashMap<String, String>,
+    // Ids for server-initiated requests (window/showDocument), prefixed so they can
+    // never collide with the client's own numeric ids.
+    next_srv_id: u64,
 }
 
 impl Lsp {
     pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
         let store = Store::load(&out);
         let generation = store.status.generation;
-        Lsp { root, out, store, generation, gen, overlay: HashMap::new() }
+        Lsp { root, out, store, generation, gen, overlay: HashMap::new(), next_srv_id: 1 }
     }
 
     pub fn run(&mut self) {
@@ -68,6 +71,12 @@ impl Lsp {
     // Dispatch one client message. Transport-agnostic: the GUI serves the same
     // sessions over WebSocket. Returns false on `exit`.
     pub(crate) fn handle<W: Write>(&mut self, msg: Value, out: &mut W) -> bool {
+        // A message without a method is the client's response to a server-initiated
+        // request (window/showDocument); never answer it, or its id would collide
+        // with a pending client request.
+        if msg.get("method").is_none() {
+            return true;
+        }
         let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
         let id = msg.get("id").cloned();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
@@ -117,6 +126,14 @@ impl Lsp {
                 let r = self.on_document_links(&params);
                 reply(out, id, r);
             }
+            "textDocument/codeLens" => {
+                let r = self.on_code_lens(&params);
+                reply(out, id, r);
+            }
+            "workspace/executeCommand" => {
+                let r = self.on_execute_command(&params, out);
+                reply(out, id, r);
+            }
             _ => {
                 if id.is_some() {
                     reply(out, id, Value::Null);
@@ -134,7 +151,9 @@ impl Lsp {
                 "referencesProvider": true,
                 "hoverProvider": true,
                 "completionProvider": { "triggerCharacters": ["`", "["] },
-                "documentLinkProvider": { "resolveProvider": false }
+                "documentLinkProvider": { "resolveProvider": false },
+                "codeLensProvider": { "resolveProvider": false },
+                "executeCommandProvider": { "commands": ["jazyk.openRequirement"] }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
@@ -475,6 +494,87 @@ impl Lsp {
             }));
         }
         json!(links)
+    }
+
+    // One lens above each requirement's located quote: the attachment made visible
+    // without hovering. The title is the requirement id, plus its verification status
+    // when the ledger has one. Emitted only where the quote locates, so a broken
+    // quote never shows a misplaced lens.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_code_lens(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let text = self.doc_text(&doc);
+        let vmap = crate::verify::status_map(&self.store, &self.gen);
+        let mut lenses: Vec<(usize, usize, Value)> = Vec::new();
+        for (rid, r) in &self.store.graph.requirements {
+            if r.source.doc != doc {
+                continue;
+            }
+            let Some((sl, sc, _, _)) = md::locate(&text, &r.source.quote) else { continue };
+            let mut title = rid.clone();
+            if let Some(s) = vmap.get(rid.as_str()).and_then(|v| v["status"].as_str()) {
+                title.push_str(&format!(" · {}", s));
+            }
+            lenses.push((
+                sl,
+                sc,
+                json!({
+                    "range": self.range((sl, sc, sl, sc)),
+                    "command": {
+                        "title": title,
+                        "command": "jazyk.openRequirement",
+                        "arguments": [rid]
+                    }
+                }),
+            ));
+        }
+        lenses.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        json!(lenses.into_iter().map(|(_, _, l)| l).collect::<Vec<_>>())
+    }
+
+    // jazyk.openRequirement <rid>: ask the client to show the requirement's heading
+    // in its entity's requirements document under <out>/docsgen/. Server-driven via
+    // window/showDocument, so any LSP client navigates without client-side commands.
+    fn on_execute_command<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
+        let cmd = params.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        if cmd != "jazyk.openRequirement" {
+            return Value::Null;
+        }
+        let Some(rid) = params
+            .get("arguments")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+        else {
+            return Value::Null;
+        };
+        let resolved = self.store.resolve_id(rid).to_string();
+        let Some(r) = self.store.graph.requirements.get(&resolved) else { return Value::Null };
+        let Some(ent) = r.entities.first() else { return Value::Null };
+        let slug = self.store.resolve_id(ent).strip_prefix("ent:").unwrap_or(ent).to_string();
+        let path = self.out.join("docsgen").join(format!("{}.md", slug));
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("[jazyk-lsp] {}: no requirements document at {}", resolved, path.display());
+            return Value::Null;
+        };
+        let heading = format!("### `{}`", resolved);
+        let line = text.lines().position(|l| l.trim() == heading).unwrap_or(0);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": format!("jazyk-srv-{}", self.next_srv_id),
+            "method": "window/showDocument",
+            "params": {
+                "uri": path_to_uri(&path),
+                "takeFocus": true,
+                "selection": {
+                    "start": {"line": line, "character": 0},
+                    "end": {"line": line, "character": 0}
+                }
+            }
+        });
+        self.next_srv_id += 1;
+        write_message(out, &msg);
+        Value::Null
     }
 
     fn on_completion(&self) -> Value {

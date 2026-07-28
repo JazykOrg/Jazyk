@@ -96,9 +96,12 @@ graph.
 - `gen_mark({entity, factHash, manifest})`: record the task done. The worker writes the
   deliverable files itself; the `manifest` binds them to the graph:
   `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}]}`.
-  Marking updates both ledger maps and the entity leaves `gen_pending`. A `factHash`
-  that no longer matches the live graph is recorded but leaves the entity pending, so a
-  graph that moved mid-task is never masked.
+  Marking strips every single-line marker comment from the manifest files and records
+  each as an anchored site on its requirement's row
+  ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps;
+  the entity leaves `gen_pending`. A `factHash` that no longer matches the live graph
+  is recorded but leaves the entity pending, so a graph that moved mid-task is never
+  masked.
 
 ## Verification tools
 

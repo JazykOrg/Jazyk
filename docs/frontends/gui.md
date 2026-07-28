@@ -123,10 +123,11 @@ Deliverable:
   and the test artifacts pointing at it. Hidden entries, `target`, `node_modules`, and
   `jazyk-out*` directories are skipped, so a deliverable at the project root lists the
   product, not the compiler's output.
-- `GET /api/deliverable/file?path=`: one file's text plus its parsed
-  [traceability markers](../consumers/gen.md#traceability): the requirement each
-  marker names, the line it sits on, and whether it is stale (the marker's statement
-  hash no longer matches the live requirement). A file that is not text reports its
+- `GET /api/deliverable/file?path=`: one file's text plus its resolved
+  [sites](../consumers/gen.md#traceability): each ledger site whose `file` is this
+  path, located against the current text (`exact`, `moved`, or `lost`), and each test
+  whose artifact is this path, located by its embedded test name. Every entry names
+  its requirement and current verification status. A file that is not text reports its
   size instead. Reads are confined to the deliverable directory.
 
 Diagnostics:
@@ -268,11 +269,13 @@ serialize on the store lock, and the second build finds nothing dirty.
 - Journal: the changeset timeline, one changeset per generation with its work item,
   mutations, and reasoning; and the release diff between any two generations.
 - Deliverable: the generated product, browsable beside the prose that produced it. A
-  file tree with per-file ownership badges; a read-only viewer where every
-  traceability marker links to its requirement, stale markers are flagged, and the
-  file's requirements show their verification chips. From the other side, an entity
-  or requirement page names the files implementing it. The docs say what the system
-  is; this view shows where that became code.
+  file tree with per-file ownership badges; a read-only viewer where every resolved
+  [site](../consumers/gen.md#traceability) shows as a code lens above its line (the
+  requirement id and verification status), clicking the lens opens the requirement's
+  node page, and lost sites are flagged in the sidebar. The file's requirements show
+  their verification chips. From the other side, an entity or requirement page names
+  the files implementing it. The docs say what the system is; this view shows where
+  that became code.
 - Settings: the project settings as a form: the docs glob, the roots, the deliverable
   directory, the LLM endpoint and model, the lint rules, and the limits, each with
   its effective default when unset. Saving rewrites `jazyk.toml` and applies live.

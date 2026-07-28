@@ -64,6 +64,10 @@ pub struct ReqRow {
     pub entity: String,
     #[serde(default)]
     pub files: Vec<String>,
+    // Anchored implementing sites, recorded from stripped markers at mark time.
+    // Mirrors docs/consumers/gen.md#traceability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<Site>,
     pub test: TestRef,
     pub hashes: RowHashes,
     #[serde(default = "verdict_none")]
@@ -98,6 +102,79 @@ pub struct RowHashes {
     pub requirement: String,
     pub test: String,
     pub files: String,
+}
+
+// One anchored implementing site: the file, the 1-based line in the stripped file,
+// and the verbatim next significant line the marker sat above. Language-agnostic:
+// relocation is a whitespace-insensitive line match, never a parse of the medium.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Site {
+    pub file: String,
+    pub line: usize,
+    pub head: String,
+}
+
+// A site freshly stripped from a file, before the requirement id is resolved.
+pub struct RawSite {
+    pub rid: String,
+    pub line: usize,
+    pub head: String,
+}
+
+// Strip single-line markers (`req:<slug> hash:<hex>` with nothing but comment leaders
+// around it) and return the clean text plus the sites they anchored. A marker line
+// carrying other alphanumeric content is left alone: the harness never mangles code.
+// Mirrors docs/consumers/gen.md#traceability.
+pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
+    let re = regex::Regex::new(r"req:([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})").unwrap();
+    let mut clean: Vec<&str> = Vec::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut sites: Vec<RawSite> = Vec::new();
+    for line in text.lines() {
+        if let Some(c) = re.captures(line) {
+            let rest = line.replacen(c.get(0).unwrap().as_str(), "", 1);
+            if !rest.chars().any(|ch| ch.is_alphanumeric()) {
+                pending.push(format!("req:{}", &c[1]));
+                continue;
+            }
+        }
+        clean.push(line);
+        if !pending.is_empty() && !line.trim().is_empty() {
+            let lineno = clean.len();
+            for rid in pending.drain(..) {
+                sites.push(RawSite { rid, line: lineno, head: line.to_string() });
+            }
+        }
+    }
+    let mut out = clean.join("\n");
+    if text.ends_with('\n') && !out.is_empty() {
+        out.push('\n');
+    }
+    (out, sites)
+}
+
+// Locate a site's head in the current text: whitespace-insensitive line match, the
+// occurrence nearest the recorded line wins. Returns (1-based line, still-at-hint).
+// No match means the site is lost; the caller shows it as such, never guesses.
+pub fn locate_head(text: &str, head: &str, hint: usize) -> Option<(usize, bool)> {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let h = norm(head);
+    if h.is_empty() {
+        return None;
+    }
+    let mut best: Option<usize> = None;
+    for (i, line) in text.lines().enumerate() {
+        if norm(line) == h {
+            let ln = i + 1;
+            let closer = best
+                .map(|b| (ln as i64 - hint as i64).abs() < (b as i64 - hint as i64).abs())
+                .unwrap_or(true);
+            if closer {
+                best = Some(ln);
+            }
+        }
+    }
+    best.map(|ln| (ln, ln == hint))
 }
 
 impl Ledger {
@@ -202,11 +279,11 @@ pub fn instructions() -> String {
          - One toolchain per deliverable: the run commands already recorded (the package lists them) establish the language, the test runner, and the command style; reuse them exactly. Never introduce a second test runner.\n\
          - Every deliverable file belongs to one entity. Never write to a file another entity's task produced (the package lists them); reference it through imports instead and pick a path of your own.\n\
          - Each recorded run command must execute from the deliverable directory as recorded. If it needs a build or configuration file that no task has written yet (package.json, Cargo.toml), return that file as a support file in the manifest step.\n\
-         - Every requirement is an obligation; implement each and place a marker comment at the implementing site: the requirement id, hash, and the verbatim quote.\n\
+         - Every requirement is an obligation; implement each and place a single-line marker comment directly above the implementing site: `req:<id> hash:<hash8>` in the medium's comment syntax, nothing else on that line. The harness strips marker lines from your files and records each location in the ledger, so the delivered file stays clean.\n\
          - Derive one test per requirement. Pick the kind per requirement:\n\
            - programmatic: any test a command can run (unit, integration, cucumber are examples, not a taxonomy). Write the test into the deliverable and record the exact command that runs only that test, exactly as it must be executed from the deliverable directory. Its exit code is the verdict, so the artifact must propagate failure: a harness that prints a failure and still exits zero verifies nothing.\n\
            - llm: the requirement needs judgment, or the deliverable is not executable software. Write a criteria file (the package names its path): front matter with the requirement id and statement hash, then the statement, the quote, the implementing file paths, the steps to confirm, and the verdict contract (PASS or FAIL plus reasoning).\n\
-         - Name each test with the suggested testName from the package (requirement id plus hash prefix) and put the marker comment above it.\n\
+         - Name each test with the suggested testName from the package (requirement id plus hash prefix) and put the single-line marker comment above it.\n\
          - Reference other entities' files through the manifest the package carries.\n\
          - Dense entities generate in parts of {GROUP} requirements: part 1 is the core plus the first group; each later part receives what exists so far and returns ONLY additional content to append.\n\
          - Return only file content, never fences or prose, when asked for a file."
@@ -356,6 +433,24 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .unwrap_or_default(),
     );
+    // Strip marker lines from the manifest files and collect the sites they anchor.
+    // The marker is a wire format: the worker localizes while writing, the harness
+    // records and cleans. Runs before hashing so every hash sees the stripped bytes.
+    // Mirrors docs/consumers/gen.md#traceability.
+    let mut sites_by_rid: BTreeMap<String, Vec<Site>> = BTreeMap::new();
+    for f in &files {
+        let path = gs.deliverable.join(f);
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let (clean, raw) = strip_markers(&text);
+        if raw.is_empty() {
+            continue;
+        }
+        std::fs::write(&path, clean).map_err(|e| e.to_string())?;
+        for s in raw {
+            let rid = store.resolve_id(&s.rid).to_string();
+            sites_by_rid.entry(rid).or_default().push(Site { file: f.clone(), line: s.line, head: s.head });
+        }
+    }
     let mut ledger = Ledger::load(&store.out);
     ledger.entities.insert(
         slug,
@@ -403,6 +498,7 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                 ReqRow {
                     entity: owner,
                     files: row_files,
+                    sites: sites_by_rid.remove(&rid).unwrap_or_default(),
                     test,
                     hashes,
                     verdict: "none".into(),
@@ -440,6 +536,73 @@ mod tests {
         );
         let gs = GenSettings { deliverable: out.join("product") };
         (s, gs)
+    }
+
+    #[test]
+    fn strip_markers_and_relocate() {
+        let text = "// intro\n// req:main-js-5 hash:310b7c2e\n\nfunction trim(line) {\n  return line.trim()\n}\n";
+        let (clean, sites) = strip_markers(text);
+        assert!(!clean.contains("hash:"), "{}", clean);
+        assert_eq!(sites.len(), 1);
+        assert_eq!(sites[0].rid, "req:main-js-5");
+        // The head is the next significant line, past the blank one.
+        assert_eq!(sites[0].head, "function trim(line) {");
+        assert_eq!(sites[0].line, 3);
+
+        // An inline marker beside code is never stripped: the harness must not mangle.
+        let (kept, none) = strip_markers("let x = 1 // req:a-1 hash:deadbeef\n");
+        assert_eq!(kept, "let x = 1 // req:a-1 hash:deadbeef\n");
+        assert!(none.is_empty());
+
+        // Relocation: whitespace-insensitive, nearest to the hint, lost when gone.
+        let edited = "// new header\n\nfunction trim(line)   {\n  return line.trim()\n}\n";
+        let (line, exact) = locate_head(edited, &sites[0].head, sites[0].line).unwrap();
+        assert_eq!(line, 3);
+        assert!(exact);
+        let moved = "a\nb\nc\nd\nfunction trim(line) {\n";
+        assert_eq!(locate_head(moved, &sites[0].head, 3), Some((5, false)));
+        assert_eq!(locate_head("nothing here\n", &sites[0].head, 3), None);
+    }
+
+    #[test]
+    fn mark_strips_markers_into_sites() {
+        let out = std::env::temp_dir().join(format!("jazyk-sites-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(
+            gs.deliverable.join("src/cart.rs"),
+            "// req:shop-1 hash:12345678\nfn hold(i: Item) {}\n",
+        )
+        .ok();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("// req:shop-1 hash:12345678\nfn {}() {{}}\n", name),
+        )
+        .ok();
+        let manifest = serde_json::json!({
+            "files": ["src/cart.rs", "tests/cart.rs"],
+            "tests": [{
+                "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+                "artifact": "tests/cart.rs", "name": name,
+                "run": format!("cargo test {}", name), "files": ["src/cart.rs"],
+            }],
+        });
+        mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        // The written files are clean; the ledger row carries the anchored sites.
+        let product = std::fs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap();
+        assert_eq!(product, "fn hold(i: Item) {}\n");
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.sites.len(), 2);
+        assert_eq!(row.sites[0].file, "src/cart.rs");
+        assert_eq!(row.sites[0].line, 1);
+        assert_eq!(row.sites[0].head, "fn hold(i: Item) {}");
+        // Hashes were computed over the stripped bytes: the row is not stale-code.
+        let (status, _) = crate::verify::status_of(&s, "req:shop-1", row, &gs);
+        assert_eq!(status, "unverified");
     }
 
     #[test]
@@ -680,7 +843,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
         let user = if k == 0 {
             format!(
-                "{}\nWrite the implementing content for this entity. Derive the medium from the context; choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put the marker comment (// req:<id> hash:<hash8> plus the quote, in the medium's comment syntax) at each implementing site. Requirements (group 1 of {}):\n{}\n",
+                "{}\nWrite the implementing content for this entity. Derive the medium from the context; choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
                 header, parts, req_lines.join("\n")
             )
         } else {
@@ -730,7 +893,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
     let tests_user = format!(
-        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`. Requirements:\n{}\n\nThe product file:\n{}\n",
+        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`. Requirements:\n{}\n\nThe product file:\n{}\n",
         header,
         product_rel,
         req_lines.join("\n"),

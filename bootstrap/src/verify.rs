@@ -255,11 +255,12 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<(b
     Ok((pass, format!("{}: {}", row.test.run, crate::llm::truncate(&tail, 300))))
 }
 
-// Rebuild the ledger from artifact markers: existing rows refresh their test and files
+// Rebuild the ledger from the artifacts: existing rows refresh their test and files
 // hashes when the artifact still carries the live statement hash; rows the ledger lost
-// are recreated from a scan of the deliverable and the criteria directory. The
-// requirement hash is never rewritten from the live graph, so an artifact carrying an
-// outdated statement stays stale-requirement until regeneration.
+// are recreated by scanning the deliverable and the criteria directory for the test
+// names derived from the live statements. Sites are not rebuilt: only generation
+// records them. The requirement hash is never rewritten from the live graph, so an
+// artifact carrying an outdated statement stays stale-requirement until regeneration.
 // Mirrors docs/consumers/gen.md#runners.
 pub fn audit(store: &Store, gs: &GenSettings) -> Value {
     let mut ledger = Ledger::load(&store.out);
@@ -302,10 +303,9 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
             continue;
         }
         let name = crate::gen::test_name(rid, &r.ears);
-        let marker = format!("req:{}", crate::gen::req_slug(rid));
         for (path, is_criteria) in &scan {
             let Ok(content) = std::fs::read_to_string(path) else { continue };
-            if !content.contains(&name) && !content.contains(&marker) {
+            if !content.contains(&name) {
                 continue;
             }
             let owner = r.entities.first().map(|e| store.resolve_id(e).to_string()).unwrap_or_default();
@@ -330,15 +330,9 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 cwd: ".".into(),
             };
             // The artifact carries the live statement hash in the test name, so the
-            // requirement baseline is honest here; content.contains(&marker) alone
-            // (an old name) leaves an unknown baseline that derives stale-requirement.
-            let req_hash = if content.contains(&name) {
-                hash_hex(&r.ears)
-            } else {
-                format!("unknown-from-audit")
-            };
+            // requirement baseline is honest here.
             let hashes = crate::gen::RowHashes {
-                requirement: req_hash,
+                requirement: hash_hex(&r.ears),
                 test: hash_file(path),
                 files: hash_files(gs, &files),
             };
@@ -347,6 +341,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 ReqRow {
                     entity: owner,
                     files,
+                    sites: Vec::new(),
                     test,
                     hashes,
                     verdict: "none".into(),

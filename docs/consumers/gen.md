@@ -135,20 +135,34 @@ harness enforces:
 ## Traceability
 
 Every requirement carries a verbatim `quote`
-([shared fields](../compiler/model.md#shared-fields)). Generated artifacts embed the
-trail twice:
+([shared fields](../compiler/model.md#shared-fields)). The trail from deliverable to
+prose has two carriers:
 
 - The test name embeds the requirement id and the first 8 hex characters of the hash of
-  its statement: `req_catalog_3_a1b2c3d4`. For tagged formats the tag carries the same:
-  `@req-catalog-3 @h-a1b2c3d4`.
-- A marker comment sits above the test with the id, the full-precision prefix, and the
-  quote: `// req:catalog-3 hash:a1b2c3d4` followed by the verbatim source sentence.
+  its statement: `req_catalog_3_a1b2c3d4`. The name is part of the artifact itself and
+  of the recorded run command, so a reworded requirement mechanically breaks the
+  recorded command: even a harness that has never heard of Jazyk fails to find the
+  stale test.
+- Anchored sites in [the ledger](#the-ledger). While writing, a worker puts a
+  single-line marker comment directly above each implementing site: `req:catalog-3
+  hash:a1b2c3d4` in the medium's comment syntax, nothing else on the line. The marker
+  is a wire format, not part of the product: `gen_mark` strips every marker line from
+  the written files and records each as a site on the requirement's row: the file, the
+  line, and `head`, the verbatim next significant line. The deliverable carries no
+  Jazyk metadata; the binding lives in the out directory.
 
-The trail is test → requirement id → `quote` → section. Because the hash is baked into
-the test name, a reworded requirement mechanically breaks the recorded run command: even
-a harness that has never heard of Jazyk fails to find the stale test. Implementing files
-carry the same marker at each implementing site, which is how the manifest stays
-auditable.
+The division of labor: the worker owns localization (it knows where each requirement
+lands while it writes), the harness owns anchoring (recording, locating, healing).
+
+Sites relocate defensively. A renderer locates a site by matching `head` against the
+current file, whitespace-insensitively. More than one match: the occurrence nearest the
+recorded line wins. No match: the site is `lost` and shown as such, never guessed.
+Anchoring never parses the medium (no function names, no language syntax), so it works
+for code, prose, or any other deliverable. Hand edits that move a site heal on the next
+match; staleness stays a [hash comparison](#status-is-derived-never-stored), never an
+anchor judgment.
+
+The trail is test or site → requirement id → `quote` → section.
 
 ## The ledger
 
@@ -174,6 +188,10 @@ requirements:
     entity: ent:catalog                   # owning entity (first referenced; follows redirects)
     files:                                # manifest: deliverable-relative files
       - src/catalog.rs                    # implementing this requirement
+    sites:                                # anchored implementing sites, from stripped
+      - file: src/catalog.rs              # markers (see traceability)
+        line: 41                          # 1-based, in the stripped file
+        head: "fn add(&mut self, i: Item) {"  # verbatim next significant line
     test:
       kind: programmatic                  # programmatic | llm
       label: unit                         # freeform, the generator's own words
@@ -239,12 +257,13 @@ and what to confirm. Editing it flips `stale-test` like any test artifact.
   own abilities to inspect or exercise the deliverable. Whichever harness runs, the
   ledger row comes out the same shape.
 
-`jazyk test --audit` rebuilds the ledger from the artifact markers: it scans the
-deliverable and the criteria directory for marker comments and test names, recreates
-rows the ledger lost, and refreshes the `test` and `files` hashes of rows whose
-artifacts still carry their statement hash. The `requirement` hash is never rewritten
-from the live graph: an artifact carrying an outdated statement hash stays
-`stale-requirement` until regeneration.
+`jazyk test --audit` rebuilds the ledger from the artifacts: it scans the deliverable
+and the criteria directory for the test names derived from the live statements,
+recreates rows the ledger lost, and refreshes the `test` and `files` hashes of rows
+whose artifacts still carry their statement hash. Sites are not rebuilt: only
+generation records them, so an audit-rebuilt row has none until the next `jazyk gen`.
+The `requirement` hash is never rewritten from the live graph: an artifact carrying an
+outdated statement hash stays `stale-requirement` until regeneration.
 
 ## Incremental regeneration
 

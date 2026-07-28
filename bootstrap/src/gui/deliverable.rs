@@ -1,6 +1,6 @@
 // The deliverable browser: the generated product listed with the graph nodes the
-// ledger binds to each file, and per-file traceability markers parsed against the
-// live requirements. Read-only. Mirrors docs/frontends/gui.md#api (deliverable).
+// ledger binds to each file, and the ledger's anchored sites resolved against the
+// current file text. Read-only. Mirrors docs/frontends/gui.md#api (deliverable).
 use super::api::err;
 use super::state::SharedState;
 use crate::store::Store;
@@ -107,30 +107,40 @@ pub struct FileQ {
     path: String,
 }
 
-// Traceability markers: `req:<id> hash:<hash8>`, in any comment syntax. A marker is
-// stale when its statement-hash prefix no longer matches the live requirement, and
-// unresolved when the requirement is gone.
-fn markers(store: &Store, text: &str) -> Vec<Value> {
-    let re = regex::Regex::new(r"req:([A-Za-z0-9][A-Za-z0-9-]*)\s+hash:([0-9a-f]{4,16})").unwrap();
+// Resolved sites for one file: the ledger's anchored sites located against the
+// current text (exact, moved, or lost), plus each programmatic test whose artifact
+// is this file, located by its embedded test name. Mirrors
+// docs/frontends/gui.md#api (deliverable) and docs/consumers/gen.md#traceability.
+fn sites(store: &Store, out_dir: &Path, path: &str, text: &str) -> Vec<Value> {
+    let ledger = crate::gen::Ledger::load(out_dir);
     let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        for c in re.captures_iter(line) {
-            let rid = format!("req:{}", &c[1]);
-            let marked = c[2].to_string();
-            let resolved = store.resolve_id(&rid).to_string();
-            let (exists, stale) = match store.graph.requirements.get(&resolved) {
-                Some(r) => {
-                    let live = crate::model::hash_hex(&r.ears);
-                    (true, !live.starts_with(&marked))
-                }
-                None => (false, false),
-            };
+    for (rid, row) in &ledger.requirements {
+        let exists = store.graph.requirements.contains_key(store.resolve_id(rid));
+        for s in &row.sites {
+            if s.file != path {
+                continue;
+            }
+            let located = crate::gen::locate_head(text, &s.head, s.line);
             out.push(json!({
-                "line": i + 1,
-                "requirement": resolved,
-                "hash": marked,
+                "line": located.map(|(l, _)| l),
+                "requirement": rid,
+                "kind": "site",
+                "located": match located {
+                    Some((_, true)) => "exact",
+                    Some(_) => "moved",
+                    None => "lost",
+                },
                 "exists": exists,
-                "stale": stale,
+            }));
+        }
+        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty() {
+            let line = text.lines().position(|l| l.contains(&row.test.name)).map(|i| i + 1);
+            out.push(json!({
+                "line": line,
+                "requirement": rid,
+                "kind": "test",
+                "located": if line.is_some() { "exact" } else { "lost" },
+                "exists": exists,
             }));
         }
     }
@@ -152,8 +162,8 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
         match String::from_utf8(bytes) {
             Ok(text) => {
                 let store = Store::load(&out_dir);
-                let marks = markers(&store, &text);
-                Ok(json!({ "path": path, "text": text, "markers": marks, "owners": owners }))
+                let resolved = sites(&store, &out_dir, &path, &text);
+                Ok(json!({ "path": path, "text": text, "sites": resolved, "owners": owners }))
             }
             Err(e) => Ok(json!({
                 "path": path,

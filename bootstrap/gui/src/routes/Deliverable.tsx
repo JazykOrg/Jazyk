@@ -1,8 +1,9 @@
 // Deliverable: the generated product, browsable beside the prose that produced
-// it. File tree with ownership badges, a read-only viewer with traceability
-// marker decorations, and a ties sidebar back to the graph.
+// it. File tree with ownership badges, a read-only viewer where the ledger's
+// resolved sites show as clickable code lenses, and a ties sidebar back to the
+// graph.
 import { useEffect, useMemo, useRef } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import * as monaco from 'monaco-editor'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
@@ -34,12 +35,14 @@ interface Listing {
   files: DFile[]
 }
 
-interface Marker {
-  line: number
+// A resolved site from the ledger: located against the current text (line is null
+// when lost), never parsed out of the file itself.
+interface Site {
+  line: number | null
   requirement: string
-  hash: string
+  kind: 'site' | 'test'
+  located: 'exact' | 'moved' | 'lost'
   exists: boolean
-  stale: boolean
 }
 
 interface FileResp {
@@ -47,7 +50,7 @@ interface FileResp {
   text?: string
   binary?: boolean
   size?: number
-  markers?: Marker[]
+  sites?: Site[]
   owners: Owners
 }
 
@@ -74,19 +77,35 @@ function langFor(path: string): string {
 }
 
 // Self-contained read-only monaco viewer; reveal is handed up through a ref.
+// Located sites render twice: a gutter decoration and a clickable code lens (the
+// requirement id and its verification status) that routes to the node page. Models
+// get a deliv:// uri so the global lens provider fires only for this viewer.
+let delivSeq = 0
+
 function ReadOnlyCode({
   path,
   text,
-  markers,
+  sites,
+  status,
+  onOpenNode,
   revealRef,
 }: {
   path: string
   text: string
-  markers: Marker[]
+  sites: Site[]
+  status: (id: string) => string
+  onOpenNode: (id: string) => void
   revealRef: React.MutableRefObject<((line: number) => void) | null>
 }) {
   const divRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const sitesRef = useRef<Site[]>(sites)
+  sitesRef.current = sites
+  const statusRef = useRef(status)
+  statusRef.current = status
+  const openRef = useRef(onOpenNode)
+  openRef.current = onOpenNode
+  const lensFire = useRef<() => void>(() => {})
 
   useEffect(() => {
     const editor = monaco.editor.create(divRef.current!, {
@@ -98,6 +117,34 @@ function ReadOnlyCode({
       scrollBeyondLastLine: false,
     })
     editorRef.current = editor
+    const lensEmitter = new monaco.Emitter<monaco.languages.CodeLensProvider>()
+    const lensProvider: monaco.languages.CodeLensProvider = {
+      onDidChange: lensEmitter.event,
+      provideCodeLenses: (model) => {
+        if (model.uri.scheme !== 'deliv') return { lenses: [], dispose: () => {} }
+        return {
+          lenses: sitesRef.current
+            .filter((s) => s.line !== null)
+            .map((s) => ({
+              range: new monaco.Range(s.line!, 1, s.line!, 1),
+              command: {
+                id: 'jazyk.deliverable.openNode',
+                title: `${s.requirement} · ${statusRef.current(s.requirement)}`,
+                arguments: [s.requirement],
+              },
+            })),
+          dispose: () => {},
+        }
+      },
+    }
+    lensFire.current = () => lensEmitter.fire(lensProvider)
+    const disposables: monaco.IDisposable[] = [
+      lensEmitter,
+      monaco.languages.registerCodeLensProvider('*', lensProvider),
+      monaco.editor.registerCommand('jazyk.deliverable.openNode', (_accessor, id) => {
+        if (typeof id === 'string') openRef.current(id)
+      }),
+    ]
     applyTheme()
     const mql = window.matchMedia('(prefers-color-scheme: dark)')
     mql.addEventListener('change', applyTheme)
@@ -114,6 +161,8 @@ function ReadOnlyCode({
       mo.disconnect()
       mql.removeEventListener('change', applyTheme)
       revealRef.current = null
+      lensFire.current = () => {}
+      for (const d of disposables) d.dispose()
       editor.getModel()?.dispose()
       editor.dispose()
       editorRef.current = null
@@ -124,20 +173,25 @@ function ReadOnlyCode({
     const editor = editorRef.current
     if (!editor) return
     const old = editor.getModel()
-    const model = monaco.editor.createModel(text, langFor(path))
+    const uri = monaco.Uri.parse(`deliv://f/${++delivSeq}/${path}`)
+    const model = monaco.editor.createModel(text, langFor(path), uri)
     editor.setModel(model)
     old?.dispose()
     model.deltaDecorations(
       [],
-      markers.map((m) => ({
-        range: new monaco.Range(m.line, 1, m.line, 1),
-        options: {
-          isWholeLine: true,
-          linesDecorationsClassName: m.stale || !m.exists ? 'dmark-bad' : 'dmark-ok',
-        },
-      })),
+      sites
+        .filter((s) => s.line !== null)
+        .map((s) => ({
+          range: new monaco.Range(s.line!, 1, s.line!, 1),
+          options: {
+            isWholeLine: true,
+            linesDecorationsClassName:
+              !s.exists || status(s.requirement).startsWith('stale') ? 'dmark-bad' : 'dmark-ok',
+          },
+        })),
     )
-  }, [path, text, markers])
+    lensFire.current()
+  }, [path, text, sites, status])
 
   return <div ref={divRef} className="deliv-editor" />
 }
@@ -201,12 +255,12 @@ function TreeLevel({
 
 function Ties({
   owners,
-  markers,
+  sites,
   rows,
   reveal,
 }: {
   owners: Owners
-  markers: Marker[]
+  sites: Site[]
   rows: Record<string, VerifyRow>
   reveal: (line: number) => void
 }) {
@@ -224,22 +278,26 @@ function Ties({
       {owners.requirements.map((id) => (
         <div key={id} style={{ margin: '4px 0' }}>
           <NodeLink id={id} /> <VerifyChip status={rows[id]?.status ?? 'unverified'} />
-          {markers
-            .filter((m) => m.requirement === id)
-            .map((m, i) => (
+          {sites
+            .filter((s) => s.requirement === id)
+            .map((s, i) => (
               <p key={i} style={{ margin: '1px 0 1px 10px' }}>
-                <a
-                  href="#line"
-                  className="mono"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    reveal(m.line)
-                  }}
-                >
-                  line {m.line}
-                </a>
-                {m.stale && <span className="v-stale"> ⚠ stale marker</span>}
-                {!m.exists && <span className="v-bad"> (gone)</span>}
+                {s.line !== null ? (
+                  <a
+                    href="#line"
+                    className="mono"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      reveal(s.line!)
+                    }}
+                  >
+                    line {s.line}
+                  </a>
+                ) : (
+                  <span className="v-bad mono">site lost</span>
+                )}
+                {s.located === 'moved' && <span className="muted"> (moved)</span>}
+                {!s.exists && <span className="v-bad"> (requirement gone)</span>}
               </p>
             ))}
         </div>
@@ -258,8 +316,12 @@ function Ties({
 export default function Deliverable() {
   const params = useParams()
   const filePath = params['*'] ?? ''
+  const navigate = useNavigate()
   const matrix = useMatrix()
   const rows = matrix.data?.rows ?? {}
+  const statusOf = useMemo(() => {
+    return (id: string) => rows[id]?.status ?? 'unverified'
+  }, [rows])
 
   const listQ = useQuery({
     queryKey: ['deliverable'],
@@ -347,7 +409,9 @@ export default function Deliverable() {
             <ReadOnlyCode
               path={open.path}
               text={open.text ?? ''}
-              markers={open.markers ?? []}
+              sites={open.sites ?? []}
+              status={statusOf}
+              onOpenNode={(id) => navigate(`/n/${encodeURIComponent(id)}`)}
               revealRef={revealRef}
             />
           </>
@@ -358,7 +422,7 @@ export default function Deliverable() {
         {filePath && open ? (
           <Ties
             owners={open.owners}
-            markers={open.markers ?? []}
+            sites={open.sites ?? []}
             rows={rows}
             reveal={(l) => revealRef.current?.(l)}
           />

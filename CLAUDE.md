@@ -70,6 +70,12 @@ turns rephrase it into EARS, keep the quote verbatim (`docs/compiler/concepts/ea
 
 - `cd bootstrap && cargo build --release` (binary at `bootstrap/target/release/jazyk`),
   `cargo test`.
+- The owner's `jazyk` command is a symlink to `bootstrap/target/release/jazyk`. After
+  ANY change to the GUI frontend or the binary, always finish with
+  `cd bootstrap/gui && npm run build` then `cargo build --release`: the built frontend
+  (`gui/dist`) embeds into the binary at compile time, so a stale release build serves
+  the old GUI. A running `jazyk gui` keeps its embedded assets; it needs a restart to
+  pick up a new binary.
 - `jazyk compile [path...]` (live trace; `--verbose` full packs, `--quiet` summary),
   `check`, `watch`, `status`, `context <target>`, `query <text>`, `gen [entity...]`,
   `test [--audit]`, `docsgen`, `viewer`, `mcp graph [--write]`, `lsp`, `benchmark`.

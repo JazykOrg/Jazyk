@@ -1,25 +1,31 @@
 // The typed API client. The session token arrives in the URL fragment
-// (#token=...), is kept for the session, and travels as a bearer header.
+// (#token=...), is stored per origin, and travels as a bearer header.
 import { useApp } from './store'
 
 let token: string | null = null
+
+// localStorage is per origin and origins include the port, so each port keeps its
+// own token: a reload, a new tab, or a browser restart on the same port resumes
+// without the fragment.
+const TOKEN_KEY = 'jazyk-token'
 
 export function initToken() {
   const m = window.location.hash.match(/token=([0-9a-f]+)/)
   if (m) {
     token = m[1]
-    sessionStorage.setItem('jazyk-token', m[1])
+    localStorage.setItem(TOKEN_KEY, m[1])
     // Drop the fragment so copied URLs do not carry the secret.
     history.replaceState(null, '', window.location.pathname + window.location.search)
   } else {
-    token = sessionStorage.getItem('jazyk-token')
+    // Tabs from before the localStorage switch kept the token per tab.
+    token = localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY)
   }
 }
 
 // A replacement token entered through the prompt (server restarted mid-session).
 export function setToken(t: string) {
   token = t
-  sessionStorage.setItem('jazyk-token', t)
+  localStorage.setItem(TOKEN_KEY, t)
 }
 
 export function tokenParam(): string {

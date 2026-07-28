@@ -31,6 +31,12 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   parameter). Requests without it get `401`. The token keeps other local processes from
   spending LLM budget or writing documents through the API. `--no-token` disables the
   check, for frontend development.
+- The app reads the token from the URL fragment once, stores it in `localStorage`, and
+  drops the fragment so copied URLs do not carry the secret. Browser origins include
+  the port, so each port keeps its own stored token: a reload, a new tab, or a browser
+  restart on the same port resumes with the stored token, no fragment needed. A stale
+  entry (the server restarted and minted a new token) surfaces as the token prompt,
+  and a pasted token replaces the stored one.
 - A `401` never fails quietly: the app blocks with a token prompt. This is the
   restarted-server case: a restart mints a new token, and an open tab's requests stop
   passing. Pasting the fresh URL (or just the token) into the prompt resumes the

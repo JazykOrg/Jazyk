@@ -152,15 +152,16 @@
   margin-left: auto;
 }
 
-/* Related rows light up: the doc <-> deliverable linkage tint. */
-.ide-row.related,
-.deliv-row.related {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+/* The selected row fills (hover is already a light background); the doc <->
+   deliverable linkage moves to the left border. */
+.wb-side .ide-row.active,
+.wb-side .deliv-row.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.ide-row.related:hover,
-.deliv-row.related:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+.wb-side .ide-row.related,
+.wb-side .deliv-row.related {
+  border-left-color: var(--accent);
 }
 
 /* Sidebar lists (graph mode, work mode) */

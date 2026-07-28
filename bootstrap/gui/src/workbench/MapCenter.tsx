@@ -168,7 +168,7 @@ function buildStyle(p: Palette): cytoscape.StylesheetStyle[] {
         'arrow-scale': 0.8,
       },
     },
-    { selector: 'edge[type = "mention"]', style: { width: 1, 'line-style': 'dotted', opacity: 0.3 } },
+    { selector: 'edge[type = "via"]', style: { width: 1, 'line-style': 'dotted', opacity: 0.3 } },
     {
       selector: 'edge[type = "own"]',
       style: {
@@ -224,6 +224,8 @@ interface EdgeData {
   source: string
   target: string
   type: string
+  // A collapsed tie's first hidden intermediary, for inspection on tap.
+  via?: string
 }
 
 const base = (p: string) => p.split('/').pop() ?? p
@@ -327,17 +329,6 @@ export default function MapCenter() {
         if (ent) edges.set(`o|${ent}|${f.path}`, { id: `o|${ent}|${f.path}`, source: ent, target: fid, type: 'own' })
       }
     }
-    // The collapsed doc-to-entity tie: a requirement in the doc names the entity.
-    for (const [rid, r] of Object.entries(graph.requirements)) {
-      for (const eid of r.entities ?? []) {
-        const ent = resolveEntity(graph, eid)
-        if (!ent) continue
-        const id = `dm|${r.source.doc}|${ent}`
-        if (!edges.has(id))
-          edges.set(id, { id, source: `doc:${r.source.doc}`, target: ent, type: 'mention' })
-        void rid
-      }
-    }
     return { nodes, edges }
   }, [graph, docsList, deliv])
 
@@ -345,7 +336,6 @@ export default function MapCenter() {
   // the selection when focus is on, every type included.
   const visible = useMemo(() => {
     const want = new Set<string>()
-    const typeOf = (id: string) => full.nodes.get(id)?.t
     const focusOn = focusHops !== 'off' && selected && full.nodes.has(selected)
     if (focusOn) {
       const adj = new Map<string, Set<string>>()
@@ -387,12 +377,60 @@ export default function MapCenter() {
     for (const e of full.edges.values()) {
       if (!want.has(e.source) || !want.has(e.target)) continue
       if ((EDGE_TYPES as readonly string[]).includes(e.type) && !types[e.type as EdgeType]) continue
-      // The collapsed ties only draw when the type they collapse over is hidden;
-      // with requirements visible the real anchors and members carry the story.
-      const reqVisible = focusOn || nodeTypes.requirements
-      if (e.type === 'mention' && (reqVisible || typeOf(e.source) === undefined)) continue
-      if (e.type === 'own' && reqVisible) continue
       edges.set(e.id, e)
+    }
+    // Hidden types never break the picture: two visible nodes joined only through
+    // hidden ones get a collapsed tie, whatever the chip combination (a document
+    // to the files its hidden requirements implement, a document to an entity, an
+    // entity to a file). BFS from each visible node through hidden nodes only; the
+    // first hidden hop rides along as the tie's intermediary for inspection.
+    if (!focusOn) {
+      const adj = new Map<string, { to: string }[]>()
+      const link = (a: string, b: string) => {
+        let l = adj.get(a)
+        if (!l) adj.set(a, (l = []))
+        l.push({ to: b })
+      }
+      for (const e of full.edges.values()) {
+        link(e.source, e.target)
+        link(e.target, e.source)
+      }
+      const drawn = new Set<string>()
+      for (const e of edges.values())
+        drawn.add(e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`)
+      for (const v of want) {
+        const seen = new Set<string>([v])
+        let frontier: { at: string; gate: string }[] = (adj.get(v) ?? [])
+          .filter((n) => !want.has(n.to) && full.nodes.has(n.to))
+          .map((n) => ({ at: n.to, gate: n.to }))
+        while (frontier.length > 0) {
+          const next: { at: string; gate: string }[] = []
+          for (const f of frontier) {
+            if (seen.has(f.at)) continue
+            seen.add(f.at)
+            for (const n of adj.get(f.at) ?? []) {
+              if (seen.has(n.to) || !full.nodes.has(n.to)) continue
+              if (want.has(n.to)) {
+                // Reached another visible node through hidden ones only.
+                if (n.to === v) continue
+                const key = v < n.to ? `${v}|${n.to}` : `${n.to}|${v}`
+                if (drawn.has(key)) continue
+                drawn.add(key)
+                edges.set(`via|${key}`, {
+                  id: `via|${key}`,
+                  source: v,
+                  target: n.to,
+                  type: 'via',
+                  via: f.gate,
+                })
+              } else {
+                next.push({ at: n.to, gate: f.gate })
+              }
+            }
+          }
+          frontier = next
+        }
+      }
     }
     const nodes = new Map<string, NodeData>()
     for (const id of want) {
@@ -422,7 +460,7 @@ export default function MapCenter() {
       if ((EDGE_TYPES as readonly string[]).includes(type)) selectRef.current(id)
       else if (type === 'member' || type === 'site') selectRef.current(id.split('|')[1])
       else if (type === 'anchor') selectRef.current(id.slice(2))
-      else if (type === 'mention') selectRef.current(edge.source().id())
+      else if (type === 'via') selectRef.current((edge.data('via') as string) ?? edge.source().id())
       else if (type === 'own') selectRef.current(edge.source().id())
     })
     cy.on('tap', (e) => {

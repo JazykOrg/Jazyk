@@ -281,6 +281,12 @@ center draws it.
   - A requirement to the deliverable files whose ledger sites implement it.
 - Type chips filter which node types draw. The overview default shows entities and
   documents only: every requirement and file at once would drown the picture.
+- Hidden types never break the picture: when two visible nodes are joined only
+  through hidden ones, a collapsed tie draws between them, thin and dotted. A
+  document connects to the files its hidden requirements implement, a document to
+  the entities they name, an entity to its files, whatever the chip combination.
+  Selecting the tie inspects the intermediary. With the intermediary type visible,
+  the real edges carry the story and the collapsed tie disappears.
 - Focus: selecting a node and focusing (or double-tapping it) pulls in every
   adjacent node of every type, chips notwithstanding: one neighborhood is never
   busy, so it shows everything, including the requirements and files the overview

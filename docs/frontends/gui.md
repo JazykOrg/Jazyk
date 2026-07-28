@@ -163,6 +163,9 @@ requests cancellation.
   panel lists past jobs from these files, so the history survives server restarts and
   page reloads, and any tool can load a transcript programmatically. Files older
   than 30 days are removed when the server starts.
+- The metadata line and the outcome line each record the store generation at that
+  moment, so a run's committed changesets are exactly the journal entries between
+  the two. The activity panel renders them inline with the trace.
 - Every build leaves a transcript, whichever frontend ran it: the CLI `compile`,
   `check`, `gen`, and `test` commands persist the same file (the metadata line carries
   `source: cli` and no job id), so the activity panel also lists builds that ran

@@ -6,7 +6,7 @@ import { useMatrix } from '../lib/queries'
 import { useApp } from '../lib/store'
 import NodeLink from '../components/NodeLink'
 import { VerifyChip, verifyClass } from '../components/Chip'
-import { aggClass } from './Ir'
+import { aggClass } from '../components/Cards'
 import './routes.css'
 
 export default function VerifyMatrix() {

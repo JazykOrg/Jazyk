@@ -8,6 +8,7 @@ import * as monaco from 'monaco-editor'
 // fallback stutters on large docs.
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
 import type { DocRecord } from '../lib/api'
+import { lineMarks } from '../lib/diff'
 import type { LspClient, LspCodeLens, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
 
 ;(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
@@ -105,6 +106,12 @@ interface Props {
   initialText: string
   lsp: LspClient
   record?: DocRecord
+  // The reconciled baseline text: gutter marks show what the next compile sees as
+  // dirty; null means the document never reconciled (no marks, no diff).
+  baseline?: string | null
+  // Swap the editor for a side-by-side diff of baseline against current text; the
+  // current side stays the same shared model, so edits and undo survive.
+  diffMode?: boolean
   onDirty: (dirty: boolean) => void
   onNavigate: (path: string, line?: number) => void
   // Route a node id (e.g. a docsgen link's entity) to its app page.
@@ -115,15 +122,51 @@ interface Props {
 
 const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, ref) {
   const divRef = useRef<HTMLDivElement>(null)
+  const diffDivRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null)
   // Per-uri last loaded or saved text; dirty means the model diverged from it.
   const baselines = useRef(new Map<string, string>())
   const created = useRef(new Map<string, { model: monaco.editor.ITextModel; unsub: () => void }>())
   const covDecorations = useRef(new Map<string, string[]>())
   const linkDecorations = useRef(new Map<string, string[]>())
+  const diffDecorations = useRef(new Map<string, string[]>())
+  const diffTimer = useRef<number | null>(null)
   const quoteDecorations = useRef<string[]>([])
   const propsRef = useRef(props)
   propsRef.current = props
+
+  // Gutter marks against the reconciled baseline: added, modified, and a strip
+  // where baseline lines were deleted. Recomputed on load and (debounced) on edit.
+  const recomputeDiffMarks = (model: monaco.editor.ITextModel) => {
+    if (model.isDisposed()) return
+    const p = propsRef.current
+    const uri = model.uri.toString()
+    if (uri !== docUri(p.root, p.path)) return
+    const old = diffDecorations.current.get(uri) ?? []
+    if (p.baseline === null || p.baseline === undefined) {
+      diffDecorations.current.set(uri, model.deltaDecorations(old, []))
+      return
+    }
+    const marks = lineMarks(p.baseline, model.getValue())
+    const lineCount = model.getLineCount()
+    const next: monaco.editor.IModelDeltaDecoration[] = []
+    const push = (line: number, cls: string, tip: string) => {
+      const l = Math.min(Math.max(line, 1), lineCount)
+      next.push({
+        range: new monaco.Range(l, 1, l, 1),
+        options: { linesDecorationsClassName: cls, linesDecorationsTooltip: tip },
+      })
+    }
+    for (const l of marks.added) push(l, 'gd-add', 'added since the last reconcile')
+    for (const l of marks.modified) push(l, 'gd-mod', 'changed since the last reconcile')
+    for (const [l, n] of marks.deletedAbove) push(l, 'gd-del', `${n} line${n > 1 ? 's' : ''} deleted here`)
+    diffDecorations.current.set(uri, model.deltaDecorations(old, next))
+  }
+  const scheduleDiffMarks = (model: monaco.editor.ITextModel) => {
+    if (diffTimer.current !== null) window.clearTimeout(diffTimer.current)
+    diffTimer.current = window.setTimeout(() => recomputeDiffMarks(model), 250)
+  }
   // Re-queries requirement lenses; wired to the code lens provider's change event so
   // a committed build refreshes lens titles (verification status) without an edit.
   const lensRefresh = useRef<() => void>(() => {})
@@ -327,6 +370,9 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       mql.removeEventListener('change', applyMonacoTheme)
       lensRefresh.current = () => {}
       for (const d of disposables) d.dispose()
+      // The diff editor must let go of the shared models before they are disposed.
+      diffEditorRef.current?.dispose()
+      diffEditorRef.current = null
       for (const [uri, e] of created.current) {
         e.unsub()
         propsRef.current.lsp.didClose(uri)
@@ -336,6 +382,9 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
       baselines.current.clear()
       covDecorations.current.clear()
       linkDecorations.current.clear()
+      diffDecorations.current.clear()
+      for (const m of monaco.editor.getModels())
+        if (m.uri.scheme === 'jazyk-base') m.dispose()
       editor.dispose()
       editorRef.current = null
     }
@@ -357,6 +406,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
         const text = model.getValue()
         propsRef.current.lsp.didChange(uri, text)
         propsRef.current.onDirty(text !== baselines.current.get(uri))
+        scheduleDiffMarks(model)
       })
       const unsubDiag = propsRef.current.lsp.onDiagnostics(uri, (diags) => {
         monaco.editor.setModelMarkers(model, 'jazyk', diags.map(toMarker))
@@ -379,6 +429,48 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     propsRef.current.onMarkers(monaco.editor.getModelMarkers({ resource: muri }))
     void refreshLinkMarks(entry.model)
   }, [props.root, props.path])
+
+  // Reconciled-baseline gutter marks follow the baseline and the open document.
+  useEffect(() => {
+    const model = editorRef.current?.getModel()
+    if (model) recomputeDiffMarks(model)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.baseline, props.path])
+
+  // The diff view: lazily created, sharing the live model on the modified side.
+  useEffect(() => {
+    if (!props.diffMode) return
+    if (!diffEditorRef.current && diffDivRef.current) {
+      const de = monaco.editor.createDiffEditor(diffDivRef.current, {
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 13,
+        scrollBeyondLastLine: false,
+        renderSideBySide: true,
+        originalEditable: false,
+        fixedOverflowWidgets: true,
+      })
+      de.getModifiedEditor().addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
+        propsRef.current.onSave(),
+      )
+      diffEditorRef.current = de
+    }
+    const de = diffEditorRef.current
+    const entry = created.current.get(docUri(props.root, props.path))
+    if (!de || !entry || props.baseline === null || props.baseline === undefined) return
+    const buri = monaco.Uri.parse(`jazyk-base:///${props.path}`)
+    let base = monaco.editor.getModel(buri)
+    if (!base) base = monaco.editor.createModel(props.baseline, 'markdown', buri)
+    else if (base.getValue() !== props.baseline) base.setValue(props.baseline)
+    de.setModel({ original: base, modified: entry.model })
+  }, [props.diffMode, props.baseline, props.root, props.path])
+
+  useEffect(
+    () => () => {
+      if (diffTimer.current !== null) window.clearTimeout(diffTimer.current)
+    },
+    [],
+  )
 
   // Coverage gutter from the section tree. Section lines refer to the last
   // reconciled text: when the editor text hash differs from graphHash the gutter
@@ -456,7 +548,12 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     [],
   )
 
-  return <div ref={divRef} className="ide-editor" />
+  return (
+    <div className="ide-editor-host">
+      <div ref={divRef} className="ide-editor" style={props.diffMode ? { display: 'none' } : undefined} />
+      <div ref={diffDivRef} className="ide-editor" style={props.diffMode ? undefined : { display: 'none' }} />
+    </div>
+  )
 })
 
 export default MonacoHost

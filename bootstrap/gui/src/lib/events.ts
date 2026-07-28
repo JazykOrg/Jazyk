@@ -33,6 +33,7 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       break
     case 'watch.state':
       app.setWatchMode(ev.mode as 'off' | 'queue' | 'watch')
+      if (ev.gen) app.setGenMode(ev.gen as 'manual' | 'auto')
       break
     case 'job.queued':
       app.upsertJob(ev.job as Job)
@@ -120,8 +121,11 @@ export function startEventStream(qc: QueryClient) {
   get<{ jobs: Job[] }>(`/api/jobs`)
     .then((r) => r.jobs.forEach((j) => app.upsertJob(j)))
     .catch(() => {})
-  get<{ mode: 'off' | 'queue' | 'watch' }>(`/api/watch`)
-    .then((r) => app.setWatchMode(r.mode))
+  get<{ mode: 'off' | 'queue' | 'watch'; gen?: 'manual' | 'auto' }>(`/api/watch`)
+    .then((r) => {
+      app.setWatchMode(r.mode)
+      if (r.gen) app.setGenMode(r.gen)
+    })
     .catch(() => {})
 
   // A new token means the EventSource URL is stale: drop it and dial fresh.

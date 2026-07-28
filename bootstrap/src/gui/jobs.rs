@@ -238,9 +238,12 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         let writer: Arc<Mutex<Option<std::fs::File>>> = Arc::new(Mutex::new(
             std::fs::OpenOptions::new().create(true).append(true).open(&trace_path).ok(),
         ));
+        // The generation at start and finish brackets the run: the journal entries
+        // between the two are the run's changesets (gui.md#jobs).
         write_line(&writer, &json!({ "meta": {
             "id": id, "kind": kind.as_value(), "queuedAt": st.jobs.get(id).map(|j| j["queuedAt"].clone()),
             "startedAt": crate::verify::now_iso(),
+            "generation": crate::store::read_generation(&st.out),
         }}));
 
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -274,6 +277,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         }
         write_line(&writer, &json!({ "outcome": {
             "state": state, "result": result, "finishedAt": crate::verify::now_iso(),
+            "generation": crate::store::read_generation(&st.out),
         }}));
         st.events.emit("job.finished", json!({ "jobId": id, "state": state, "result": result }));
         let st2 = st.clone();

@@ -51,6 +51,28 @@
   user-select: none;
 }
 
+.map-edgetypes {
+  position: relative;
+}
+
+.map-edgetypes summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.map-edgetypes[open] .map-types {
+  position: absolute;
+  z-index: 20;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 140px;
+}
+
 .map-body {
   flex: 1;
   display: flex;

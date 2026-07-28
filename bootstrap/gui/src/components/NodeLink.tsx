@@ -1,6 +1,8 @@
 // The whole cross-linking model: any node id anywhere renders through this and
-// routes to the universal resolver at /n/:id. Redirects resolve client-side.
+// opens the inspector (?node=) on the current center, never a new page.
+// Redirects resolve client-side.
 import { Link } from 'react-router'
+import { useNodeHref } from '../lib/nav'
 import { useGraph } from '../lib/queries'
 
 export function useResolveId(id: string): string {
@@ -16,8 +18,9 @@ export function useResolveId(id: string): string {
 
 export default function NodeLink({ id, children }: { id: string; children?: React.ReactNode }) {
   const resolved = useResolveId(id)
+  const href = useNodeHref()
   return (
-    <Link className="id mono" to={`/n/${encodeURIComponent(resolved)}`}>
+    <Link className="id mono" to={href(resolved)}>
       {children ?? resolved}
     </Link>
   )

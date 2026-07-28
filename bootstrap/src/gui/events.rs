@@ -103,15 +103,7 @@ pub async fn sse(
 
 // Cheap generation read: one line of status.yaml, no shard parsing.
 pub fn read_generation(out: &Path) -> u64 {
-    std::fs::read_to_string(out.join("status.yaml"))
-        .ok()
-        .and_then(|t| {
-            t.lines()
-                .find(|l| l.starts_with("generation:"))
-                .and_then(|l| l.split(':').nth(1))
-                .and_then(|v| v.trim().parse::<u64>().ok())
-        })
-        .unwrap_or(0)
+    crate::store::read_generation(out)
 }
 
 // Condense a journal entry for the event stream: the work item and one {op, id} per

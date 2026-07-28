@@ -1,0 +1,372 @@
+/* Workbench layout: rail | sidebar | center + inspector, activity panel below,
+   status bar at the bottom. One page; navigation swaps panes, never the page. */
+
+.wb {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The rail */
+.wb-rail {
+  width: 54px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding-top: 6px;
+}
+
+.wb-rail a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 0 7px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 10px;
+  border-left: 3px solid transparent;
+}
+
+.wb-rail a .glyph {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.wb-rail a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+.wb-rail a:hover {
+  color: var(--accent);
+}
+
+.wb-rail .rail-bottom {
+  margin-top: auto;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 10px;
+}
+
+/* Sidebar + center + inspector */
+.wb-side {
+  width: 250px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow: auto;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-centerrow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.wb-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.wb-center-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px 40px;
+}
+
+.wb-inspector {
+  width: 340px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  overflow: auto;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.wb-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wb-inspector-head .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-inspector-head button {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 0 6px;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.wb-inspector h2 {
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+  margin: 14px 0 6px;
+  padding-bottom: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* Explorer: two labeled sections over one tree vocabulary */
+.wb-explorer-section {
+  padding: 6px 0 2px;
+}
+
+.wb-explorer-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.wb-explorer-label .ide-mini {
+  margin-left: auto;
+}
+
+/* Related rows light up: the doc <-> deliverable linkage tint. */
+.ide-row.related,
+.deliv-row.related {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.ide-row.related:hover,
+.deliv-row.related:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Sidebar lists (graph mode, work mode) */
+.wb-side-pad {
+  padding: 10px 12px;
+}
+
+.wb-side-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 6px;
+  flex-wrap: wrap;
+}
+
+.wb-side-tabs a {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.wb-side-tabs a.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.wb-list-row {
+  display: block;
+  padding: 2px 12px;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+
+.wb-list-row:hover {
+  background: var(--bg);
+  color: var(--accent);
+}
+
+.wb-list-row.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-list-row .sub {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Activity panel */
+.wb-activity {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.wb-activity.open {
+  height: 42vh;
+  min-height: 220px;
+}
+
+.wb-activity-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  font-size: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.wb-activity-bar .toggle {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wb-activity-bar .toggle:hover {
+  color: var(--accent);
+  outline: none;
+}
+
+.wb-activity-bar select {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.wb-activity-bar button {
+  font-size: 12px;
+  padding: 1px 10px;
+}
+
+.wb-activity-bar .bar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.wb-activity-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--line);
+}
+
+.wb-runlist {
+  width: 300px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  overflow: auto;
+  padding: 6px 8px;
+}
+
+.wb-runlist .card {
+  margin: 4px 0;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.wb-runlist .card.job-sel {
+  border-color: var(--accent);
+}
+
+.wb-rundetail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 14px;
+}
+
+.wb-changesets {
+  margin: 8px 0;
+}
+
+.wb-changeset-row {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 0;
+}
+
+button.btn-on {
+  outline: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+/* Editor diff gutter marks (monaco lines-decorations margin, beside coverage). */
+.gd-add {
+  border-left: 3px solid var(--accent);
+  margin-left: 6px;
+}
+
+.gd-mod {
+  border-left: 3px solid var(--info);
+  margin-left: 6px;
+}
+
+.gd-del {
+  background: linear-gradient(var(--err), var(--err)) 6px 0 / 10px 2.5px no-repeat;
+}
+
+/* Map toolbar chips */
+.wb-map-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex-wrap: wrap;
+}
+
+.wb-map-toolbar input[type='search'] {
+  max-width: 220px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.wb-map-toolbar .map-types {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.wb-map-toolbar label {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  cursor: pointer;
+}

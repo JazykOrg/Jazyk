@@ -20,8 +20,13 @@ interface AppStore {
   jobs: Record<number, Job>
   trace: JobTraceRow[]
   watchMode: 'off' | 'queue' | 'watch'
+  genMode: 'manual' | 'auto'
   theme: 'auto' | 'light' | 'dark'
   lastCommit: { generation: number; at: number } | null
+  // The activity panel: collapsed is the one-line control bar.
+  activityOpen: boolean
+  // The open document's unsaved-edit state, for tree ops that need a save first.
+  editorDirty: boolean
   setConnected: (v: boolean) => void
   setAuthRequired: (v: boolean) => void
   bumpTokenEpoch: () => void
@@ -29,8 +34,11 @@ interface AppStore {
   setJobState: (id: number, state: string, result?: Job['result']) => void
   pushTrace: (row: JobTraceRow) => void
   setWatchMode: (v: 'off' | 'queue' | 'watch') => void
+  setGenMode: (v: 'manual' | 'auto') => void
   setTheme: (t: 'auto' | 'light' | 'dark') => void
   setLastCommit: (generation: number) => void
+  setActivityOpen: (v: boolean) => void
+  setEditorDirty: (v: boolean) => void
 }
 
 export const useApp = create<AppStore>((set) => ({
@@ -40,8 +48,11 @@ export const useApp = create<AppStore>((set) => ({
   jobs: {},
   trace: [],
   watchMode: 'queue',
+  genMode: 'manual',
   theme: (localStorage.getItem('jazyk-theme') as 'auto' | 'light' | 'dark') || 'auto',
   lastCommit: null,
+  activityOpen: localStorage.getItem('jazyk-activity') === 'open',
+  editorDirty: false,
   setConnected: (v) => set({ connected: v }),
   setAuthRequired: (v) => set((s) => (s.authRequired === v ? s : { authRequired: v })),
   bumpTokenEpoch: () => set((s) => ({ tokenEpoch: s.tokenEpoch + 1 })),
@@ -57,6 +68,7 @@ export const useApp = create<AppStore>((set) => ({
       trace: [...s.trace.slice(Math.max(0, s.trace.length - TRACE_RING + 1)), row],
     })),
   setWatchMode: (v) => set({ watchMode: v }),
+  setGenMode: (v) => set({ genMode: v }),
   setTheme: (t) => {
     localStorage.setItem('jazyk-theme', t)
     if (t === 'auto') delete document.documentElement.dataset.theme
@@ -64,6 +76,11 @@ export const useApp = create<AppStore>((set) => ({
     set({ theme: t })
   },
   setLastCommit: (generation) => set({ lastCommit: { generation, at: Date.now() } }),
+  setActivityOpen: (v) => {
+    localStorage.setItem('jazyk-activity', v ? 'open' : 'closed')
+    set({ activityOpen: v })
+  },
+  setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
 }))
 
 export function applyTheme() {

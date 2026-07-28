@@ -117,6 +117,7 @@ fn render_stderr(ev: &TraceEvent) {
 struct Transcript {
     file: std::fs::File,
     n: u64,
+    out: std::path::PathBuf,
 }
 
 #[derive(Clone)]
@@ -153,10 +154,14 @@ impl Trace {
         if let Ok(mut file) =
             std::fs::OpenOptions::new().create(true).append(true).open(dir.join(format!("{}.jsonl", stem)))
         {
-            let meta = json!({"meta": {"id": null, "kind": {"kind": kind}, "startedAt": started, "source": "cli"}});
+            // The generation at start and finish brackets the run: the journal
+            // entries between the two are the run's changesets (gui.md#jobs).
+            let meta = json!({"meta": {"id": null, "kind": {"kind": kind}, "startedAt": started, "source": "cli",
+                "generation": crate::store::read_generation(out)}});
             let _ = writeln!(file, "{}", meta);
             let _ = file.flush();
-            self.transcript = Some(std::sync::Arc::new(std::sync::Mutex::new(Transcript { file, n: 0 })));
+            self.transcript =
+                Some(std::sync::Arc::new(std::sync::Mutex::new(Transcript { file, n: 0, out: out.to_path_buf() })));
         }
         self
     }
@@ -164,7 +169,8 @@ impl Trace {
         use std::io::Write;
         if let Some(t) = &self.transcript {
             let mut t = t.lock().unwrap();
-            let line = json!({"outcome": {"state": state, "result": result, "finishedAt": crate::verify::now_iso()}});
+            let line = json!({"outcome": {"state": state, "result": result, "finishedAt": crate::verify::now_iso(),
+                "generation": crate::store::read_generation(&t.out)}});
             let _ = writeln!(t.file, "{}", line);
             let _ = t.file.flush();
         }

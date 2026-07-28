@@ -1,5 +1,6 @@
 // A source reference: opens the editor at the section (and quote, when given).
 import { Link } from 'react-router'
+import { docHref } from '../lib/nav'
 
 export default function SectionLink({
   doc,
@@ -12,12 +13,8 @@ export default function SectionLink({
   quote?: string
   children?: React.ReactNode
 }) {
-  const params = new URLSearchParams()
-  if (section) params.set('section', section)
-  if (quote) params.set('quote', quote)
-  const qs = params.toString()
   return (
-    <Link className="id mono" to={`/docs/${doc}${qs ? `?${qs}` : ''}`}>
+    <Link className="id mono" to={docHref(doc, section, quote)}>
       {children ?? (section ? `${doc}#${section}` : doc)}
     </Link>
   )

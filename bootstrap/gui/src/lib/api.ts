@@ -46,9 +46,19 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     } catch (e) {
       if ((e as { conflict?: boolean }).conflict) throw e
     }
-    throw new Error(msg)
+    throw Object.assign(new Error(msg), { status: res.status })
   }
   return res.json()
+}
+
+// A read where absence is an answer, not an error (e.g. a missing diff baseline).
+export async function getOr404<T>(path: string): Promise<T | null> {
+  try {
+    return await req<T>('GET', path)
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return null
+    throw e
+  }
 }
 
 export const get = <T = unknown,>(path: string) => req<T>('GET', path)
@@ -188,6 +198,23 @@ export interface TraceEvent {
   kind: string
   label?: string
   [k: string]: unknown
+}
+
+export interface DelivOwners {
+  entities: string[]
+  requirements: string[]
+  tests: string[]
+}
+
+export interface DelivFileInfo {
+  path: string
+  size: number
+  owners: DelivOwners
+}
+
+export interface Deliverable {
+  root: string
+  files: DelivFileInfo[]
 }
 
 export interface VerifyRow {

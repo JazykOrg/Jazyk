@@ -2,6 +2,8 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   get,
+  getOr404,
+  type Deliverable,
   type DocInfo,
   type DocRecord,
   type Graph,
@@ -58,6 +60,28 @@ export const useNode = (id: string) =>
     queryKey: ['node', id],
     queryFn: () => get<Record<string, unknown>>(`/api/entities/${encodeURIComponent(id)}`),
     enabled: id.startsWith('ent:'),
+    ...opts,
+  })
+
+export const useDeliverable = () =>
+  useQuery({ queryKey: ['deliverable'], queryFn: () => get<Deliverable>('/api/deliverable'), ...opts })
+
+// The last reconciled text; null when the document never reconciled.
+export const useDocBaseline = (path: string) =>
+  useQuery({
+    queryKey: ['docs', 'baseline', path],
+    queryFn: () => getOr404<{ path: string; text: string; hash: string }>(`/api/docs/baseline?path=${encodeURIComponent(path)}`),
+    enabled: path !== '',
+    ...opts,
+  })
+
+// The file before the last generation rewrote it; null when generation never did.
+export const useDelivBaseline = (path: string) =>
+  useQuery({
+    queryKey: ['deliverable', 'baseline', path],
+    queryFn: () =>
+      getOr404<{ path: string; text?: string; binary?: boolean }>(`/api/deliverable/baseline?path=${encodeURIComponent(path)}`),
+    enabled: path !== '',
     ...opts,
   })
 

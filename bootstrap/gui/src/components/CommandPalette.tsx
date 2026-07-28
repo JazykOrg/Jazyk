@@ -1,7 +1,9 @@
-// Cmd/Ctrl-K search over the graph: type, pick a hit, land on /n/:id.
+// Cmd/Ctrl-K search over the graph: type, pick a hit, and the inspector opens on
+// the current center.
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { get } from '../lib/api'
+import { useNodeHref } from '../lib/nav'
 import '../routes/routes.css'
 
 interface Hit {
@@ -18,6 +20,7 @@ export default function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null)
   const timer = useRef<number | null>(null)
   const navigate = useNavigate()
+  const nodeHref = useNodeHref()
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -66,7 +69,7 @@ export default function CommandPalette() {
 
   const go = (id: string) => {
     setOpen(false)
-    navigate(`/n/${encodeURIComponent(id)}`)
+    navigate(nodeHref(id))
   }
 
   return (

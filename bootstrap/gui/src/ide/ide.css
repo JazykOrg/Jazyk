@@ -167,6 +167,13 @@
   font-size: 13px;
 }
 
+.ide-editor-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .ide-editor {
   flex: 1;
   min-height: 0;

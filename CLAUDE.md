@@ -113,9 +113,7 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 
 ## Working norms
 
-- Do NOT stage or commit unless the owner explicitly asks. This is a hard rule.
-- When asked to commit: commit as Matus Faro (`matus@matus.io`), signed, and never add Claude
-  or AI co-author or attribution trailers.
+- Always commit and push all changes when the work is done. Do not leave the tree dirty.
 - Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `jazyk-out` anywhere
   are gitignored.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys

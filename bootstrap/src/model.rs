@@ -1,175 +1,233 @@
-// Build artifact data model. Mirrors docs/compiler/model and docs/compiler/artifacts.
+// The semantic graph node types. Mirrors docs/compiler/model.md and graph.schema.yaml.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DocMeta {
-    pub source_file: String,
-    pub format: String,
-    pub content_hash: String,
+fn default_scope() -> String {
+    "public".to_string()
+}
+fn default_lifecycle() -> String {
+    "open".to_string()
+}
+fn is_default_scope(s: &String) -> bool {
+    s == "public"
+}
+fn is_open(s: &String) -> bool {
+    s == "open"
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SectionBody {
-    pub title: String,
-    pub kind: String,
-    pub order: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent: Option<String>,
-    pub raw: String,
-    // 0-based inclusive start line, exclusive end line (for LSP range mapping).
-    #[serde(default)]
-    pub start_line: usize,
-    #[serde(default)]
-    pub end_line: usize,
+// A located quote: the verbatim text is found by string search inside the section's raw body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SourceRef {
+    pub doc: String,
+    pub section: String,
+    pub quote: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalEntity {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Entity {
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
-    pub linkage: String,
-    pub role: String,
-    pub local_definition: String,
-    pub confidence: f64,
-    // Section references in this doc where the entity appears (first is the defining section).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<String>,
+    #[serde(default = "default_scope", skip_serializing_if = "is_default_scope")]
+    pub scope: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub provenance: Vec<String>,
+    pub mentions: Vec<SourceRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Edge {
-    pub members: Vec<String>,
-    #[serde(rename = "type")]
-    pub kind: String,
+impl Default for Entity {
+    fn default() -> Self {
+        Entity {
+            name: String::new(),
+            aliases: Vec::new(),
+            definition: None,
+            scope: default_scope(),
+            mentions: Vec::new(),
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        }
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+// An entity pair a requirement ties together, with an optional relationship type.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReqEdge {
+    pub a: String,
+    pub b: String,
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub rel_type: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Requirement {
-    pub id: String,
-    pub ears_text: String,
-    pub entity_refs: Vec<String>,
+    pub ears: String,
+    pub entities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub implied_edges: Vec<Edge>,
-    pub source_section: String,
-    // Verbatim snippet of the document this requirement was extracted from (LLM-chosen),
-    // used to anchor diagnostics to the exact text rather than the section heading.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub evidence: String,
-    pub confidence: f64,
+    pub edges: Vec<ReqEdge>,
+    pub source: SourceRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+// Derived: recomputed on every commit from requirement edges. Never written directly.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Relationship {
-    pub local_id: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub rel_type: String,
     pub members: Vec<String>,
     pub requirements: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct External {
-    pub local_id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relocation: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
-    pub id: String,
     pub rule: String,
     pub severity: String,
     pub subjects: Vec<String>,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct ObjectArtifact {
-    pub doc: DocMeta,
-    pub sections: BTreeMap<String, SectionBody>,
-    pub entities: BTreeMap<String, LocalEntity>,
-    pub requirements: Vec<Requirement>,
-    pub relationships: Vec<Relationship>,
-    pub externals: Vec<External>,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Member {
-    pub object: String,
-    pub local_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GlobalEntity {
-    pub global_id: String,
-    pub canonical_name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub aliases: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    pub members: Vec<Member>,
-    pub resolved_by: String,
-    pub confidence: f64,
+    #[serde(default = "default_lifecycle", skip_serializing_if = "is_open")]
+    pub lifecycle: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub global_definition: Option<String>,
+    pub triage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GlobalRel {
-    pub global_id: String,
-    #[serde(rename = "type")]
+// One section of a parsed document. `raw` is verbatim; `hash` is the content hash of raw.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Section {
+    pub title: String,
     pub kind: String,
-    pub members: Vec<String>,
-    pub requirements: Vec<String>,
+    pub order: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub raw: String,
+    pub hash: String,
+    pub lines: [usize; 2],
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct GlobalReq {
-    pub global_id: String,
-    pub ears_text: String,
-    pub entities: Vec<String>,
-    pub source_section: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct LinkedArtifact {
-    pub entities: Vec<GlobalEntity>,
-    pub relationships: Vec<GlobalRel>,
-    pub requirements: Vec<GlobalReq>,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coverage {
-    pub entity: String,
-    pub tests_derivable: usize,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "claimedBy", default, skip_serializing_if = "Option::is_none")]
+    pub claimed_by: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct ReviewedArtifact {
-    pub entities: Vec<GlobalEntity>,
-    pub relationships: Vec<GlobalRel>,
-    pub requirements: Vec<GlobalReq>,
-    pub coverage: Vec<Coverage>,
-    pub diagnostics: Vec<Diagnostic>,
+// One file under docs/ in the out dir, mirroring one source document.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DocRecord {
+    #[serde(rename = "contentHash")]
+    pub content_hash: String,
+    #[serde(default)]
+    pub sections: BTreeMap<String, Section>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub coverage: BTreeMap<String, Coverage>,
+}
+
+// One scheduled unit of work: a task type and its target.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkItem {
+    pub task: String,
+    pub target: String,
+    #[serde(rename = "dirtySections", default, skip_serializing_if = "Vec::is_empty")]
+    pub dirty_sections: Vec<String>,
+    #[serde(rename = "staleAnchors", default, skip_serializing_if = "Vec::is_empty")]
+    pub stale_anchors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JournalEntry {
+    pub build: String,
+    #[serde(rename = "workItem")]
+    pub work_item: WorkItem,
+    pub mutations: Vec<serde_json::Value>,
+    pub rounds: u32,
+    pub tokens: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Spent {
+    #[serde(default)]
+    pub turns: u64,
+    #[serde(default)]
+    pub rounds: u64,
+    #[serde(default)]
+    pub tokens: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Status {
+    #[serde(default)]
+    pub generation: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parked: Vec<WorkItem>,
+    #[serde(default)]
+    pub spent: Spent,
+    #[serde(default)]
+    pub verdict: String,
+}
+
+// The in-memory graph: the contents of the graph/ shard files.
+#[derive(Clone, Debug, Default)]
+pub struct Graph {
+    pub entities: BTreeMap<String, Entity>,
+    pub requirements: BTreeMap<String, Requirement>,
+    pub relationships: BTreeMap<String, Relationship>,
+    pub diagnostics: BTreeMap<String, Diagnostic>,
+    pub redirects: BTreeMap<String, String>,
+}
+
+// Relationship types, strongest first. An edge's type is promoted to the strongest
+// implied across its contributing requirement edges.
+pub const REL_TYPES: [&str; 7] = [
+    "generalization",
+    "realization",
+    "composition",
+    "aggregation",
+    "association",
+    "dependency",
+    "reference",
+];
+
+pub fn rel_rank(t: &str) -> usize {
+    REL_TYPES.iter().position(|r| *r == t).unwrap_or(REL_TYPES.len() - 1)
+}
+
+// Process-stable content hash (SipHash with fixed keys), hex-encoded.
+pub fn hash_hex(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+// Split a full section reference "doc/path.md#/internal/ref" into (doc, internal ref).
+pub fn split_section_ref(full: &str) -> Option<(String, String)> {
+    let (doc, sec) = full.split_once('#')?;
+    if doc.is_empty() || !sec.starts_with('/') {
+        return None;
+    }
+    Some((doc.to_string(), sec.to_string()))
 }

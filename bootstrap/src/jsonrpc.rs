@@ -1,4 +1,5 @@
-// Content-Length framed JSON-RPC over stdio, shared by the LSP and MCP servers.
+// Content-Length framed JSON-RPC over stdio, used by the LSP server. (The MCP server
+// speaks line-delimited JSON-RPC and has its own loop.)
 use serde_json::Value;
 use std::io::{BufRead, Write};
 

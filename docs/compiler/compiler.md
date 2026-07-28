@@ -1,57 +1,74 @@
 # Compiler
 
-The compiler reads natural language documentation using [Large Language Models (LLMs)
-](https://en.wikipedia.org/wiki/Large_language_model). 
-It surfaces documentation ambiguity, open-endedness, and contradictions within the documentation.
-And finally it produces machine readable [project requirements (artifacts)](./artifacts.md).
-These artifacts may be used to generate, continuously update and test software.
+The compiler maintains a persistent [semantic graph](./model.md) that mirrors the
+project's documentation. Compiling means reconciling: bring the graph in line with the
+documents, surface ambiguity and contradictions as [diagnostics](./model/diagnostic.md),
+and leave everything queryable for downstream consumers.
 
-## High-level
+The graph is the build artifact. It is edited in place, never regenerated. Entities,
+requirements, and diagnostics keep their identity across builds, so everything downstream
+(generated code, tests, tickets, triage) stays bound. See
+[identity](./concepts/identity.md).
 
-The compiler is a Rust library. It is embedded in a frontend such as the [CLI](../cli.md), the
-[Language Server](../lsp/lsp.md), or the [MCP server](../mcp.md).
+## Division of labor
 
-Several stages call a large language model through an OpenAI-compatible endpoint (e.g. local LLM),
-configured in [project settings](./project-settings.md#llm) and overridable with CLI flags.
+The design splits work strictly between deterministic code and the model.
 
-The design mimics similar compilation and linking processes as programming languages. Each file is
-compiled on its own, exposing entities and relationships between those entities. And later, entities
-across compiled files are linked together and their structure merged.
+The harness owns everything that must never be wrong:
 
-## Phases
+- [parsing](./parsing.md) and section diffing,
+- identifiers and the [graph store](./graph.md) with its validation gates,
+- the [dirty set](./reconciler.md#dirty-set) (what is stale),
+- [context assembly](./context.md),
+- derived relationships and [garbage collection](./graph.md#garbage-collection).
 
-- [Compilation](./compilation.md) runs per file, may run in parallel. Splits a file
-  into sections and extracts entities, requirements, and relationships. It produces one object
-  artifact per file.
-- [Linking](./linking.md) runs over all object artifacts. It resolves entities across
-  files, then validates them together. It produces the linked and reviewed artifacts.
+The model owns everything that requires judgment:
 
-## Model
+- reading a section and extracting requirements and entities,
+- deciding whether a concept already exists in the graph (search before create),
+- writing and refining definitions,
+- judging severity, and marking sections covered or non-normative.
 
-The semantic model is a graph. The node types are sections, entities, requirements, relationships,
-and diagnostics.
+## Components
 
-[See more](./model.md)
+- The [tool registry](./tools.md), also served as an MCP server (`jazyk mcp graph`).
+  Read tools are the public query surface. Write tools mutate the graph and are used by
+  compilation turns, or by an external agent given `--write`.
+- The [turn harness](./turns.md): one focused LLM session wired to the registry, staging
+  mutations, committing atomically.
+- The [reconciler](./reconciler.md): computes what is stale, schedules turns level by
+  level with bounded parallelism, and decides when the build has converged.
 
-## Build artifacts
+## Build lifecycle
 
-The output of each phase is a build artifact: the object artifact (per file), the linked artifact,
-and the reviewed artifact.
+```
+parse all docs → diff section trees → dirty set
+  → ingest wave (reconcile-doc turns, root first, then levels in parallel)
+  → review wave (review-entity turns)
+  → checks (deterministic lint, coverage, reachability)
+  → fixed point reached, or budget exhausted with work parked
+```
 
-[See more](./artifacts.md)
+The first build and every rebuild run the same lifecycle. The first build starts
+from an empty graph, so everything is dirty. A rebuild with no changes has an empty dirty
+set and makes zero LLM calls.
 
-## Concepts
+## Outputs
 
-Cross cutting concepts used across the phases:
+Everything lives in the out directory (default `jazyk-out/`). See
+[storage layout](./graph.md#storage-layout).
 
-- [Determinism](./concepts/determinism.md)
-- [Stable diagnostics](./concepts/stable-diagnostics.md)
-- [Stable identity](./concepts/stable-identity.md)
-- [Scopes](./concepts/scopes.md)
-- [Incrementality](./concepts/incremental.md)
-- [Reasoning](./concepts/reasoning.md)
-- [EARS](./concepts/ears.md)
+- `graph/`: the semantic graph, the primary output.
+- `docs/`: section trees and coverage per document.
+- `docsgen/`: one human-readable requirements document per entity, rendered
+  deterministically on every build. See
+  [documentation generation](../consumers/docsgen.md#the-requirements-document).
+- `gen/`: generation and verification metadata: the
+  [ledger](../consumers/gen.md#the-ledger) and the criteria files for llm tests. The
+  deliverable itself lives outside the out directory
+  ([generation settings](./project-settings.md#generation)).
+- `journal/`: the audit trail of every change.
+- `status.yaml`: convergence verdict, budgets spent, parked work.
 
-## Project settings
-
-[See more](./project-settings.md)
+`jazyk check` exits non-zero when open diagnostics of severity `error` exist. See
+[CLI](../frontends/cli.md).

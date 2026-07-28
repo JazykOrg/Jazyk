@@ -1,106 +1,129 @@
-// Language server over stdio. Thin protocol layer over the compiler engine, mirroring
-// docs/lsp.md and docs/lsp/capabilities/*. Hand-rolled JSON-RPC (no async runtime).
-use crate::cache::Store;
-use crate::engine::{self, Build};
+// The language server: thin and read-only, per docs/frontends/lsp.md. It reads the
+// graph store and maps nodes to editor positions. It never compiles; rebuilds run
+// through `jazyk compile` or `jazyk watch`, and the store's generation counter tells
+// this server when to reload and republish.
+use crate::context::{self, Focus};
 use crate::jsonrpc::{read_message, write_message};
-use crate::llm::Llm;
 use crate::md;
-use crate::model::*;
-use crate::project::Project;
+use crate::model::Entity;
+use crate::store::Store;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{self, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub struct Server {
-    proj: Project,
-    cache: Store,
-    llm: Llm,
-    out_dir: PathBuf,
-    overlay: BTreeMap<String, String>, // oid -> in-memory text
-    build: Option<Build>,
-    last_sig: Option<String>, // fingerprint of the inputs the current build was made from
+pub struct Lsp {
+    root: PathBuf,
+    out: PathBuf,
+    store: Store,
+    generation: u64,
+    gen: crate::gen::GenSettings,
+    // Open documents: project-relative doc path -> current editor text.
+    overlay: HashMap<String, String>,
 }
 
-impl Server {
-    pub fn new(proj: Project, llm: Llm, out_dir: PathBuf) -> Server {
-        let cache = Store::new(&out_dir, &llm.model);
-        Server {
-            proj,
-            cache,
-            llm,
-            out_dir,
-            overlay: BTreeMap::new(),
-            build: None,
-            last_sig: None,
-        }
+impl Lsp {
+    pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
+        let store = Store::load(&out);
+        let generation = store.status.generation;
+        Lsp { root, out, store, generation, gen, overlay: HashMap::new() }
     }
 
     pub fn run(&mut self) {
-        let stdin = io::stdin();
-        let mut reader = BufReader::new(stdin.lock());
+        // Two producers, one consumer: a stdin reader thread and a store poller thread
+        // feed one channel, so a committed build repaints every open document the
+        // moment it lands, without waiting for editor activity.
+        // Mirrors docs/frontends/lsp.md#rebuilds-and-refresh.
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let tx_in = tx.clone();
+        std::thread::spawn(move || {
+            let stdin = io::stdin();
+            let mut reader = BufReader::new(stdin.lock());
+            while let Some(m) = read_message(&mut reader) {
+                if tx_in.send(Event::Client(m)).is_err() {
+                    return;
+                }
+            }
+            tx_in.send(Event::Eof).ok();
+        });
+        spawn_store_watcher(self.out.clone(), tx);
         let stdout = io::stdout();
         loop {
-            let msg = match read_message(&mut reader) {
-                Some(m) => m,
-                None => break,
+            let msg = match rx.recv() {
+                Ok(Event::Client(m)) => m,
+                Ok(Event::StoreChanged) => {
+                    let mut out = stdout.lock();
+                    self.refresh(&mut out);
+                    continue;
+                }
+                Ok(Event::Eof) | Err(_) => break,
             };
-            let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
-            let id = msg.get("id").cloned();
-            let params = msg.get("params").cloned().unwrap_or(Value::Null);
             let mut out = stdout.lock();
-            match method.as_str() {
-                "initialize" => {
-                    self.on_initialize(&params);
-                    reply(&mut out, id, self.capabilities());
+            if !self.handle(msg, &mut out) {
+                break;
+            }
+        }
+    }
+
+    // Dispatch one client message. Transport-agnostic: the GUI serves the same
+    // sessions over WebSocket. Returns false on `exit`.
+    pub(crate) fn handle<W: Write>(&mut self, msg: Value, out: &mut W) -> bool {
+        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+        let id = msg.get("id").cloned();
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        // The store is the single source of truth: reload when a compile moved it.
+        self.refresh(out);
+        match method.as_str() {
+            "initialize" => reply(out, id, self.capabilities()),
+            "initialized" => {}
+            "shutdown" => reply(out, id, Value::Null),
+            "exit" => return false,
+            "textDocument/didOpen" => {
+                if let Some(doc) = self.sync_open(&params) {
+                    self.publish(out, &doc);
                 }
-                "initialized" => self.rebuild_and_publish(&mut out),
-                "shutdown" => reply(&mut out, id, Value::Null),
-                "exit" => break,
-                "textDocument/didOpen" => {
-                    // Opening a file doesn't change content (overlay == disk), so this only
-                    // rebuilds if something actually changed; either way we (re)publish so the
-                    // newly opened file shows the current build's diagnostics.
-                    self.on_did_open(&params);
-                    if !self.maybe_rebuild_and_publish(&mut out) {
-                        self.publish_all(&mut out);
-                    }
+            }
+            "textDocument/didChange" => {
+                if let Some(doc) = self.sync_change(&params) {
+                    self.publish(out, &doc);
                 }
-                "textDocument/didChange" => {
-                    self.on_did_change(&params);
-                    self.maybe_rebuild_and_publish(&mut out);
+            }
+            "textDocument/didSave" => self.publish_all(out),
+            // The client's native file watcher saw the store move; the refresh
+            // before dispatch already reloaded and republished. Nothing more.
+            "workspace/didChangeWatchedFiles" => {}
+            "textDocument/didClose" => {
+                if let Some(doc) = self.param_doc(&params) {
+                    self.overlay.remove(&doc);
                 }
-                "textDocument/didSave" => {
-                    self.maybe_rebuild_and_publish(&mut out);
-                }
-                "textDocument/didClose" => self.on_did_close(&params),
-                "textDocument/definition" => {
-                    let r = self.on_definition(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/references" => {
-                    let r = self.on_references(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/hover" => {
-                    let r = self.on_hover(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/completion" => {
-                    let r = self.on_completion(&params);
-                    reply(&mut out, id, r);
-                }
-                "textDocument/semanticTokens/full" => {
-                    let r = self.on_semantic_tokens(&params);
-                    reply(&mut out, id, r);
-                }
-                _ => {
-                    if id.is_some() {
-                        reply(&mut out, id, Value::Null);
-                    }
+            }
+            "textDocument/definition" => {
+                let r = self.on_definition(&params);
+                reply(out, id, r);
+            }
+            "textDocument/references" => {
+                let r = self.on_references(&params);
+                reply(out, id, r);
+            }
+            "textDocument/hover" => {
+                let r = self.on_hover(&params);
+                reply(out, id, r);
+            }
+            "textDocument/completion" => {
+                let r = self.on_completion();
+                reply(out, id, r);
+            }
+            "textDocument/documentLink" => {
+                let r = self.on_document_links(&params);
+                reply(out, id, r);
+            }
+            _ => {
+                if id.is_some() {
+                    reply(out, id, Value::Null);
                 }
             }
         }
+        true
     }
 
     fn capabilities(&self) -> Value {
@@ -111,566 +134,367 @@ impl Server {
                 "referencesProvider": true,
                 "hoverProvider": true,
                 "completionProvider": { "triggerCharacters": ["`", "["] },
-                "semanticTokensProvider": {
-                    "legend": {
-                        "tokenTypes": ["entity"],
-                        "tokenModifiers": ["definition", "external", "unresolved"]
-                    },
-                    "full": true
-                }
+                "documentLinkProvider": { "resolveProvider": false }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
     }
 
-    fn on_initialize(&mut self, params: &Value) {
-        // Honor the workspace root if the client supplies one and it contains a project.
-        if let Some(uri) = params.get("rootUri").and_then(|u| u.as_str()) {
-            if let Some(path) = uri_to_path(uri) {
-                if let Some(root) = crate::project::find_root(&path) {
-                    let llm = self.llm.clone();
-                    self.proj = Project::load(&root);
-                    // Keep CLI LLM overrides (base_url/model already set on self.llm).
-                    self.llm = llm;
-                }
-            }
-        }
-        self.log("jazyk language server initialized");
-    }
-
-    // Fingerprint of all current inputs (overlay text where open, else disk), so we can skip
-    // rebuilds when nothing actually changed.
-    fn inputs_sig(&self) -> String {
-        let mut parts = Vec::new();
-        for f in self.proj.doc_files() {
-            let oid = engine::object_id(&self.proj, &f);
-            let content = self
-                .overlay
-                .get(&oid)
-                .cloned()
-                .unwrap_or_else(|| std::fs::read_to_string(&f).unwrap_or_default());
-            parts.push(format!("{}\u{0}{}", oid, content));
-        }
-        parts.join("\u{1}")
-    }
-
-    // Rebuild only if inputs changed since the last build; publishes progressively. Returns
-    // true if it rebuilt.
-    fn maybe_rebuild_and_publish<W: Write>(&mut self, out: &mut W) -> bool {
-        let sig = self.inputs_sig();
-        if self.last_sig.as_deref() == Some(sig.as_str()) {
-            eprintln!("[jazyk-lsp] no document changes; skipping rebuild");
-            return false;
-        }
-        self.rebuild_and_publish(out);
-        true
-    }
-
-    // Two-phase build: compile files (parallel) and publish per-file diagnostics, then link and
-    // publish the cross-file diagnostics — so feedback appears without waiting for linking.
-    fn rebuild_and_publish<W: Write>(&mut self, out: &mut W) {
-        self.last_sig = Some(self.inputs_sig());
-        let n = self.proj.doc_files().len();
-        eprintln!(
-            "[jazyk-lsp] compiling {} file(s) with model {} at {} …",
-            n, self.llm.model, self.llm.base_url
-        );
-        // Phase 1: compile and publish per-file diagnostics immediately.
-        let objects = engine::compile_files(&self.proj, Some(&self.cache), &self.llm, &self.overlay, false);
-        self.build = Some(Build {
-            objects: objects.clone(),
-            linked: LinkedArtifact::default(),
-            reviewed: ReviewedArtifact::default(),
-        });
-        self.publish_all(out);
-        eprintln!("[jazyk-lsp] compiled {} file(s); linking …", objects.len());
-
-        // Phase 2: link and publish the cross-file diagnostics.
-        let (linked, reviewed) = engine::link_objects(&self.proj, &objects, Some(&self.cache), &self.llm);
-        let diag_count: usize =
-            objects.iter().map(|(_, a)| a.diagnostics.len()).sum::<usize>() + reviewed.diagnostics.len();
-        eprintln!(
-            "[jazyk-lsp] build complete: {} entities, {} relationships, {} requirements, {} diagnostics",
-            reviewed.entities.len(),
-            reviewed.relationships.len(),
-            reviewed.requirements.len(),
-            diag_count
-        );
-        let build = Build { objects, linked, reviewed };
-        // Persist the whole-program finals so a separate MCP process (or CI) reads the same completed
-        // build the editor sees (see docs/lsp/lifecycle.md#persisted-output).
-        crate::cli::write_artifacts(&build, &self.out_dir);
-        self.build = Some(build);
-        self.publish_all(out);
-    }
-
-    fn log(&self, msg: &str) {
-        eprintln!("[jazyk-lsp] {}", msg);
-    }
-
-    // ---- file sync ----
-
-    fn on_did_open(&mut self, params: &Value) {
-        if let Some(td) = params.get("textDocument") {
-            if let (Some(uri), Some(text)) =
-                (td.get("uri").and_then(|u| u.as_str()), td.get("text").and_then(|t| t.as_str()))
-            {
-                if let Some(oid) = self.uri_to_oid(uri) {
-                    self.overlay.insert(oid, text.to_string());
-                }
-            }
+    // Reload the store when the generation counter moved, and republish every open
+    // document so the editor reflects the new build.
+    pub(crate) fn refresh<W: Write>(&mut self, out: &mut W) {
+        let current = Store::load(&self.out);
+        if current.status.generation != self.generation {
+            eprintln!(
+                "[jazyk-lsp] store generation {} -> {}; reloading",
+                self.generation, current.status.generation
+            );
+            self.generation = current.status.generation;
+            self.store = current;
+            self.publish_all(out);
         }
     }
 
-    fn on_did_change(&mut self, params: &Value) {
-        let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str());
-        // Full sync: take the last content change's full text.
+    // ---- document sync ----
+
+    fn sync_open(&mut self, params: &Value) -> Option<String> {
+        let td = params.get("textDocument")?;
+        let doc = self.uri_to_doc(td.get("uri")?.as_str()?)?;
+        let text = td.get("text")?.as_str()?.to_string();
+        self.overlay.insert(doc.clone(), text);
+        Some(doc)
+    }
+
+    fn sync_change(&mut self, params: &Value) -> Option<String> {
+        let doc = self.param_doc(params)?;
+        // Full sync: the last content change carries the whole text.
         let text = params
-            .get("contentChanges")
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.last())
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str());
-        if let (Some(uri), Some(text)) = (uri, text) {
-            if let Some(oid) = self.uri_to_oid(uri) {
-                self.overlay.insert(oid, text.to_string());
-            }
-        }
+            .get("contentChanges")?
+            .as_array()?
+            .last()?
+            .get("text")?
+            .as_str()?
+            .to_string();
+        self.overlay.insert(doc.clone(), text);
+        Some(doc)
     }
 
-    fn on_did_close(&mut self, params: &Value) {
-        if let Some(uri) = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()) {
-            if let Some(oid) = self.uri_to_oid(uri) {
-                self.overlay.remove(&oid);
-            }
-        }
+    fn param_doc(&self, params: &Value) -> Option<String> {
+        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+        self.uri_to_doc(uri)
     }
 
-    // ---- uri/oid helpers ----
+    // ---- path mapping ----
 
-    fn uri_to_oid(&self, uri: &str) -> Option<String> {
+    fn uri_to_doc(&self, uri: &str) -> Option<String> {
         let path = uri_to_path(uri)?;
-        Some(engine::object_id(&self.proj, &path))
+        let rel = path.strip_prefix(&self.root).ok()?;
+        Some(rel.to_string_lossy().replace('\\', "/"))
     }
 
-    fn oid_to_uri(&self, oid: &str) -> String {
-        let abs = Build::abs_path(&self.proj, oid);
-        path_to_uri(&abs)
+    fn doc_to_uri(&self, doc: &str) -> String {
+        path_to_uri(&self.root.join(doc))
     }
 
-    fn file_text(&self, oid: &str) -> String {
-        if let Some(t) = self.overlay.get(oid) {
+    fn doc_text(&self, doc: &str) -> String {
+        if let Some(t) = self.overlay.get(doc) {
             return t.clone();
         }
-        std::fs::read_to_string(Build::abs_path(&self.proj, oid)).unwrap_or_default()
+        std::fs::read_to_string(self.root.join(doc)).unwrap_or_default()
     }
 
-    // ---- graph helpers ----
+    // ---- anchoring ----
 
-    // Global entity whose name/alias occurrence in `oid` covers (line, character).
-    fn entity_at(&self, oid: &str, line: usize, character: usize) -> Option<GlobalEntity> {
-        let build = self.build.as_ref()?;
-        let text = self.file_text(oid);
-        let mut best: Option<(usize, GlobalEntity)> = None; // (name length, entity)
-        for ge in &build.reviewed.entities {
-            // Only consider entities that have a member in this file.
-            if !ge.members.iter().any(|m| m.object == oid) {
-                continue;
-            }
-            let mut names = vec![ge.canonical_name.clone()];
-            names.extend(ge.aliases.iter().cloned());
-            for n in names {
-                for (l, c, len) in md::occurrences(&text, &n) {
-                    if l == line && character >= c && character < c + len {
-                        // Prefer the longest matching name.
-                        if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
-                            best = Some((len, ge.clone()));
-                        }
-                    }
-                }
-            }
+    // Range of a quote in a document: exact match first, then the first whole-word
+    // occurrence of a fallback name, then the section's first line, then line 0.
+    fn anchor(&self, doc: &str, quote: &str, name: &str, section: Option<&str>) -> (usize, usize, usize, usize) {
+        let text = self.doc_text(doc);
+        if let Some(r) = md::locate(&text, quote) {
+            return r;
         }
-        best.map(|(_, e)| e)
-    }
-
-    fn object<'a>(&self, build: &'a Build, oid: &str) -> Option<&'a ObjectArtifact> {
-        build.objects.iter().find(|(o, _)| o == oid).map(|(_, a)| a)
-    }
-
-    // The (oid, line) where an entity is defined.
-    fn entity_def(&self, build: &Build, ge: &GlobalEntity) -> Option<(String, usize)> {
-        let member = ge
-            .members
-            .iter()
-            .find(|m| m.role.as_deref() == Some("definition"))
-            .or_else(|| ge.members.first())?;
-        let art = self.object(build, &member.object)?;
-        let le = art.entities.get(&member.local_id)?;
-        let section = le.provenance.first()?;
-        let line = md::section_line(&art.sections, section);
-        Some((member.object.clone(), line))
-    }
-
-    fn loc(&self, oid: &str, line: usize) -> Value {
-        json!({
-            "uri": self.oid_to_uri(oid),
-            "range": { "start": {"line": line, "character": 0}, "end": {"line": line, "character": 0} }
-        })
-    }
-
-    // ---- request handlers ----
-
-    fn on_definition(&self, params: &Value) -> Value {
-        let (oid, line, ch) = match self.pos(params) {
-            Some(v) => v,
-            None => return Value::Null,
-        };
-        let build = match &self.build {
-            Some(b) => b,
-            None => return Value::Null,
-        };
-        if let Some(ge) = self.entity_at(&oid, line, ch) {
-            if let Some((doid, dline)) = self.entity_def(build, &ge) {
-                return self.loc(&doid, dline);
-            }
-        }
-        Value::Null
-    }
-
-    fn on_references(&self, params: &Value) -> Value {
-        let (oid, line, ch) = match self.pos(params) {
-            Some(v) => v,
-            None => return json!([]),
-        };
-        let build = match &self.build {
-            Some(b) => b,
-            None => return json!([]),
-        };
-        let ge = match self.entity_at(&oid, line, ch) {
-            Some(e) => e,
-            None => return json!([]),
-        };
-        let mut locs: Vec<Value> = Vec::new();
-        let mut seen: std::collections::BTreeSet<(String, usize)> = std::collections::BTreeSet::new();
-        for m in &ge.members {
-            if let Some(art) = self.object(build, &m.object) {
-                if let Some(le) = art.entities.get(&m.local_id) {
-                    for sec in &le.provenance {
-                        let l = md::section_line(&art.sections, sec);
-                        if seen.insert((m.object.clone(), l)) {
-                            locs.push(self.loc(&m.object, l));
-                        }
-                    }
-                }
-            }
-        }
-        json!(locs)
-    }
-
-    fn on_hover(&self, params: &Value) -> Value {
-        let (oid, line, ch) = match self.pos(params) {
-            Some(v) => v,
-            None => return Value::Null,
-        };
-        let build = match &self.build {
-            Some(b) => b,
-            None => return Value::Null,
-        };
-        let ge = match self.entity_at(&oid, line, ch) {
-            Some(e) => e,
-            None => return Value::Null,
-        };
-        let mut md_text = format!("**{}**", ge.canonical_name);
-        if let Some(s) = &ge.scope {
-            md_text.push_str(&format!("  \n*scope:* {}", s));
-        }
-        let def = ge.global_definition.clone().or_else(|| {
-            ge.members.first().and_then(|m| {
-                self.object(build, &m.object)
-                    .and_then(|a| a.entities.get(&m.local_id))
-                    .map(|le| le.local_definition.clone())
-            })
-        });
-        if let Some(d) = def {
-            if !d.is_empty() {
-                md_text.push_str(&format!("\n\n{}", d));
-            }
-        }
-        // Relationships.
-        let rels: Vec<String> = build
-            .reviewed
-            .relationships
-            .iter()
-            .filter(|r| r.members.contains(&ge.global_id))
-            .map(|r| {
-                let other = r.members.iter().find(|m| *m != &ge.global_id).cloned().unwrap_or_default();
-                format!("- {} → {}", r.kind, other.trim_start_matches("ent:"))
-            })
-            .collect();
-        if !rels.is_empty() {
-            md_text.push_str(&format!("\n\n**Relationships**\n{}", rels.join("\n")));
-        }
-        // Requirements.
-        let reqs: Vec<String> = build
-            .reviewed
-            .requirements
-            .iter()
-            .filter(|r| r.entities.contains(&ge.global_id))
-            .map(|r| format!("- {}", r.ears_text))
-            .collect();
-        if !reqs.is_empty() {
-            md_text.push_str(&format!("\n\n**Requirements**\n{}", reqs.join("\n")));
-        }
-        // Diagnostics.
-        let diags: Vec<String> = build
-            .reviewed
-            .diagnostics
-            .iter()
-            .filter(|d| d.subjects.contains(&ge.global_id))
-            .map(|d| format!("- ⚠ {} — {}", d.rule, d.message))
-            .collect();
-        if !diags.is_empty() {
-            md_text.push_str(&format!("\n\n**Diagnostics**\n{}", diags.join("\n")));
-        }
-        json!({ "contents": { "kind": "markdown", "value": md_text } })
-    }
-
-    fn on_completion(&self, _params: &Value) -> Value {
-        let build = match &self.build {
-            Some(b) => b,
-            None => return json!({ "isIncomplete": false, "items": [] }),
-        };
-        let mut items: Vec<Value> = Vec::new();
-        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for (oid, art) in &build.objects {
-            for le in art.entities.values() {
-                if le.linkage != "external" {
-                    continue;
-                }
-                if !seen.insert(le.name.clone()) {
-                    continue;
-                }
-                items.push(json!({
-                    "label": le.name,
-                    "kind": 6, // Variable
-                    "detail": le.local_definition,
-                    "documentation": format!("defined in {}", oid),
-                    "insertText": le.name
-                }));
-            }
-        }
-        json!({ "isIncomplete": false, "items": items })
-    }
-
-    // Semantic tokens: color every entity-name occurrence in the file, so the spans that are
-    // command-clickable (see `entity_at`) are visible. Modifiers carry three facets: `definition`
-    // (this file defines the entity), `external` (shared concept), `unresolved` (a reference with
-    // nothing defining it anywhere). Mirrors the enumeration `entity_at` does, over the whole file.
-    fn on_semantic_tokens(&self, params: &Value) -> Value {
-        let oid = match params
-            .get("textDocument")
-            .and_then(|t| t.get("uri"))
-            .and_then(|u| u.as_str())
-            .and_then(|u| self.uri_to_oid(u))
-        {
-            Some(o) => o,
-            None => return json!({ "data": [] }),
-        };
-        let build = match &self.build {
-            Some(b) => b,
-            None => return json!({ "data": [] }),
-        };
-        let text = self.file_text(&oid);
-        let art = self.object(build, &oid);
-
-        // Candidate tokens: (line, col, len, modifier_bitset). Bits match the legend order:
-        // definition = 1<<0, external = 1<<1, unresolved = 1<<2.
-        let mut toks: Vec<(usize, usize, usize, u32)> = Vec::new();
-        for ge in &build.reviewed.entities {
-            let member = match ge.members.iter().find(|m| m.object == oid) {
-                Some(m) => m,
-                None => continue,
-            };
-            let mut mods: u32 = 0;
-            if member.role.as_deref() == Some("definition") {
-                mods |= 1 << 0;
-            }
-            if let Some(le) = art.and_then(|a| a.entities.get(&member.local_id)) {
-                if le.linkage == "external" {
-                    mods |= 1 << 1;
-                }
-            }
-            if !ge.members.iter().any(|m| m.role.as_deref() == Some("definition")) {
-                mods |= 1 << 2;
-            }
-            let mut names = vec![ge.canonical_name.clone()];
-            names.extend(ge.aliases.iter().cloned());
-            for n in names {
-                for (l, c, len) in md::occurrences(&text, &n) {
-                    toks.push((l, c, len, mods));
-                }
-            }
-        }
-
-        json!({ "data": encode_semantic_tokens(toks) })
-    }
-
-    fn pos(&self, params: &Value) -> Option<(String, usize, usize)> {
-        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
-        let oid = self.uri_to_oid(uri)?;
-        let p = params.get("position")?;
-        let line = p.get("line")?.as_u64()? as usize;
-        let ch = p.get("character")?.as_u64()? as usize;
-        Some((oid, line, ch))
-    }
-
-    // ---- diagnostics ----
-
-    // Range of a requirement: its verbatim evidence snippet, else its source-section heading.
-    fn req_range(&self, art: &ObjectArtifact, text: &str, req: &Requirement) -> (usize, usize, usize, usize) {
-        if !req.evidence.is_empty() {
-            if let Some(r) = md::locate(text, &req.evidence) {
-                return r;
-            }
-        }
-        let line = md::section_line(&art.sections, &req.source_section);
-        (line, 0, line, 0)
-    }
-
-    // Range of an entity in one file: its first whole-word name occurrence, then a substring
-    // fallback (handles plural/morphology like "Products"), then its defining section heading.
-    fn entity_range(&self, art: &ObjectArtifact, text: &str, local_id: &str) -> (usize, usize, usize, usize) {
-        if let Some(le) = art.entities.get(local_id) {
-            if let Some((l, c, len)) = md::occurrences(text, &le.name).into_iter().next() {
+        if !name.is_empty() {
+            if let Some((l, c, len)) = occurrences(&text, name).into_iter().next() {
                 return (l, c, l, c + len);
             }
-            if let Some((sl, sc, _, _)) = md::locate(text, &le.name) {
-                let len = le.name.chars().count();
-                return (sl, sc, sl, sc + len);
-            }
-            if let Some(sec_ref) = le.provenance.first() {
-                let line = md::section_line(&art.sections, sec_ref);
-                return (line, 0, line, 0);
+        }
+        if let Some(sec) = section {
+            if let Some(s) = self.store.docs.get(doc).and_then(|d| d.sections.get(sec)) {
+                return (s.lines[0], 0, s.lines[0], 0);
             }
         }
         (0, 0, 0, 0)
     }
 
-    fn publish_all<W: Write>(&self, out: &mut W) {
-        let build = match &self.build {
-            Some(b) => b,
-            None => return,
-        };
-        // file oid -> diagnostics
-        let mut by_file: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        // Ensure every known file gets a (possibly empty) publish so resolved diagnostics clear.
-        for (oid, _) in &build.objects {
-            by_file.entry(oid.clone()).or_default();
-        }
-        for oid in self.overlay.keys() {
-            by_file.entry(oid.clone()).or_default();
-        }
+    fn range(&self, r: (usize, usize, usize, usize)) -> Value {
+        json!({
+            "start": {"line": r.0, "character": r.1},
+            "end": {"line": r.2, "character": r.3}
+        })
+    }
 
-        // Per-object diagnostics (A2/A3): subjects are local requirement ids. Anchor to the
-        // requirement's verbatim evidence snippet where available.
-        for (oid, art) in &build.objects {
-            let text = self.file_text(oid);
-            for d in &art.diagnostics {
-                let range = d
-                    .subjects
-                    .iter()
-                    .find_map(|s| art.requirements.iter().find(|r| &r.id == s))
-                    .map(|r| self.req_range(art, &text, r))
-                    .unwrap_or((0, 0, 0, 0));
-                by_file.entry(oid.clone()).or_default().push(lsp_diag(d, range));
+    // ---- diagnostics ----
+
+    fn publish_all<W: Write>(&self, out: &mut W) {
+        let open: Vec<String> = self.overlay.keys().cloned().collect();
+        for doc in open {
+            self.publish(out, &doc);
+        }
+    }
+
+    // Publish the open diagnostics that anchor to one document. Suppressed triage stays
+    // out of the editor; resolved findings are never shown.
+    fn publish<W: Write>(&self, out: &mut W, doc: &str) {
+        let mut items: Vec<Value> = Vec::new();
+        for d in self.store.graph.diagnostics.values() {
+            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+                continue;
+            }
+            let severity = match d.severity.as_str() {
+                "error" => 1,
+                "warning" => 2,
+                "info" => 3,
+                _ => 4, // none: shown as a hint
+            };
+            for subject in &d.subjects {
+                let anchor = self.subject_anchor(subject, doc);
+                let Some(range) = anchor else { continue };
+                items.push(json!({
+                    "range": self.range(range),
+                    "severity": severity,
+                    "source": "jazyk",
+                    "code": d.rule,
+                    "message": format!("{}: {}", d.rule, d.message)
+                }));
             }
         }
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": { "uri": self.doc_to_uri(doc), "diagnostics": items }
+        });
+        write_message(out, &msg);
+    }
 
-        // Global diagnostics: subjects are entity ids; anchor to the entity-name occurrence in
-        // each member file.
-        for d in &build.reviewed.diagnostics {
-            let mut placed = false;
-            for subj in &d.subjects {
-                for ge in build.reviewed.entities.iter().filter(|e| &e.global_id == subj) {
-                    for m in &ge.members {
-                        if let Some(art) = self.object(build, &m.object) {
-                            let text = self.file_text(&m.object);
-                            let range = self.entity_range(art, &text, &m.local_id);
-                            by_file.entry(m.object.clone()).or_default().push(lsp_diag(d, range));
-                            placed = true;
+    // Where a diagnostic subject anchors inside `doc`, if it does at all.
+    fn subject_anchor(&self, subject: &str, doc: &str) -> Option<(usize, usize, usize, usize)> {
+        let resolved = self.store.resolve_id(subject).to_string();
+        if let Some(r) = self.store.graph.requirements.get(&resolved) {
+            if r.source.doc == doc {
+                return Some(self.anchor(doc, &r.source.quote, "", Some(&r.source.section)));
+            }
+            return None;
+        }
+        if let Some(e) = self.store.graph.entities.get(&resolved) {
+            let m = e.mentions.iter().find(|m| m.doc == doc)?;
+            return Some(self.anchor(doc, &m.quote, &e.name, Some(&m.section)));
+        }
+        // A section reference subject: "doc.md#/ref".
+        if let Some((sdoc, sec)) = crate::model::split_section_ref(&resolved) {
+            if sdoc == doc {
+                let s = self.store.docs.get(doc)?.sections.get(&sec)?;
+                return Some((s.lines[0], 0, s.lines[0], 0));
+            }
+        }
+        None
+    }
+
+    // ---- entity under cursor ----
+
+    fn pos(&self, params: &Value) -> Option<(String, usize, usize)> {
+        let doc = self.param_doc(params)?;
+        let p = params.get("position")?;
+        let line = p.get("line")?.as_u64()? as usize;
+        let ch = p.get("character")?.as_u64()? as usize;
+        Some((doc, line, ch))
+    }
+
+    // The entity whose name or alias occurrence covers (line, character); longest match
+    // wins. Any entity is eligible, not only ones mentioned in this document, so a doc
+    // that references a concept without a stored mention still navigates.
+    fn entity_at(&self, doc: &str, line: usize, character: usize) -> Option<(String, &Entity)> {
+        let text = self.doc_text(doc);
+        let mut best: Option<(usize, String)> = None;
+        for (id, e) in &self.store.graph.entities {
+            let mut names = vec![e.name.clone()];
+            names.extend(e.aliases.iter().cloned());
+            for n in names {
+                for (l, c, len) in occurrences(&text, &n) {
+                    if l == line && character >= c && character < c + len {
+                        if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
+                            best = Some((len, id.clone()));
                         }
                     }
                 }
             }
-            // Unplaceable diagnostics go to the first known file at line 0.
-            if !placed {
-                if let Some((oid, _)) = build.objects.first() {
-                    by_file.entry(oid.clone()).or_default().push(lsp_diag(d, (0, 0, 0, 0)));
+        }
+        let (_, id) = best?;
+        self.store.graph.entities.get(&id).map(|e| (id, e))
+    }
+
+    // ---- request handlers ----
+
+    fn on_definition(&self, params: &Value) -> Value {
+        let Some((doc, line, ch)) = self.pos(params) else { return Value::Null };
+        let Some((_, e)) = self.entity_at(&doc, line, ch) else { return Value::Null };
+        // The defining mention is the first one recorded.
+        let Some(m) = e.mentions.first() else { return Value::Null };
+        let r = self.anchor(&m.doc, &m.quote, &e.name, Some(&m.section));
+        json!({ "uri": self.doc_to_uri(&m.doc), "range": self.range(r) })
+    }
+
+    fn on_references(&self, params: &Value) -> Value {
+        let Some((doc, line, ch)) = self.pos(params) else { return json!([]) };
+        let Some((_, e)) = self.entity_at(&doc, line, ch) else { return json!([]) };
+        let mut locs: Vec<Value> = Vec::new();
+        let mut seen: BTreeSet<(String, usize)> = BTreeSet::new();
+        for m in &e.mentions {
+            let r = self.anchor(&m.doc, &m.quote, &e.name, Some(&m.section));
+            if seen.insert((m.doc.clone(), r.0)) {
+                locs.push(json!({ "uri": self.doc_to_uri(&m.doc), "range": self.range(r) }));
+            }
+        }
+        json!(locs)
+    }
+
+    // Hover shows the same rendered pack the compiler and the MCP server see, with a
+    // verification summary from the ledger. Hovering inside a requirement's located
+    // quote shows that requirement's own status.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_hover(&self, params: &Value) -> Value {
+        let Some((doc, line, ch)) = self.pos(params) else { return Value::Null };
+        if let Some((id, _)) = self.entity_at(&doc, line, ch) {
+            let mut value = match context::assemble(&self.store, &id, &Focus::default(), 4000) {
+                Ok(pack) => pack.pack,
+                Err(_) => return Value::Null,
+            };
+            let vmap = crate::verify::status_map(&self.store, &self.gen);
+            let refs = self.store.requirements_referencing(&id);
+            let statuses: Vec<&str> = refs
+                .iter()
+                .filter_map(|r| vmap.get(r).and_then(|v| v["status"].as_str()))
+                .collect();
+            if !statuses.is_empty() {
+                let ok = statuses.iter().filter(|s| **s == "verified").count();
+                let bad = statuses.iter().filter(|s| **s == "failing").count();
+                let stale = statuses.iter().filter(|s| s.starts_with("stale")).count();
+                value.push_str(&format!(
+                    "\n\n---\nverification: {}/{} verified, {} failing, {} stale",
+                    ok,
+                    statuses.len(),
+                    bad,
+                    stale
+                ));
+            }
+            return json!({ "contents": { "kind": "markdown", "value": value } });
+        }
+        // No entity under the cursor: a requirement's quote, maybe.
+        if let Some((rid, r)) = self.requirement_at(&doc, line, ch) {
+            let vmap = crate::verify::status_map(&self.store, &self.gen);
+            let mut value = format!("`{}`\n\n{}", rid, r.ears);
+            if let Some(v) = vmap.get(&rid) {
+                value.push_str(&format!("\n\n---\nverification: `{}`", v["status"].as_str().unwrap_or("missing")));
+                if let Some(name) = v["name"].as_str() {
+                    value.push_str(&format!(" by `{}` ({})", name, v["kind"].as_str().unwrap_or("?")));
+                }
+                if let Some(t) = v["lastRun"].as_str() {
+                    value.push_str(&format!(", last run {}", t));
+                }
+                if let Some(ev) = v["evidence"].as_str() {
+                    value.push_str(&format!("\n\n> {}", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+                }
+            }
+            return json!({ "contents": { "kind": "markdown", "value": value } });
+        }
+        Value::Null
+    }
+
+    // The requirement whose located quote contains the position, if any.
+    fn requirement_at(&self, doc: &str, line: usize, character: usize) -> Option<(String, &crate::model::Requirement)> {
+        let text = self.doc_text(doc);
+        for (rid, r) in &self.store.graph.requirements {
+            if r.source.doc != doc {
+                continue;
+            }
+            if let Some((sl, sc, el, ec)) = md::locate(&text, &r.source.quote) {
+                let after_start = line > sl || (line == sl && character >= sc);
+                let before_end = line < el || (line == el && character <= ec);
+                if after_start && before_end {
+                    return Some((rid.clone(), r));
                 }
             }
         }
-
-        for (oid, diags) in by_file {
-            let msg = json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/publishDiagnostics",
-                "params": { "uri": self.oid_to_uri(&oid), "diagnostics": diags }
-            });
-            write_message(out, &msg);
-        }
+        None
     }
-}
 
-// Turn candidate entity spans (line, col, len, modifier_bitset) into the flat, delta-encoded
-// semantic-tokens array the LSP spec expects. Overlapping spans collapse to the longest match at a
-// given start (mirroring `entity_at`), since semantic tokens may not overlap.
-fn encode_semantic_tokens(mut toks: Vec<(usize, usize, usize, u32)>) -> Vec<u32> {
-    // Order by position, longest first at a given start so the kept span is the longest one.
-    toks.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.2.cmp(&a.2)));
-    let mut kept: Vec<(usize, usize, usize, u32)> = Vec::new();
-    for t in toks {
-        if let Some(last) = kept.last() {
-            // Skip anything starting inside the previously kept token on the same line.
-            if last.0 == t.0 && t.1 < last.1 + last.2 {
+    // Every whole-word occurrence of an entity name or alias links to that entity's
+    // requirements document under <out>/docsgen/. Links are emitted only when the
+    // target file exists, so they never dangle. Longest name wins on overlaps, like
+    // entity_at; at most 200 links per document.
+    fn on_document_links(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let text = self.doc_text(&doc);
+        struct Cand {
+            line: usize,
+            col: usize,
+            len: usize,
+            id: String,
+            name: String,
+        }
+        let mut cands: Vec<Cand> = Vec::new();
+        for (id, e) in &self.store.graph.entities {
+            let slug = id.strip_prefix("ent:").unwrap_or(id);
+            if !self.out.join("docsgen").join(format!("{}.md", slug)).exists() {
                 continue;
             }
+            let mut names = vec![e.name.clone()];
+            names.extend(e.aliases.iter().cloned());
+            for n in names {
+                for (line, col, len) in occurrences(&text, &n) {
+                    cands.push(Cand { line, col, len, id: id.clone(), name: e.name.clone() });
+                }
+            }
         }
-        kept.push(t);
+        cands.sort_by(|a, b| b.len.cmp(&a.len).then(a.line.cmp(&b.line)).then(a.col.cmp(&b.col)));
+        let mut taken: Vec<(usize, usize, usize)> = Vec::new(); // (line, start, end)
+        let mut links: Vec<Value> = Vec::new();
+        for c in cands {
+            if links.len() >= 200 {
+                break;
+            }
+            let end = c.col + c.len;
+            if taken.iter().any(|(l, s, e)| *l == c.line && c.col < *e && *s < end) {
+                continue;
+            }
+            taken.push((c.line, c.col, end));
+            let slug = c.id.strip_prefix("ent:").unwrap_or(&c.id);
+            let target = path_to_uri(&self.out.join("docsgen").join(format!("{}.md", slug)));
+            links.push(json!({
+                "range": self.range((c.line, c.col, c.line, end)),
+                "target": target,
+                "tooltip": format!("{}: requirements document", c.name)
+            }));
+        }
+        json!(links)
     }
-    // Delta-encode: [deltaLine, deltaStartChar, length, tokenType, modifiers].
-    let mut data: Vec<u32> = Vec::new();
-    let (mut prev_line, mut prev_col) = (0usize, 0usize);
-    for (l, c, len, mods) in kept {
-        let dl = l - prev_line;
-        let dc = if dl == 0 { c - prev_col } else { c };
-        data.extend_from_slice(&[dl as u32, dc as u32, len as u32, 0, mods]);
-        prev_line = l;
-        prev_col = c;
-    }
-    data
-}
 
-fn lsp_diag(d: &Diagnostic, range: (usize, usize, usize, usize)) -> Value {
-    let severity = match d.severity.as_str() {
-        "error" => 1,
-        "warning" => 2,
-        "info" => 3,
-        _ => 4,
-    };
-    let mut message = d.message.clone();
-    if let Some(r) = &d.reasoning {
-        if !r.is_empty() {
-            message.push_str(&format!("\n\n{}", r));
+    fn on_completion(&self) -> Value {
+        let mut items: Vec<Value> = Vec::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for e in self.store.graph.entities.values() {
+            let mut names = vec![e.name.clone()];
+            names.extend(e.aliases.iter().cloned());
+            for n in names {
+                if seen.insert(n.clone()) {
+                    items.push(json!({
+                        "label": n,
+                        "kind": 6,
+                        "detail": e.definition.clone().unwrap_or_default()
+                    }));
+                }
+            }
         }
+        json!({ "isIncomplete": false, "items": items })
     }
-    let (sl, sc, el, ec) = range;
-    json!({
-        "range": { "start": {"line": sl, "character": sc}, "end": {"line": el, "character": ec} },
-        "severity": severity,
-        "source": "jazyk",
-        "code": d.rule,
-        "message": message
-    })
 }
 
 fn reply<W: Write>(out: &mut W, id: Option<Value>, result: Value) {
@@ -681,17 +505,47 @@ fn reply<W: Write>(out: &mut W, id: Option<Value>, result: Value) {
 // file:// URI -> path (handles the common file:///abs/path form).
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
-    let decoded = percent_decode(rest);
-    Some(PathBuf::from(decoded))
+    Some(PathBuf::from(percent_decode(rest)))
 }
 
-fn path_to_uri(path: &std::path::Path) -> String {
+fn path_to_uri(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     if s.starts_with('/') {
         format!("file://{}", s)
     } else {
         format!("file:///{}", s)
     }
+}
+
+// Whole-word, case-insensitive occurrences of `needle` in `text`, as
+// (line, start_col, len) in 0-based char columns. Editor-position mapping only.
+fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
+    let mut out = Vec::new();
+    if needle.trim().is_empty() {
+        return out;
+    }
+    let nlow = needle.to_lowercase();
+    let nlen = needle.chars().count();
+    for (lineno, line) in text.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let lower: String = line.to_lowercase();
+        let mut start = 0usize;
+        while let Some(byte_idx) = lower[start..].find(&nlow) {
+            let abs = start + byte_idx;
+            let col = lower[..abs].chars().count();
+            let before_ok = col == 0 || !chars[col - 1].is_alphanumeric();
+            let after_idx = col + nlen;
+            let after_ok = after_idx >= chars.len() || !chars[after_idx].is_alphanumeric();
+            if before_ok && after_ok {
+                out.push((lineno, col, nlen));
+            }
+            start = abs + nlow.len();
+            if start > lower.len() {
+                break;
+            }
+        }
+    }
+    out
 }
 
 fn percent_decode(s: &str) -> String {
@@ -712,56 +566,66 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::encode_semantic_tokens;
+// Events feeding the main loop: a client message, a store change, or stdin closing.
+enum Event {
+    Client(Value),
+    StoreChanged,
+    Eof,
+}
 
-    #[test]
-    fn delta_encodes_in_position_order() {
-        // Two entities on different lines; input order is reversed to prove sorting.
-        let toks = vec![(2, 4, 5, 0b010), (0, 2, 8, 0b001)];
-        let data = encode_semantic_tokens(toks);
-        assert_eq!(
-            data,
-            vec![
-                // line 0, col 2, len 8, type 0, mods 1
-                0, 2, 8, 0, 0b001, //
-                // line 2 (delta 2), col 4 (absolute, new line), len 5, type 0, mods 2
-                2, 4, 5, 0, 0b010,
-            ]
-        );
-    }
-
-    #[test]
-    fn same_line_uses_delta_column() {
-        let toks = vec![(0, 0, 3, 0), (0, 10, 4, 0)];
-        let data = encode_semantic_tokens(toks);
-        // second token's deltaStartChar is 10 - 0 = 10.
-        assert_eq!(data, vec![0, 0, 3, 0, 0, 0, 10, 4, 0, 0]);
-    }
-
-    #[test]
-    fn overlap_keeps_longest_match() {
-        // "Product" (col 5, len 7) overlaps "Product ID" (col 5, len 10) at the same start.
-        let toks = vec![(0, 5, 7, 0), (0, 5, 10, 0)];
-        let data = encode_semantic_tokens(toks);
-        // Only the longer span survives.
-        assert_eq!(data, vec![0, 5, 10, 0, 0]);
-    }
-
-    #[test]
-    fn overlap_skips_token_starting_inside_previous() {
-        // A long span (col 2, len 10 -> covers 2..12) and a later one starting inside it (col 8).
-        let toks = vec![(0, 2, 10, 0), (0, 8, 4, 0)];
-        let data = encode_semantic_tokens(toks);
-        assert_eq!(data, vec![0, 2, 10, 0, 0]);
-    }
-
-    #[test]
-    fn adjacent_non_overlapping_tokens_both_kept() {
-        // col 2..5 and col 5..9 touch but do not overlap.
-        let toks = vec![(0, 2, 3, 0), (0, 5, 4, 0)];
-        let data = encode_semantic_tokens(toks);
-        assert_eq!(data, vec![0, 2, 3, 0, 0, 0, 3, 4, 0, 0]);
-    }
+// Tail build activity into the log channel (stderr) and nudge the main loop on every
+// generation bump: the store lock marks builds starting and ending, and each bump
+// replays the new journal entries, one line per committed mutation.
+// Mirrors docs/frontends/lsp.md#build-activity-in-the-log.
+fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
+    std::thread::spawn(move || {
+        let read_generation = |out: &Path| -> u64 {
+            std::fs::read_to_string(out.join("status.yaml"))
+                .ok()
+                .and_then(|t| {
+                    t.lines()
+                        .find(|l| l.starts_with("generation:"))
+                        .and_then(|l| l.split(':').nth(1))
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                })
+                .unwrap_or(0)
+        };
+        let mut last_gen = read_generation(&out);
+        let mut lock_seen = out.join(".lock").exists();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let lock_now = out.join(".lock").exists();
+            if lock_now != lock_seen {
+                lock_seen = lock_now;
+                eprintln!(
+                    "[jazyk-build] {}",
+                    if lock_now { "build started (lock acquired)" } else { "build ended (lock released)" }
+                );
+            }
+            let gen_now = read_generation(&out);
+            if gen_now <= last_gen {
+                continue;
+            }
+            if tx.send(Event::StoreChanged).is_err() {
+                return;
+            }
+            for g in (last_gen + 1)..=gen_now {
+                let path = out.join("journal").join(format!("g{}.yaml", g));
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let Ok(entry) = serde_norway::from_str::<Value>(&text) else { continue };
+                let task = entry["workItem"]["task"].as_str().unwrap_or("?");
+                let target = entry["workItem"]["target"].as_str().unwrap_or("?");
+                let muts = entry["mutations"].as_array().cloned().unwrap_or_default();
+                eprintln!("[jazyk-build] g{} {} {} ({} mutation(s))", g, task, target, muts.len());
+                for m in &muts {
+                    eprintln!(
+                        "[jazyk-build]   {} {}",
+                        m["op"].as_str().unwrap_or("?"),
+                        m["id"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            last_gen = gen_now;
+        }
+    });
 }

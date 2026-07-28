@@ -1,41 +1,55 @@
-// A1 Parse: split a markdown document into a tree of sections (deterministic, no LLM).
-use crate::model::SectionBody;
+// Parsing: split a markdown document into a tree of sections (deterministic, no LLM).
+// Mirrors docs/compiler/parsing.md.
+use crate::model::{hash_hex, Section};
 use std::collections::{BTreeMap, HashMap};
 
-// Return the reference of the most specific (deepest, by reference length) section
-// whose [start_line, end_line) range contains `line`.
-#[allow(dead_code)] // available for cursor->section mapping; navigation currently maps via entities
-pub fn section_at_line(sections: &BTreeMap<String, SectionBody>, line: usize) -> Option<String> {
-    let mut best: Option<(&String, usize)> = None;
-    for (reference, s) in sections {
-        if line >= s.start_line && line < s.end_line {
-            let depth = reference.matches('/').count();
-            if best.map(|(_, d)| depth > d).unwrap_or(true) {
-                best = Some((reference, depth));
-            }
-        }
-    }
-    best.map(|(r, _)| r.clone())
-}
-
-// The first line of a section's range, for mapping a node id to an LSP position.
-pub fn section_line(sections: &BTreeMap<String, SectionBody>, reference: &str) -> usize {
-    sections.get(reference).map(|s| s.start_line).unwrap_or(0)
-}
-
-// Locate `needle` as a verbatim substring of `text` (possibly multi-line). Returns the
-// 0-based (start_line, start_col, end_line, end_col) in character columns, or None.
-// Used to turn an LLM-chosen evidence snippet into a precise editor range.
+// Locate `needle` in `text` (possibly multi-line). Returns the 0-based
+// (start_line, start_col, end_line, end_col) in character columns, or None. Exact
+// substring first; a quote wrapped across source lines locates whitespace-insensitively,
+// the same doctrine the store applies to quote containment. Character offsets are never
+// stored.
 pub fn locate(text: &str, needle: &str) -> Option<(usize, usize, usize, usize)> {
     let needle = needle.trim();
     if needle.is_empty() {
         return None;
     }
-    let byte = text.find(needle)?;
-    let end = byte + needle.len();
+    let (byte, end) = match text.find(needle) {
+        Some(b) => (b, b + needle.len()),
+        None => locate_tokens(text, needle)?,
+    };
     let (sl, sc) = line_col(text, byte);
     let (el, ec) = line_col(text, end);
     Some((sl, sc, el, ec))
+}
+
+// Match the needle's whitespace-separated tokens in order, any whitespace between.
+// Returns the matched byte range.
+fn locate_tokens(text: &str, needle: &str) -> Option<(usize, usize)> {
+    let tokens: Vec<&str> = needle.split_whitespace().collect();
+    let first = tokens.first()?;
+    for (start, _) in text.match_indices(first) {
+        let mut pos = start + first.len();
+        let mut ok = true;
+        for token in &tokens[1..] {
+            let rest = &text[pos..];
+            let skipped = rest.len() - rest.trim_start().len();
+            if skipped == 0 {
+                ok = false;
+                break;
+            }
+            let at = pos + skipped;
+            if text[at..].starts_with(token) {
+                pos = at + token.len();
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            return Some((start, pos));
+        }
+    }
+    None
 }
 
 // 0-based (line, char column) of a byte offset within `text`.
@@ -44,38 +58,6 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     let line = before.matches('\n').count();
     let col = before.rsplit('\n').next().unwrap_or("").chars().count();
     (line, col)
-}
-
-// Whole-word, case-insensitive occurrences of `needle` in `text`, returned as
-// (line, start_col, len) using 0-based UTF-16-free char columns (good enough for ASCII docs).
-pub fn occurrences(text: &str, needle: &str) -> Vec<(usize, usize, usize)> {
-    let mut out = Vec::new();
-    if needle.trim().is_empty() {
-        return out;
-    }
-    let nlow = needle.to_lowercase();
-    let nlen = needle.chars().count();
-    for (lineno, line) in text.lines().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        let lower: String = line.to_lowercase();
-        let mut start = 0usize;
-        while let Some(byte_idx) = lower[start..].find(&nlow) {
-            let abs = start + byte_idx;
-            // Translate byte index to char column.
-            let col = lower[..abs].chars().count();
-            let before_ok = col == 0 || !chars[col - 1].is_alphanumeric();
-            let after_idx = col + nlen;
-            let after_ok = after_idx >= chars.len() || !chars[after_idx].is_alphanumeric();
-            if before_ok && after_ok {
-                out.push((lineno, col, nlen));
-            }
-            start = abs + nlow.len();
-            if start > lower.len() {
-                break;
-            }
-        }
-    }
-    out
 }
 
 pub fn slug(s: &str) -> String {
@@ -99,7 +81,7 @@ struct Head {
     line: usize,
 }
 
-pub fn parse_sections(text: &str) -> BTreeMap<String, SectionBody> {
+pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
     let lines: Vec<&str> = text.lines().collect();
     let mut heads: Vec<Head> = Vec::new();
     let mut in_code = false;
@@ -122,7 +104,26 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, SectionBody> {
         }
     }
 
-    let mut sections: BTreeMap<String, SectionBody> = BTreeMap::new();
+    let mut sections: BTreeMap<String, Section> = BTreeMap::new();
+    // Content before the first heading, or a whole document without headings, forms a
+    // preamble section at `/`, so no prose is invisible to extraction. Mirrors
+    // docs/compiler/parsing.md#section-tree.
+    let pre_end = heads.first().map(|h| h.line).unwrap_or(lines.len());
+    if lines[..pre_end].iter().any(|l| !l.trim().is_empty()) {
+        let raw = lines[..pre_end].join("\n");
+        sections.insert(
+            "/".to_string(),
+            Section {
+                title: String::new(),
+                kind: "preamble".to_string(),
+                order: 0,
+                parent: None,
+                hash: hash_hex(&raw),
+                raw,
+                lines: [0, pre_end],
+            },
+        );
+    }
     let mut stack: Vec<(usize, String)> = Vec::new();
     let mut sibling_counts: HashMap<String, usize> = HashMap::new();
     for (idx, h) in heads.iter().enumerate() {
@@ -161,17 +162,126 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, SectionBody> {
         let kind = if stack.is_empty() && idx == 0 { "root" } else { "heading" };
         sections.insert(
             reference,
-            SectionBody {
+            Section {
                 title: h.title.clone(),
                 kind: kind.to_string(),
                 order,
                 parent: parent_ref,
+                hash: hash_hex(&raw),
                 raw,
-                start_line: h.line,
-                end_line: end,
+                lines: [h.line, end],
             },
         );
         stack.push((h.level, sl));
     }
     sections
+}
+
+// Relative markdown links to other .md files inside `text`, resolved against the linking
+// document's directory. Feeds the reconciler's level scheduling (the document link graph).
+pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b']' && bytes[i + 1] == b'(' {
+            if let Some(close) = text[i + 2..].find(')') {
+                let target = &text[i + 2..i + 2 + close];
+                let target = target.split('#').next().unwrap_or("");
+                if target.ends_with(".md") && !target.starts_with("http") {
+                    if let Some(resolved) = resolve_rel(from_doc, target) {
+                        out.push(resolved);
+                    }
+                }
+                i += 2 + close;
+            }
+        }
+        i += 1;
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+// Resolve a relative link target against the directory of `from_doc` (both '/'-separated,
+// relative to the project root). Returns None if the path escapes the root.
+fn resolve_rel(from_doc: &str, target: &str) -> Option<String> {
+    let mut parts: Vec<&str> = from_doc.split('/').collect();
+    parts.pop(); // drop the file name
+    for seg in target.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            s => parts.push(s),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn locate_wrapped_quote() {
+        let text = "intro text\nAn Order shall be paid within 21 days of placement; otherwise the system shall\ncancel it.\nmore";
+        let needle = "An Order shall be paid within 21 days of placement; otherwise the system shall cancel it.";
+        let (sl, sc, el, ec) = super::locate(text, needle).expect("wrapped quote locates");
+        assert_eq!((sl, sc), (1, 0));
+        assert_eq!(el, 2);
+        assert_eq!(ec, "cancel it.".chars().count());
+    }
+
+    use super::*;
+
+    #[test]
+    fn parses_tree_with_refs_and_hashes() {
+        let text = "# Top\nintro\n\n## A\nbody a\n\n### A1\ndeep\n\n## B\nbody b\n";
+        let s = parse_sections(text);
+        assert_eq!(s.len(), 4);
+        assert_eq!(s["/top"].kind, "root");
+        assert_eq!(s["/top/a"].parent.as_deref(), Some("/top"));
+        assert_eq!(s["/top/a/a1"].parent.as_deref(), Some("/top/a"));
+        assert_eq!(s["/top/b"].order, 1);
+        assert!(s["/top/a"].raw.contains("body a"));
+        assert!(!s["/top/a"].raw.contains("deep"));
+        assert_ne!(s["/top/a"].hash, s["/top/b"].hash);
+    }
+
+    #[test]
+    fn ignores_headings_in_code_blocks() {
+        let text = "# Top\n```\n# not a heading\n```\n## Real\n";
+        let s = parse_sections(text);
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn preamble_and_headingless_content_is_captured() {
+        // Prose before the first heading lands in a preamble section at `/`.
+        let s = parse_sections("Intro line before any heading.\n\n# Top\nbody\n");
+        assert_eq!(s["/"].kind, "preamble");
+        assert!(s["/"].raw.contains("Intro line"));
+        assert_eq!(s["/top"].kind, "root");
+        assert_eq!(s.len(), 2);
+        // A heading-less document is one preamble holding everything.
+        let n = parse_sections("Just prose, no headings at all.\n");
+        assert_eq!(n.len(), 1);
+        assert!(n["/"].raw.contains("Just prose"));
+        // A blank-only file still yields no sections: empty-file check territory.
+        assert!(parse_sections("\n\n").is_empty());
+    }
+
+    #[test]
+    fn extracts_doc_links() {
+        let text = "see [a](./sub/a.md) and [b](../b.md#anchor) and [x](http://x.md)";
+        let links = doc_links(text, "docs/main.md");
+        assert_eq!(links, vec!["b.md".to_string(), "docs/sub/a.md".to_string()]);
+    }
+
+    #[test]
+    fn locates_quotes() {
+        let text = "line one\nthe exact quote here\nline three";
+        assert!(locate(text, "exact quote").is_some());
+        assert!(locate(text, "not there").is_none());
+    }
 }

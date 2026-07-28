@@ -1,0 +1,143 @@
+# Turns
+
+A turn is one focused LLM session with tools. It is the only place the model touches the
+compilation process. The [reconciler](./reconciler.md) decides what turns to run; the turn
+harness runs one.
+
+## Anatomy
+
+A turn is given:
+
+- a work item: the task and its target, e.g. reconcile document `docs/cli.md`,
+- an initial [context pack](./context.md) for that target,
+- a task-scoped subset of the [tool registry](./tools.md#task-toolsets),
+- budgets: maximum rounds, maximum staged mutations, context size.
+
+A turn produces either a committed [changeset](./graph.md#changesets) or a parked work
+item. Nothing in between. An aborted turn leaves no trace in the graph.
+
+## Task types
+
+- `reconcile-doc`: bring the graph in line with one document's dirty sections. The model
+  reads the sections, extracts requirements and the entities they need, updates what
+  drifted, and marks sections covered. The pack includes the dirty section bodies, the
+  requirements already sourced from each dirty section (so an unchanged statement is a
+  no-op, not a re-extraction, and a coverage claim sees what the section already
+  yielded), the known entities of the document's neighborhood, coverage states, and
+  stale anchors. Stale anchors are a contract: for each one, either the fact still
+  stands and the turn re-records it with a fresh verbatim quote (the natural key
+  updates it in place), or the fact is gone and the turn deletes it. The `done` gate
+  rejects a turn that leaves a stale anchor untouched.
+- `review-entity`: judge one entity whose facts changed. The model checks that the
+  requirements form a coherent whole, refreshes the `definition`, merges lookalike
+  duplicates, deletes requirements that restate a fact another requirement on the
+  entity already carries (keeping the better-sourced one), and reports
+  [diagnostics](./model/diagnostic.md). The pack includes the
+  entity, its requirements across all documents, lookalike candidates, and requirements
+  whose statement names the entity without referencing it: candidates for a missing
+  reference the review adds with `update_requirement`. A missing reference is what
+  strands an entity cluster unreachable from the roots.
+
+Extraction order inside `reconcile-doc` is deliberate: requirements first, entities only
+as requirements need them. An entity that no statement needs is noise. See
+[entity](./model/entity.md#what-is-an-entity).
+
+## Message loop
+
+- The system message states the task, the graph invariants, and the finish contract: the
+  turn ends by calling `done`.
+- The first user message is the rendered context pack.
+- Each model reply is either tool calls or text. Read tools answer immediately. Write
+  tools stage mutations. Results go back as tool results.
+- The transcript is append-only.
+- A reasoning model's reasoning rides on the assistant message: a `reasoning_content`
+  or `reasoning` field, or inline `<think>` text in the content. The harness appends
+  the message unchanged, so later rounds see the reasoning behind earlier calls. A
+  streamed response accumulates its reasoning deltas into the same field before the
+  message is appended, so streaming and non-streaming replies carry the same fields.
+  Some providers reject reasoning fields echoed back in the request; the client then
+  strips them from outgoing messages for the rest of the run (see
+  [LLM settings](./project-settings.md#llm)), and the transcript and trace
+  keep the text.
+
+## Codecs
+
+The loop speaks to the model through a codec. Two codecs exist:
+
+- `native`: OpenAI-style `tools` and `tool_calls`. Used when the endpoint and model
+  support it. The codec asks the model to batch one section's calls (searches, upserts,
+  the coverage mark) into a single reply.
+- `text`: tools are described in the system prompt. The model answers with exactly one
+  JSON action object per reply, e.g. `{"tool": "upsert_entity", "args": {...}}`. Results
+  come back as a plain message. One action per reply is deliberate: small models cannot
+  reliably emit several.
+
+Pacing guidance is the codec's to give, not the shared system prompt's: the two codecs
+contradict each other on batching, so the instruction ships in the codec's own
+system-prompt section.
+
+The harness probes on the first round. If the endpoint rejects the `tools` parameter or
+the model answers prose without tool calls, the run downgrades to `text` and stays there.
+The [benchmark](../benchmark/benchmark.md) grades a model under both codecs.
+
+## Staged mutations
+
+Write tools never touch the store directly. They stage mutations into the turn's
+changeset. Each call is validated the moment it is staged, against the store plus what is
+already staged, and invalid calls are rejected with a repair message. See
+[validation gates](./graph.md#validation-gates).
+
+Three consecutive invalid rounds abort the turn. The work item is retried once with fresh
+context, then parked with an `incomplete-build` diagnostic.
+
+## Commit
+
+Calling `done` triggers batch-level checks. Failures give the model up to two repair
+rounds. A clean batch commits atomically. A batch that cannot be repaired parks the work
+item. See [changesets](./graph.md#changesets).
+
+An explicit `done` finishes the coverage contract: every dirty section carries a mark,
+staged in this turn or already recorded. A turn that extracts requirements from a
+section and never marks it is sent back to set the mark, not committed around. The
+implicit path is exempt (see [budgets](#budgets)): it commits the staged work and the
+unmarked sections stay unprocessed for the next build.
+
+## Budgets
+
+- Rounds per turn: default 24, raised for dense work items: a turn gets at least 8
+  rounds per dirty section. A dense document stages one mutation per round under a
+  model that calls one tool at a time, so the budget scales with extraction density, not
+  caution. A model may batch several tool calls in one reply; each reply is one round.
+- Staged mutations per turn: default 64.
+- Context budget: per model profile, e.g. 24k characters for a 4B class model.
+- Per build: a hard turn cap, so a stuck build stops instead of looping. See
+  [convergence](./reconciler.md#convergence).
+
+A model that stops replying with tool calls while mutations are staged is treated as
+having called `done`: the same commit gates run, and a clean batch commits. Weak models
+forget the finish contract more often than they stage bad work; discarding a valid
+changeset over a missing `done` would punish the wrong thing. A turn with nothing staged
+parks as usual.
+
+The same reasoning bounds what one bad claim can sink. When the implicit `done` is
+rejected over a dishonest `covered` claim, the harness drops the offending coverage
+marks and commits the rest: the extracted requirements land, the miscovered sections
+stay unprocessed, and the next build resumes them. Only the explicit `done` holds the
+model to repairing its own claims.
+
+An untouched stale anchor is different: the turn parks and stages nothing. Stale
+anchors are a contract only the model can honor, and the harness never commits around
+one. The next build lists the anchor again.
+
+## Trace events
+
+The harness emits a structured event per round: the tool call with condensed arguments,
+the condensed result, and any reasoning text the model produced. Reasoning carried in a
+`reasoning_content` or `reasoning` field is emitted as model text, the same as reasoning
+prose in the content. The `compile` command
+renders these live, and the [GUI](../frontends/gui.md) streams them to the browser. The
+event kinds: turn start, tool call, tool result, tool error, model text, turn done,
+turn failed, and a plain note. The [generation](../consumers/gen.md) and verification
+workers emit their own kinds per entity and per ledger row. Verbose mode includes the
+full context pack and raw payloads. The committed changeset with the same information
+persists in the [journal](./graph.md#journal).

@@ -9,17 +9,17 @@ docs by LLM turns, surfacing ambiguity and contradictions along the way. Downstr
 
 Status: research project; large changes in direction are acceptable and expected.
 
-- Canonical trees: `docs2/` (the design, also the dogfood input) and `bootstrap2/` (the Rust
+- Canonical trees: `docs/` (the design, also the dogfood input) and `bootstrap/` (the Rust
   implementation, binary `jazyk`).
-- Archived: `docs/` and `bootstrap/` are the v1 multi-step compile/link design, kept for
-  reference; it failed in practice (see git history around "Failed POC"). Do not extend them.
-  Exception: `bootstrap/site/` still hosts the jazyk.org static site and its deploy workflow.
-- `docs/TODO/002-turn-based-compilation.md` is the founding statement of the current design.
+- The v1 multi-step compile/link design (previously `docs/` and `bootstrap/`, then archived as
+  the current trees took the names `docs2/` and `bootstrap2/`) failed in practice and was
+  removed; see git history around "Failed POC". Do not resurrect it.
+- `site/` hosts the jazyk.org static site and its deploy workflow.
 
 ## Architecture (turn-based reconciliation)
 
 The compile/link pipeline is gone. One persistent graph per project, edited in place, never
-regenerated. Three runtime components (see `docs2/compiler/compiler.md`):
+regenerated. Three runtime components (see `docs/compiler/compiler.md`):
 
 - Graph MCP server (`jazyk mcp graph [--write]`): the tool registry served over stdio. Read
   tools (context, expand, search, read_section, get_entity) are public; write tools mutate the
@@ -39,42 +39,42 @@ leave redirects), the dirty set, validation, derived relationships (a product of
 handles). The model owns extraction, same-vs-different judgment (search before create),
 severity, and coverage marking (covered | non-normative). Provenance is verbatim quotes
 located whitespace-insensitively, never char offsets. Declarative prose states obligations:
-turns rephrase it into EARS, keep the quote verbatim (`docs2/compiler/concepts/ears.md`).
+turns rephrase it into EARS, keep the quote verbatim (`docs/compiler/concepts/ears.md`).
 
 ## Repo layout
 
-- `docs2/main.md`: front door. `docs2/compiler/`: compiler.md, parsing.md, model.md +
+- `docs/main.md`: front door. `docs/compiler/`: compiler.md, parsing.md, model.md +
   `model/`, graph.md, context.md, turns.md, reconciler.md, tools.md, `concepts/`,
   project-settings.md, schemas (draft-07 JSON Schema in YAML, `$id`
   `https://jazyk.org/schemas/*.json`).
-- `docs2/frontends/`: cli.md, mcp.md, lsp.md, viewer.md. `docs2/consumers/`: gen.md
-  (generation + verification ledger), pm.md, docsgen.md. `docs2/benchmark/`: benchmark.md,
+- `docs/frontends/`: cli.md, mcp.md, lsp.md, viewer.md. `docs/consumers/`: gen.md
+  (generation + verification ledger), pm.md, docsgen.md. `docs/benchmark/`: benchmark.md,
   cases.md, `cases/` (the case files are embedded into the binary at compile time; they are
   fixtures, excluded from the docs glob).
-- `docs2/jazyk.toml`: the live project file (docs glob, roots, lint rules). The graph lands in
-  `docs2/jazyk-out/` (gitignored): `graph/*.yaml` shards, `docs/` section trees + coverage,
+- `docs/jazyk.toml`: the live project file (docs glob, roots, lint rules). The graph lands in
+  `docs/jazyk-out/` (gitignored): `graph/*.yaml` shards, `docs/` section trees + coverage,
   `journal/`, `status.yaml`.
-- `bootstrap2/src/`: model.rs, store.rs (shards, natural-key upserts, atomic commit, journal,
+- `bootstrap/src/`: model.rs, store.rs (shards, natural-key upserts, atomic commit, journal,
   GC), context.rs, tools.rs (the registry), turn.rs (codecs, prompts), reconcile.rs, llm.rs
   (OpenAI-compatible client over ureq; sticky fallbacks for tools/temperature/streaming),
   md.rs, project.rs, cli.rs, gen.rs + verify.rs (generation ledger, verification statuses),
   docsgen.rs, viewer.rs, mcp.rs, lsp.rs (read-only), benchmark.rs, jsonrpc.rs,
-  parallel.rs. `bootstrap2/editors/vscode`: LSP client extension. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
+  parallel.rs. `bootstrap/editors/vscode`: LSP client extension. Deps: serde, serde_json, serde_norway, ureq (HTTP), notify (file
   events). Dependency policy (owner decision, 2026-07-06): infrastructure comes from
   crates; hand-roll only domain logic. Do not reimplement transports, parsers for
   standard formats, or platform APIs.
-- `bootstrap2/example/f1` and `f2`: fixtures (f2 has planted traps, see its EXPECTED.md).
-  `bootstrap2/VALIDATION.md`: measured results, scorecard, known weaknesses.
+- `bootstrap/example/f1` and `f2`: fixtures (f2 has planted traps, see its EXPECTED.md).
+  `bootstrap/VALIDATION.md`: measured results, scorecard, known weaknesses.
 
 ## Build and commands
 
-- `cd bootstrap2 && cargo build --release` (binary at `bootstrap2/target/release/jazyk`),
+- `cd bootstrap && cargo build --release` (binary at `bootstrap/target/release/jazyk`),
   `cargo test`.
 - `jazyk compile [path...]` (live trace; `--verbose` full packs, `--quiet` summary),
   `check`, `watch`, `status`, `context <target>`, `query <text>`, `gen [entity...]`,
   `test [--audit]`, `docsgen`, `viewer`, `mcp graph [--write]`, `lsp`, `benchmark`.
 - A project is a directory with `jazyk.toml` (walk-up discovery). Run the dogfood from
-  `docs2/`.
+  `docs/`.
 - Always run `jazyk benchmark` before trusting a new model: it grades turn capability per
   codec with deterministic checks. Local 4B-class models fail it; the harness still holds
   (gates bounce bad calls, junk never lands), but judgment-quality output (reviews, lint)
@@ -88,17 +88,17 @@ project `[llm]` → `~/.jazyk/config.toml` → default. The repo `.env` points
 models and remote providers; the global config picks the model (`gemma4:e4b-mlx`). Use
 LocalRouter; do not override the endpoint unless asked. Tuning: `JAZYK_MAX_CONCURRENCY`,
 `JAZYK_MAX_RETRIES`, `JAZYK_TEMPERATURE` (negative omits), `JAZYK_VERBOSE`, `JAZYK_CODEC`
-(force `native`/`text`). Local models are slow: test on `bootstrap2/example/f1` first.
+(force `native`/`text`). Local models are slow: test on `bootstrap/example/f1` first.
 
 ## Docs-first workflow (hard rule)
 
-`bootstrap2` is an example implementation of `docs2`. Any behavior change lands in `docs2/`
+`bootstrap` is an example implementation of `docs`. Any behavior change lands in `docs/`
 first, then the code. No undocumented features. Mid-implementation discoveries flow
-docs2 → code, never code alone.
+docs → code, never code alone.
 
 ## Docs writing style (match this exactly)
 
-The owner is strict about voice. When writing or editing anything under `docs2/`:
+The owner is strict about voice. When writing or editing anything under `docs/`:
 - Plain, to-the-point, short declarative sentences.
 - Never use em dashes. Use commas, periods, parentheses, or colons.
 - Bullet lists with `- `, nested where useful.
@@ -109,7 +109,7 @@ The owner is strict about voice. When writing or editing anything under `docs2/`
 - Cross-link with relative markdown links and anchors (GitHub slug of the heading).
 
 After editing docs, check that relative links and anchors resolve and that there are no em
-dashes. docs2 is also the compiler's own input, so keep statements extractable.
+dashes. docs is also the compiler's own input, so keep statements extractable.
 
 ## Working norms
 
@@ -119,4 +119,4 @@ dashes. docs2 is also the compiler's own input, so keep statements extractable.
 - Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `jazyk-out` anywhere
   are gitignored.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys
-  `bootstrap/site/` to jazyk.org via GitHub Actions.
+  `site/` to jazyk.org via GitHub Actions.

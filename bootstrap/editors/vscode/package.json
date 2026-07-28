@@ -1,8 +1,8 @@
 {
   "name": "jazyk",
   "displayName": "Jazyk",
-  "description": "Language support for Jazyk — natural language as a programming language.",
-  "version": "0.1.0",
+  "description": "Language support for Jazyk: natural language compiled into a semantic graph.",
+  "version": "0.2.1",
   "publisher": "jazyk",
   "engines": {
     "vscode": "^1.75.0"
@@ -13,7 +13,6 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:jazyk",
     "workspaceContains:**/jazyk.toml"
   ],
   "contributes": {
@@ -23,59 +22,13 @@
         "title": "Jazyk: Restart Language Server"
       }
     ],
-    "languages": [
-      {
-        "id": "jazyk",
-        "aliases": [
-          "Jazyk"
-        ],
-        "extensions": [
-          ".md"
-        ],
-        "configuration": "./language-configuration.json"
-      }
-    ],
-    "semanticTokenScopes": [
-      {
-        "language": "jazyk",
-        "scopes": {
-          "entity": ["entity.name.type"]
-        }
-      },
-      {
-        "language": "markdown",
-        "scopes": {
-          "entity": ["entity.name.type"]
-        }
-      }
-    ],
-    "configurationDefaults": {
-      "editor.semanticTokenColorCustomizations": {
-        "enabled": true,
-        "rules": {
-          "entity.definition": { "underline": true },
-          "entity.external": { "italic": true },
-          "entity.unresolved": { "foreground": "#d1453b" }
-        }
-      }
-    },
     "configuration": {
       "title": "Jazyk",
       "properties": {
         "jazyk.server.path": {
           "type": "string",
-          "default": "jazyk",
-          "description": "Path to the jazyk binary. Falls back to PATH."
-        },
-        "jazyk.llm.baseUrl": {
-          "type": "string",
           "default": "",
-          "description": "Override the LLM base URL passed as --llm-base-url."
-        },
-        "jazyk.llm.model": {
-          "type": "string",
-          "default": "",
-          "description": "Override the LLM model passed as --model."
+          "description": "Path to the jazyk binary. When empty, the extension looks for bootstrap/target/release/jazyk, then bootstrap/target/debug/jazyk in the workspace, then falls back to `jazyk` on PATH."
         }
       }
     }

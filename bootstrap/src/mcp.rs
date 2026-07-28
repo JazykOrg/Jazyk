@@ -1,317 +1,222 @@
-// MCP server over stdio (newline-delimited JSON-RPC). Exposes the compiler and the build
-// graph to agents. Mirrors docs/mcp.md.
-use crate::cache::Store;
-use crate::engine::{self, Build};
-use crate::llm::Llm;
-use crate::model::{LinkedArtifact, ReviewedArtifact};
-use crate::project::Project;
+// The graph MCP server: the tool registry served over stdio as line-delimited JSON-RPC.
+// Read tools by default; --write adds the mutation tools, each call committing as its own
+// changeset. Mirrors docs/frontends/mcp.md.
+use crate::model::WorkItem;
+use crate::store::Store;
+use crate::tools::{catalog, toolset, ToolSession, WorkScope};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-const NO_BUILD: &str =
-    "no build found in the out directory; run the `compile` tool first (or `jazyk build`)";
-
-pub struct Mcp {
-    proj: Project,
-    cache: Store,
-    llm: Llm,
-    out_dir: PathBuf,
-    build: Option<Build>,
+pub struct McpServer {
+    project: crate::project::Project,
+    out: PathBuf,
+    write: bool,
+    mutation_limit: usize,
+    context_budget: usize,
 }
 
-impl Mcp {
-    pub fn new(proj: Project, llm: Llm, out_dir: PathBuf) -> Mcp {
-        let cache = Store::new(&out_dir, &llm.model);
-        Mcp {
-            proj,
-            cache,
-            llm,
-            out_dir,
-            build: None,
+impl McpServer {
+    pub fn new(project: crate::project::Project, out: PathBuf, write: bool) -> McpServer {
+        McpServer {
+            mutation_limit: project.limits.turn_mutations,
+            context_budget: project.limits.context_budget,
+            project,
+            out,
+            write,
         }
     }
 
-    pub fn run(&mut self) {
-        let stdin = io::stdin();
-        let stdout = io::stdout();
+    // The server's own long poll: returns when the graph's generation counter moves, a
+    // documentation file changes on disk, or the ledger or a watched deliverable file
+    // changes, or at the timeout. Mirrors docs/frontends/mcp.md#external-workers.
+    fn await_changes(&self, params: &Value) -> Value {
+        let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300).clamp(1, 3600);
+        let gs = crate::gen::GenSettings::resolve(&self.project);
+        let fingerprint = |path: &std::path::Path| -> String {
+            std::fs::metadata(path)
+                .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
+                .unwrap_or_default()
+        };
+        // Watched surfaces: docs, the ledger, and every file the ledger names.
+        let watched = |gs: &crate::gen::GenSettings| -> Vec<std::path::PathBuf> {
+            let mut v = self.project.doc_files();
+            v.push(crate::gen::Ledger::path(&self.out));
+            let ledger = crate::gen::Ledger::load(&self.out);
+            for row in ledger.requirements.values() {
+                for f in &row.files {
+                    v.push(gs.deliverable.join(f));
+                }
+                v.push(crate::gen::artifact_path(&self.out, gs, &row.test));
+            }
+            v.sort();
+            v.dedup();
+            v
+        };
+        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> =
+            watched(&gs).into_iter().map(|f| (f.clone(), fingerprint(&f))).collect();
+        let start_gen = Store::load(&self.out).status.generation;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+        let mut changed_docs: Vec<String> = Vec::new();
+        let mut changed = false;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let store = Store::load(&self.out);
+            if store.status.generation != start_gen {
+                changed = true;
+            }
+            for f in watched(&gs) {
+                if snapshot.get(&f).map(|s| s.as_str()) != Some(fingerprint(&f).as_str()) {
+                    let rel = f
+                        .strip_prefix(&self.project.root)
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| f.to_string_lossy().to_string());
+                    if !changed_docs.contains(&rel) {
+                        changed_docs.push(rel);
+                    }
+                    changed = true;
+                }
+            }
+            if changed {
+                break;
+            }
+        }
+        let store = Store::load(&self.out);
+        // Stale: a documentation file's content no longer matches what the graph reconciled.
+        let graph_stale = self.project.doc_files().iter().any(|f| {
+            let rel = f
+                .strip_prefix(&self.project.root)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            match (std::fs::read_to_string(f), store.docs.get(&rel)) {
+                (Ok(text), Some(rec)) => crate::model::hash_hex(&text) != rec.content_hash,
+                (Ok(_), None) => true,
+                _ => false,
+            }
+        });
+        json!({
+            "changed": changed,
+            "changedDocs": changed_docs,
+            "graphStale": graph_stale,
+            "generation": store.status.generation,
+            "genPending": crate::gen::pending(&store, &gs),
+            "verifyPending": crate::verify::pending_counts(&store, &gs),
+        })
+    }
+
+    pub fn run(&self) {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
         for line in stdin.lock().lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(_) => break,
-            };
+            let Ok(line) = line else { break };
             if line.trim().is_empty() {
                 continue;
             }
-            let msg: Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => continue,
+            let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+            let method = req["method"].as_str().unwrap_or_default().to_string();
+            let id = req["id"].clone();
+            if id.is_null() {
+                continue; // notification, no response
+            }
+            let result = self.handle(&method, &req["params"]);
+            let resp = match result {
+                Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
+                Err((code, msg)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}}),
             };
-            let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-            let id = msg.get("id").cloned();
-            let params = msg.get("params").cloned().unwrap_or(Value::Null);
             let mut out = stdout.lock();
-            match method {
-                "initialize" => self.send(&mut out, id, self.initialize()),
-                "notifications/initialized" | "initialized" => {}
-                "tools/list" => self.send(&mut out, id, json!({ "tools": tools() })),
-                "tools/call" => {
-                    let res = self.tools_call(&params);
-                    self.send(&mut out, id, res);
-                }
-                "ping" => self.send(&mut out, id, json!({})),
-                _ => {
-                    if id.is_some() {
-                        self.send_err(&mut out, id, -32601, "method not found");
-                    }
-                }
-            }
+            writeln!(out, "{}", resp).ok();
+            out.flush().ok();
         }
     }
 
-    fn initialize(&self) -> Value {
-        json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": format!(
-                "Jazyk MCP server for project {}. Compile the project, then navigate the entity graph: get_entity, requirements_for, relationships_for, search, diagnostics.",
-                self.proj.root.display()
-            )
-        })
-    }
-
-    // Read the latest persisted build (linked.yaml + reviewed.yaml) from the out directory. Exploration
-    // and diagnostics tools use this; they never recompile (see docs/mcp.md). `objects` is left empty
-    // because the whole-program globals are all these tools read. Returns None if no build is on disk.
-    fn load_persisted(&self) -> Option<Build> {
-        let fmt = crate::serialize::DEFAULT;
-        let linked: LinkedArtifact = fmt
-            .from_str(&std::fs::read_to_string(self.out_dir.join("linked.yaml")).ok()?)
-            .ok()?;
-        let reviewed: ReviewedArtifact = fmt
-            .from_str(&std::fs::read_to_string(self.out_dir.join("reviewed.yaml")).ok()?)
-            .ok()?;
-        Some(Build {
-            objects: Vec::new(),
-            linked,
-            reviewed,
-        })
-    }
-
-    // The build to serve exploration/diagnostics from: the one compiled this session if present,
-    // otherwise the latest persisted build loaded from disk. None means nothing has been built yet.
-    fn loaded(&mut self) -> Option<&Build> {
-        if self.build.is_none() {
-            self.build = self.load_persisted();
+    fn enabled_tools(&self) -> Vec<&'static str> {
+        if self.write {
+            toolset("mcp-write")
+        } else {
+            toolset("mcp-read")
         }
-        self.build.as_ref()
     }
 
-    fn tools_call(&mut self, params: &Value) -> Value {
-        let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-        let text = match name {
-            "compile" => {
-                let build = engine::compile_project(
-                    &self.proj,
-                    Some(&self.cache),
-                    &self.llm,
-                    &BTreeMap::new(),
-                    false,
-                );
-                // Persist the whole-program artifacts so exploration tools (and the next session) can
-                // read this as the latest build without recompiling.
-                crate::cli::write_artifacts(&build, &self.out_dir);
-                self.build = Some(build);
-                let b = self.build.as_ref().unwrap();
-                let errors = b.reviewed.diagnostics.iter().filter(|d| d.severity == "error").count();
-                let warnings = b.reviewed.diagnostics.iter().filter(|d| d.severity == "warning").count();
-                format!(
-                    "Compiled {} files: {} entities, {} relationships, {} requirements. {} error(s), {} warning(s).",
-                    b.objects.len(),
-                    b.reviewed.entities.len(),
-                    b.reviewed.relationships.len(),
-                    b.reviewed.requirements.len(),
-                    errors,
-                    warnings
-                )
-            }
-            "diagnostics" => {
-                let b = match self.loaded() {
-                    Some(b) => b,
-                    None => return json!({ "content": [{ "type": "text", "text": NO_BUILD }] }),
-                };
-                let filter = args.get("entity").and_then(|e| e.as_str());
-                let diags: Vec<Value> = b
-                    .reviewed
-                    .diagnostics
+    fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")}
+            })),
+            "ping" => Ok(json!({})),
+            "tools/list" => {
+                let enabled = self.enabled_tools();
+                let mut tools: Vec<Value> = catalog()
                     .iter()
-                    .filter(|d| filter.map(|f| d.subjects.iter().any(|s| s.contains(f))).unwrap_or(true))
-                    .map(|d| json!({"rule": d.rule, "severity": d.severity, "subjects": d.subjects, "message": d.message}))
+                    .filter(|t| enabled.contains(&t.name))
+                    .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
-                serde_json::to_string_pretty(&diags).unwrap_or_default()
+                tools.push(json!({
+                    "name": "await_changes",
+                    "description": "Long poll: returns when the graph's generation counter moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s). Carries the changed documents, graph staleness, pending generation work, and pending verification counts.",
+                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}, "additionalProperties": false}
+                }));
+                Ok(json!({"tools": tools}))
             }
-            "get_entity" => {
-                let b = match self.loaded() {
-                    Some(b) => b,
-                    None => return json!({ "content": [{ "type": "text", "text": NO_BUILD }] }),
+            "tools/call" => {
+                let name = params["name"].as_str().unwrap_or_default().to_string();
+                if name == "await_changes" {
+                    return Ok(text_result(self.await_changes(params), false));
+                }
+                let args = params["arguments"].clone();
+                let enabled = self.enabled_tools();
+                if !enabled.contains(&name.as_str()) {
+                    return Err((-32602, format!("unknown or disabled tool `{}`", name)));
+                }
+                let store = Store::load(&self.out);
+                if store.docs.is_empty() && store.graph.entities.is_empty() {
+                    return Ok(text_result(
+                        json!({"error": {"rule": "no-build", "message": "no graph found; run `jazyk compile` first"}}),
+                        true,
+                    ));
+                }
+                let is_write = !crate::tools::READ_TOOLS.contains(&name.as_str());
+                let scope = WorkScope {
+                    task: if is_write { "mcp-write".into() } else { "mcp-read".into() },
+                    doc: None,
+                    target_sections: Vec::new(),
+                    stale_anchors: Vec::new(),
                 };
-                let q = args.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                match find_entity(b, q) {
-                    Some(ge) => {
-                        let rels: Vec<Value> = b
-                            .reviewed
-                            .relationships
-                            .iter()
-                            .filter(|r| r.members.contains(&ge.global_id))
-                            .map(|r| json!({"type": r.kind, "members": r.members}))
-                            .collect();
-                        let reqs: Vec<String> = b
-                            .reviewed
-                            .requirements
-                            .iter()
-                            .filter(|r| r.entities.contains(&ge.global_id))
-                            .map(|r| r.ears_text.clone())
-                            .collect();
-                        serde_json::to_string_pretty(&json!({
-                            "id": ge.global_id,
-                            "name": ge.canonical_name,
-                            "definition": ge.global_definition,
-                            "relationships": rels,
-                            "requirements": reqs
-                        }))
-                        .unwrap_or_default()
+                let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
+                session.gen = crate::gen::GenSettings::resolve(&self.project);
+                match session.dispatch(&name, &args) {
+                    Ok(v) => {
+                        if is_write && !session.staged.is_empty() {
+                            // Each MCP write commits as its own changeset, same gates, same journal.
+                            let mut s = Store::load(&self.out);
+                            let wi = WorkItem {
+                                task: "mcp".into(),
+                                target: name.clone(),
+                                dirty_sections: vec![],
+                                stale_anchors: vec![],
+                            };
+                            let report = s.apply(session.staged, &wi, 1, 0);
+                            let mut v = v;
+                            v["committed"] = json!(report.applied);
+                            if !report.skipped.is_empty() {
+                                v["skipped"] = json!(report.skipped);
+                            }
+                            return Ok(text_result(v, false));
+                        }
+                        Ok(text_result(v, false))
                     }
-                    None => format!("no entity matching '{}'", q),
+                    Err(e) => Ok(text_result(e.to_value(), true)),
                 }
             }
-            "requirements_for" => {
-                let b = match self.loaded() {
-                    Some(b) => b,
-                    None => return json!({ "content": [{ "type": "text", "text": NO_BUILD }] }),
-                };
-                let a = args.get("entity").and_then(|n| n.as_str()).unwrap_or("");
-                let other = args.get("other").and_then(|n| n.as_str());
-                let ea = find_entity(b, a).map(|e| e.global_id.clone());
-                let eb = other.and_then(|o| find_entity(b, o)).map(|e| e.global_id.clone());
-                let reqs: Vec<String> = b
-                    .reviewed
-                    .requirements
-                    .iter()
-                    .filter(|r| {
-                        let has_a = ea.as_ref().map(|x| r.entities.contains(x)).unwrap_or(false);
-                        let has_b = eb.as_ref().map(|x| r.entities.contains(x)).unwrap_or(true);
-                        has_a && has_b
-                    })
-                    .map(|r| r.ears_text.clone())
-                    .collect();
-                serde_json::to_string_pretty(&reqs).unwrap_or_default()
-            }
-            "relationships_for" => {
-                let b = match self.loaded() {
-                    Some(b) => b,
-                    None => return json!({ "content": [{ "type": "text", "text": NO_BUILD }] }),
-                };
-                let a = args.get("entity").and_then(|n| n.as_str()).unwrap_or("");
-                match find_entity(b, a) {
-                    Some(ge) => {
-                        let rels: Vec<Value> = b
-                            .reviewed
-                            .relationships
-                            .iter()
-                            .filter(|r| r.members.contains(&ge.global_id))
-                            .map(|r| json!({"type": r.kind, "members": r.members, "requirements": r.requirements}))
-                            .collect();
-                        serde_json::to_string_pretty(&rels).unwrap_or_default()
-                    }
-                    None => format!("no entity matching '{}'", a),
-                }
-            }
-            "search" => {
-                let b = match self.loaded() {
-                    Some(b) => b,
-                    None => return json!({ "content": [{ "type": "text", "text": NO_BUILD }] }),
-                };
-                let q = args.get("query").and_then(|n| n.as_str()).unwrap_or("").to_lowercase();
-                let hits: Vec<Value> = b
-                    .reviewed
-                    .entities
-                    .iter()
-                    .filter(|e| {
-                        e.canonical_name.to_lowercase().contains(&q)
-                            || e.global_definition.as_deref().unwrap_or("").to_lowercase().contains(&q)
-                    })
-                    .map(|e| json!({"id": e.global_id, "name": e.canonical_name, "definition": e.global_definition}))
-                    .collect();
-                serde_json::to_string_pretty(&hits).unwrap_or_default()
-            }
-            _ => format!("unknown tool: {}", name),
-        };
-        json!({ "content": [{ "type": "text", "text": text }] })
-    }
-
-    fn send<W: Write>(&self, out: &mut W, id: Option<Value>, result: Value) {
-        let msg = json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "result": result });
-        let _ = writeln!(out, "{}", msg);
-        let _ = out.flush();
-    }
-
-    fn send_err<W: Write>(&self, out: &mut W, id: Option<Value>, code: i64, message: &str) {
-        let msg = json!({ "jsonrpc": "2.0", "id": id.unwrap_or(Value::Null), "error": {"code": code, "message": message} });
-        let _ = writeln!(out, "{}", msg);
-        let _ = out.flush();
+            _ => Err((-32601, format!("method not found: {}", method))),
+        }
     }
 }
 
-use crate::model::GlobalEntity;
-
-fn find_entity<'a>(b: &'a Build, query: &str) -> Option<&'a GlobalEntity> {
-    let q = query.to_lowercase();
-    b.reviewed
-        .entities
-        .iter()
-        .find(|e| e.global_id == query || e.canonical_name.to_lowercase() == q)
-        .or_else(|| {
-            b.reviewed
-                .entities
-                .iter()
-                .find(|e| e.canonical_name.to_lowercase().contains(&q))
-        })
-}
-
-fn tools() -> Vec<Value> {
-    vec![
-        json!({
-            "name": "compile",
-            "description": "Compile and link the project; returns a build summary with error/warning counts.",
-            "inputSchema": { "type": "object", "properties": {} }
-        }),
-        json!({
-            "name": "diagnostics",
-            "description": "List diagnostics from the latest build, optionally filtered to an entity id/name substring.",
-            "inputSchema": { "type": "object", "properties": { "entity": {"type": "string"} } }
-        }),
-        json!({
-            "name": "get_entity",
-            "description": "Fetch an entity: its definition, requirements, and relationships.",
-            "inputSchema": { "type": "object", "properties": { "name": {"type": "string"} }, "required": ["name"] }
-        }),
-        json!({
-            "name": "requirements_for",
-            "description": "List requirements for an entity, or between two entities (pass 'other').",
-            "inputSchema": { "type": "object", "properties": { "entity": {"type": "string"}, "other": {"type": "string"} }, "required": ["entity"] }
-        }),
-        json!({
-            "name": "relationships_for",
-            "description": "List the relationships an entity participates in.",
-            "inputSchema": { "type": "object", "properties": { "entity": {"type": "string"} }, "required": ["entity"] }
-        }),
-        json!({
-            "name": "search",
-            "description": "Find entities whose name or definition contains the query.",
-            "inputSchema": { "type": "object", "properties": { "query": {"type": "string"} }, "required": ["query"] }
-        }),
-    ]
+fn text_result(v: Value, is_error: bool) -> Value {
+    json!({
+        "content": [{"type": "text", "text": v.to_string()}],
+        "isError": is_error
+    })
 }

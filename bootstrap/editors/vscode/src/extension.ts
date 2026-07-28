@@ -1,5 +1,9 @@
 // VS Code extension: launches `jazyk lsp` and forwards LSP traffic. The extension does no
-// analysis itself. Mirrors docs/lsp/editors/vscode.md.
+// analysis itself. The server is read-only: it maps the graph store to editor positions
+// and never compiles; run `jazyk compile` or `jazyk watch` beside the editor to rebuild.
+// Mirrors docs/frontends/lsp.md.
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   LanguageClient,
@@ -9,14 +13,12 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
-let extContext: vscode.ExtensionContext;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  extContext = context;
   await startClient();
 
-  // The server launch args are built from settings at start time, so restart the server
-  // whenever a jazyk.* setting changes (server path or LLM overrides).
+  // The server launch path comes from settings at start time, so restart the server
+  // whenever a jazyk.* setting changes.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (e.affectsConfiguration('jazyk')) {
@@ -33,31 +35,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 async function startClient(): Promise<void> {
   const config = vscode.workspace.getConfiguration('jazyk');
-  const jazykPath = resolveBinary(config.get<string>('server.path'), extContext);
+  const jazykPath = resolveBinary(config.get<string>('server.path'));
 
-  // Pass LLM overrides through to the server when configured.
-  const args = ['lsp', '--stdio'];
-  const baseUrl = config.get<string>('llm.baseUrl');
-  const model = config.get<string>('llm.model');
-  if (baseUrl) {
-    args.push('--llm-base-url', baseUrl);
-  }
-  if (model) {
-    args.push('--model', model);
-  }
-
+  const args = ['lsp'];
   const serverOptions: ServerOptions = {
     run: { command: jazykPath, args, transport: TransportKind.stdio },
     debug: { command: jazykPath, args, transport: TransportKind.stdio },
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [
-      { scheme: 'file', language: 'jazyk' },
-      { scheme: 'file', language: 'markdown' },
-    ],
+    // Markdown files keep VS Code's built-in markdown language (grammar, link
+    // following, preview); the extension only attaches the LSP client to them.
+    documentSelector: [{ scheme: 'file', language: 'markdown' }],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher('**/*.md'),
+      // The editor owns file watching (native FSEvents/inotify): source documents for
+      // anchoring, and the store's generation file so a committed build repaints
+      // instantly without server-side polling.
+      fileEvents: [
+        vscode.workspace.createFileSystemWatcher('**/*.md'),
+        vscode.workspace.createFileSystemWatcher('**/jazyk-out/status.yaml'),
+      ],
     },
   };
 
@@ -80,20 +77,25 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-// An explicit settings path, otherwise rely on PATH (and optionally a bundled binary).
-function resolveBinary(
-  configured: string | undefined,
-  context: vscode.ExtensionContext
-): string {
+// Resolution order: an explicit setting wins; otherwise prefer the workspace's own
+// bootstrap build (release, then debug); otherwise rely on PATH.
+function resolveBinary(configured: string | undefined): string {
   if (configured && configured.trim().length > 0) {
     return configured;
   }
-  const bundled = vscode.Uri.joinPath(context.extensionUri, 'bin', 'jazyk');
-  try {
-    // If a bundled binary exists, prefer it; otherwise fall through to PATH.
-    require('fs').accessSync(bundled.fsPath);
-    return bundled.fsPath;
-  } catch {
-    return 'jazyk';
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    for (const rel of [
+      path.join('bootstrap', 'target', 'release', 'jazyk'),
+      path.join('bootstrap', 'target', 'debug', 'jazyk'),
+    ]) {
+      const candidate = path.join(folder.uri.fsPath, rel);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {
+        // keep looking
+      }
+    }
   }
+  return 'jazyk';
 }

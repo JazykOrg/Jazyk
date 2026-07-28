@@ -1,500 +1,640 @@
-// Benchmark: tests whether the configured model is good enough to compile Jazyk.
-// Mirrors docs/benchmark/. It exercises the LLM-invoking stages (A2, A3, A4, L4, L5)
-// with representative cases, runs a structural schema gate + field-targeted assertions,
-// and reports a per-stage score, an overall score, and a usable/not-usable verdict.
-use crate::llm::Llm;
-use serde_json::{json, Value};
+// The benchmark frontend: decides whether a model is capable of driving compilation
+// turns. Runs every case under both codecs in a sandbox store, grades with
+// deterministic checks, no LLM judge. Mirrors docs/benchmark/benchmark.md.
+//
+// The case definitions ARE the documentation: the fenced yaml blocks in
+// docs/benchmark/cases/*.md are embedded at compile time, one source of truth.
+use crate::llm::{self, Llm};
+use crate::model::*;
+use crate::project::{Limits, Linting};
+use crate::store::Store;
+use crate::turn::{run_turn, Trace, TraceLevel};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
-// Enum domains from docs/compiler/model.schema.yaml. Matched case-insensitively.
-const ROLES: &[&str] = &["definition", "reference"];
-const RELATIONSHIP_TYPES: &[&str] = &[
-    "generalization",
-    "realization",
-    "composition",
-    "aggregation",
-    "association",
-    "dependency",
-    "reference",
+const CASE_FILES: [&str; 11] = [
+    include_str!("../../docs/benchmark/cases/turn-extract.md"),
+    include_str!("../../docs/benchmark/cases/turn-declarative.md"),
+    include_str!("../../docs/benchmark/cases/turn-density.md"),
+    include_str!("../../docs/benchmark/cases/turn-edges.md"),
+    include_str!("../../docs/benchmark/cases/turn-reuse.md"),
+    include_str!("../../docs/benchmark/cases/turn-converge.md"),
+    include_str!("../../docs/benchmark/cases/turn-repair.md"),
+    include_str!("../../docs/benchmark/cases/turn-review.md"),
+    include_str!("../../docs/benchmark/cases/turn-review-duplicate.md"),
+    include_str!("../../docs/benchmark/cases/turn-review-lookalike.md"),
+    include_str!("../../docs/benchmark/cases/turn-review-lint.md"),
 ];
-const SEVERITIES: &[&str] = &["error", "warning", "info", "none"];
-
-// A structural schema validator: returns Ok on conformance, Err(path/value reason) otherwise.
-type SchemaFn = fn(&Value) -> Result<(), String>;
-
-// A field-targeted assertion against the parsed output.
-#[allow(dead_code)] // `Each` is a documented primitive (checks.md), kept available for future cases.
-enum Assert {
-    /// Top-level field equals `value` (case-insensitive, trimmed). Works for strings and bools.
-    Eq { field: &'static str, value: &'static str },
-    /// Top-level string field contains `needle` (case-insensitive).
-    Contains { field: &'static str, needle: &'static str },
-    /// Some element of `array` has string field `field` containing `needle`.
-    Any { array: &'static str, field: &'static str, needle: &'static str },
-    /// Every element of `array` has string field `field` containing `needle`.
-    Each { array: &'static str, field: &'static str, needle: &'static str },
-}
 
 struct Case {
-    name: &'static str,
-    stage: &'static str,
-    system: &'static str,
-    user: &'static str,
-    // JSON schema sent as a structured-output constraint (response_format), exactly as the
-    // compiler does. A conforming endpoint is steered to the right shape and enums at generation.
-    json_schema: Value,
-    // Post-parse structural gate: re-checks shape/enums (and EARS shape), catching endpoints that
-    // ignore response_format and fall back to prompt-only JSON.
-    validate: SchemaFn,
-    asserts: &'static [Assert],
+    name: String,
+    tier: String,
+    task_type: String,
+    target: String,
+    docs: BTreeMap<String, String>,
+    entities: BTreeMap<String, Value>,
+    requirements: BTreeMap<String, Value>,
+    coverage: BTreeMap<String, String>,
+    lint: Linting,
+    checks: Vec<(String, Value)>,
 }
 
-// JSON schemas per stage, mirroring the shapes the compiler requests in compile.rs / link.rs.
-fn entities_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["entities"],
-        "properties": {
-            "entities": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name", "role", "definition"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "role": {"type": "string", "enum": ROLES},
-                        "definition": {"type": "string"}
-                    }
+// The results file compares only within one case set: hash every embedded case
+// definition. Mirrors docs/benchmark/benchmark.md#results-file.
+fn case_set_hash() -> String {
+    let blocks: Vec<String> = CASE_FILES.iter().flat_map(|f| yaml_blocks(f)).collect();
+    hash_hex(&blocks.join("\n---\n"))
+}
+
+// Pull every fenced ```yaml block out of a markdown file.
+fn yaml_blocks(md: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur: Option<String> = None;
+    for line in md.lines() {
+        match &mut cur {
+            None if line.trim() == "```yaml" => cur = Some(String::new()),
+            Some(buf) => {
+                if line.trim() == "```" {
+                    out.push(cur.take().unwrap());
+                } else {
+                    buf.push_str(line);
+                    buf.push('\n');
                 }
             }
+            None => {}
         }
-    })
+    }
+    out
 }
 
-fn requirements_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["requirements"],
-        "properties": {
-            "requirements": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["ears", "entities"],
-                    "properties": {
-                        "ears": {"type": "string"},
-                        "entities": {"type": "array", "items": {"type": "string"}}
-                    }
+fn parse_cases() -> Vec<Case> {
+    let mut cases = Vec::new();
+    for file in CASE_FILES {
+        for block in yaml_blocks(file) {
+            let v: Value = match serde_norway::from_str(&block) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("jazyk: bad case yaml: {}", e);
+                    continue;
                 }
-            }
+            };
+            let obj = |x: &Value| -> BTreeMap<String, Value> {
+                x.as_object()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default()
+            };
+            let strs = |x: &Value| -> Vec<String> {
+                x.as_array()
+                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .unwrap_or_default()
+            };
+            cases.push(Case {
+                name: v["name"].as_str().unwrap_or("unnamed").to_string(),
+                tier: v["tier"].as_str().unwrap_or("extraction").to_string(),
+                task_type: v["task"]["type"].as_str().unwrap_or_default().to_string(),
+                target: v["task"]["target"].as_str().unwrap_or_default().to_string(),
+                docs: obj(&v["given"]["docs"])
+                    .into_iter()
+                    .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
+                    .collect(),
+                entities: obj(&v["given"]["graph"]["entities"]),
+                requirements: obj(&v["given"]["graph"]["requirements"]),
+                coverage: obj(&v["given"]["graph"]["coverage"])
+                    .into_iter()
+                    .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
+                    .collect(),
+                lint: Linting {
+                    warnings: strs(&v["given"]["lint"]["warnings"]),
+                    errors: strs(&v["given"]["lint"]["errors"]),
+                },
+                checks: v["assert"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|c| {
+                                c.as_object()
+                                    .and_then(|m| m.iter().next())
+                                    .map(|(k, v)| (k.clone(), v.clone()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            });
         }
-    })
-}
-
-fn relationship_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["type", "reasoning"],
-        "properties": {
-            "type": {"type": "string", "enum": RELATIONSHIP_TYPES},
-            "reasoning": {"type": "string"}
-        }
-    })
-}
-
-fn definition_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["coherent", "definition"],
-        "properties": {
-            "coherent": {"type": "boolean"},
-            "definition": {"type": "string"}
-        }
-    })
-}
-
-fn diagnostics_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["diagnostics"],
-        "properties": {
-            "diagnostics": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["rule", "severity", "message"],
-                    "properties": {
-                        "rule": {"type": "string"},
-                        "severity": {"type": "string", "enum": SEVERITIES},
-                        "message": {"type": "string"}
-                    }
-                }
-            }
-        }
-    })
-}
-
-fn cases() -> Vec<Case> {
-    vec![
-        Case {
-            name: "a2-entities-basic",
-            stage: "A2",
-            system: "Extract domain entities. Return ONLY JSON: {\"entities\":[{\"name\":string,\"role\":\"definition\"|\"reference\",\"definition\":string}]}.",
-            user: "# Cart\n\nA Cart holds the Products a Customer intends to buy. Each Cart belongs to one Customer. A Product has a price and a name.",
-            json_schema: entities_schema(),
-            validate: schema_entities,
-            asserts: &[
-                Assert::Any { array: "entities", field: "name", needle: "Cart" },
-                Assert::Any { array: "entities", field: "name", needle: "Product" },
-                Assert::Any { array: "entities", field: "name", needle: "Customer" },
-            ],
-        },
-        Case {
-            name: "a3-requirements-ears",
-            stage: "A3",
-            system: "Extract EARS requirements. Each 'ears' must be a full EARS sentence containing the word 'shall'. Return ONLY JSON: {\"requirements\":[{\"ears\":string,\"entities\":[string]}]}.",
-            user: "Entities: User, Email\n\nEach User must have a unique Email. When a User registers, the system shall send a confirmation Email.",
-            json_schema: requirements_schema(),
-            validate: schema_requirements,
-            // The EARS shape (every 'ears' contains 'shall') is gated by `validate`, since the
-            // structured-output schema cannot enforce content. The assertions check recall of both
-            // input requirements: the uniqueness constraint and the registration/confirmation event.
-            asserts: &[
-                Assert::Any { array: "requirements", field: "ears", needle: "unique" },
-                Assert::Any { array: "requirements", field: "ears", needle: "confirmation" },
-            ],
-        },
-        Case {
-            name: "a4-relationship-type",
-            stage: "A4",
-            system: "Pick the single strongest UML relationship type for the pair given the requirements. Types: generalization, realization, composition, aggregation, association, dependency, reference. Return ONLY JSON: {\"type\":string,\"reasoning\":string}.",
-            user: "Pair: Cart, Product\nRequirements:\n- A Cart holds the Products a Customer intends to buy.\n- Removing a Cart removes its Products.",
-            json_schema: relationship_schema(),
-            validate: schema_relationship,
-            // The chosen type must be composition, not merely mentioned in the reasoning.
-            asserts: &[Assert::Eq { field: "type", value: "composition" }],
-        },
-        Case {
-            name: "l4-synthesize-definition",
-            stage: "L4",
-            system: "Decide if the definitions describe one coherent thing and synthesize one. Return ONLY JSON: {\"coherent\":true|false,\"definition\":string}.",
-            user: "Entity: Customer\nDefinitions:\n- (sales.md): a person or organization that holds an account\n- (orders.md): the buyer who places an order",
-            json_schema: definition_schema(),
-            validate: schema_definition,
-            // A coherent merge, retaining a key concept from the inputs ("account").
-            asserts: &[
-                Assert::Eq { field: "coherent", value: "true" },
-                Assert::Contains { field: "definition", needle: "account" },
-            ],
-        },
-        Case {
-            name: "l5-contradiction",
-            stage: "L5",
-            system: "Review an entity's requirements gathered across documents and find real problems. Severity must be one of: error, warning, info, none. Return ONLY JSON: {\"diagnostics\":[{\"rule\":string,\"severity\":string,\"message\":string}]}.",
-            user: "Entity: ABC\nRequirements:\n- ABC is a tricycle with exactly 3 wheels.\n- ABC is a four-wheeled car.",
-            json_schema: diagnostics_schema(),
-            validate: schema_diagnostics,
-            // The contradiction must be flagged and name the conflicting concept.
-            asserts: &[Assert::Any { array: "diagnostics", field: "message", needle: "wheel" }],
-        },
-    ]
-}
-
-// ---- structural schema validators ----------------------------------------------------------
-
-fn arr<'a>(v: &'a Value, key: &str) -> Result<&'a Vec<Value>, String> {
-    match v.get(key) {
-        Some(Value::Array(a)) if !a.is_empty() => Ok(a),
-        Some(Value::Array(_)) => Err(format!("'{}' is an empty array", key)),
-        Some(_) => Err(format!("'{}' is not an array", key)),
-        None => Err(format!("missing key '{}'", key)),
     }
+    cases
 }
 
-// A field that must be a non-empty (after trim) string.
-fn nonempty_str(item: &Value, path: &str, field: &str) -> Result<String, String> {
-    match item.get(field) {
-        Some(Value::String(s)) if !s.trim().is_empty() => Ok(s.clone()),
-        Some(Value::String(_)) => Err(format!("{}.{} is empty", path, field)),
-        Some(_) => Err(format!("{}.{} is not a string", path, field)),
-        None => Err(format!("{}.{} missing", path, field)),
+fn source_ref(v: &Value) -> Option<SourceRef> {
+    let full = v["section"].as_str()?;
+    let (doc, section) = split_section_ref(full)?;
+    Some(SourceRef { doc, section, quote: v["quote"].as_str().unwrap_or_default().to_string() })
+}
+
+// Seed a sandbox store from a case fixture. The sandbox writes to a throwaway out dir.
+fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
+    let mut s = Store { out: tmp.to_path_buf(), ..Default::default() };
+    for (doc, text) in &case.docs {
+        s.docs.insert(
+            doc.clone(),
+            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+        );
     }
-}
-
-// A field that must be a string from `domain` (case-insensitive).
-fn enum_str(item: &Value, path: &str, field: &str, domain: &[&str]) -> Result<(), String> {
-    let s = nonempty_str(item, path, field)?;
-    if domain.iter().any(|d| d.eq_ignore_ascii_case(s.trim())) {
-        Ok(())
-    } else {
-        Err(format!("{}.{} '{}' not in {:?}", path, field, s.trim(), domain))
-    }
-}
-
-fn schema_entities(v: &Value) -> Result<(), String> {
-    let items = arr(v, "entities")?;
-    for (i, e) in items.iter().enumerate() {
-        let p = format!("entities[{}]", i);
-        nonempty_str(e, &p, "name")?;
-        enum_str(e, &p, "role", ROLES)?;
-        // A `definition`-role entity must carry a non-empty definition. A `reference`-role
-        // entity is only mentioned here, so its `definition` may be empty or absent; if present
-        // it must still be a string.
-        let role = e.get("role").and_then(|r| r.as_str()).unwrap_or("").trim().to_lowercase();
-        if role == "definition" {
-            nonempty_str(e, &p, "definition")?;
-        } else if let Some(d) = e.get("definition") {
-            if !d.is_string() {
-                return Err(format!("{}.definition is not a string", p));
+    for (full, state) in &case.coverage {
+        if let Some((doc, section)) = split_section_ref(full) {
+            if let Some(rec) = s.docs.get_mut(&doc) {
+                rec.coverage.insert(section, Coverage { state: state.clone(), note: None, claimed_by: None });
             }
         }
     }
-    Ok(())
-}
-
-fn schema_requirements(v: &Value) -> Result<(), String> {
-    let items = arr(v, "requirements")?;
-    for (i, r) in items.iter().enumerate() {
-        let p = format!("requirements[{}]", i);
-        let ears = nonempty_str(r, &p, "ears")?;
-        // EARS shape: every requirement carries the mandatory 'shall'.
-        if !ears.to_lowercase().contains("shall") {
-            return Err(format!("{}.ears missing 'shall' (not EARS-shaped)", p));
-        }
-        match r.get("entities") {
-            Some(Value::Array(a)) if !a.is_empty() && a.iter().all(|x| x.is_string()) => {}
-            Some(Value::Array(_)) => return Err(format!("{}.entities empty or non-string", p)),
-            Some(_) => return Err(format!("{}.entities is not an array", p)),
-            None => return Err(format!("{}.entities missing", p)),
-        }
-    }
-    Ok(())
-}
-
-fn schema_relationship(v: &Value) -> Result<(), String> {
-    enum_str(v, "(root)", "type", RELATIONSHIP_TYPES)?;
-    nonempty_str(v, "(root)", "reasoning")?;
-    Ok(())
-}
-
-fn schema_definition(v: &Value) -> Result<(), String> {
-    match v.get("coherent") {
-        Some(Value::Bool(_)) => {}
-        Some(_) => return Err("(root).coherent is not a boolean".into()),
-        None => return Err("missing key 'coherent'".into()),
-    }
-    nonempty_str(v, "(root)", "definition")?;
-    Ok(())
-}
-
-fn schema_diagnostics(v: &Value) -> Result<(), String> {
-    let items = arr(v, "diagnostics")?;
-    for (i, d) in items.iter().enumerate() {
-        let p = format!("diagnostics[{}]", i);
-        nonempty_str(d, &p, "rule")?;
-        nonempty_str(d, &p, "message")?;
-        enum_str(d, &p, "severity", SEVERITIES)?;
-    }
-    Ok(())
-}
-
-// ---- assertion evaluation ------------------------------------------------------------------
-
-// Render a JSON value's text for substring/equality checks: strings as-is, bools/numbers stringified.
-fn as_text(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
-fn field_contains(item: &Value, field: &str, needle: &str) -> bool {
-    item.get(field)
-        .and_then(as_text)
-        .map(|s| s.to_lowercase().contains(&needle.to_lowercase()))
-        .unwrap_or(false)
-}
-
-impl Assert {
-    fn describe(&self) -> String {
-        match self {
-            Assert::Eq { field, value } => format!("{} == '{}'", field, value),
-            Assert::Contains { field, needle } => format!("{} contains '{}'", field, needle),
-            Assert::Any { array, field, needle } => {
-                format!("some {}.{} contains '{}'", array, field, needle)
-            }
-            Assert::Each { array, field, needle } => {
-                format!("every {}.{} contains '{}'", array, field, needle)
-            }
-        }
-    }
-
-    fn eval(&self, v: &Value) -> bool {
-        match self {
-            Assert::Eq { field, value } => v
-                .get(field)
-                .and_then(as_text)
-                .map(|s| s.trim().eq_ignore_ascii_case(value.trim()))
-                .unwrap_or(false),
-            Assert::Contains { field, needle } => field_contains(v, field, needle),
-            Assert::Any { array, field, needle } => match v.get(array) {
-                Some(Value::Array(a)) => a.iter().any(|x| field_contains(x, field, needle)),
-                _ => false,
+    for (id, e) in &case.entities {
+        s.graph.entities.insert(
+            id.clone(),
+            Entity {
+                name: e["name"].as_str().unwrap_or_default().to_string(),
+                aliases: e["aliases"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+                definition: e["definition"].as_str().map(String::from),
+                mentions: e["mentions"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(source_ref).collect())
+                    .unwrap_or_default(),
+                ..Default::default()
             },
-            Assert::Each { array, field, needle } => match v.get(array) {
-                Some(Value::Array(a)) if !a.is_empty() => {
-                    a.iter().all(|x| field_contains(x, field, needle))
-                }
-                _ => false,
+        );
+    }
+    for (id, r) in &case.requirements {
+        let Some(source) = source_ref(&r["source"]) else { continue };
+        s.graph.requirements.insert(
+            id.clone(),
+            Requirement {
+                ears: r["ears"].as_str().unwrap_or_default().to_string(),
+                entities: r["entities"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+                edges: Vec::new(),
+                source,
+                confidence: None,
+                reasoning: None,
+                created: None,
+                updated: None,
             },
+        );
+    }
+    s.recompute_relationships();
+    s
+}
+
+// Check patterns are regular expressions per case.schema.yaml, matched
+// case-insensitively. An invalid pattern is a check failure, never a silent pass.
+fn compile(pattern: &str) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("bad pattern `{}`: {}", pattern, e))
+}
+
+// Resolve a check's entity reference: an id, or a unique exact name/alias match.
+fn find_entity(store: &Store, ident: &str) -> Option<String> {
+    if store.graph.entities.contains_key(ident) {
+        return Some(ident.to_string());
+    }
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    store
+        .graph
+        .entities
+        .iter()
+        .find(|(_, e)| norm(&e.name) == norm(ident) || e.aliases.iter().any(|a| norm(a) == norm(ident)))
+        .map(|(id, _)| id.clone())
+}
+
+// Evaluate one check against the resulting store and the staged-mutation count.
+// Returns None on pass, or a short failure description.
+fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<String> {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    match kind {
+        "entityExists" => {
+            let want = norm(arg["name"].as_str().unwrap_or_default());
+            let found = store.graph.entities.values().any(|e| {
+                norm(&e.name) == want || e.aliases.iter().any(|a| norm(a) == want)
+            });
+            (!found).then(|| format!("no entity named {}", arg["name"]))
         }
+        "entityAbsent" => {
+            let pat = arg["namePattern"].as_str().unwrap_or_default();
+            let re = match compile(pat) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
+            };
+            store
+                .graph
+                .entities
+                .values()
+                .find(|e| re.is_match(&e.name))
+                .map(|e| format!("entity `{}` matches forbidden pattern {}", e.name, pat))
+        }
+        "entityCount" => {
+            let n = store.graph.entities.len();
+            if let Some(max) = arg["max"].as_u64() {
+                if n as u64 > max {
+                    return Some(format!("{} entities, max {}", n, max));
+                }
+            }
+            if let Some(min) = arg["min"].as_u64() {
+                if (n as u64) < min {
+                    return Some(format!("{} entities, min {}", n, min));
+                }
+            }
+            None
+        }
+        "requirementExists" => {
+            let pat = arg["earsPattern"].as_str().unwrap_or_default();
+            let ent = arg["entity"].as_str().unwrap_or_default();
+            let re = match compile(pat) {
+                Ok(re) => re,
+                Err(e) => return Some(e),
+            };
+            let Some(ent_id) = find_entity(store, ent) else {
+                return Some(format!("entity {} not found", ent));
+            };
+            let found = store.graph.requirements.values().any(|r| {
+                re.is_match(&r.ears) && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
+            });
+            (!found).then(|| format!("no requirement matching `{}` on {}", pat, ent_id))
+        }
+        "requirementCount" => {
+            let n = match arg["entity"].as_str() {
+                Some(ent) => {
+                    let Some(ent_id) = find_entity(store, ent) else {
+                        return Some(format!("entity {} not found", ent));
+                    };
+                    store
+                        .graph
+                        .requirements
+                        .values()
+                        .filter(|r| r.entities.iter().any(|e| store.resolve_id(e) == ent_id))
+                        .count()
+                }
+                None => store.graph.requirements.len(),
+            };
+            if let Some(max) = arg["max"].as_u64() {
+                if n as u64 > max {
+                    return Some(format!("{} requirements, max {}", n, max));
+                }
+            }
+            if let Some(min) = arg["min"].as_u64() {
+                if (n as u64) < min {
+                    return Some(format!("{} requirements, min {}", n, min));
+                }
+            }
+            None
+        }
+        "relationshipExists" => {
+            let a = arg["a"].as_str().unwrap_or_default();
+            let b = arg["b"].as_str().unwrap_or_default();
+            let Some(a_id) = find_entity(store, a) else {
+                return Some(format!("entity {} not found", a));
+            };
+            let Some(b_id) = find_entity(store, b) else {
+                return Some(format!("entity {} not found", b));
+            };
+            let want_type = arg["type"].as_str();
+            let found = store.graph.relationships.values().any(|r| {
+                let members: Vec<String> = r.members.iter().map(|m| store.resolve_id(m).to_string()).collect();
+                members.contains(&a_id)
+                    && members.contains(&b_id)
+                    && want_type.map(|t| r.rel_type == t).unwrap_or(true)
+            });
+            (!found).then(|| {
+                format!(
+                    "no {} relationship between {} and {}",
+                    want_type.unwrap_or("derived"),
+                    a_id,
+                    b_id
+                )
+            })
+        }
+        "mutationCount" => {
+            if let Some(max) = arg["max"].as_u64() {
+                if staged as u64 > max {
+                    return Some(format!("{} mutations staged, max {}", staged, max));
+                }
+            }
+            if let Some(min) = arg["min"].as_u64() {
+                if (staged as u64) < min {
+                    return Some(format!("{} mutations staged, min {}", staged, min));
+                }
+            }
+            None
+        }
+        "diagnosticExists" => {
+            let rule = arg["rule"].as_str().unwrap_or_default();
+            let subject = arg["subject"].as_str();
+            let found = store.graph.diagnostics.values().any(|d| {
+                d.lifecycle == "open"
+                    && d.rule == rule
+                    && subject
+                        .map(|want| d.subjects.iter().any(|s| store.resolve_id(s) == store.resolve_id(want)))
+                        .unwrap_or(true)
+            });
+            (!found).then(|| format!("no open {} diagnostic on {}", rule, subject.unwrap_or("any subject")))
+        }
+        "diagnosticAbsent" => {
+            let rule = arg["rule"].as_str().unwrap_or_default();
+            store
+                .graph
+                .diagnostics
+                .values()
+                .find(|d| d.lifecycle == "open" && d.rule == rule)
+                .map(|d| format!("unexpected {} diagnostic: {}", rule, llm::truncate(&d.message, 60)))
+        }
+        "coverageSet" => {
+            let full = arg["section"].as_str().unwrap_or_default();
+            let want = arg["state"].as_str().unwrap_or_default();
+            let Some((doc, section)) = split_section_ref(full) else {
+                return Some(format!("bad section ref {}", full));
+            };
+            let got = store
+                .docs
+                .get(&doc)
+                .and_then(|r| r.coverage.get(&section))
+                .map(|c| c.state.clone())
+                .unwrap_or_else(|| "unprocessed".to_string());
+            (got != want).then(|| format!("{} coverage is {}, expected {}", full, got, want))
+        }
+        other => Some(format!("unknown check kind {}", other)),
     }
 }
 
-// ---- run -----------------------------------------------------------------------------------
-
-// Speed thresholds (see docs/benchmark/scoring.md#throughput). Output speed (decode rate) gates the
-// verdict: the target scores 1, the floor is the minimum below which the model is too slow to compile
-// with. Time to first token is reported and scored against its target but does not gate, since a slow
-// start with a fast decode is still workable.
-const SPEED_TARGET_TPS: f64 = 20.0;
-const SPEED_FLOOR_TPS: f64 = 5.0;
-const TTFT_TARGET_SECS: f64 = 2.0;
-
-pub fn run(llm: &Llm) -> i32 {
-    eprintln!("jazyk benchmark: model {} at {}", llm.model, llm.base_url);
-    eprintln!("grading the LLM stages used to compile Jazyk (A2, A3, A4, L4, L5).\n");
-    let cases = cases();
-    let mut stage_scores: std::collections::BTreeMap<&str, Vec<f64>> = std::collections::BTreeMap::new();
-    let mut failed: Vec<String> = Vec::new();
-
-    // Measure generation throughput across all cases: reset the meter, run, then read the snapshot.
-    crate::llm::throughput_reset();
-    for c in &cases {
-        let score = score_case(llm, c, &mut failed);
-        stage_scores.entry(c.stage).or_default().push(score);
+pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
+    let cases = parse_cases();
+    if cases.is_empty() {
+        eprintln!("jazyk: no benchmark cases parsed");
+        return 2;
     }
-    let tp = crate::llm::throughput_snapshot();
-    eprintln!();
+    let limits = Limits::default();
+    let trace = Trace::stderr(TraceLevel::Quiet);
+    println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
+    let mut any_usable = false;
+    let mut codec_reports: Vec<(String, Value)> = Vec::new();
 
-    let stage_floor = 0.5;
-    let overall_threshold = 0.6;
-    let mut all_stages_pass = true;
-    let mut overall_parts = Vec::new();
-    eprintln!("\nstage scores:");
-    for (stage, scores) in &stage_scores {
-        let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-        overall_parts.push(mean);
-        let pass = mean >= stage_floor;
-        if !pass {
-            all_stages_pass = false;
+    for (codec_name, mode) in [("native", 1u8), ("text", 2u8)] {
+        let started = std::time::Instant::now();
+        let tokens_before = llm::tokens_spent();
+        let mut extraction_ok = true;
+        let mut review_ok = true;
+        let mut checks_passed = 0usize;
+        let mut checks_total = 0usize;
+        let mut case_results: Vec<(String, String)> = Vec::new();
+        // A codec where no turn ever produces a completion is unmeasured, not graded.
+        // Mirrors docs/benchmark/benchmark.md#report.
+        let mut any_completion = false;
+        let mut first_abort: Option<String> = None;
+        println!("\ncodec: {}", codec_name);
+
+        for case in &cases {
+            llm::set_tools_mode(mode);
+            let tmp = std::env::temp_dir().join(format!("jazyk-bench-{}-{}", std::process::id(), case.name));
+            std::fs::remove_dir_all(&tmp).ok();
+            let mut store = sandbox(case, &tmp);
+            let dirty: Vec<String> = match case.task_type.as_str() {
+                "reconcile-doc" => store
+                    .docs
+                    .get(&case.target)
+                    .map(|r| r.sections.keys().cloned().collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let item = WorkItem {
+                task: case.task_type.clone(),
+                target: case.target.clone(),
+                dirty_sections: dirty,
+                stale_anchors: Vec::new(),
+            };
+            let case_start = std::time::Instant::now();
+            let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &crate::gen::GenSettings::from_out(&store.out), &trace);
+            let staged = out.session.staged.len();
+            any_completion |= out.tokens > 0;
+            let mut fail: Option<String> = None;
+            // An aborted turn fails the case with the abort reason. Its checks are
+            // skipped and count as failed: an untouched fixture satisfying a check is
+            // not evidence. Mirrors docs/benchmark/benchmark.md#runs.
+            if let Some(why) = &out.failed {
+                fail = Some(format!("turn aborted: {}", why));
+                if first_abort.is_none() {
+                    first_abort = Some(why.clone());
+                }
+                checks_total += case.checks.len();
+            } else {
+                // A native case that silently downgraded mid-turn did not pass natively.
+                if mode == 1 && llm::tools_mode() == 2 {
+                    fail = Some("endpoint or model rejected native tool calls".into());
+                }
+                if staged > 0 {
+                    store.apply(out.session.staged, &item, out.rounds, 0);
+                }
+                for (kind, arg) in &case.checks {
+                    checks_total += 1;
+                    match eval_check(kind, arg, &store, staged) {
+                        None => checks_passed += 1,
+                        Some(why) => {
+                            if fail.is_none() {
+                                fail = Some(format!("{}: {}", kind, why));
+                            }
+                        }
+                    }
+                }
+            }
+            std::fs::remove_dir_all(&tmp).ok();
+            match &fail {
+                None => {
+                    case_results.push((case.name.clone(), "pass".into()));
+                    println!(
+                        "  {:22} pass  ({} rounds, {} staged, {:.0}s)",
+                        case.name,
+                        out.rounds,
+                        staged,
+                        case_start.elapsed().as_secs_f32()
+                    );
+                }
+                Some(why) => {
+                    if case.tier == "review" {
+                        review_ok = false;
+                    } else {
+                        extraction_ok = false;
+                    }
+                    case_results.push((case.name.clone(), why.clone()));
+                    println!(
+                        "  {:22} FAIL  {} ({} rounds, {:.0}s)",
+                        case.name,
+                        why,
+                        out.rounds,
+                        case_start.elapsed().as_secs_f32()
+                    );
+                }
+            }
         }
-        eprintln!("  {:<4} {:.2} {}", stage, mean, if pass { "ok" } else { "BELOW FLOOR" });
-    }
-    let overall = if overall_parts.is_empty() {
-        0.0
-    } else {
-        overall_parts.iter().sum::<f64>() / overall_parts.len() as f64
-    };
 
-    // Speed: split time to first token from the decode (output) speed, measured by streaming. Output
-    // speed gates the verdict against its floor; TTFT is reported and scored but does not gate.
-    let output_speed = if tp.decode_secs > 0.0 { tp.tokens as f64 / tp.decode_secs } else { 0.0 };
-    let ttft_avg = if tp.stream_calls > 0 { tp.ttft_secs / tp.stream_calls as f64 } else { 0.0 };
-    let effective = if tp.total_secs > 0.0 { tp.tokens as f64 / tp.total_secs } else { 0.0 };
-    let speed_score = (output_speed / SPEED_TARGET_TPS).min(1.0);
-    let speed_pass = output_speed >= SPEED_FLOOR_TPS;
-    let ttft_score = if ttft_avg > 0.0 { (TTFT_TARGET_SECS / ttft_avg).min(1.0) } else { 1.0 };
-    eprintln!("\nspeed (streamed over {} calls):", tp.stream_calls);
-    eprintln!(
-        "  time to first token : {:.2}s avg — ttft score {:.2} (target {:.1}s)",
-        ttft_avg, ttft_score, TTFT_TARGET_SECS
-    );
-    eprintln!(
-        "  output speed        : {:.1} tok/s decode ({} tokens / {:.1}s) — speed score {:.2} (target {:.0} tok/s) {}",
-        output_speed,
-        tp.tokens,
-        tp.decode_secs,
-        speed_score,
-        SPEED_TARGET_TPS,
-        if speed_pass { "ok" } else { "BELOW FLOOR" }
-    );
-    eprintln!("  effective           : {:.1} tok/s end-to-end (TTFT + decode)", effective);
-
-    let usable = all_stages_pass && speed_pass && overall >= overall_threshold;
-    eprintln!("\noverall score: {:.2} (threshold {:.2})", overall, overall_threshold);
-    if !failed.is_empty() {
-        eprintln!("failed checks:");
-        for f in &failed {
-            eprintln!("  - {}", f);
+        // No completion ever arrived: nothing was graded, so the codec gets no
+        // verdict and no results entry. Mirrors docs/benchmark/benchmark.md#report.
+        if !any_completion {
+            println!(
+                "  verdict: unmeasured  no completion ever arrived ({})",
+                first_abort.as_deref().unwrap_or("no turns ran")
+            );
+            continue;
         }
+        // The verdict is the highest tier whose cases all pass; review implies
+        // extraction. Mirrors docs/benchmark/benchmark.md#report.
+        let verdict = match (extraction_ok, review_ok) {
+            (true, true) => "review",
+            (true, false) => "extraction",
+            _ => "not capable",
+        };
+        any_usable |= extraction_ok;
+        let secs = started.elapsed().as_secs_f64();
+        let tokens = llm::tokens_spent() - tokens_before;
+        let throughput = if secs > 0.0 { tokens as f64 / secs } else { 0.0 };
+        println!(
+            "  verdict: {}  score {}/{} checks  throughput ~{:.0} tok/s",
+            verdict, checks_passed, checks_total, throughput
+        );
+        codec_reports.push((
+            codec_name.to_string(),
+            serde_json::json!({
+                "verdict": verdict,
+                "score": format!("{}/{}", checks_passed, checks_total),
+                "throughput": throughput.round() as u64,
+                "cases": case_results.iter().cloned().collect::<BTreeMap<String, String>>(),
+            }),
+        ));
     }
-    if !speed_pass {
-        eprintln!("  - output speed {:.1} tok/s below floor {:.0} tok/s", output_speed, SPEED_FLOOR_TPS);
+    llm::set_tools_mode(0);
+    // Both codecs unmeasured: a dead endpoint never overwrites a real grade.
+    // Mirrors docs/benchmark/benchmark.md#results-file.
+    if codec_reports.is_empty() {
+        eprintln!("jazyk: benchmark measured nothing: the endpoint never returned a completion; results not written");
+        return 2;
     }
-    eprintln!("verdict: {}", if usable { "USABLE" } else { "NOT USABLE" });
-    if usable {
+    write_results(out, &llm.model, &codec_reports);
+    if any_usable {
         0
     } else {
         1
     }
 }
 
-fn score_case(llm: &Llm, c: &Case, failed: &mut Vec<String>) -> f64 {
-    eprintln!("[{}] {}", c.stage, c.name);
-    eprintln!("  prompt : {}", oneline(c.system, 140));
-    eprintln!("  input  : {}", oneline(c.user, 200));
-
-    // Schema-constrained call, exactly as the compiler issues it (response_format: json_schema).
-    // chat_json handles JSON extraction, parsing, and retries; an endpoint that rejects the
-    // constraint falls back to prompt-only JSON and is still held to the structural gate below.
-    let v = match llm.chat_json_stream(c.system, c.user, c.stage, &c.json_schema, &format!("benchmark · {}", c.stage)) {
-        Ok(v) => {
-            eprintln!("  output : {}", oneline(&serde_json::to_string(&v).unwrap_or_default(), 400));
-            v
-        }
-        Err(e) => {
-            eprintln!("  schema : FAIL — no conforming JSON: {} (gate)\n", oneline(&e, 200));
-            failed.push(format!("{}: no conforming JSON: {}", c.name, oneline(&e, 160)));
-            return 0.0;
-        }
-    };
-
-    // Structural schema gate: shape, required fields, enums, EARS shape.
-    if let Err(reason) = (c.validate)(&v) {
-        eprintln!("  schema : FAIL — {} (gate)\n", reason);
-        failed.push(format!("{}: schema: {}", c.name, reason));
-        return 0.0;
-    }
-    eprintln!("  schema : ok — structure conforms");
-
-    // Field-targeted assertions.
-    let mut hits = 0usize;
-    for a in c.asserts {
-        if a.eval(&v) {
-            eprintln!("  assert : ok   {}", a.describe());
-            hits += 1;
-        } else {
-            eprintln!("  assert : FAIL {}", a.describe());
-            failed.push(format!("{}: {}", c.name, a.describe()));
+// One entry per model in <out>/benchmark/results.yaml, updated in place. Mirrors
+// docs/benchmark/benchmark.md#results-file.
+fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, Value)]) {
+    let path = out.join("benchmark").join("results.yaml");
+    let mut all: BTreeMap<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_norway::from_str(&s).ok())
+        .unwrap_or_default();
+    let graded_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    all.insert(
+        model.to_string(),
+        serde_json::json!({
+            "gradedAt": graded_at,
+            "caseSetHash": case_set_hash(),
+            "codecs": codec_reports.iter().cloned().collect::<BTreeMap<String, Value>>(),
+        }),
+    );
+    if std::fs::create_dir_all(path.parent().unwrap()).is_ok() {
+        match serde_norway::to_string(&all) {
+            Ok(y) => {
+                if let Err(e) = std::fs::write(&path, y) {
+                    eprintln!("jazyk: could not write {}: {}", path.display(), e);
+                } else {
+                    println!("\nresults: {}", path.display());
+                }
+            }
+            Err(e) => eprintln!("jazyk: could not serialize results: {}", e),
         }
     }
-    let score = if c.asserts.is_empty() {
-        1.0
-    } else {
-        hits as f64 / c.asserts.len() as f64
-    };
-    eprintln!("  score  : {:.2}\n", score);
-    score
 }
 
-// Collapse whitespace/newlines and truncate, for readable single-line logging.
-fn oneline(s: &str, n: usize) -> String {
-    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() > n {
-        format!("{}…", flat.chars().take(n).collect::<String>())
-    } else {
-        flat
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_all_embedded_cases() {
+        let cases = parse_cases();
+        assert_eq!(cases.len(), 12); // eleven files, turn-review holds two blocks
+        assert!(cases.iter().any(|c| c.name == "turn-declarative"));
+        assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
+        let extract = cases.iter().find(|c| c.name == "turn-extract").unwrap();
+        assert_eq!(extract.task_type, "reconcile-doc");
+        assert_eq!(extract.checks.len(), 6);
+        // Tier defaults to extraction; the five review cases declare theirs.
+        assert_eq!(extract.tier, "extraction");
+        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 5);
+        let lint = cases.iter().find(|c| c.name == "turn-review-lint").unwrap();
+        assert_eq!(lint.lint.warnings.len(), 1);
+        // Every embedded pattern must compile, or a case is unwinnable.
+        for case in &cases {
+            for (kind, arg) in &case.checks {
+                let pat = match kind.as_str() {
+                    "entityAbsent" => arg["namePattern"].as_str(),
+                    "requirementExists" => arg["earsPattern"].as_str(),
+                    _ => None,
+                };
+                if let Some(pat) = pat {
+                    assert!(compile(pat).is_ok(), "{}: {}", case.name, pat);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn results_file_updates_in_place_per_model() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "review"}))]);
+        write_results(&tmp, "model-b", &[("text".into(), serde_json::json!({"verdict": "extraction"}))]);
+        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "extraction"}))]);
+        let s = std::fs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
+        let all: BTreeMap<String, Value> = serde_norway::from_str(&s).unwrap();
+        assert_eq!(all.len(), 2);
+        // The re-grade replaced model-a's entry; model-b survived untouched.
+        assert_eq!(all["model-a"]["codecs"]["native"]["verdict"], "extraction");
+        assert_eq!(all["model-b"]["codecs"]["text"]["verdict"], "extraction");
+        assert_eq!(all["model-a"]["caseSetHash"], all["model-b"]["caseSetHash"]);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn patterns_are_regexes_matched_case_insensitively() {
+        let re = |p: &str| compile(p).unwrap();
+        assert!(re("empt(y|ies|ied)").is_match("the system shall EMPTY the Cart"));
+        assert!(re("^--|/|\\.md").is_match("--api-key"));
+        assert!(re("^--|/|\\.md").is_match("src/link.rs"));
+        assert!(re("^--|/|\\.md").is_match("notes.md"));
+        assert!(!re("^--|/|\\.md").is_match("Shopping Cart"));
+        assert!(re("^addProduct$").is_match("addproduct"));
+        // An invalid pattern is a check failure, never a silent pass.
+        assert!(compile("(unclosed").is_err());
+    }
+
+    #[test]
+    fn sandbox_seeds_fixture() {
+        let cases = parse_cases();
+        let converge = cases.iter().find(|c| c.name == "turn-converge").unwrap();
+        let tmp = std::env::temp_dir().join("jazyk-bench-test");
+        let s = sandbox(converge, &tmp);
+        assert!(s.graph.entities.contains_key("ent:cart"));
+        assert!(s.graph.requirements.contains_key("req:shop-1"));
+        assert_eq!(s.docs["docs/shop.md"].coverage["/shop/checkout"].state, "covered");
+        // The fixture's quote must locate in the parsed section, or the case is unwinnable.
+        let r = &s.graph.requirements["req:shop-1"];
+        assert!(s.quote_locates(&r.source.doc, &r.source.section, &r.source.quote));
     }
 }

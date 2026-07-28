@@ -1,73 +1,46 @@
-// Minimal OpenAI-compatible chat client over raw TCP (works against Ollama at /v1).
+// OpenAI-compatible chat client over ureq. What is ours is the provider-behavior
+// handling: message-history requests with native tool-calling, a sticky capability
+// probe that downgrades to the text codec when the endpoint rejects `tools`, sticky
+// temperature and streaming fallbacks, pacing, and retry policy.
 use serde_json::{json, Value};
-use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::io::{BufRead, BufReader, Read};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-// Set once an endpoint rejects `response_format`, so the rest of the run skips structured output
-// instead of paying a rejected request plus a fallback on every call.
-static STRUCTURED_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+// Codec capability, learned once per run. 0 = unknown, 1 = native tools, 2 = text fallback.
+static TOOLS_MODE: AtomicU8 = AtomicU8::new(0);
 
-// Generation-speed meter. Each successful request records its output tokens and its timing. Streamed
-// calls additionally split time to first token (TTFT) from the decode window, so the benchmark can
-// report the two separately (see docs/benchmark/scoring.md#throughput). The benchmark resets the meter
-// before its cases and reads the snapshot after. The counters are global but only the benchmark reads
-// them; the build records into them harmlessly.
-static GEN_TOKENS: AtomicU64 = AtomicU64::new(0);
-static GEN_TOTAL_MICROS: AtomicU64 = AtomicU64::new(0); // request → last token, all calls
-static GEN_TTFT_MICROS: AtomicU64 = AtomicU64::new(0); // request → first token, streamed calls only
-static GEN_DECODE_MICROS: AtomicU64 = AtomicU64::new(0); // first → last token, streamed calls only
-static GEN_CALLS: AtomicU64 = AtomicU64::new(0);
-static GEN_STREAM_CALLS: AtomicU64 = AtomicU64::new(0);
+// Set once a model rejects the temperature parameter (some only allow their default);
+// the rest of the run omits it. Providers often wrap the rejection as a bare 400, so the
+// first hard 400 with a temperature set triggers the drop-and-retry.
+static TEMP_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
-// A snapshot of the meter. Seconds are totals across calls; the benchmark derives means and rates.
-pub struct Throughput {
-    pub tokens: u64,
-    pub total_secs: f64,
-    pub ttft_secs: f64,
-    pub decode_secs: f64,
-    pub stream_calls: u64,
+// Set once an endpoint answers "stream must be set to true"; the rest of the run uses
+// streaming requests and assembles the message from SSE deltas.
+static STREAM_REQUIRED: AtomicBool = AtomicBool::new(false);
+
+// Set once a provider rejects reasoning fields echoed back in the message history
+// (some 400 when `reasoning_content` appears in an input message). The rest of the run
+// strips them from outgoing messages; the turn's own transcript keeps them.
+static REASONING_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+
+pub fn tools_mode() -> u8 {
+    TOOLS_MODE.load(Ordering::Relaxed)
 }
 
-// Reset the speed meter to zero.
-pub fn throughput_reset() {
-    for c in [&GEN_TOKENS, &GEN_TOTAL_MICROS, &GEN_TTFT_MICROS, &GEN_DECODE_MICROS, &GEN_CALLS, &GEN_STREAM_CALLS] {
-        c.store(0, Ordering::Relaxed);
-    }
+pub fn set_tools_mode(mode: u8) {
+    TOOLS_MODE.store(mode, Ordering::Relaxed);
 }
 
-pub fn throughput_snapshot() -> Throughput {
-    Throughput {
-        tokens: GEN_TOKENS.load(Ordering::Relaxed),
-        total_secs: GEN_TOTAL_MICROS.load(Ordering::Relaxed) as f64 / 1_000_000.0,
-        ttft_secs: GEN_TTFT_MICROS.load(Ordering::Relaxed) as f64 / 1_000_000.0,
-        decode_secs: GEN_DECODE_MICROS.load(Ordering::Relaxed) as f64 / 1_000_000.0,
-        stream_calls: GEN_STREAM_CALLS.load(Ordering::Relaxed),
-    }
+// Token meter: completion tokens across all calls this run, for status.yaml reporting.
+static SPENT_TOKENS: AtomicU64 = AtomicU64::new(0);
+
+pub fn tokens_spent() -> u64 {
+    SPENT_TOKENS.load(Ordering::Relaxed)
 }
 
-// A non-streamed call: only the blended request → response time is known.
-fn record_generation(tokens: u64, elapsed: Duration) {
-    GEN_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-    GEN_TOTAL_MICROS.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
-    GEN_CALLS.fetch_add(1, Ordering::Relaxed);
-}
-
-// A streamed call: TTFT and the decode window are measured separately.
-fn record_generation_stream(tokens: u64, ttft: Duration, decode: Duration) {
-    GEN_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-    GEN_TTFT_MICROS.fetch_add(ttft.as_micros() as u64, Ordering::Relaxed);
-    GEN_DECODE_MICROS.fetch_add(decode.as_micros() as u64, Ordering::Relaxed);
-    GEN_TOTAL_MICROS.fetch_add((ttft + decode).as_micros() as u64, Ordering::Relaxed);
-    GEN_CALLS.fetch_add(1, Ordering::Relaxed);
-    GEN_STREAM_CALLS.fetch_add(1, Ordering::Relaxed);
-}
-
-// Verbose request logging: when on, each LLM call logs its label, outcome, and duration so the user
-// can see what is being compiled and linked through a slow model. Enabled by the CLI (`jazyk build`
-// / `watch`) via `set_verbose`, or by the `JAZYK_VERBOSE` env var for any frontend (lazy default).
+// Verbose request logging, enabled by the CLI or the JAZYK_VERBOSE env var.
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static VERBOSE_INIT: AtomicBool = AtomicBool::new(false);
 pub fn set_verbose(on: bool) {
@@ -82,9 +55,9 @@ fn verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-// Global cap on concurrent in-flight LLM requests, so parallel compilation/linking does not
-// overwhelm the backend (a local Ollama serializes work and 502s under heavy fan-out). Tunable
-// with JAZYK_MAX_CONCURRENCY; default 6.
+// Global cap on concurrent in-flight LLM requests, so parallel turns do not overwhelm the
+// backend (a local Ollama serializes work and 502s under heavy fan-out). Tunable with
+// JAZYK_MAX_CONCURRENCY; default 6.
 struct Semaphore {
     permits: Mutex<usize>,
     cv: Condvar,
@@ -100,6 +73,32 @@ fn semaphore() -> &'static Semaphore {
         Semaphore { permits: Mutex::new(n), cv: Condvar::new() }
     })
 }
+// Minimum gap between request starts, so tight failure loops cannot hammer an endpoint.
+// Tunable with JAZYK_MIN_INTERVAL_MS; default 500.
+static LAST_REQUEST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+fn pace() {
+    let min_ms = std::env::var("JAZYK_MIN_INTERVAL_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(500);
+    if min_ms == 0 {
+        return;
+    }
+    let wait = {
+        let mut last = LAST_REQUEST.lock().unwrap();
+        let now = std::time::Instant::now();
+        let wait = match *last {
+            Some(t) => Duration::from_millis(min_ms).saturating_sub(now.duration_since(t)),
+            None => Duration::ZERO,
+        };
+        *last = Some(now + wait);
+        wait
+    };
+    if !wait.is_zero() {
+        std::thread::sleep(wait);
+    }
+}
+
 struct Permit;
 fn acquire() -> Permit {
     let s = semaphore();
@@ -143,6 +142,15 @@ fn is_transient(err: &str) -> bool {
         || e.contains("read:")
         || e.contains("write:")
         || e.contains("no http body")
+        || e.contains("transport")
+        || e.contains("network")
+        || e.contains("io error")
+}
+
+// Whether an error indicates the endpoint or model rejects the `tools` parameter.
+fn rejects_tools(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("tools") || e.contains("tool_choice") || e.contains("function")
 }
 
 #[derive(Clone)]
@@ -150,79 +158,99 @@ pub struct Llm {
     pub base_url: String,
     pub model: String,
     pub api_key: String,
-    // Sampling temperature. Defaults to 0 for deterministic builds, but some models (e.g. newer
-    // OpenAI ones) only allow their default; `None` omits the field entirely.
+    // Sampling temperature. Defaults to 0, but some models only allow their default;
+    // `None` omits the field entirely.
     pub temperature: Option<f64>,
 }
 
 impl Llm {
-    // Chat expecting structured JSON, constrained by a JSON Schema sent as `response_format`
-    // (OpenAI-compatible structured output). `schema_name` labels the call; `schema` is the bare
-    // JSON Schema for the reply. Retries when the response is not valid JSON of a usable shape
-    // (truncated / wrapped in prose), in addition to the transport retries in `chat`. If the
-    // endpoint rejects structured output, `chat_inner` falls back to prompt-only JSON. `label`
-    // identifies the call (file and stage, or linked entity) in retry and verbose log lines.
-    pub fn chat_json(&self, system: &str, user: &str, schema_name: &str, schema: &Value, label: &str) -> Result<Value, String> {
-        self.chat_json_impl(system, user, schema_name, schema, label, false)
-    }
-
-    // Like `chat_json`, but streams the response so the throughput meter can split time to first token
-    // from the decode rate. Used by the benchmark; the build uses the non-streamed `chat_json`.
-    pub fn chat_json_stream(&self, system: &str, user: &str, schema_name: &str, schema: &Value, label: &str) -> Result<Value, String> {
-        self.chat_json_impl(system, user, schema_name, schema, label, true)
-    }
-
-    fn chat_json_impl(&self, system: &str, user: &str, schema_name: &str, schema: &Value, label: &str, stream: bool) -> Result<Value, String> {
-        let rf = json!({
-            "type": "json_schema",
-            "json_schema": { "name": schema_name, "strict": true, "schema": schema }
-        });
-        let max = max_retries();
-        let mut last = String::new();
-        for attempt in 0..=max {
-            let content = self.chat_fmt(system, user, Some(&rf), label, stream)?;
-            match extract_json_object(&content) {
-                Some(obj) => match serde_json::from_str::<Value>(&obj) {
-                    Ok(v) => return Ok(v),
-                    Err(e) => last = format!("bad JSON: {} :: {}", e, truncate(&obj, 300)),
-                },
-                None => last = format!("no JSON object in response: {}", truncate(&content, 300)),
-            }
-            if attempt < max {
-                // Retry immediately (no backoff): the backend serializes work behind the concurrency
-                // cap, so delaying only adds latency.
-                eprintln!("[jazyk] {} — malformed JSON, retrying ({}/{}): {}", label, attempt + 1, max, truncate(&last, 160));
-            }
-        }
-        Err(last)
-    }
-
-    // Chat returning raw text, with no structured-output constraint.
-    pub fn chat(&self, system: &str, user: &str, label: &str) -> Result<String, String> {
-        self.chat_fmt(system, user, None, label, false)
-    }
-
-    // Chat with an optional `response_format`. Retries transient transport failures (gateway/5xx,
-    // dropped connections) immediately, with no backoff.
-    fn chat_fmt(&self, system: &str, user: &str, rf: Option<&Value>, label: &str, stream: bool) -> Result<String, String> {
+    // One turn round: send the full message history, optionally with tool definitions, and
+    // return the assistant message object (`content` and, when the model called tools,
+    // `tool_calls`) plus the completion tokens the call spent. Transport failures retry
+    // immediately; a `tools` rejection surfaces as Err so the turn harness can downgrade
+    // the codec.
+    pub fn chat_messages(&self, messages: &[Value], tools: Option<&[Value]>, label: &str) -> Result<(Value, u64), String> {
         let max = max_retries();
         let mut last = String::new();
         let started = std::time::Instant::now();
         if verbose() {
             eprintln!("[jazyk] → {}", label);
         }
+        let mut try_stream = false;
         for attempt in 0..=max {
-            match self.chat_once(system, user, rf, stream) {
-                Ok(s) => {
+            let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
+            match self.chat_once(messages, tools, streaming) {
+                Ok(out) => {
+                    // A streaming probe that succeeds after a non-streaming failure
+                    // sticks for the run.
+                    if try_stream && !STREAM_REQUIRED.swap(true, Ordering::Relaxed) {
+                        eprintln!("[jazyk] streaming retry succeeded; using SSE for the rest of the run");
+                    }
                     if verbose() {
                         eprintln!("[jazyk] ✓ {} ({} ms)", label, started.elapsed().as_millis());
                     }
-                    return Ok(s);
+                    return Ok(out);
                 }
                 Err(e) => {
+                    // An endpoint that only serves streaming responses says so; switch
+                    // once, sticky for the run, and retry.
+                    if e.to_lowercase().contains("stream must be set to true")
+                        && !STREAM_REQUIRED.swap(true, Ordering::Relaxed)
+                    {
+                        eprintln!("[jazyk] endpoint requires streaming; switching to SSE for the rest of the run");
+                        continue;
+                    }
+                    // A provider that rejects reasoning fields echoed back in the
+                    // history names them in the 400. Strip them once, sticky for the
+                    // run, and retry. Checked before the temperature fallback so the
+                    // named rejection is not misread as a temperature one.
+                    if e.contains("400")
+                        && e.to_lowercase().contains("reasoning")
+                        && !REASONING_UNSUPPORTED.swap(true, Ordering::Relaxed)
+                    {
+                        eprintln!("[jazyk] provider rejected reasoning fields in the history; stripping them from requests for the rest of the run");
+                        continue;
+                    }
+                    // A model that rejects `temperature` answers 400 (often wrapped by a
+                    // proxy). Drop the parameter once, sticky for the run, and retry.
+                    let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
+                    if looks_400 && self.temperature.is_some() && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed) {
+                        eprintln!("[jazyk] model rejected the request (likely temperature); retrying without it for the rest of the run");
+                        continue;
+                    }
+                    if tools.is_some() && rejects_tools(&e) && !is_transient(&e) {
+                        return Err(format!("tools-rejected: {}", e));
+                    }
                     last = e;
                     if attempt < max && is_transient(&last) {
-                        eprintln!("[jazyk] {} — transient error, retrying ({}/{}): {}", label, attempt + 1, max, truncate(&last, 120));
+                        // Some proxies fail relaying a non-streaming response (e.g. tool
+                        // calls through a router); probe the retry over SSE. Sticky only
+                        // if the streaming attempt succeeds; a failed probe reverts.
+                        if !streaming {
+                            try_stream = true;
+                        } else if try_stream {
+                            try_stream = false;
+                        }
+                        // A rate limit is not a hiccup: pause before retrying instead of
+                        // hammering the window shut.
+                        if last.to_lowercase().contains("rate limit") {
+                            eprintln!(
+                                "[jazyk] {} — rate limited, retrying in 20s ({}/{})",
+                                label,
+                                attempt + 1,
+                                max
+                            );
+                            std::thread::sleep(Duration::from_secs(20));
+                        } else {
+                            eprintln!(
+                                "[jazyk] {} — transient error, retrying in 5s ({}/{}): {}",
+                                label,
+                                attempt + 1,
+                                max,
+                                truncate(&last, 120)
+                            );
+                            std::thread::sleep(Duration::from_secs(5));
+                        }
                     } else {
                         break;
                     }
@@ -235,242 +263,198 @@ impl Llm {
         Err(last)
     }
 
-    // One logical attempt. Drops a parameter the model rejects and retries once: `response_format`
-    // first (fall back to prompt-only JSON), then a non-default temperature. The recursion covers
-    // any combination of the two.
-    fn chat_once(&self, system: &str, user: &str, rf: Option<&Value>, stream: bool) -> Result<String, String> {
-        self.attempt(system, user, self.temperature, rf, stream)
+    // Simple one-shot text chat (no history, no tools). Used by small utility paths.
+    #[allow(dead_code)]
+    pub fn chat(&self, system: &str, user: &str, label: &str) -> Result<String, String> {
+        let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
+        let (msg, _tokens) = self.chat_messages(&messages, None, label)?;
+        Ok(msg["content"].as_str().unwrap_or("").to_string())
     }
 
-    fn attempt(&self, system: &str, user: &str, temperature: Option<f64>, rf: Option<&Value>, stream: bool) -> Result<String, String> {
-        match self.chat_inner(system, user, temperature, rf, stream) {
-            Err(e) if rf.is_some() && {
-                let le = e.to_lowercase();
-                le.contains("response_format") || le.contains("response format") || le.contains("json_schema")
-            } =>
-            {
-                if !STRUCTURED_UNSUPPORTED.swap(true, Ordering::Relaxed) {
-                    eprintln!("[jazyk] endpoint rejected response_format; falling back to prompt-only JSON for this run");
-                }
-                self.attempt(system, user, temperature, None, stream)
-            }
-            Err(e) if temperature.is_some() && e.to_lowercase().contains("temperature") => {
-                eprintln!("[jazyk] model rejected temperature; retrying without it");
-                self.attempt(system, user, None, rf, stream)
-            }
-            other => other,
-        }
-    }
-
-    fn chat_inner(&self, system: &str, user: &str, temperature: Option<f64>, rf: Option<&Value>, stream: bool) -> Result<String, String> {
+    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>, streaming: bool) -> Result<(Value, u64), String> {
+        // History goes out as-is, reasoning fields included, so a reasoning model keeps
+        // its chain across rounds. Stripped only under the sticky rejection fallback.
+        let outgoing: Vec<Value> = if REASONING_UNSUPPORTED.load(Ordering::Relaxed) {
+            messages
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    if let Some(o) = m.as_object_mut() {
+                        o.remove("reasoning_content");
+                        o.remove("reasoning");
+                    }
+                    m
+                })
+                .collect()
+        } else {
+            messages.to_vec()
+        };
         let mut payload = json!({
             "model": self.model,
-            "stream": false,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user}
-            ]
+            "stream": streaming,
+            "messages": outgoing,
         });
-        if stream {
-            // Stream Server-Sent Events and ask for a final usage chunk, so the meter gets exact
-            // completion tokens alongside the per-token timing.
-            payload["stream"] = json!(true);
+        if streaming {
             payload["stream_options"] = json!({"include_usage": true});
         }
-        if let Some(t) = temperature {
-            payload["temperature"] = json!(t);
-        }
-        if let Some(rf) = rf {
-            // Skip if a prior call already learned this endpoint rejects structured output.
-            if !STRUCTURED_UNSUPPORTED.load(Ordering::Relaxed) {
-                payload["response_format"] = rf.clone();
+        if let Some(t) = self.temperature {
+            if !TEMP_UNSUPPORTED.load(Ordering::Relaxed) {
+                payload["temperature"] = json!(t);
             }
+        }
+        if let Some(tools) = tools {
+            payload["tools"] = json!(tools);
         }
         let body = payload.to_string();
 
-        // Bound concurrent requests across all worker threads.
+        // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
+        pace();
 
-        let (host, port, base_path) = parse_url(&self.base_url)?;
-        let path = format!("{}/chat/completions", base_path);
-        let addr = format!("{}:{}", host, port);
-        let mut conn = TcpStream::connect(&addr).map_err(|e| format!("connect {}: {}", addr, e))?;
-        conn.set_read_timeout(Some(Duration::from_secs(900))).ok();
-        conn.set_write_timeout(Some(Duration::from_secs(60))).ok();
-        let auth = if self.api_key.is_empty() {
-            String::new()
-        } else {
-            format!("Authorization: Bearer {}\r\n", self.api_key)
+        // Bounded reads keep a stalled endpoint from holding a turn open indefinitely.
+        let read_timeout = std::env::var("JAZYK_READ_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(300)
+            .max(10);
+        let agent = ureq::AgentBuilder::new()
+            .timeout_read(Duration::from_secs(read_timeout))
+            .timeout_write(Duration::from_secs(60))
+            .build();
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let mut req = agent.post(&url).set("Content-Type", "application/json");
+        if !self.api_key.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", self.api_key));
+        }
+        let resp = match req.send_string(&body) {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, r)) => {
+                let text = r.into_string().unwrap_or_default();
+                return Err(format!("http error: HTTP {} :: {}", code, truncate(&text, 300)));
+            }
+            Err(ureq::Error::Transport(t)) => {
+                return Err(format!("transport: {}", t));
+            }
         };
-        let req = format!(
-            "POST {} HTTP/1.0\r\nHost: {}\r\n{}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            path, host, auth, body.as_bytes().len(), body
-        );
-        // Time the generation from the request being sent. Excludes the concurrency-permit wait above,
-        // so the meter reflects the server's response time, not local queueing.
-        let started = Instant::now();
-        conn.write_all(req.as_bytes()).map_err(|e| format!("write: {}", e))?;
 
-        if stream {
-            return read_stream(&mut conn, started);
+        if streaming {
+            return read_stream_message(BufReader::new(resp.into_reader()));
         }
 
-        let mut buf = Vec::new();
-        conn.read_to_end(&mut buf).map_err(|e| format!("read: {}", e))?;
-        let text = String::from_utf8_lossy(&buf).to_string();
-        let sep = text.find("\r\n\r\n").ok_or("no http body separator")?;
-        let head = &text[..sep];
-        let resp_body = &text[sep + 4..];
-        let ok = head.lines().next().map(|l| l.contains(" 200")).unwrap_or(false);
-        if !ok {
-            return Err(format!("http error: {} :: {}", head.lines().next().unwrap_or(""), truncate(resp_body, 300)));
+        let mut resp_body = String::new();
+        resp.into_reader()
+            .take(64 * 1024 * 1024)
+            .read_to_string(&mut resp_body)
+            .map_err(|e| format!("read: {}", e))?;
+        let v: Value = serde_json::from_str(&resp_body)
+            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
+        let msg = v["choices"][0]["message"].clone();
+        if msg.is_null() {
+            return Err(format!("no message in response :: {}", truncate(&resp_body, 300)));
         }
-        let v: Value = serde_json::from_str(resp_body)
-            .map_err(|e| format!("response json: {} :: {}", e, truncate(resp_body, 300)))?;
-        let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
-        // Record throughput: prefer the endpoint's reported completion tokens, else estimate from the
-        // response length (~4 chars per token). Same unit as the benchmark target, so either is usable.
         let tokens = v["usage"]["completion_tokens"]
             .as_u64()
-            .unwrap_or_else(|| (content.chars().count() as u64).div_ceil(4));
-        record_generation(tokens, started.elapsed());
-        Ok(content)
+            .unwrap_or_else(|| (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4));
+        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+        Ok((msg, tokens))
     }
 }
 
-// Read a streamed (SSE) chat completion, separating time to first token from the decode window.
-// Parses `data:` lines as they arrive: timestamps the first content delta (TTFT) and the last
-// (decode end), accumulates the content, and prefers the final `usage` chunk for the token count
-// (falling back to the streamed delta count). Tolerant of HTTP chunked framing, since non-`data:`
-// lines (chunk-size lines, blanks) are skipped. Falls back to a whole-body JSON parse if the server
-// ignored `stream: true` and returned one object. Records into the streaming meter on success.
-fn read_stream(conn: &mut TcpStream, req_start: Instant) -> Result<String, String> {
-    let mut raw: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 8192];
-    let mut headers_done = false;
-    let mut head_line = String::new();
-    let mut body_all = String::new(); // full SSE body, for the non-streamed fallback
-    let mut pending = String::new(); // unprocessed tail (partial line)
+// Read a streamed (SSE) chat completion and assemble the assistant message: content
+// deltas concatenate; reasoning deltas (`reasoning_content` or `reasoning`) concatenate
+// into the same field they arrived in, so the assembled message carries what a
+// non-streaming reply would; tool-call deltas accumulate per index (id and name arrive
+// first, arguments append across chunks). Non-`data:` lines (blanks, comments) are
+// skipped.
+fn read_stream_message<R: BufRead>(reader: R) -> Result<(Value, u64), String> {
+    struct TcAcc {
+        id: String,
+        name: String,
+        args: String,
+    }
     let mut content = String::new();
-    let mut first: Option<Instant> = None;
-    let mut last = req_start;
-    let mut delta_tokens: u64 = 0;
+    let mut reasoning_content = String::new();
+    let mut reasoning = String::new();
+    let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
-    let mut done = false;
 
-    loop {
-        let n = match conn.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(e) => return Err(format!("read: {}", e)),
-        };
-        if !headers_done {
-            raw.extend_from_slice(&buf[..n]);
-            let Some(pos) = find_subslice(&raw, b"\r\n\r\n") else { continue };
-            let head = String::from_utf8_lossy(&raw[..pos]).to_string();
-            head_line = head.lines().next().unwrap_or("").to_string();
-            if !head_line.contains(" 200") {
-                // Error response (e.g. rejected response_format): drain and surface the body so
-                // `attempt` can react to it the same way the non-streamed path does.
-                let mut rest = raw[pos + 4..].to_vec();
-                while let Ok(m) = conn.read(&mut buf) {
-                    if m == 0 {
-                        break;
-                    }
-                    rest.extend_from_slice(&buf[..m]);
-                }
-                let body = String::from_utf8_lossy(&rest);
-                return Err(format!("http error: {} :: {}", head_line, truncate(&body, 300)));
-            }
-            headers_done = true;
-            let body_bytes = raw[pos + 4..].to_vec();
-            let chunk = String::from_utf8_lossy(&body_bytes).to_string();
-            body_all.push_str(&chunk);
-            pending.push_str(&chunk);
-        } else {
-            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-            body_all.push_str(&chunk);
-            pending.push_str(&chunk);
-        }
-
-        // Process complete lines; leave any partial line in `pending`.
-        while let Some(nl) = pending.find('\n') {
-            let line = pending[..nl].trim_end_matches('\r').to_string();
-            pending.drain(..nl + 1);
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("read: {}", e))?;
+        {
+            let line = line.trim_end_matches('\r').to_string();
             let Some(data) = line.strip_prefix("data:") else { continue };
             let data = data.trim();
             if data.is_empty() {
                 continue;
             }
             if data == "[DONE]" {
-                done = true;
                 break;
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             if let Some(u) = v["usage"]["completion_tokens"].as_u64() {
                 usage_tokens = Some(u);
             }
-            if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
-                if !delta.is_empty() {
-                    if first.is_none() {
-                        first = Some(Instant::now());
+            let delta = &v["choices"][0]["delta"];
+            if let Some(c) = delta["content"].as_str() {
+                content.push_str(c);
+            }
+            if let Some(r) = delta["reasoning_content"].as_str() {
+                reasoning_content.push_str(r);
+            }
+            if let Some(r) = delta["reasoning"].as_str() {
+                reasoning.push_str(r);
+            }
+            if let Some(calls) = delta["tool_calls"].as_array() {
+                for tc in calls {
+                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                    while tcs.len() <= idx {
+                        tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
                     }
-                    last = Instant::now();
-                    content.push_str(delta);
-                    delta_tokens += 1;
+                    if let Some(id) = tc["id"].as_str() {
+                        tcs[idx].id = id.to_string();
+                    }
+                    if let Some(n) = tc["function"]["name"].as_str() {
+                        tcs[idx].name = n.to_string();
+                    }
+                    if let Some(a) = tc["function"]["arguments"].as_str() {
+                        tcs[idx].args.push_str(a);
+                    }
                 }
             }
         }
-        if done {
-            break;
-        }
     }
 
-    // Fallback: the server ignored `stream: true` and returned a single JSON object.
-    if content.is_empty() && delta_tokens == 0 {
-        if let Some(obj) = extract_json_object(&body_all) {
-            if let Ok(v) = serde_json::from_str::<Value>(&obj) {
-                content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
-                usage_tokens = v["usage"]["completion_tokens"].as_u64().or(usage_tokens);
-                first.get_or_insert(last);
-            }
-        }
-        if content.is_empty() {
-            let detail = if head_line.is_empty() { truncate(&body_all, 200) } else { head_line };
-            return Err(format!("empty stream response :: {}", detail));
-        }
+    if content.is_empty() && tcs.is_empty() && reasoning_content.is_empty() && reasoning.is_empty() {
+        return Err("empty stream response".to_string());
     }
-
-    let first_t = first.unwrap_or(last);
-    let ttft = first_t.saturating_duration_since(req_start);
-    let decode = last.saturating_duration_since(first_t);
-    let tokens = usage_tokens.unwrap_or(delta_tokens);
-    record_generation_stream(tokens, ttft, decode);
-    Ok(content)
-}
-
-// Index of the first occurrence of `needle` in `hay`.
-fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || hay.len() < needle.len() {
-        return None;
+    let tokens = usage_tokens.unwrap_or_else(|| {
+        ((content.chars().count()
+            + reasoning_content.chars().count()
+            + reasoning.chars().count()
+            + tcs.iter().map(|t| t.args.chars().count()).sum::<usize>()) as u64)
+            .div_ceil(4)
+    });
+    SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+    let mut msg = json!({"role": "assistant", "content": content});
+    if !reasoning_content.is_empty() {
+        msg["reasoning_content"] = json!(reasoning_content);
     }
-    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+    if !reasoning.is_empty() {
+        msg["reasoning"] = json!(reasoning);
+    }
+    if !tcs.is_empty() {
+        msg["tool_calls"] = json!(tcs
+            .iter()
+            .map(|t| {
+                json!({"id": t.id, "type": "function", "function": {"name": t.name, "arguments": t.args}})
+            })
+            .collect::<Vec<_>>());
+    }
+    Ok((msg, tokens))
 }
 
-fn parse_url(u: &str) -> Result<(String, u16, String), String> {
-    let rest = u.strip_prefix("http://").or_else(|| u.strip_prefix("https://")).unwrap_or(u);
-    let (hostport, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, ""),
-    };
-    let (host, port) = match hostport.find(':') {
-        Some(i) => (hostport[..i].to_string(), hostport[i + 1..].parse::<u16>().unwrap_or(80)),
-        None => (hostport.to_string(), 80),
-    };
-    Ok((host, port, path.trim_end_matches('/').to_string()))
-}
-
-// Extract the first balanced JSON object from possibly noisy model output.
+// Extract the first balanced JSON object from possibly noisy model output. The text codec
+// parses actions with this.
 pub fn extract_json_object(s: &str) -> Option<String> {
     let mut s = s.to_string();
     while let (Some(a), Some(b)) = (s.find("<think>"), s.find("</think>")) {
@@ -512,13 +496,51 @@ pub fn extract_json_object(s: &str) -> Option<String> {
     None
 }
 
-// Extract the first <svg ...>...</svg> block from possibly noisy model output.
-pub fn extract_svg(s: &str) -> Option<String> {
-    let start = s.find("<svg")?;
-    let end = s[start..].find("</svg>")? + start + "</svg>".len();
-    Some(s[start..end].to_string())
+pub fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(n).collect();
+    out.push('…');
+    out
 }
 
-fn truncate(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sse(chunks: &[&str]) -> String {
+        chunks.iter().map(|c| format!("data: {}\n\n", c)).collect::<String>() + "data: [DONE]\n\n"
+    }
+
+    #[test]
+    fn stream_keeps_reasoning_deltas() {
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"reasoning_content":"the section "}}]}"#,
+            r#"{"choices":[{"delta":{"reasoning_content":"states a fact"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"Recording it."}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"done","arguments":"{}"}}]}}]}"#,
+        ]);
+        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        assert_eq!(msg["reasoning_content"], "the section states a fact");
+        assert_eq!(msg["content"], "Recording it.");
+        assert_eq!(msg["tool_calls"][0]["function"]["name"], "done");
+    }
+
+    #[test]
+    fn stream_keeps_reasoning_field_variant() {
+        let body = sse(&[r#"{"choices":[{"delta":{"reasoning":"thinking"}}]}"#]);
+        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        assert_eq!(msg["reasoning"], "thinking");
+        assert!(msg.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn stream_without_reasoning_adds_no_field() {
+        let body = sse(&[r#"{"choices":[{"delta":{"content":"plain"}}]}"#]);
+        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        assert_eq!(msg["content"], "plain");
+        assert!(msg.get("reasoning_content").is_none());
+        assert!(msg.get("reasoning").is_none());
+    }
 }

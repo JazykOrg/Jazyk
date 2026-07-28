@@ -1,41 +1,68 @@
 # Cases
 
-A case is one predefined test: an input fed to a single LLM stage, and the expectations its output must
-meet. Each case lives in its own file under [`cases/`](./cases), so a case states both what is sent to
-the model and what counts as a good answer.
+A case is one predefined test: a fixture, one turn to run, and deterministic assertions
+about what the turn did. Each case lives under [`cases/`](./cases) as a markdown file:
+an H1, a paragraph stating the skill it grades, and a fenced `yaml` block holding the
+case definition per [`case.schema.yaml`](./case.schema.yaml). A file may hold more than
+one `yaml` block; each block is one case.
 
 ## Case format
 
-A case file is Markdown: prose explaining the case's intent, followed by a fenced `yaml` block with the
-structured case. The structure is defined by [case.schema.yaml](./case.schema.yaml).
+- `name`: unique case name, usually the file stem.
+- `description`: one sentence stating the skill the case grades.
+- `tier`: `extraction` (the default) or `review`. The verdict is the highest tier whose
+  cases all pass. See [report](./benchmark.md#report).
+- `task`: the turn to run. `type` is `reconcile-doc` or `review-entity`, `target` is a
+  document path or an entity id. See [task types](../compiler/turns.md#task-types).
+- `given`: the fixture.
+  - `docs`: map of document path → markdown text. These are the only source files the
+    case sees.
+  - `graph` (optional): nodes pre-seeded into the sandbox store before the turn runs:
+    `entities` and `requirements` maps keyed by id, and a `coverage` map of section
+    reference → state.
+  - `lint` (optional): project [lint rules](../compiler/project-settings.md#linting)
+    the turn runs under, as `warnings` and `errors` lists.
+- `assert`: an array of checks. All must pass. Each check is deterministic and runs over
+  the staged mutations and the resulting graph. Patterns are regular expressions,
+  matched case-insensitively. E.g.:
+  - an entity named `Cart` exists,
+  - no entity whose name matches `^--`,
+  - zero mutations staged,
+  - at least 6 requirements referencing `ent:frontend`,
+  - a `composition` relationship between two named entities,
+  - a diagnostic with rule `contradiction` and subject `ent:abc` exists (`subject` is
+    optional: without it, any open diagnostic with the rule passes).
 
-- `stage`. The LLM stage under test: `A2`, `A3`, `A4`, `L4`, or `L5`.
-- `input`. The predefined input for that stage, shaped to match what the stage receives during a real
-  build (e.g. a whole document for A2; a section plus an entity list for A3; an entity's local
-  definitions for L4).
-- `expect`. The checks to run, see [Checks](./checks.md#checks):
-  - `schema`. The output shape the stage must produce.
-  - `assertions`. A list of deterministic expectations (presence, field value, substring, emission).
-  - `judge`. An optional rubric and threshold for grading free-text output.
-  - `mustEmit` / `mustNotEmit`. [Diagnostic](../compiler/model/diagnostic.md#diagnostic) rules that
-    must, or must not, appear (for the diagnostic-producing stages).
+## Execution
+
+- Each case runs in a fresh sandbox store seeded from `given`. The project graph is
+  never touched.
+- The harness runs exactly one turn: `task.type` on `task.target`, with the standard
+  [task toolset](../compiler/tools.md#task-toolsets),
+  [budgets](../compiler/turns.md#budgets), and
+  [validation gates](../compiler/graph.md#validation-gates).
+- Checks run after the turn commits. An aborted turn fails the case with the abort
+  reason; its checks are skipped and count as failed. See
+  [runs](./benchmark.md#runs).
 
 ## Index
 
-Each stage has at least one positive case and, where it makes sense, a negative case, so the benchmark
-catches both failure to produce good output and failure to stay quiet when the input is clean.
+Extraction tier:
 
-- A2 extract entities
-  - [a2-entities-basic](./cases/a2-entities-basic.md)
-  - [a2-entities-linkage](./cases/a2-entities-linkage.md)
-- A3 extract requirements
-  - [a3-requirements-ears](./cases/a3-requirements-ears.md)
-  - [a3-requirements-edges](./cases/a3-requirements-edges.md)
-- A4 consolidate relationships
-  - [a4-relationship-conflict](./cases/a4-relationship-conflict.md)
-- L4 synthesize definitions
-  - [l4-definition-coherent](./cases/l4-definition-coherent.md)
-  - [l4-definition-false-merge](./cases/l4-definition-false-merge.md)
-- L5 semantic review
-  - [l5-contradiction](./cases/l5-contradiction.md)
-  - [l5-clean](./cases/l5-clean.md)
+- [turn-extract](./cases/turn-extract.md): extraction sanity.
+- [turn-declarative](./cases/turn-declarative.md): declarative extraction.
+- [turn-density](./cases/turn-density.md): extraction density on plain declarative
+  prose.
+- [turn-edges](./cases/turn-edges.md): edge declaration from a sub-system list.
+- [turn-reuse](./cases/turn-reuse.md): reuse discipline.
+- [turn-converge](./cases/turn-converge.md): convergence discipline.
+- [turn-repair](./cases/turn-repair.md): repair.
+
+Review tier:
+
+- [turn-review](./cases/turn-review.md): review judgment, one planted contradiction and
+  one clean entity.
+- [turn-review-duplicate](./cases/turn-review-duplicate.md): rephrase-duplicate
+  collapse.
+- [turn-review-lookalike](./cases/turn-review-lookalike.md): lookalike entity merge.
+- [turn-review-lint](./cases/turn-review-lint.md): lint application.

@@ -1,4 +1,4 @@
-#:schema = ../docs2/compiler/project-settings.schema.yaml
+#:schema = ../docs/compiler/project-settings.schema.yaml
 
 [docs]
 glob = [

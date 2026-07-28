@@ -1,6 +1,6 @@
 name: Deploy site
 
-# Publishes bootstrap/site/ to GitHub Pages on every push to master that
+# Publishes site/ to GitHub Pages on every push to master that
 # touches the site. The site is plain static HTML (Tailwind via CDN), so there
 # is no build step: the directory is uploaded as-is.
 
@@ -8,7 +8,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'bootstrap/site/**'
+      - 'site/**'
       - '.github/workflows/site.yml'
   workflow_dispatch:
 
@@ -33,6 +33,6 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: bootstrap/site
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

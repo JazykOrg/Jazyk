@@ -107,7 +107,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type.",
+            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key: a match returns the existing id with updated true and refreshes it in place. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type.",
             parameters: obj(
                 json!({
                     "ears": {"type": "string"},
@@ -121,13 +121,15 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_requirement",
-            description: "Update an existing requirement's statement, entities, or edges.",
+            description: "Update an existing requirement's statement, entities, or edges. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
                     "ears": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string"}}, "required": ["a", "b"]}}
+                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string"}}, "required": ["a", "b"]}},
+                    "section": {"type": "string"},
+                    "quote": {"type": "string"}
                 }),
                 &["id"],
             ),
@@ -139,7 +141,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. rule is one of: contradiction, duplicate-entity, missing-link, ambiguity. severity: error, warning, info, or none. Severity error only when two statements cannot both hold.",
+            description: "Record a judgment about the graph or documents. rule is one of: contradiction, duplicate-entity, duplicate-requirement, missing-link, ambiguity. severity: error, warning, info, or none. Severity error only when two statements cannot both hold.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string"},
@@ -238,6 +240,10 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         "reconcile-doc" => vec![
             "context", "expand", "search", "read_section", "upsert_entity", "update_entity", "delete_entity",
             "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
+        ],
+        "review-requirement" => vec![
+            "context", "expand", "search", "get_entity", "read_section", "update_requirement", "delete_requirement",
+            "report_diagnostic", "resolve_diagnostic", "done",
         ],
         "review-entity" => vec![
             "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "update_requirement",
@@ -957,26 +963,87 @@ impl ToolSession {
                     }
                 }
                 let source = SourceRef { doc: doc.clone(), section: sec, quote: quote.trim().to_string() };
-                // The store mints ids; a supplied id is ignored. Idempotency comes from
-                // the natural key at commit, and update_requirement handles revisions.
+                let requirement = Requirement {
+                    ears,
+                    entities,
+                    edges,
+                    source,
+                    confidence: None,
+                    reasoning: Self::opt_str(args, "reasoning"),
+                    created: None,
+                    updated: None,
+                };
+                // Stage-time natural-key resolution: the model sees the resolved id,
+                // never a misleading fresh one. Same predicate as the commit-time fold.
+                let norm_ears = crate::store::normalize_statement(&requirement.ears);
+                let norm_quote = crate::store::normalize_statement(&requirement.source.quote);
+                let same_key = |r: &Requirement| {
+                    r.source.doc == requirement.source.doc
+                        && r.source.section == requirement.source.section
+                        && (crate::store::normalize_statement(&r.ears) == norm_ears
+                            || (crate::store::normalize_statement(&r.source.quote) == norm_quote
+                                && crate::store::statement_subsumes(&r.ears, &requirement.ears)))
+                };
+                // A statement this turn already staged: refresh that staged call in
+                // place, so a repeated upsert is idempotent within the turn.
+                let staged_pos = self.staged.iter().position(
+                    |op| matches!(op, Op::CreateRequirement { requirement: r, .. } if same_key(r)),
+                );
+                if let Some(pos) = staged_pos {
+                    let Op::CreateRequirement { id, requirement: r } = &mut self.staged[pos] else {
+                        unreachable!()
+                    };
+                    for e in &requirement.entities {
+                        if !r.entities.contains(e) {
+                            r.entities.push(e.clone());
+                        }
+                    }
+                    for edge in requirement.edges {
+                        if !r.edges.iter().any(|x| (x.a == edge.a && x.b == edge.b) || (x.a == edge.b && x.b == edge.a)) {
+                            r.edges.push(edge);
+                        }
+                    }
+                    r.ears = requirement.ears;
+                    r.source = requirement.source;
+                    return Ok(json!({"id": id.clone(), "updated": true}));
+                }
+                // A statement the store already holds updates in place. A stale anchor
+                // in the same section whose statement subsumes (or is subsumed by) the
+                // new one is that statement reworded: it resolves to the anchor's id.
+                let existing = self
+                    .snapshot
+                    .graph
+                    .requirements
+                    .iter()
+                    .find(|(_, r)| same_key(r))
+                    .map(|(rid, _)| rid.clone())
+                    .or_else(|| {
+                        self.scope
+                            .stale_anchors
+                            .iter()
+                            .find(|a| {
+                                self.snapshot.graph.requirements.get(*a).is_some_and(|r| {
+                                    r.source.doc == requirement.source.doc
+                                        && r.source.section == requirement.source.section
+                                        && !self.snapshot.quote_locates(&r.source.doc, &r.source.section, &r.source.quote)
+                                        && crate::store::statement_subsumes(&r.ears, &requirement.ears)
+                                })
+                            })
+                            .cloned()
+                    });
+                if let Some(rid) = existing {
+                    self.staged_reqs.insert(rid.clone());
+                    self.taken_ids.insert(rid.clone());
+                    self.stage(Op::CreateRequirement { id: rid.clone(), requirement })?;
+                    return Ok(json!({"id": rid, "updated": true}));
+                }
+                // A new statement: the store mints the id; a supplied id is ignored.
                 let mut taken = self.taken_ids.clone();
                 taken.extend(self.staged_reqs.iter().cloned());
                 let id = self.snapshot.mint_req_id(&doc, &taken);
                 self.staged_reqs.insert(id.clone());
                 self.taken_ids.insert(id.clone());
-                self.stage(Op::CreateRequirement {
-                    id: id.clone(),
-                    requirement: Requirement {
-                        ears,
-                        entities,
-                        edges,
-                        source,
-                        confidence: None,
-                        reasoning: Self::opt_str(args, "reasoning"),
-                        created: None,
-                        updated: None,
-                    },
-                })?;
+                self.stage(Op::CreateRequirement { id: id.clone(), requirement })?;
                 Ok(json!({"id": id, "created": true}))
             }
             "update_requirement" => {
@@ -1025,7 +1092,34 @@ impl ToolSession {
                     }
                     edges = Some(v);
                 }
-                self.stage(Op::UpdateRequirement { id: id.clone(), ears, entities, edges })?;
+                // A revision may re-anchor its provenance: section plus quote, both or
+                // neither. The quote must locate, same gate as a fresh upsert.
+                let source = match (Self::opt_str(args, "section"), Self::opt_str(args, "quote")) {
+                    (Some(section), Some(q)) => {
+                        let (doc, sec) = self.resolve_section(&section)?;
+                        if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
+                            if &doc != wd {
+                                return Err(ToolError::new(
+                                    "wrong-document",
+                                    format!(
+                                        "source cites {} but this turn reconciles {}; quote the sentence from {}'s own sections",
+                                        doc, wd, wd
+                                    ),
+                                ));
+                            }
+                        }
+                        let q = self.check_quote(&doc, &sec, &q)?;
+                        Some(SourceRef { doc, section: sec, quote: q.trim().to_string() })
+                    }
+                    (None, None) => None,
+                    _ => {
+                        return Err(ToolError::new(
+                            "bad-argument",
+                            "re-anchoring needs both section and quote; pass the two together or neither".into(),
+                        ))
+                    }
+                };
+                self.stage(Op::UpdateRequirement { id: id.clone(), ears, entities, edges, source })?;
                 Ok(json!({"id": id, "updated": true}))
             }
             "delete_requirement" => {
@@ -1036,7 +1130,8 @@ impl ToolSession {
             }
             "report_diagnostic" => {
                 let rule = Self::str_arg(args, "rule")?;
-                const REVIEW_RULES: [&str; 5] = ["contradiction", "duplicate-entity", "missing-link", "ambiguity", "lint"];
+                const REVIEW_RULES: [&str; 6] =
+                    ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"];
                 if !REVIEW_RULES.contains(&rule.as_str()) {
                     return Err(ToolError::new(
                         "bad-rule",
@@ -1179,11 +1274,14 @@ impl ToolSession {
                     }
                     let addressed = self.staged.iter().any(|o| match o {
                         Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
-                        Op::CreateRequirement { requirement, .. } => {
-                            requirement.source.doc == r.source.doc
-                                && requirement.source.section == r.source.section
-                                && crate::store::normalize_statement(&requirement.ears)
-                                    == crate::store::normalize_statement(&r.ears)
+                        // A staged create that resolved to the anchor carries its id;
+                        // the statement-equality fallback covers pre-resolution stages.
+                        Op::CreateRequirement { id, requirement } => {
+                            id == a
+                                || (requirement.source.doc == r.source.doc
+                                    && requirement.source.section == r.source.section
+                                    && crate::store::normalize_statement(&requirement.ears)
+                                        == crate::store::normalize_statement(&r.ears))
                         }
                         _ => false,
                     });
@@ -1195,7 +1293,7 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "stale-anchor",
                         format!(
-                            "stale anchors left untouched: {}; for each, re-record the statement with upsert_requirement using a fresh verbatim quote (the same statement updates in place), or delete_requirement if the document no longer states it",
+                            "stale anchors left untouched: {}; for each: if the document still states the fact, re-record it with upsert_requirement quoting the new sentence verbatim (it resolves to the anchor and updates in place); if the statement changed meaning, revise it with update_requirement carrying the id, the new ears, and the new section plus quote; if the fact is gone, delete_requirement",
                             untouched.join(", ")
                         ),
                     ));
@@ -1590,14 +1688,74 @@ mod tests {
     #[test]
     fn stale_anchor_satisfied_by_same_statement_reupsert() {
         let mut t = session_with_stale_anchor();
-        // Same statement, fresh verbatim quote: the natural key updates it in place at commit.
+        // Same statement, fresh verbatim quote: the natural key resolves at stage time
+        // and the model sees the anchor's id, not a misleading fresh one.
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({"ears": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "req:shop-1");
+        assert_eq!(v["updated"], true);
+        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        t.dispatch("done", &json!({"summary": "re-anchored"})).unwrap();
+        assert!(t.done.is_some());
+    }
+
+    #[test]
+    fn repeated_upsert_resolves_to_one_staged_statement() {
+        let mut t = session();
         t.dispatch(
-            "upsert_requirement",
-            &json!({"ears": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            "upsert_entity",
+            &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
+        )
+        .unwrap();
+        let args = json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
+        let v1 = t.dispatch("upsert_requirement", &args).unwrap();
+        assert_eq!(v1["created"], true);
+        // The identical call again is idempotent within the turn: same id, one staged op.
+        let v2 = t.dispatch("upsert_requirement", &args).unwrap();
+        assert_eq!(v2["updated"], true);
+        assert_eq!(v1["id"], v2["id"]);
+        assert_eq!(t.staged.iter().filter(|o| matches!(o, Op::CreateRequirement { .. })).count(), 1);
+    }
+
+    #[test]
+    fn stale_anchor_reworded_statement_resolves_to_the_anchor() {
+        let mut t = session_with_stale_anchor();
+        // The statement was reworded (it subsumes the anchor's) and the old quote no
+        // longer locates: the upsert lands on the anchor's id, updating in place.
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "req:shop-1");
+        assert_eq!(v["updated"], true);
+        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        t.dispatch("done", &json!({"summary": "re-anchored reworded"})).unwrap();
+        assert!(t.done.is_some());
+    }
+
+    #[test]
+    fn update_requirement_reanchors_with_section_and_quote() {
+        let mut t = session_with_stale_anchor();
+        // Re-anchoring needs the pair together, and the quote must locate.
+        let err = t.dispatch("update_requirement", &json!({"id": "req:shop-1", "section": "/shop/cart"})).unwrap_err();
+        assert_eq!(err.rule, "bad-argument");
+        let err2 = t
+            .dispatch("update_requirement", &json!({"id": "req:shop-1", "section": "/shop/cart", "quote": "not in the document"}))
+            .unwrap_err();
+        assert_eq!(err2.rule, "quote-not-found");
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:shop-1", "ears": "The Shopping Cart shall keep items a Customer intends to buy.", "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
         )
         .unwrap();
         t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        t.dispatch("done", &json!({"summary": "re-anchored"})).unwrap();
+        t.dispatch("done", &json!({"summary": "revised and re-anchored"})).unwrap();
         assert!(t.done.is_some());
     }
 }

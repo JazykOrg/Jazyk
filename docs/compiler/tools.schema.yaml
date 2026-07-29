@@ -164,7 +164,8 @@ definitions:
     description: >-
       Request payload of upsert_requirement. The store mints the id; a supplied id is
       ignored. The natural key (section plus punctuation-insensitive statement) makes
-      the call idempotent
+      the call idempotent; a match resolves at stage time and returns the existing id
+      with updated true
     type: object
     required:
       - ears
@@ -194,7 +195,9 @@ definitions:
           $ref: 'graph.json#/definitions/requirementEdge'
     additionalProperties: false
   updateRequirement:
-    description: Request payload of update_requirement
+    description: >-
+      Request payload of update_requirement. section plus quote re-anchor the
+      provenance; the quote must locate verbatim in the section
     type: object
     required:
       - id
@@ -212,6 +215,12 @@ definitions:
         type: array
         items:
           $ref: 'graph.json#/definitions/requirementEdge'
+      section:
+        type: string
+        description: Full section reference the revised statement comes from
+      quote:
+        type: string
+        description: Verbatim text from the section
     additionalProperties: false
   deleteRequirement:
     description: Request payload of delete_requirement

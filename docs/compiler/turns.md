@@ -24,10 +24,26 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   requirements already sourced from each dirty section (so an unchanged statement is a
   no-op, not a re-extraction, and a coverage claim sees what the section already
   yielded), the known entities of the document's neighborhood, coverage states, and
-  stale anchors. Stale anchors are a contract: for each one, either the fact still
+  stale anchors. Stale anchors are a contract, with three outcomes: the fact still
   stands and the turn re-records it with a fresh verbatim quote (the natural key
-  updates it in place), or the fact is gone and the turn deletes it. The `done` gate
-  rejects a turn that leaves a stale anchor untouched.
+  resolves to the anchor and updates it in place), the fact changed and the turn
+  revises it with `update_requirement` carrying the new `ears` plus the new `quote`,
+  or the fact is gone and the turn deletes it. The `done` gate rejects a turn that
+  leaves a stale anchor untouched.
+- `review-requirement`: judge one changed statement against its computed neighbors.
+  The [reconciler](./reconciler.md#waves) picks the neighbors; the turn only judges.
+  The pack shows the changed requirement (`ears`, `quote`, source section) and each
+  neighbor side by side, plus any open diagnostic already tying a pair. The model gives
+  one verdict per neighbor:
+  - duplicate: the same obligation reworded. Delete the worse-sourced one, or report a
+    `duplicate-requirement` info diagnostic when the restatement is intentional
+    cross-document redundancy (both kept).
+  - contradiction: the two statements cannot both hold. Report a `contradiction`
+    diagnostic naming both.
+  - consistent: no action.
+  It also resolves a pair diagnostic whose condition no longer holds. Focused pairwise
+  judgment is deliberate: weak models answer "can these two both hold?" far more
+  reliably than "is this entity coherent?".
 - `review-entity`: judge one entity whose facts changed. The model checks that the
   requirements form a coherent whole, refreshes the `definition`, merges lookalike
   duplicates, deletes requirements that restate a fact another requirement on the

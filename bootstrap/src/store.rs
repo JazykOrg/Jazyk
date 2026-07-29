@@ -33,6 +33,9 @@ pub enum Op {
         entities: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edges: Option<Vec<ReqEdge>>,
+        // A revision may re-anchor its provenance (docs/compiler/tools.md#write-tools).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceRef>,
     },
     DeleteRequirement { id: String, reason: String },
     ReportDiagnostic { id: String, diagnostic: Diagnostic },
@@ -58,6 +61,9 @@ pub struct CommitReport {
     pub skipped: Vec<String>,
     // Final entity ids touched by this commit (for scheduling review turns).
     pub touched_entities: BTreeSet<String>,
+    // Final requirement ids created or whose statement changed (for scheduling
+    // review-requirement pair turns). A quote-only refresh does not qualify.
+    pub changed_requirements: BTreeSet<String>,
 }
 
 // A document that changed, with what a reconcile turn needs to know.
@@ -322,6 +328,82 @@ impl Store {
             .collect()
     }
 
+    // Content tokens of a statement: normalized tokens minus stop words and the given
+    // entities' own name tokens, reduced to crude stems so "reverses" meets "reverse"
+    // and "sorting" meets "sort". Feeds requirement_neighbors.
+    fn content_tokens(&self, ears: &str, entities: &[String]) -> BTreeSet<String> {
+        const STOP: [&str; 30] = [
+            "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or", "and", "if", "with",
+            "by", "it", "its", "when", "then", "that", "which", "this", "system", "not", "no", "only", "all", "each",
+        ];
+        let stem = |t: &str| -> String {
+            for suffix in ["ing", "ed", "s"] {
+                if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
+                    return t[..t.len() - suffix.len()].to_string();
+                }
+            }
+            t.to_string()
+        };
+        let mut name_toks: BTreeSet<String> = BTreeSet::new();
+        for e in entities {
+            if let Some(ent) = self.graph.entities.get(self.resolve_id(e)) {
+                for n in std::iter::once(&ent.name).chain(ent.aliases.iter()) {
+                    for t in normalize_statement(n).split(' ') {
+                        name_toks.insert(stem(t));
+                    }
+                }
+            }
+        }
+        normalize_statement(ears)
+            .split(' ')
+            .filter(|t| !STOP.contains(t))
+            .map(|t| stem(t))
+            .filter(|t| !name_toks.contains(t))
+            .collect()
+    }
+
+    // Deterministic neighbor set for one requirement: other requirements sharing an
+    // entity, scored by overlapping content tokens, at least two shared, best six.
+    // Feeds the review-requirement pair wave (docs/compiler/reconciler.md#waves).
+    pub fn requirement_neighbors(&self, rid: &str) -> Vec<String> {
+        let Some(req) = self.graph.requirements.get(rid) else { return Vec::new() };
+        let subject_entities: BTreeSet<&str> = req.entities.iter().map(|e| self.resolve_id(e)).collect();
+        let toks = self.content_tokens(&req.ears, &req.entities);
+        let mut scored: Vec<(usize, &String)> = Vec::new();
+        for (oid, other) in &self.graph.requirements {
+            if oid == rid || !other.entities.iter().any(|e| subject_entities.contains(self.resolve_id(e))) {
+                continue;
+            }
+            let shared = self.content_tokens(&other.ears, &other.entities).intersection(&toks).count();
+            if shared >= 2 {
+                scored.push((shared, oid));
+            }
+        }
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
+        scored.into_iter().take(6).map(|(_, id)| id.clone()).collect()
+    }
+
+    // The pair-review set: computed neighbors plus sticky partners. Open contradiction
+    // and duplicate-requirement diagnostics tie pairs; editing one side of a known pair
+    // always re-judges the other.
+    pub fn pair_review_neighbors(&self, rid: &str) -> Vec<String> {
+        let mut nbrs = self.requirement_neighbors(rid);
+        for d in self.graph.diagnostics.values() {
+            if d.lifecycle != "open" || !(d.rule == "contradiction" || d.rule == "duplicate-requirement") {
+                continue;
+            }
+            if !d.subjects.iter().any(|s| s == rid) {
+                continue;
+            }
+            for sub in &d.subjects {
+                if sub != rid && self.graph.requirements.contains_key(sub) && !nbrs.contains(sub) {
+                    nbrs.push(sub.clone());
+                }
+            }
+        }
+        nbrs
+    }
+
     // ---- commit ----
 
     // Apply a staged changeset atomically: reconcile creates by natural key against nodes
@@ -333,6 +415,7 @@ impl Store {
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut touched: BTreeSet<String> = BTreeSet::new();
+        let mut changed_reqs: BTreeSet<String> = BTreeSet::new();
         let mut applied: Vec<Op> = Vec::new();
 
         let resolve = |remap: &BTreeMap<String, String>, store: &Store, id: &str| -> String {
@@ -504,8 +587,12 @@ impl Store {
                     // never a duplicate; a lightly reworded statement refreshes in place.
                     // A re-extraction from the same source sentence whose statement
                     // subsumes (or is subsumed by) the existing one is the same fact
-                    // reworded and also refreshes in place.
-                    if let Some(existing) = self
+                    // reworded and also refreshes in place. A create staged under an
+                    // existing id whose statement subsumes the incoming one in the same
+                    // section is the stage-time resolution of a stale anchor: it folds
+                    // into that id (an accidental id race with a different statement
+                    // still re-mints below).
+                    let fold_target = self
                         .graph
                         .requirements
                         .iter()
@@ -518,7 +605,15 @@ impl Store {
                                         && statement_subsumes(&r.ears, &requirement.ears)))
                         })
                         .map(|(rid, _)| rid.clone())
-                    {
+                        .or_else(|| {
+                            self.graph.requirements.get(&id).and_then(|r| {
+                                (r.source.doc == requirement.source.doc
+                                    && r.source.section == requirement.source.section
+                                    && statement_subsumes(&r.ears, &requirement.ears))
+                                .then(|| id.clone())
+                            })
+                        });
+                    if let Some(existing) = fold_target {
                         remap.insert(id, existing.clone());
                         let r = self.graph.requirements.get_mut(&existing).unwrap();
                         for e in &requirement.entities {
@@ -532,15 +627,36 @@ impl Store {
                             }
                         }
                         // The matched statement's ears and quote refresh in place (same
-                        // statement modulo punctuation); the id never churns.
+                        // statement modulo punctuation); the id never churns. A refresh
+                        // that changes something is journaled as the update it is.
+                        let mut refreshed_ears: Option<String> = None;
+                        let mut refreshed_source: Option<SourceRef> = None;
                         if r.ears != requirement.ears {
                             r.ears = requirement.ears.clone();
+                            refreshed_ears = Some(requirement.ears.clone());
+                            changed_reqs.insert(existing.clone());
                         }
                         if r.source.quote != requirement.source.quote {
+                            // A quote that changed in substance (not punctuation) means
+                            // the document text under the statement changed: revised,
+                            // even when the turn kept the old wording.
+                            if normalize_statement(&r.source.quote) != normalize_statement(&requirement.source.quote) {
+                                changed_reqs.insert(existing.clone());
+                            }
                             r.source = requirement.source.clone();
+                            refreshed_source = Some(requirement.source.clone());
                         }
                         r.updated = Some(build.clone());
                         touched.extend(r.entities.iter().cloned());
+                        if refreshed_ears.is_some() || refreshed_source.is_some() {
+                            applied.push(Op::UpdateRequirement {
+                                id: existing,
+                                ears: refreshed_ears,
+                                entities: None,
+                                edges: None,
+                                source: refreshed_source,
+                            });
+                        }
                         continue;
                     }
                     requirement.created = Some(build.clone());
@@ -553,6 +669,7 @@ impl Store {
                         remap.insert(id, final_id.clone());
                     }
                     touched.extend(requirement.entities.iter().cloned());
+                    changed_reqs.insert(final_id.clone());
                     // A committed requirement adds its source as a mention on every entity
                     // it references, so reuse accumulates cross-document presence.
                     for e in &requirement.entities {
@@ -566,13 +683,16 @@ impl Store {
                     applied.push(Op::CreateRequirement { id: final_id.clone(), requirement: requirement.clone() });
                     self.graph.requirements.insert(final_id, requirement);
                 }
-                Op::UpdateRequirement { id, ears, entities, edges } => {
+                Op::UpdateRequirement { id, ears, entities, edges, source } => {
                     let rid = resolve(&remap, self, &id);
                     let resolved_entities = entities
                         .map(|es| es.iter().map(|e| resolve(&remap, self, e)).collect::<Vec<_>>());
                     match self.graph.requirements.get_mut(&rid) {
                         Some(r) => {
                             if let Some(e) = &ears {
+                                if r.ears != *e {
+                                    changed_reqs.insert(rid.clone());
+                                }
                                 r.ears = e.clone();
                             }
                             if let Some(es) = &resolved_entities {
@@ -581,9 +701,17 @@ impl Store {
                             if let Some(ed) = &edges {
                                 r.edges = ed.clone();
                             }
+                            if let Some(s) = &source {
+                                // Same rule as the create fold: a re-anchored quote that
+                                // changed in substance marks the statement revised.
+                                if normalize_statement(&r.source.quote) != normalize_statement(&s.quote) {
+                                    changed_reqs.insert(rid.clone());
+                                }
+                                r.source = s.clone();
+                            }
                             r.updated = Some(build.clone());
                             touched.extend(r.entities.iter().cloned());
-                            applied.push(Op::UpdateRequirement { id: rid, ears, entities: resolved_entities, edges });
+                            applied.push(Op::UpdateRequirement { id: rid, ears, entities: resolved_entities, edges, source });
                         }
                         None => skipped.push(format!("update_requirement: unknown id {}", rid)),
                     }
@@ -601,13 +729,18 @@ impl Store {
                 Op::ReportDiagnostic { id, mut diagnostic } => {
                     diagnostic.subjects = diagnostic.subjects.iter().map(|s| resolve(&remap, self, s)).collect();
                     // Sticky: an open diagnostic with the same rule and subjects is updated,
-                    // not duplicated. Human triage is never touched.
+                    // not duplicated. Subject order does not matter: a pair reported from
+                    // either endpoint is the same finding. Human triage is never touched.
+                    let subject_set = |v: &[String]| -> BTreeSet<String> { v.iter().cloned().collect() };
+                    let incoming_subjects = subject_set(&diagnostic.subjects);
                     let existing = self
                         .graph
                         .diagnostics
                         .iter()
                         .find(|(_, d)| {
-                            d.rule == diagnostic.rule && d.lifecycle == "open" && d.subjects == diagnostic.subjects
+                            d.rule == diagnostic.rule
+                                && d.lifecycle == "open"
+                                && subject_set(&d.subjects) == incoming_subjects
                         })
                         .map(|(id, _)| id.clone());
                     match existing {
@@ -690,7 +823,7 @@ impl Store {
             &entry,
         );
         self.save();
-        CommitReport { applied: applied.len(), skipped, touched_entities: touched }
+        CommitReport { applied: applied.len(), skipped, touched_entities: touched, changed_requirements: changed_reqs }
     }
 
     // Relationships are a materialized view over requirements: group requirement edges by
@@ -1275,5 +1408,59 @@ mod tests {
         assert_eq!(hits[0].0, "ent:shopping-cart");
         let hits2 = s.search("credit card");
         assert_eq!(hits2[0].0, "ent:card");
+    }
+
+    #[test]
+    fn create_under_existing_id_folds_in_place_and_reports_change() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
+        s.graph.requirements.insert("req:t-1".into(), Requirement {
+            ears: "The Cart shall hold items a Customer intends to buy.".into(), entities: vec!["ent:cart".into()], edges: vec![],
+            source: mention("t.md", "/t", "holds items a Customer intends to buy"), confidence: None, reasoning: None, created: None, updated: None,
+        });
+        // Stage-time resolution staged a create under the anchor's id with a reworded,
+        // subsuming statement and a fresh quote; commit folds it in place.
+        let report = s.apply(vec![Op::CreateRequirement { id: "req:t-1".into(), requirement: Requirement {
+            ears: "The Cart shall hold items.".into(), entities: vec!["ent:cart".into()], edges: vec![],
+            source: mention("t.md", "/t", "keeps items"), confidence: None, reasoning: None, created: None, updated: None,
+        }}], &wi(), 1, 10);
+        assert_eq!(s.graph.requirements.len(), 1);
+        let r = &s.graph.requirements["req:t-1"];
+        assert_eq!(r.ears, "The Cart shall hold items.");
+        assert_eq!(r.source.quote, "keeps items");
+        assert!(report.changed_requirements.contains("req:t-1"), "{:?}", report.changed_requirements);
+    }
+
+    #[test]
+    fn requirement_neighbors_find_the_topic_cluster() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:util".into(), Entity { name: "Sorting Algorithm CLI Utility".into(), ..Default::default() });
+        let mk = |ears: &str| Requirement {
+            ears: ears.into(), entities: vec!["ent:util".into()], edges: vec![],
+            source: mention("m.md", "/m", "q"), confidence: None, reasoning: None, created: None, updated: None,
+        };
+        // The example-sort failure: three statements about reverse-order sorting were
+        // never put side by side. Stemmed content-token overlap pairs them.
+        s.graph.requirements.insert("req:m-2".into(), mk("The system shall allow the -r argument, which reverses sorting order to descending."));
+        s.graph.requirements.insert("req:m-3".into(), mk("The Sorting Algorithm CLI Utility shall keep track of reverse order with `-r`."));
+        s.graph.requirements.insert("req:m-5".into(), mk("The Sorting Algorithm CLI Utility shall strip out whitespace before and after the current line."));
+        s.graph.requirements.insert("req:m-8".into(), mk("The Sorting Algorithm CLI Utility shall sort lines descending, or ascending if reverse order is set."));
+        let n = s.requirement_neighbors("req:m-8");
+        assert!(n.contains(&"req:m-2".to_string()), "{:?}", n);
+        assert!(n.contains(&"req:m-3".to_string()), "{:?}", n);
+        assert!(!n.contains(&"req:m-5".to_string()), "{:?}", n);
+    }
+
+    #[test]
+    fn pair_diagnostic_sticky_regardless_of_subject_order() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        let d = |subjects: Vec<String>| Diagnostic {
+            rule: "contradiction".into(), severity: "warning".into(), subjects, message: "conflict".into(),
+            reasoning: None, lifecycle: "open".into(), triage: None, created: None, updated: None,
+        };
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:a".into(), "req:b".into()]) }], &wi(), 1, 1);
+        // The same pair reported from the other endpoint updates the finding in place.
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:b".into(), "req:a".into()]) }], &wi(), 1, 1);
+        assert_eq!(s.graph.diagnostics.len(), 1);
     }
 }

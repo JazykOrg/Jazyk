@@ -40,19 +40,28 @@ clever ones.
   redirect. See [mutations](./graph.md#mutations).
 - `upsert_requirement({ears, entities, section, quote, edges?})`: the store mints the
   id; any id supplied is ignored. Idempotency comes from the natural key (the source
-  section plus the punctuation-insensitive statement text), so a retried or lightly
-  reworded statement updates in place, refreshing its `ears` and `quote`, never minting
-  a duplicate. A statement re-extracted from the same source sentence whose content
+  section plus the punctuation-insensitive statement text), resolved the moment the
+  call is staged, against the store and the turn's own staged statements alike. A match
+  returns the existing id with `updated: true` and refreshes its `ears` and `quote` in
+  place, never minting a duplicate; the model sees the resolution, not a misleading
+  fresh id. A statement re-extracted from the same source sentence whose content
   subsumes or is subsumed by the existing statement is the same fact reworded: it also
-  updates in place. A sentence carrying several atomic facts is unaffected, since those
-  statements are not subsets of each other. `edges` name entity pairs the statement ties together, with an optional
+  updates in place. A stale anchor in the same section whose statement subsumes or is
+  subsumed by the new statement resolves the same way, so re-recording a reworded
+  statement lands on the anchor's id. A sentence carrying several atomic facts is
+  unaffected, since those statements are not subsets of each other. Parallel turns can
+  still stage the same key concurrently; the store reconciles survivors at commit.
+  `edges` name entity pairs the statement ties together, with an optional
   [relationship type](./model/relationship.md). Real revisions go through
   `update_requirement`.
-- `update_requirement({id, ears?, entities?, edges?})`.
+- `update_requirement({id, ears?, entities?, edges?, section?, quote?})`: a revision
+  keeps the id. `section` plus `quote` re-anchor the provenance; the quote must locate
+  verbatim in the section. This is the path for a stale anchor whose statement changed
+  meaning: new `ears`, new `quote`, same id.
 - `delete_requirement({id, reason})`.
 - `report_diagnostic({rule, severity, subjects, message, reasoning})`. `rule` is one of
-  the review rules: `contradiction`, `duplicate-entity`, `missing-link`, `ambiguity`, or
-  `lint` for violations of the project's own
+  the review rules: `contradiction`, `duplicate-entity`, `duplicate-requirement`,
+  `missing-link`, `ambiguity`, or `lint` for violations of the project's own
   [lint rules](./project-settings.md). Free-form rule names are rejected, so
   findings stay comparable across builds.
 - `resolve_diagnostic({id, reason})`.
@@ -141,6 +150,9 @@ Turns see subsets, not the whole catalog:
 - `reconcile-doc`: `context`, `expand`, `search`, `read_section`, `upsert_entity`,
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,
   `delete_requirement`, `set_coverage`, `done`.
+- `review-requirement`: `context`, `expand`, `search`, `get_entity`, `read_section`,
+  `update_requirement`, `delete_requirement`, `report_diagnostic`,
+  `resolve_diagnostic`, `done`.
 - `review-entity`: `context`, `expand`, `search`, `get_entity`, `update_entity`,
   `merge_entities`, `update_requirement` (a review adds missing `edges` when
   requirements tie entities structurally), `delete_requirement`, `report_diagnostic`,

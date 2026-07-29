@@ -13,7 +13,7 @@ When invoked, `sort` allows the following CLI args:
 
 ## Execution
 
-Pseudo code:
+This is pseudo code:
 
 ```Pseudo
 Read CLI arguments, keep track of:
@@ -23,6 +23,6 @@ Read in from STDIN line by line:
     For current line, strip out whitespace before and after
     If stripped line is empty string, continue to next line
     Add stripped line to lines
-Sort lines ascending or descending if reverse order
+Sort lines descending. Or ascending if reverse order
 Print all sorted lines delimited by newline
 ```

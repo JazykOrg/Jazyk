@@ -55,6 +55,24 @@ non-convergence, incremental cross-contamination, local model unable to complete
   parallel, so judgments see their neighbors' merges (docs/compiler/reconciler.md#waves).
 - `report_diagnostic` accepts only the cataloged review rules; free-form rule names were
   producing incomparable findings (docs/compiler/tools.md#write-tools).
+- Stage-time natural-key resolution for `upsert_requirement`: the example-sort stale
+  anchor turn burned 3 rounds because the tool answered `created: true` with a fresh id
+  while the commit fold silently landed the statement on the anchor. The model now sees
+  the resolved id (`updated: true`) the moment it stages, an identical repeated call is
+  idempotent within the turn, and `update_requirement` can re-anchor provenance with
+  `section` plus `quote` (docs/compiler/tools.md#write-tools).
+- Requirement-level dirty propagation: the example-sort planted flip (execution pseudo
+  code contradicting the `-r` description) survived a full build because dirtiness was
+  section-granular and review entity-granular; nothing ever put the two statements side
+  by side. A pair-review wave now schedules `review-requirement` turns for every
+  created or revised statement (revised includes a quote that changed in substance)
+  against deterministically computed neighbors, with sticky re-review of open
+  contradiction and duplicate pairs (docs/compiler/reconciler.md#waves). Validated on
+  example-sort: the wave selected exactly `req:main-js-2` and `req:main-js-3` as
+  neighbors of the changed `req:main-js-8`; `qwen3:4b-instruct` reported the planted
+  contradiction with the right subjects at severity error and repaired the drifted
+  ears, while `gemma4:e4b-mlx` rubber-stamped the same pack (consistent with the
+  benchmark's judgment gating).
 
 ## Known weaknesses (open)
 

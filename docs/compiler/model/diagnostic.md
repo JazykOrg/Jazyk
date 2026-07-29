@@ -42,10 +42,10 @@ checks alike.
 | coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | review turns | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | review turns | `duplicate-entity` | warning | two entities that look like one concept |
+| review turns, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
 | review turns | `missing-link` | warning | a concept the documents rely on but never define |
 | review turns | `ambiguity` | info, warning, or error | a statement open to more than one reading |
 | [checks](../reconciler.md#waves) | `unused-entity` | warning | an entity no requirement references |
-| checks | `duplicate-requirement` | warning or info | warning: one source sentence extracted twice; info: the same fact intentionally restated in different documents (both kept) |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |
 | checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
 | checks | `empty-file` | warning | a matched file with no content |

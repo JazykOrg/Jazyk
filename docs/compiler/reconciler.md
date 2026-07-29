@@ -48,6 +48,26 @@ A build runs in waves:
   unprocessed, or requirements whose `quote` no longer locates, re-enqueue once.
   Coverage outranks review when the budget is tight; a fix-up that no longer fits the
   turn budget parks instead of vanishing, so the verdict stays honest.
+- Pair review: `review-requirement` turns for every requirement the ingest and fix-up
+  commits created or revised. Revised means the `ears` changed, or the source `quote`
+  changed in substance (normalized text, not punctuation): the document text under a
+  statement changing is exactly the case where the statement must be re-judged, even
+  when a turn kept the old wording. Dirtiness propagates from sections to
+  requirements: a changed statement must be re-judged against the statements it
+  overlaps, not just re-extracted. For each changed requirement the reconciler computes a neighbor set
+  deterministically:
+  - candidates are requirements sharing an entity with it,
+  - each is scored by overlapping content tokens: statement tokens minus stop words
+    and the shared entities' own name tokens, reduced to crude stems, so "reverses"
+    meets "reverse" and "sorting" meets "sort",
+  - neighbors sharing at least two content tokens qualify, best six by score.
+  Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a
+  changed requirement also re-enqueues every partner such a diagnostic ties it to, so
+  editing one side of a known pair always re-judges the other. A changed requirement
+  with no neighbors and no sticky partner schedules nothing. The turn shows each pair
+  side by side and requires one verdict per neighbor (duplicate, contradiction, or
+  consistent); see [turns](./turns.md#task-types). Neighbor selection is the
+  reconciler's, never the model's.
 - Review: `review-entity` turns for every entity whose fact set changed. Entities that
   share requirements or relationships form one review group; groups run in parallel,
   entities within a group run in order, so a judgment sees the merges and diagnostics of

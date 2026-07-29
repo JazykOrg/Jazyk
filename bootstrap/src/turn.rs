@@ -355,6 +355,26 @@ Rules:
 - A tool error names what was wrong and how to repair the call; fix it and continue.
 - Staging nothing is a correct outcome. If the graph already reflects the sections (the pack lists what each section already yielded), set coverage and finish. Prefer a no-op over cosmetic rewording of existing definitions or statements; stability of the graph across builds matters more than polish. Stage only what the document supports."#;
 
+const REVIEW_REQ_SYSTEM: &str = r#"You are the pair-review turn of jazyk, a natural language compiler. Your job: judge ONE changed requirement against each of its neighbor statements, by calling tools.
+
+The pack shows the changed requirement and its neighbors, each with its statement (ears), verbatim source quote, and source section. The neighbors were selected deterministically because they overlap this requirement; judge every one of them.
+
+For EACH neighbor give exactly one verdict:
+- duplicate: the same obligation reworded. When both quote the same document, delete the worse-sourced one with delete_requirement (keep the one whose quote states the obligation directly). When they quote different documents, the redundancy is intentional: report_diagnostic rule duplicate-requirement, severity info, subjects both ids, message saying both are kept.
+- contradiction: the two cannot both hold, in their statements or in their source quotes (opposite defaults, opposite behavior for the same condition, incompatible values). report_diagnostic rule contradiction, subjects both ids, message quoting the conflicting claims. Severity error when no reading lets both hold, warning otherwise.
+- consistent: both can hold and they state different facts. No action, no diagnostic.
+
+Ground each verdict in the quotes as much as the ears statements: the quote is the document's own text. If the changed requirement's ears no longer says what its quote says, first repair the ears with update_requirement, then judge the pairs against the repaired statement.
+
+Then:
+- If an open diagnostic listed in the pack no longer holds, resolve it with resolve_diagnostic.
+- Call done with a one-line summary naming the verdict per neighbor.
+
+Rules:
+- Judge only the pairs shown. Use read_section or get_entity only when a quote alone cannot settle a verdict.
+- A duplicate is the same obligation, not the same topic. Two statements about the same flag that impose different behavior contradict, they do not duplicate.
+- If every pair is consistent, call done immediately with no mutations."#;
+
 const REVIEW_SYSTEM: &str = r#"You are the review turn of jazyk, a natural language compiler. Your job: judge one entity whose facts changed, by calling tools.
 
 Work in this order:
@@ -454,6 +474,50 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                 }
             }
         }
+    }
+    s
+}
+
+// The pair-review pack: the changed requirement and its neighbors side by side. The
+// neighbor set is recomputed here with the same deterministic function the reconciler
+// used to schedule the turn (docs/compiler/reconciler.md#waves).
+fn review_requirement_pack(store: &Store, rid: &str) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("# Work item: review changed requirement {} against its neighbors\n", rid));
+    let fmt = |id: &str, r: &crate::model::Requirement| {
+        format!(
+            "- {}\n  ears: {}\n  quote: \"{}\"\n  section: {}#{}\n",
+            id,
+            r.ears,
+            r.source.quote,
+            r.source.doc,
+            r.source.section
+        )
+    };
+    if let Some(r) = store.graph.requirements.get(rid) {
+        s.push_str("\n## The changed requirement\n");
+        s.push_str(&fmt(rid, r));
+    }
+    let neighbors = store.pair_review_neighbors(rid);
+    if !neighbors.is_empty() {
+        s.push_str("\n## Neighbors (one verdict each: duplicate, contradiction, or consistent)\n");
+        for n in &neighbors {
+            if let Some(r) = store.graph.requirements.get(n) {
+                s.push_str(&fmt(n, r));
+            }
+        }
+    }
+    let open: Vec<String> = store
+        .graph
+        .diagnostics
+        .iter()
+        .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|x| x == rid))
+        .map(|(id, d)| format!("- {} ({}, {}): {}", id, d.rule, d.severity, d.message))
+        .collect();
+    if !open.is_empty() {
+        s.push_str("\n## Open diagnostics naming this requirement (resolve any that no longer hold)\n");
+        s.push_str(&open.join("\n"));
+        s.push('\n');
     }
     s
 }
@@ -569,6 +633,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
     };
     let (system, pack) = match item.task.as_str() {
         "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(&snapshot, item, limits.context_budget)),
+        "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(&snapshot, &item.target)),
         _ => (REVIEW_SYSTEM, review_pack(&snapshot, &item.target, limits.context_budget, lint)),
     };
     let names = toolset(&item.task);

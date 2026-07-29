@@ -99,9 +99,10 @@ fn run_wave(
     lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     trace: &Trace,
-) -> (usize, BTreeSet<String>, Vec<WorkItem>) {
+) -> (usize, BTreeSet<String>, BTreeSet<String>, Vec<WorkItem>) {
     let applied = Mutex::new(0usize);
     let touched = Mutex::new(BTreeSet::new());
+    let changed = Mutex::new(BTreeSet::new());
     let parked = Mutex::new(Vec::new());
     parallel::par_map(items, workers(), |_, item| {
         // Best-effort cancellation: an unstarted item parks; the next build resumes it.
@@ -130,6 +131,7 @@ fn run_wave(
                     }
                     *applied.lock().unwrap() += report.applied;
                     touched.lock().unwrap().extend(report.touched_entities);
+                    changed.lock().unwrap().extend(report.changed_requirements);
                     return;
                 }
                 Some(e) => {
@@ -146,6 +148,7 @@ fn run_wave(
     (
         applied.into_inner().unwrap(),
         touched.into_inner().unwrap(),
+        changed.into_inner().unwrap(),
         parked.into_inner().unwrap(),
     )
 }
@@ -505,6 +508,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let mut turns = 0u32;
     let mut applied_total = 0usize;
     let mut touched_all: BTreeSet<String> = BTreeSet::new();
+    let mut changed_all: BTreeSet<String> = BTreeSet::new();
     let mut parked_all: Vec<WorkItem> = Vec::new();
     let budget_cap = proj.limits.build_turn_factor as usize * (total_dirty + previously_parked.len()).max(1) + 8;
 
@@ -542,9 +546,10 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             continue;
         }
         turns += level_items.len() as u32;
-        let (applied, touched, parked) = run_wave(&store, llm, &level_items, &proj.limits, &proj.linting, &gs, trace);
+        let (applied, touched, changed, parked) = run_wave(&store, llm, &level_items, &proj.limits, &proj.linting, &gs, trace);
         applied_total += applied;
         touched_all.extend(touched);
+        changed_all.extend(changed);
         parked_all.extend(parked);
     }
 
@@ -615,7 +620,47 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         } else {
             trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
             turns += fixup.len() as u32;
-            let (applied, touched, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, &gs, trace);
+            let (applied, touched, changed, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, &gs, trace);
+            applied_total += applied;
+            touched_all.extend(touched);
+            changed_all.extend(changed);
+            parked_all.extend(parked);
+            let mut s = store.lock().unwrap();
+            s.gc();
+        }
+    }
+
+    // Pair-review wave: dirtiness propagates from sections to requirements. Every
+    // requirement the ingest and fix-up commits created or revised is re-judged
+    // against its computed neighbors and sticky partners. A changed requirement
+    // with neither schedules nothing. Mirrors docs/compiler/reconciler.md#waves.
+    let mut pair_targets: BTreeSet<String> = changed_all.clone();
+    for p in &previously_parked {
+        if p.task == "review-requirement" {
+            pair_targets.insert(p.target.clone());
+        }
+    }
+    let pair_items: Vec<WorkItem> = {
+        let s = store.lock().unwrap();
+        pair_targets
+            .iter()
+            .filter(|rid| s.graph.requirements.contains_key(*rid))
+            .filter(|rid| !s.pair_review_neighbors(rid).is_empty())
+            .map(|rid| WorkItem {
+                task: "review-requirement".into(),
+                target: rid.clone(),
+                dirty_sections: vec![],
+                stale_anchors: vec![],
+            })
+            .collect()
+    };
+    if !pair_items.is_empty() {
+        if (turns as usize) + pair_items.len() > budget_cap || trace.is_cancelled() {
+            parked_all.extend(pair_items);
+        } else {
+            trace.line("reconcile", &format!("pair review: {} changed requirement(s)", pair_items.len()));
+            turns += pair_items.len() as u32;
+            let (applied, touched, _changed, parked) = run_wave(&store, llm, &pair_items, &proj.limits, &proj.linting, &gs, trace);
             applied_total += applied;
             touched_all.extend(touched);
             parked_all.extend(parked);
@@ -674,7 +719,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     dirty_sections: vec![],
                     stale_anchors: vec![],
                 };
-                let (a, _t, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, &gs, trace);
+                let (a, _t, _c, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, &gs, trace);
                 *applied.lock().unwrap() += a;
                 parked.lock().unwrap().extend(p);
             }

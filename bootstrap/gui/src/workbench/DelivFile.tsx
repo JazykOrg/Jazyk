@@ -6,16 +6,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import * as monaco from 'monaco-editor'
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
+import '../ide/monaco-env'
 import { get, type DelivOwners } from '../lib/api'
 import { useDelivBaseline, useMatrix } from '../lib/queries'
 import { useInspector } from '../lib/nav'
 import { lineMarks } from '../lib/diff'
 import '../routes/routes.css'
-
-// The editor chunk may evaluate before MonacoHost's; both set the same worker.
-const env = self as unknown as { MonacoEnvironment?: monaco.Environment }
-if (!env.MonacoEnvironment) env.MonacoEnvironment = { getWorker: () => new EditorWorker() }
 
 // A resolved site from the ledger: located against the current text (line is null
 // when lost), never parsed out of the file itself.

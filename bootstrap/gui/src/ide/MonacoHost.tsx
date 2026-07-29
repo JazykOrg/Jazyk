@@ -3,17 +3,10 @@
 // 0-based positions and monaco 1-based ones.
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import * as monaco from 'monaco-editor'
-// Inline the worker as a blob: Firefox refuses cross-context worker URLs from the
-// bundled chunk (it mangles the base to https://[ff00::]/), and the main-thread
-// fallback stutters on large docs.
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker&inline'
+import './monaco-env'
 import type { DocRecord } from '../lib/api'
 import { lineMarks } from '../lib/diff'
 import type { LspClient, LspCodeLens, LspDiagnostic, LspDocumentLink, LspRange } from './lsp-client'
-
-;(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
-}
 
 export function docUri(root: string, path: string): string {
   return `file://${root}/${path}`

@@ -58,9 +58,14 @@ export function docHref(doc: string, section?: string, quote?: string): string {
   return `/files/docs/${doc}${qs ? `?${qs}` : ''}`
 }
 
-export function delivHref(path: string, site?: string): string {
-  const qs = site ? `?site=${encodeURIComponent(site)}` : ''
-  return `/files/deliverable/${path}${qs}`
+// `?site=` reveals a requirement's first located site, `?line=` a line directly
+// (docs/frontends/gui.md#layout).
+export function delivHref(path: string, site?: string, line?: number): string {
+  const params = new URLSearchParams()
+  if (site) params.set('site', site)
+  if (line !== undefined) params.set('line', String(line))
+  const qs = params.toString()
+  return `/files/deliverable/${path}${qs ? `?${qs}` : ''}`
 }
 
 export function useOpenActivity(): (run?: string) => void {

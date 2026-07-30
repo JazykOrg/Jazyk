@@ -408,23 +408,135 @@ impl Lsp {
         }
         // No entity under the cursor: a requirement's quote, maybe.
         if let Some((rid, r)) = self.requirement_at(&doc, line, ch) {
-            let vmap = crate::verify::status_map(&self.store, &self.gen);
-            let mut value = format!("`{}`\n\n{}", rid, r.ears);
-            if let Some(v) = vmap.get(&rid) {
-                value.push_str(&format!("\n\n---\nverification: `{}`", v["status"].as_str().unwrap_or("missing")));
-                if let Some(name) = v["name"].as_str() {
-                    value.push_str(&format!(" by `{}` ({})", name, v["kind"].as_str().unwrap_or("?")));
-                }
-                if let Some(t) = v["lastRun"].as_str() {
-                    value.push_str(&format!(", last run {}", t));
-                }
-                if let Some(ev) = v["evidence"].as_str() {
-                    value.push_str(&format!("\n\n> {}", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
-                }
+            let value = self.requirement_card(&rid, r);
+            let mut hover = json!({ "contents": { "kind": "markdown", "value": value } });
+            // The hover range is the located quote, so the whole statement highlights.
+            if let Some(q) = md::locate(&self.doc_text(&doc), &r.source.quote) {
+                hover["range"] = self.range(q);
             }
-            return json!({ "contents": { "kind": "markdown", "value": value } });
+            return hover;
         }
         Value::Null
+    }
+
+    // The requirement card: the requirement, the code, and the test, each linked, with
+    // the derived verification status. Links are absolute `file://` URIs with an
+    // `#L<line>` fragment so any client navigates; the requirement link carries the id
+    // as `?req=` for clients that route to the node itself.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn requirement_card(&self, rid: &str, r: &crate::model::Requirement) -> String {
+        let ledger = crate::gen::Ledger::load(&self.out);
+        let row = ledger.requirements.get(rid);
+        let (status, reason) = match row {
+            Some(row) => crate::verify::status_of(&self.store, rid, row, &self.gen),
+            None => ("missing".to_string(), "not-generated".to_string()),
+        };
+        let mut s = format!("**`{}`** · {} {}\n\n{}\n\n", rid, status_glyph(&status), status, r.ears);
+        if let Some(link) = self.docsgen_link(rid, r) {
+            s.push_str(&format!("[the requirement →]({})\n\n", link));
+        }
+        s.push_str("---\n\n");
+
+        // The code: anchored sites first, each relocated against the file as it stands,
+        // then manifest files that carry no site.
+        let mut code: Vec<String> = Vec::new();
+        if let Some(row) = row {
+            let mut anchored: BTreeSet<&str> = BTreeSet::new();
+            for site in &row.sites {
+                anchored.insert(site.file.as_str());
+                let abs = self.gen.deliverable.join(&site.file);
+                let text = std::fs::read_to_string(&abs).unwrap_or_default();
+                match crate::gen::locate_head(&text, &site.head, site.line) {
+                    Some((l, exact)) => code.push(format!(
+                        "- [`{}:{}`]({}#L{}){}",
+                        site.file,
+                        l,
+                        path_to_uri(&abs),
+                        l,
+                        if exact { "" } else { " · moved" }
+                    )),
+                    None => code.push(format!(
+                        "- [`{}`]({}) · site lost",
+                        site.file,
+                        path_to_uri(&abs)
+                    )),
+                }
+            }
+            for f in &row.files {
+                if anchored.contains(f.as_str()) {
+                    continue;
+                }
+                let abs = self.gen.deliverable.join(f);
+                code.push(format!("- [`{}`]({})", f, path_to_uri(&abs)));
+            }
+        }
+        if code.is_empty() {
+            s.push_str("**code** · not generated\n\n");
+        } else {
+            s.push_str("**code**\n\n");
+            s.push_str(&code.join("\n"));
+            s.push_str("\n\n");
+        }
+
+        // The test: the artifact at the line its name sits on, then the status.
+        s.push_str("---\n\n");
+        let Some(row) = row else {
+            s.push_str("**test** · not generated\n");
+            return s;
+        };
+        let t = &row.test;
+        let artifact = crate::gen::artifact_path(&self.out, &self.gen, t);
+        let label = if t.label == t.kind { t.kind.clone() } else { format!("{} · {}", t.kind, t.label) };
+        s.push_str(&format!("**test** · {}\n\n", label));
+        let line = if t.name.is_empty() {
+            None
+        } else {
+            std::fs::read_to_string(&artifact)
+                .ok()
+                .and_then(|text| text.lines().position(|l| l.contains(&t.name)).map(|i| i + 1))
+        };
+        // An llm test's criteria are metadata under the out directory, not part of the
+        // product: the link carries the id, so a client with no page for the artifact
+        // lands on the requirement's verification detail instead.
+        let target = if t.kind == "llm" {
+            format!("{}?req={}", path_to_uri(&artifact), rid)
+        } else {
+            path_to_uri(&artifact)
+        };
+        match line {
+            Some(l) => s.push_str(&format!(
+                "- [`{}:{}`]({}#L{}) · `{}`\n",
+                t.artifact, l, target, l, t.name
+            )),
+            None => s.push_str(&format!(
+                "- [`{}`]({}){}\n",
+                t.artifact,
+                target,
+                if artifact.exists() { "" } else { " · artifact gone" }
+            )),
+        }
+        s.push_str(&format!("- {} {} · {}", status_glyph(&status), status, reason));
+        if let Some(last) = &row.last_run {
+            s.push_str(&format!(" · last run {}", last));
+        }
+        s.push('\n');
+        s.push_str(&format!("- run `{}`\n", t.run));
+        if let Some(ev) = &row.evidence {
+            s.push_str(&format!("\n> {}\n", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+        }
+        s
+    }
+
+    // Link to a requirement's heading in its entity's requirements document. None when
+    // the document does not exist, so the card never dangles.
+    fn docsgen_link(&self, rid: &str, r: &crate::model::Requirement) -> Option<String> {
+        let ent = r.entities.first()?;
+        let slug = self.store.resolve_id(ent).strip_prefix("ent:").unwrap_or(ent).to_string();
+        let path = self.out.join("docsgen").join(format!("{}.md", slug));
+        let text = std::fs::read_to_string(&path).ok()?;
+        let heading = format!("### `{}`", rid);
+        let line = text.lines().position(|l| l.trim() == heading).map(|i| i + 1).unwrap_or(1);
+        Some(format!("{}?req={}#L{}", path_to_uri(&path), rid, line))
     }
 
     // The requirement whose located quote contains the position, if any.
@@ -608,6 +720,18 @@ fn uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(percent_decode(rest)))
 }
 
+// One glyph per derived verification status, so the card reads at a glance in clients
+// that render no colour. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
+fn status_glyph(status: &str) -> &'static str {
+    match status {
+        "verified" => "✓",
+        "failing" => "✗",
+        "unverified" => "○",
+        s if s.starts_with("stale") => "↻",
+        _ => "–",
+    }
+}
+
 fn path_to_uri(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     if s.starts_with('/') {
@@ -728,4 +852,124 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
             last_gen = gen_now;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gen::{GenSettings, Ledger, ReqRow, RowHashes, Site, TestRef};
+    use crate::model::{Requirement, SourceRef};
+
+    fn requirement() -> Requirement {
+        Requirement {
+            ears: "The Cart shall hold items.".into(),
+            entities: vec!["ent:cart".into()],
+            edges: vec![],
+            source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds".into() },
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    // The card: the requirement linked to its docsgen heading, the code linked at the
+    // line each site relocates to, and the test linked at its name.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn requirement_card_links_the_requirement_code_and_test() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let root = tmp.join("proj");
+        let out = root.join("jazyk-out");
+        let deliv = tmp.join("product");
+        std::fs::create_dir_all(deliv.join("src")).unwrap();
+        std::fs::create_dir_all(deliv.join("tests")).unwrap();
+        std::fs::create_dir_all(out.join("docsgen")).unwrap();
+        // The site anchored at line 1; an inserted header moved it to line 3.
+        std::fs::write(deliv.join("src/cart.rs"), "// header\n\nfn hold(i: Item) {}\n").unwrap();
+        std::fs::write(deliv.join("tests/cart.rs"), "#[test]\nfn req_shop_1_abcd() {}\n").unwrap();
+        std::fs::write(out.join("docsgen").join("cart.md"), "# Cart\n\n### `req:shop-1`\n").unwrap();
+
+        let mut ledger = Ledger::default();
+        ledger.requirements.insert(
+            "req:shop-1".into(),
+            ReqRow {
+                entity: "ent:cart".into(),
+                files: vec!["src/cart.rs".into(), "src/checkout.rs".into()],
+                sites: vec![Site { file: "src/cart.rs".into(), line: 1, head: "fn hold(i: Item) {}".into() }],
+                test: TestRef {
+                    kind: "programmatic".into(),
+                    label: "unit".into(),
+                    artifact: "tests/cart.rs".into(),
+                    name: "req_shop_1_abcd".into(),
+                    run: "cargo test req_shop_1_abcd".into(),
+                    cwd: ".".into(),
+                },
+                hashes: RowHashes::default(),
+                verdict: "none".into(),
+                last_run: None,
+                evidence: None,
+            },
+        );
+        ledger.save(&out);
+
+        let r = requirement();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.graph.requirements.insert("req:shop-1".into(), r.clone());
+        let lsp = Lsp {
+            root,
+            out,
+            store,
+            generation: 0,
+            gen: GenSettings { deliverable: deliv },
+            overlay: HashMap::new(),
+            next_srv_id: 1,
+        };
+        let card = lsp.requirement_card("req:shop-1", &r);
+
+        assert!(card.contains("**`req:shop-1`**"), "{}", card);
+        assert!(card.contains("The Cart shall hold items."), "{}", card);
+        // The requirement link: the docsgen heading, with the id for clients that route
+        // to the node itself.
+        assert!(card.contains("docsgen/cart.md?req=req:shop-1#L3"), "{}", card);
+        // The code: the site relocated from line 1 to line 3, and marked moved. The
+        // manifest file with no site links to the file itself.
+        assert!(card.contains("[`src/cart.rs:3`]"), "{}", card);
+        assert!(card.contains("#L3) · moved"), "{}", card);
+        assert!(card.contains("[`src/checkout.rs`]"), "{}", card);
+        // The test: the artifact at the line its name sits on, and the derived status
+        // (the row's requirement hash is empty, so the statement moved under it).
+        assert!(card.contains("[`tests/cart.rs:2`]"), "{}", card);
+        assert!(card.contains("`req_shop_1_abcd`"), "{}", card);
+        assert!(card.contains("↻ stale-requirement · requirement-changed"), "{}", card);
+        assert!(card.contains("run `cargo test req_shop_1_abcd`"), "{}", card);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // No ledger row: the requirement still shows, the other two parts say so.
+    #[test]
+    fn requirement_card_without_a_ledger_row() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let r = requirement();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.graph.requirements.insert("req:shop-1".into(), r.clone());
+        let lsp = Lsp {
+            root: tmp.clone(),
+            out,
+            store,
+            generation: 0,
+            gen: GenSettings { deliverable: tmp.join("product") },
+            overlay: HashMap::new(),
+            next_srv_id: 1,
+        };
+        let card = lsp.requirement_card("req:shop-1", &r);
+        assert!(card.contains("– missing"), "{}", card);
+        assert!(card.contains("**code** · not generated"), "{}", card);
+        assert!(card.contains("**test** · not generated"), "{}", card);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

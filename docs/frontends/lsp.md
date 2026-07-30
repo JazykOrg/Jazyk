@@ -13,13 +13,33 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
   anchors stay put while typing.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.
-- Hover: the entity's definition, requirements, and relationships from the graph. Hover content
-  is a rendered pack from the [context engine](../compiler/context.md), so it matches what the
-  compiler and the [MCP server](./mcp.md) show. When the
+- Hover on an entity: the entity's definition, requirements, and relationships from the graph.
+  Hover content is a rendered pack from the [context engine](../compiler/context.md), so it
+  matches what the compiler and the [MCP server](./mcp.md) show. When the
   [ledger](../consumers/gen.md#the-ledger) exists, the hover appends a verification
-  summary for the entity (verified over total, failing and stale counts), and hovering
-  inside a requirement's located quote shows that requirement's own status, test, and
-  last evidence.
+  summary for the entity (verified over total, failing and stale counts).
+- Hover inside a requirement's located quote: the requirement card, three parts, each part
+  linked. The hover range is the located quote, so the whole statement highlights.
+  - The requirement: the id, the EARS sentence, the derived
+    [status](../consumers/gen.md#status-is-derived-never-stored), and a link to the
+    requirement's heading in its entity's requirements document at
+    `<out>/docsgen/<slug>.md`.
+  - The code: the requirement's implementing
+    [sites](../consumers/gen.md#traceability), each linking to its file at the line the
+    site relocates to, marked when the site moved or was lost. A manifest file that
+    carries no site links to the file itself.
+  - The test: the kind and label, a link to the artifact at the line the test name sits
+    on, the status with the last run time and the run command, and the evidence tail
+    from the last verdict.
+  - Links are absolute `file://` URIs with an `#L<line>` fragment, so any client
+    navigates. The requirement link also carries `?req=<id>`, and so does the test link
+    when the artifact is an `llm` test's criteria (metadata under the out directory, not
+    part of the product). A client that reads the parameter (the
+    [GUI](./gui.md#editor)) opens the requirement itself; a client that ignores it still
+    lands on the file.
+  - Without a ledger row the card is the requirement part alone, and the code and test
+    parts read as not generated. Nothing is invented: the card shows what the ledger
+    records, never a guess at which file implements what.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
 - Code lens: every requirement sourced in the open document shows one lens above its

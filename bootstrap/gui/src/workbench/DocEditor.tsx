@@ -10,8 +10,8 @@ import type * as monaco from 'monaco-editor'
 import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
-import { useInspector } from '../lib/nav'
-import MonacoHost, { docUri, type MonacoHandle } from '../ide/MonacoHost'
+import { delivHref, useInspector } from '../lib/nav'
+import MonacoHost, { docUri, type LinkTarget, type MonacoHandle } from '../ide/MonacoHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
 import '../ide/ide.css'
@@ -24,6 +24,28 @@ interface DocContent {
 
 function contentPath(path: string): string {
   return `/api/docs/content?path=${encodeURIComponent(path)}`
+}
+
+// Lexical path normalization: the project reports the deliverable directory as it is
+// configured (`../product`), and link targets carry the same unresolved segments.
+function normPath(p: string): string {
+  const parts: string[] = []
+  for (const seg of p.split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') {
+      parts.pop()
+      continue
+    }
+    parts.push(seg)
+  }
+  return `${p.startsWith('/') ? '/' : ''}${parts.join('/')}`
+}
+
+// The path relative to a directory, or null when it is not under it.
+function relTo(dir: string, path: string): string | null {
+  const d = normPath(dir)
+  const p = normPath(path)
+  return p.startsWith(`${d}/`) ? p.slice(d.length + 1) : null
 }
 
 // Marker severity values (monaco.MarkerSeverity), kept numeric so this file needs
@@ -78,6 +100,8 @@ export default function DocEditor() {
 
   const rootRef = useRef<string | undefined>(undefined)
   rootRef.current = projectQ.data?.root
+  const delivRef = useRef<string | undefined>(undefined)
+  delivRef.current = projectQ.data?.deliverable
   const docsRef = useRef<{ path: string }[]>([])
   docsRef.current = docsQ.data?.docs ?? []
   const docPathRef = useRef(docPath)
@@ -224,6 +248,35 @@ export default function DocEditor() {
     [navigate],
   )
 
+  // A clicked link from a document link or the requirement card. The node wins (the
+  // card's requirement link opens the inspector), then a matched document, then a
+  // deliverable file at the line. Anything else is left alone: an artifact under the
+  // out directory has no page (docs/frontends/gui.md#editor).
+  const onOpenLink = useCallback(
+    (t: LinkTarget) => {
+      if (t.node) {
+        openNode(t.node)
+        return
+      }
+      const root = rootRef.current
+      const docRel = root ? relTo(root, t.path) : null
+      if (docRel && docsRef.current.some((d) => d.path === docRel)) {
+        onNavigate(docRel, t.line)
+        return
+      }
+      const deliv = delivRef.current
+      const delivRel = deliv ? relTo(deliv, t.path) : null
+      if (delivRel) {
+        navigate(delivHref(delivRel, undefined, t.line))
+        return
+      }
+      // A docsgen link names an entity's requirements document; land on the entity.
+      const docsgen = t.path.match(/\/docsgen\/([a-z0-9-]+)\.md$/)
+      if (docsgen) openNode(`ent:${docsgen[1]}`)
+    },
+    [navigate, onNavigate, openNode],
+  )
+
   useEffect(() => {
     const p = pendingLine.current
     if (p && loaded?.path === p.path) {
@@ -307,6 +360,7 @@ export default function DocEditor() {
         diffMode={diffMode && hasBaseline}
         onDirty={onDirty}
         onNavigate={onNavigate}
+        onOpenLink={onOpenLink}
         onOpenNode={openNode}
         onMarkers={setMarkers}
         onSave={() => void save()}

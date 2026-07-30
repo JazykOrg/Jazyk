@@ -17,6 +17,29 @@ function uriToPath(root: string, uri: string): string | null {
   return uri.startsWith(prefix) ? uri.slice(prefix.length) : null
 }
 
+// A link click resolved to what the app routes on: the absolute path, the 1-based
+// line an `#L<n>` fragment names, and the graph node a `?req=` query names (the
+// requirement card's own link). See docs/frontends/lsp.md#capabilities.
+export interface LinkTarget {
+  path: string
+  line?: number
+  node?: string
+}
+
+function lineFromFragment(fragment: string): number | undefined {
+  const m = /^L?(\d+)$/.exec(fragment)
+  return m ? Number(m[1]) : undefined
+}
+
+function queryParam(query: string, key: string): string | undefined {
+  for (const part of query.split('&')) {
+    const i = part.indexOf('=')
+    if (i > 0 && decodeURIComponent(part.slice(0, i)) === key)
+      return decodeURIComponent(part.slice(i + 1))
+  }
+  return undefined
+}
+
 function toLspPos(p: monaco.Position) {
   return { line: p.lineNumber - 1, character: p.column - 1 }
 }
@@ -107,7 +130,9 @@ interface Props {
   diffMode?: boolean
   onDirty: (dirty: boolean) => void
   onNavigate: (path: string, line?: number) => void
-  // Route a node id (e.g. a docsgen link's entity) to its app page.
+  // Route a clicked link: a document, a deliverable file at a line, or a node.
+  onOpenLink: (target: LinkTarget) => void
+  // Route a node id (e.g. a code lens's requirement) to its app page.
   onOpenNode?: (id: string) => void
   onMarkers: (markers: monaco.editor.IMarker[]) => void
   onSave: () => void
@@ -324,25 +349,19 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
           return true
         },
       }),
-      // Document links target files under the root; the route owner decides whether
-      // the path is an editable document.
+      // Every link click (document links and the requirement card's links) resolves
+      // to a neutral target; the route owner decides where it lands.
       monaco.editor.registerLinkOpener({
         open: (resource) => {
-          const target = resource.toString()
-          const rel = uriToPath(propsRef.current.root, target)
-          if (rel) {
-            propsRef.current.onNavigate(rel)
-            return true
-          }
-          // A docsgen link names an entity's requirements document; land on the
-          // entity page instead of a file the browser cannot open.
-          const docsgen = target.match(/\/docsgen\/([a-z0-9-]+)\.md$/)
-          if (docsgen && propsRef.current.onOpenNode) {
-            propsRef.current.onOpenNode(`ent:${docsgen[1]}`)
-            return true
-          }
+          if (resource.scheme !== 'file') return false
+          propsRef.current.onOpenLink({
+            path: decodeURIComponent(resource.path),
+            line: lineFromFragment(resource.fragment),
+            node: queryParam(resource.query, 'req'),
+          })
           // Never hand a file:// target to the browser; it is blocked and noisy.
-          return target.startsWith('file://')
+          // Unroutable targets (an artifact outside the project) simply do nothing.
+          return true
         },
       }),
       monaco.editor.onDidChangeMarkers((uris) => {

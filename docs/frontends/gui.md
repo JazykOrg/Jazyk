@@ -231,7 +231,9 @@ One workbench page. Navigation swaps panes, never the page. Five regions:
 
 Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`, `/graph`,
 `/work`, and `/settings` pick the center; `?node=` holds the inspector selection;
-`?run=` the selected run. Routes from the earlier tabbed layout redirect to their new
+`?run=` the selected run. A document takes `?section=` and `?quote=` to reveal and
+highlight a quote; a deliverable file takes `?site=<requirement>` to reveal that
+requirement's first located site, or `?line=` to reveal a line directly. Routes from the earlier tabbed layout redirect to their new
 homes.
 
 ### Files
@@ -387,7 +389,7 @@ The GUI embeds a code editor on the project's documents, backed by the language 
 over `GET /lsp` (WebSocket, one JSON-RPC message per text frame, no Content-Length
 framing). Each connection is its own session with its own open-document overlay. The
 [capabilities](./lsp.md#capabilities) are the LSP's: anchored diagnostics, hover with
-the rendered context pack and verification summary, go to definition, references,
+the rendered context pack, the requirement card, go to definition, references,
 completion, document links, code lens.
 
 - Document URIs are `file://` paths under the project root, as reported by
@@ -401,6 +403,13 @@ completion, document links, code lens.
   lenses](./lsp.md#capabilities) above their quotes, so where a requirement anchors
   is visible without hovering. Clicking a lens opens the requirement in the
   inspector, beside the text.
+- Hovering a requirement's quote shows the language server's
+  [requirement card](./lsp.md#capabilities): the requirement, the code, and the test,
+  each linked, with the verification status. The card's links stay inside the app: the
+  requirement link opens the requirement in the inspector, a code or test link opens
+  that deliverable file in the center at the line, and a link into another document
+  opens the editor there. An `llm` test's criteria file has no page of its own, so that
+  link lands on the requirement's verification detail in the inspector.
 - Coverage renders beside the text from the section tree: covered, non-normative, and
   unprocessed sections are visually distinct.
 - The editor diffs against the reconciled baseline (`GET /api/docs/baseline`):

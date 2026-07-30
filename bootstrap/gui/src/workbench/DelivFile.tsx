@@ -268,6 +268,24 @@ export default function DelivFile() {
     if (!site) revealedSite.current = ''
   }, [site, filePath])
 
+  // ?line=N reveals a line directly: where a requirement card's code or test link
+  // lands (docs/frontends/gui.md#layout).
+  const line = searchParams.get('line')
+  const revealedLine = useRef('')
+  useEffect(() => {
+    if (!line) {
+      revealedLine.current = ''
+      return
+    }
+    if (!open || open.path !== filePath) return
+    const key = `${filePath}|${line}`
+    if (revealedLine.current === key) return
+    const n = Number(line)
+    if (!Number.isFinite(n) || n < 1) return
+    revealedLine.current = key
+    requestAnimationFrame(() => revealRef.current?.(n))
+  }, [line, open, filePath])
+
   const baseline =
     baselineQ.data && !baselineQ.data.binary && typeof baselineQ.data.text === 'string'
       ? baselineQ.data.text

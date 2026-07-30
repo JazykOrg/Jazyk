@@ -231,6 +231,58 @@
   text-underline-offset: 3px;
 }
 
+/* The hover card (the language server's requirement card and entity packs): three
+   parts, each a labelled block with its links. Read as a card, not as prose. */
+.monaco-hover {
+  max-width: 620px;
+}
+
+.monaco-hover .hover-contents {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.monaco-hover .hover-contents p {
+  margin: 4px 0;
+}
+
+/* The attribute and class selectors beat monaco's own hover rules for the two
+   properties it also sets: the divider and the link colour. */
+.monaco-hover .hover-contents .rendered-markdown hr {
+  margin: 7px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.monaco-hover .hover-contents ul {
+  margin: 2px 0;
+  padding-left: 2px;
+  list-style: none;
+}
+
+.monaco-hover .hover-contents li {
+  margin: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monaco-hover .hover-contents a[data-href] {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.monaco-hover .hover-contents a[data-href]:hover {
+  text-decoration: underline;
+}
+
+.monaco-hover .hover-contents blockquote {
+  margin: 5px 0 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  opacity: 0.75;
+}
+
 /* Located quote highlight for ?section=&quote= navigation. */
 .quote-hit {
   background: color-mix(in srgb, var(--accent) 22%, transparent);

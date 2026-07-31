@@ -61,6 +61,41 @@ artifact carries that exact title, that definition, that color value. A generato
 does not know what to write is missing a requirement, and the honest outcome is a
 failing row, not invented filler.
 
+## The medium is decided once, before anything is generated
+
+What the deliverable is made of is one decision for the whole deliverable, not a
+judgment each task repeats. A per-task decision is where the substitution above creeps
+in: asked to write "the About slide", a generator writes prose about a slide, because
+nothing in front of it said the deliverable is a file a tool must produce.
+
+So the first generation run for a deliverable decides the medium first, in its own
+step, and records it in [the ledger](#the-ledger):
+
+```yaml
+medium:
+  form: Microsoft PowerPoint deck            # what the deliverable is, in the model's words
+  produced: built                            # written | built
+  toolchain: python3 with python-pptx        # what writes or builds it
+  artifact: jazyk.pptx                       # deliverable-relative; only when built
+```
+
+- The input is the requirements that say what the deliverable is: the same graph every
+  task reads, budgeted like a [context pack](../compiler/context.md).
+- `produced: written` means the generated files are the deliverable. `produced: built`
+  means they are the source that produces `artifact`, and [the build](#the-build) runs
+  it.
+- Every task package carries the decision, and every task's instructions state it as a
+  fact rather than asking again. A task that generates under `produced: built` writes
+  source, never the artifact itself and never prose about it.
+- The decision is made once and reused, like the toolchain and the build. It is
+  re-decided only when nothing is generated: a ledger with no entities decides again,
+  so wiping the deliverable is how a project changes its mind. `--force` regenerates
+  against the recorded decision.
+- Under `produced: built`, recording a build is not optional. The manifest step is
+  rejected when it records none and none is recorded yet, with one corrective retry,
+  the same gate that catches an unrunnable test command. A generator that cannot name
+  the command that produces the artifact has not produced it.
+
 ## The build
 
 A deliverable whose medium must be produced by a tool records one build command:
@@ -120,6 +155,12 @@ reference already generated files through the manifest.
   worker for another path (one corrective retry, then the task fails). Using another
   entity's files goes through references (imports, includes), never through rewriting
   them.
+- The task package names those files with the statements they carry, not just their
+  paths. A composite deliverable is assembled from parts other tasks wrote, and a path
+  alone says nothing about what is inside; the statements do, and they are what the
+  graph already knows. So the entry per entity is its `files` and what each set
+  `holds`, and the task composing them reads or imports those paths knowing what they
+  contain.
 - One toolchain per deliverable. The first task establishes it (the language, the test
   runner, the build files); every later task reuses it. The task package carries the
   run commands already recorded in the ledger, so a worker sees the established
@@ -241,10 +282,18 @@ metadata file. Two maps:
 - `requirements`: verification state. How each requirement ties to the deliverable and
   how it is verified.
 
-A third key, `build`, is present only when the deliverable's medium must be produced by
-a tool ([the build](#the-build)).
+Two more keys sit beside them: `medium`, the deliverable's
+[decided form](#the-medium-is-decided-once-before-anything-is-generated), written by
+the first run, and `build`, present only when that medium must be produced by a tool
+([the build](#the-build)).
 
 ```yaml
+medium:                                   # decided once, carried by every task package
+  form: Microsoft PowerPoint deck
+  produced: built                         # written | built
+  toolchain: python3 with python-pptx
+  artifact: jazyk.pptx                    # deliverable-relative; only when built
+
 build:                                    # optional; absent when the files are the output
   run: python build_deck.py               # runs once, before any row is judged
   cwd: .                                  # deliverable-relative working dir

@@ -410,8 +410,22 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
     )
     .map(|p| p.pack)
     .unwrap_or_default();
-    let manifest: BTreeMap<&String, &Vec<String>> =
-        ledger.entities.iter().map(|(k, v)| (k, &v.files)).collect();
+    // The manifest of other tasks' work. A composite deliverable is assembled from parts
+    // other entities wrote, so a path alone is not enough: the entry names what the files
+    // hold, by the statements the task implemented.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    let manifest: BTreeMap<&String, Value> = ledger
+        .entities
+        .iter()
+        .map(|(k, v)| {
+            let holds: Vec<String> = v
+                .requirements
+                .iter()
+                .filter_map(|rid| store.graph.requirements.get(rid).map(|r| r.ears.clone()))
+                .collect();
+            (k, json!({"files": v.files, "holds": holds}))
+        })
+        .collect();
     // The established conventions: run commands other tasks already recorded. One
     // toolchain per deliverable (docs/consumers/gen.md#file-ownership-and-conventions).
     let mut run_commands: Vec<String> = ledger
@@ -905,7 +919,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
     let header = format!(
-        "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nAlready generated files (each belongs to its entity; never write to another entity's file): {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
+        "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity; never write to one of them. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
         id,
         task["name"].as_str().unwrap_or_default(),
         task["context"].as_str().unwrap_or_default(),

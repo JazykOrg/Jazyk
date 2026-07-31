@@ -6,6 +6,7 @@ import {
   type Deliverable,
   type DocInfo,
   type DocRecord,
+  type FeedbackEntry,
   type Graph,
   type JournalEntry,
   type Project,
@@ -38,6 +39,13 @@ export const useJournal = (limit = 50) =>
   useQuery({
     queryKey: ['journal', limit],
     queryFn: () => get<{ entries: JournalEntry[]; generation: number }>(`/api/journal?limit=${limit}`),
+    ...opts,
+  })
+
+export const useFeedback = (limit = 200) =>
+  useQuery({
+    queryKey: ['feedback', limit],
+    queryFn: () => get<{ entries: FeedbackEntry[] }>(`/api/feedback?limit=${limit}`),
     ...opts,
   })
 

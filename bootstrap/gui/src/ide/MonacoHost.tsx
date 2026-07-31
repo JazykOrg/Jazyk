@@ -116,12 +116,25 @@ export interface MonacoHandle {
   revealSection(startLine: number, quote?: string): void
 }
 
+// What a running build is doing to this document, drawn over the text
+// (docs/frontends/gui.md#editor).
+export interface BuildBands {
+  label: string
+  state: 'queued' | 'running' | 'done' | 'failed'
+  sections: string[]
+  active: string | null
+  result: string | null
+}
+
 interface Props {
   root: string
   path: string
   initialText: string
   lsp: LspClient
   record?: DocRecord
+  // The build bands, and the line the pointer is on so a result can be held.
+  build?: BuildBands
+  onHoverLine?: (line: number | null) => void
   // The reconciled baseline text: gutter marks show what the next compile sees as
   // dirty; null means the document never reconciled (no marks, no diff).
   baseline?: string | null
@@ -147,6 +160,7 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
   const baselines = useRef(new Map<string, string>())
   const created = useRef(new Map<string, { model: monaco.editor.ITextModel; unsub: () => void }>())
   const covDecorations = useRef(new Map<string, string[]>())
+  const buildDecorations = useRef(new Map<string, string[]>())
   const linkDecorations = useRef(new Map<string, string[]>())
   const diffDecorations = useRef(new Map<string, string[]>())
   const diffTimer = useRef<number | null>(null)
@@ -512,6 +526,67 @@ const MonacoHost = forwardRef<MonacoHandle, Props>(function MonacoHost(props, re
     const old = covDecorations.current.get(uri) ?? []
     covDecorations.current.set(uri, model.deltaDecorations(old, next))
   }, [props.record, props.path])
+
+  // Build bands: the turn's dirty sections banded as queued, the section it
+  // reached banded as running, and both replaced by the outcome when it ends. The
+  // lines come from the last reconciled section tree, like the coverage gutter, so
+  // they can drift against unsaved edits (docs/frontends/gui.md#editor).
+  useEffect(() => {
+    const model = editorRef.current?.getModel()
+    if (!model) return
+    const uri = model.uri.toString()
+    const b = props.build
+    const next: monaco.editor.IModelDeltaDecoration[] = []
+    if (b && props.record) {
+      const lineCount = model.getLineCount()
+      const done = b.state === 'done' || b.state === 'failed'
+      const outcome = b.state === 'failed' ? 'build-failed' : 'build-done'
+      for (const ref of b.sections) {
+        const sec = props.record.sections[ref]
+        if (!sec) continue
+        const [start, end] = sec.lines
+        if (start > lineCount) continue
+        // Section lines come from the last reconciled tree: clamp before asking
+        // the model anything about them.
+        const first = Math.min(Math.max(start, 1), lineCount)
+        const active = ref === b.active
+        const cls = done ? outcome : active ? 'build-active' : 'build-queued'
+        const tip = done
+          ? `${b.label}: ${b.result ?? (b.state === 'failed' ? 'parked' : 'committed')}`
+          : `${b.label}: ${active ? 'reconciling this section' : 'queued for this build'}`
+        next.push({
+          range: new monaco.Range(first, 1, Math.min(Math.max(end, first), lineCount), 1),
+          options: { isWholeLine: true, className: cls, hoverMessage: { value: tip } },
+        })
+        // A marker in the gutter beside the band, so the state reads at a glance
+        // even where the background tint is subtle.
+        next.push({
+          range: new monaco.Range(first, 1, first, 1),
+          options: { linesDecorationsClassName: `${cls}-gutter`, linesDecorationsTooltip: tip },
+        })
+      }
+    }
+    const old = buildDecorations.current.get(uri) ?? []
+    buildDecorations.current.set(uri, model.deltaDecorations(old, next))
+  }, [props.build, props.record, props.path])
+
+  // The pointer's line, for holding a fading band in place.
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    let last: number | null = null
+    const report = (line: number | null) => {
+      if (line === last) return
+      last = line
+      propsRef.current.onHoverLine?.(line)
+    }
+    const moved = editor.onMouseMove((e) => report(e.target.position?.lineNumber ?? null))
+    const left = editor.onMouseLeave(() => report(null))
+    return () => {
+      moved.dispose()
+      left.dispose()
+    }
+  }, [])
 
   useImperativeHandle(
     ref,

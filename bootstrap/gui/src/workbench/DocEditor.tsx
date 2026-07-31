@@ -71,6 +71,27 @@ export default function DocEditor() {
   const setEditorDirty = useApp((a) => a.setEditorDirty)
   const [diffMode, setDiffMode] = useState(false)
 
+  // What the running build is doing to this document, if anything.
+  const turns = useApp((a) => a.turns)
+  const turnHold = useApp((a) => a.turnHold)
+  const progress = useMemo(
+    () => Object.values(turns).find((t) => t.doc === docPath),
+    [turns, docPath],
+  )
+  const build = useMemo(
+    () =>
+      progress
+        ? {
+            label: progress.label,
+            state: progress.state,
+            sections: progress.sections,
+            active: progress.active,
+            result: progress.result,
+          }
+        : undefined,
+    [progress],
+  )
+
   const lsp = useMemo(() => new LspClient(), [])
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -299,6 +320,35 @@ export default function DocEditor() {
     requestAnimationFrame(() => hostRef.current?.revealSection(sec.lines[0], quote ?? undefined))
   }, [section, quote, coverageQ.data, loaded, docPath])
 
+  // The pointer inside a banded section holds that turn's result in place, the
+  // same hold the files tree gives its rows (docs/frontends/gui.md#editor). The
+  // pointer may already be inside when the turn ends, so the last hovered line is
+  // kept and re-checked whenever the turn's state moves.
+  const record = coverageQ.data?.[docPath]
+  const hoverLine = useRef<number | null>(null)
+  const evaluateHold = useCallback(() => {
+    const t = Object.values(useApp.getState().turns).find((x) => x.doc === docPath)
+    if (!t) return
+    const line = hoverLine.current
+    const inside =
+      line !== null &&
+      t.sections.some((ref) => {
+        const sec = record?.sections[ref]
+        return sec ? line >= sec.lines[0] && line <= sec.lines[1] : false
+      })
+    turnHold(t.label, inside)
+  }, [docPath, record, turnHold])
+  const onHoverLine = useCallback(
+    (line: number | null) => {
+      hoverLine.current = line
+      evaluateHold()
+    },
+    [evaluateHold],
+  )
+  useEffect(() => {
+    evaluateHold()
+  }, [evaluateHold, progress?.label, progress?.state])
+
   const root = projectQ.data?.root
   const sortedMarkers = useMemo(
     () => [...markers].sort((a, b) => a.startLineNumber - b.startLineNumber),
@@ -356,6 +406,8 @@ export default function DocEditor() {
         initialText={loaded.text}
         lsp={lsp}
         record={coverageQ.data?.[loaded.path]}
+        build={loaded.path === docPath ? build : undefined}
+        onHoverLine={onHoverLine}
         baseline={baseline}
         diffMode={diffMode && hasBaseline}
         onDirty={onDirty}

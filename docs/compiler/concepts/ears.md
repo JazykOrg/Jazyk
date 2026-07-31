@@ -22,11 +22,58 @@ A requirement stores the statement in its `ears` field. The behavior-vs-constrai
 distinction is a derived facet of the pattern, not a stored field. Ubiquitous statements
 typically state constraints; triggered, stated, and conditioned patterns describe behavior.
 
+"The system" in these patterns is a placeholder. The real subject is whatever the
+documents describe; see [the subject](#the-subject-is-whatever-the-documents-describe).
+
+## The subject is whatever the documents describe
+
+Jazyk does not assume the documents describe software. The subject of a statement is the
+thing the documents are about and its parts: a service, a slide deck, a book, a course, a
+schematic, a contract. Substitute that subject for "the system" in every pattern above.
+E.g.:
+
+```
+quote: This slide shows a headline title `Jazyk` as well as a link to the site.
+ears:  The Introduction slide shall show a headline title `Jazyk`.
+ears:  The Introduction slide shall show a link to the site.
+```
+
+The consequence is that a document describing an artifact's content, structure, or
+appearance is stating requirements on that artifact, not background. Three kinds are
+missed most often:
+
+- Content. What an artifact says, shows, or contains is an obligation on it. "This slide
+  defines what Jazyk is about in a couple of sentences" yields "The About slide shall
+  define what Jazyk is about in a couple of sentences."
+- Appearance and material facts. A stated value, color, font, size, measurement, or
+  wording is an obligation on the thing it describes. "The primary color is #248555"
+  yields "The slides shall use #248555 as the primary color." A stated fact is never
+  "just a fact"; the document states it because the artifact must match it.
+- Format and medium. "All slides are under the Microsoft PowerPoint file format" yields
+  "The slides shall be delivered in the Microsoft PowerPoint file format."
+
+The test never asks whether a sentence describes behavior. Artifacts that do nothing
+still have obligations: they must contain, show, and look like what the documents say.
+
+The counterweight is navigation. A sentence whose only content is where something is
+written constrains the documentation, not the result:
+
+```
+The slides themselves are defined under [Slides](./slides.md).
+This document describes how the gateway works.
+```
+
+Neither states anything the result must satisfy, so neither is a requirement. The
+difference from a list item is what the sentence names: an item under "the sub-systems
+are:" names a part of the subject and is a fact about it, while a navigation sentence
+names a file. See [enumerations](#enumerations).
+
 ## Declarative prose states obligations
 
-Documentation rarely says "shall". A declarative statement about the system states an
-obligation all the same. The test per sentence: does it say what the system or one of
-its parts is, does, uses, allows, requires, or limits? If yes, it is a requirement.
+Documentation rarely says "shall". A declarative statement about the subject states an
+obligation all the same. The test per sentence: does it say what the subject or one of
+its parts is, does, contains, shows, uses, allows, requires, or limits? If yes, it is a
+requirement.
 The turn rephrases it into EARS form for the `ears` field and keeps the source sentence
 verbatim in the `quote`. E.g.:
 
@@ -66,11 +113,20 @@ names: "The user account shall have a `username`" references both the account an
 Non-normative is the exception, not the default. A section is non-normative only when
 no sentence in it passes the test above: navigation pages that only link elsewhere,
 glossaries defining outside-world terms, changelogs, roadmap wish lists. A glossary
-entry that states what a system part does is a requirement wearing a glossary's
+entry that states what a part does is a requirement wearing a glossary's
 clothes; extract it. Lists of operations, properties, or rules are never non-normative;
 see [enumerations](#enumerations). Before marking a section non-normative, re-read it
-sentence by sentence; if any sentence is about the system, the section is not
+sentence by sentence; if any sentence is about the subject, the section is not
 non-normative.
+
+Three reasons for marking a section non-normative are always wrong:
+
+- "It states a fact, not a requirement." A stated fact about the subject is an
+  obligation; the document states it because the result must match it.
+- "It describes content or appearance, not behavior." Content and appearance are
+  obligations. See [the subject](#the-subject-is-whatever-the-documents-describe).
+- "It is not a requirement on the system." The subject is whatever the documents
+  describe, and a part of it is as valid a subject as the whole.
 
 ## Enumerations
 

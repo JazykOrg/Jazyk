@@ -22,7 +22,7 @@ pub struct ToolError {
 }
 
 impl ToolError {
-    fn new(rule: &str, message: String) -> ToolError {
+    pub fn new(rule: &str, message: String) -> ToolError {
         ToolError { rule: rule.to_string(), message }
     }
     pub fn to_value(&self) -> Value {
@@ -171,6 +171,18 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "report_feedback",
+            description: "Report that jazyk's own prompt, tool, schema, or error message is ambiguous, wrong, confusing, or missing something. This reaches jazyk's developers, not this project's authors. It never touches the graph. Use it for what blocked YOU; problems in the documents are diagnostics, not feedback. kind: ambiguous, wrong, confusing, missing, or other. subject names the tool, argument, or instruction. message says what was unclear and what would have helped. Then continue the task with your best judgment.",
+            parameters: obj(
+                json!({
+                    "kind": {"type": "string", "enum": ["ambiguous", "wrong", "confusing", "missing", "other"]},
+                    "subject": {"type": "string"},
+                    "message": {"type": "string"}
+                }),
+                &["kind", "message"],
+            ),
+        },
+        ToolDef {
             name: "gen_instructions",
             description: "The generation contract every worker follows: one task per entity producing the deliverable files and the tests for its requirements, traceability markers, the two test kinds, the parts protocol for dense entities. The medium derives from the context; the contract never names one.",
             parameters: obj(json!({}), &[]),
@@ -187,14 +199,19 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "gen_mark",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. Pass the factHash from the gen_task package.",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the gen_task package already carries rather than recording a second one. Pass the factHash from the gen_task package.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
                     "factHash": {"type": "string"},
                     "manifest": {"type": "object", "properties": {
                         "files": {"type": "array", "items": {"type": "string"}},
-                        "tests": {"type": "array", "items": {"type": "object"}}
+                        "tests": {"type": "array", "items": {"type": "object"}},
+                        "build": {"type": "object", "properties": {
+                            "run": {"type": "string"},
+                            "cwd": {"type": "string"},
+                            "produces": {"type": "array", "items": {"type": "string"}}
+                        }}
                     }}
                 }),
                 &["entity", "factHash", "manifest"],
@@ -234,9 +251,15 @@ pub fn catalog() -> Vec<ToolDef> {
 pub const READ_TOOLS: [&str; 5] = ["context", "expand", "search", "read_section", "get_entity"];
 pub const GEN_TOOLS: [&str; 4] = ["gen_instructions", "gen_pending", "gen_task", "gen_mark"];
 pub const VERIFY_TOOLS: [&str; 3] = ["verify_pending", "verify_task", "verify_mark"];
+// Feedback about jazyk itself, not about the graph: served in every toolset, read-only
+// MCP included. See docs/compiler/tools.md#feedback-tool.
+pub const FEEDBACK_TOOL: &str = "report_feedback";
+// Feedback entries one session may record. Past it the call is acknowledged without a
+// record, so a confused model cannot flood the log.
+pub const FEEDBACK_LIMIT: usize = 5;
 
 pub fn toolset(task: &str) -> Vec<&'static str> {
-    match task {
+    let mut v = match task {
         "reconcile-doc" => vec![
             "context", "expand", "search", "read_section", "upsert_entity", "update_entity", "delete_entity",
             "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
@@ -257,7 +280,11 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         }
         "mcp-write" => catalog().iter().map(|t| t.name).filter(|n| *n != "done").collect(),
         _ => READ_TOOLS.to_vec(),
+    };
+    if !v.contains(&FEEDBACK_TOOL) {
+        v.push(FEEDBACK_TOOL);
     }
+    v
 }
 
 // A "built with X and Y" style list inside one statement: several atomic facts bundled
@@ -366,6 +393,12 @@ pub struct ToolSession {
     pub done: Option<String>,
     // Resolved [gen] settings for the generation and verification tools.
     pub gen: crate::gen::GenSettings,
+    // Who is driving this session, recorded on every feedback entry so a record names
+    // its caller. Set by the harness that owns the session.
+    pub caller: crate::feedback::Caller,
+    // Feedback entries this session already recorded; capped so a confused model
+    // cannot flood the log (docs/compiler/tools.md#feedback-tool).
+    feedback_count: usize,
     mutation_limit: usize,
     default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this turn's own creates.
@@ -388,6 +421,8 @@ impl ToolSession {
             staged: Vec::new(),
             done: None,
             gen,
+            caller: Default::default(),
+            feedback_count: 0,
             mutation_limit,
             default_budget,
             staged_entities: Default::default(),
@@ -707,10 +742,44 @@ impl ToolSession {
             "search" => {
                 let query = Self::str_arg(args, "query")?;
                 let hits = self.search_all(&query);
-                Ok(json!(hits
+                if !hits.is_empty() {
+                    return Ok(json!({
+                        "hits": hits
+                            .iter()
+                            .map(|(id, name, def)| json!({"id": id, "name": name, "definition": def}))
+                            .collect::<Vec<_>>()
+                    }));
+                }
+                // A miss is an answer, not a dead end. A bare empty list reads as "ask
+                // again"; models loop on it. Say what the graph holds and what to do next.
+                let mut known: Vec<String> = self
+                    .staged_entities
                     .iter()
-                    .map(|(id, name, def)| json!({"id": id, "name": name, "definition": def}))
-                    .collect::<Vec<_>>()))
+                    .map(|(id, e)| format!("{} ({})", id, e.name))
+                    .collect();
+                for (id, e) in &self.snapshot.graph.entities {
+                    if !self.staged_entities.contains_key(id) {
+                        known.push(format!("{} ({})", id, e.name));
+                    }
+                }
+                let total = known.len();
+                known.truncate(25);
+                Ok(json!({
+                    "hits": [],
+                    "entityCount": total,
+                    "entities": known,
+                    "next": if total == 0 {
+                        format!(
+                            "no match for `{}`: the graph holds no entities yet. Searching again will return this same answer. Create the entity with upsert_entity.",
+                            query
+                        )
+                    } else {
+                        format!(
+                            "no match for `{}`. The graph's {} entity(ies) are listed above; searching again will return this same answer. If one of them means the same concept, use its id. Otherwise create the entity with upsert_entity.",
+                            query, total
+                        )
+                    }
+                }))
             }
             "read_section" => {
                 let r = Self::str_arg(args, "ref")?;
@@ -1094,9 +1163,24 @@ impl ToolSession {
                 }
                 // A revision may re-anchor its provenance: section plus quote, both or
                 // neither. The quote must locate, same gate as a fresh upsert.
+                // The common miscall is passing the statement as the quote while only
+                // meaning to change `entities`; name the existing anchor so the repair
+                // is to drop the two fields, not to guess another sentence.
+                let anchor_hint = || match self.snapshot.graph.requirements.get(&id) {
+                    Some(r) => format!(
+                        "{} is anchored at {}#{} quoting \"{}\". `quote` is the document's own sentence, never the `ears` statement. To change only the entities or edges, omit `section` and `quote`",
+                        id,
+                        r.source.doc,
+                        r.source.section,
+                        crate::llm::truncate(&r.source.quote, 120)
+                    ),
+                    None => "`quote` is the document's own sentence, never the `ears` statement. To change only the entities or edges, omit `section` and `quote`".to_string(),
+                };
                 let source = match (Self::opt_str(args, "section"), Self::opt_str(args, "quote")) {
                     (Some(section), Some(q)) => {
-                        let (doc, sec) = self.resolve_section(&section)?;
+                        let (doc, sec) = self
+                            .resolve_section(&section)
+                            .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
                         if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
                             if &doc != wd {
                                 return Err(ToolError::new(
@@ -1108,14 +1192,16 @@ impl ToolSession {
                                 ));
                             }
                         }
-                        let q = self.check_quote(&doc, &sec, &q)?;
+                        let q = self
+                            .check_quote(&doc, &sec, &q)
+                            .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
                         Some(SourceRef { doc, section: sec, quote: q.trim().to_string() })
                     }
                     (None, None) => None,
                     _ => {
                         return Err(ToolError::new(
                             "bad-argument",
-                            "re-anchoring needs both section and quote; pass the two together or neither".into(),
+                            format!("re-anchoring needs both section and quote; pass the two together or neither. {}", anchor_hint()),
                         ))
                     }
                 };
@@ -1202,6 +1288,39 @@ impl ToolSession {
                         format!("{} is not one of this turn's dirty sections ({})", sec, self.scope.target_sections.join(", ")),
                     ));
                 }
+                // A section that yielded a statement is not non-normative. The two claims
+                // contradict, and the harness settles it deterministically rather than
+                // journaling a mark the graph itself refutes.
+                if state == "non-normative" {
+                    let mut yielded: Vec<String> = self
+                        .snapshot
+                        .graph
+                        .requirements
+                        .iter()
+                        .filter(|(_, r)| r.source.doc == doc && r.source.section == sec)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for op in &self.staged {
+                        if let Op::CreateRequirement { id, requirement } = op {
+                            if requirement.source.doc == doc && requirement.source.section == sec {
+                                yielded.push(id.clone());
+                            }
+                        }
+                    }
+                    if !yielded.is_empty() {
+                        yielded.sort();
+                        yielded.dedup();
+                        return Err(ToolError::new(
+                            "contradicts-extraction",
+                            format!(
+                                "{}#{} already yielded {}; a section that states a requirement is covered, not non-normative. Mark it covered, or delete the statement first if it was a mistake",
+                                doc,
+                                sec,
+                                yielded.join(", ")
+                            ),
+                        ));
+                    }
+                }
                 // One coverage mark per section per changeset: restaging replaces the
                 // earlier mark instead of journaling contradictory states.
                 self.staged
@@ -1261,6 +1380,48 @@ impl ToolSession {
                 let evidence = Self::opt_str(args, "evidence");
                 crate::verify::mark(&self.snapshot, &rid, &verdict, seen.as_deref(), evidence.as_deref(), &gs)
                     .map_err(|e| ToolError::new("bad-argument", e))
+            }
+            // Feedback about jazyk's own prompts and tools. It stages nothing, spends no
+            // mutation budget, and passes no gate beyond a non-empty message: a model
+            // asking for help is never bounced. Mirrors docs/compiler/tools.md#feedback-tool.
+            "report_feedback" => {
+                let message = Self::opt_str(args, "message").unwrap_or_default();
+                let message = message.trim();
+                if message.is_empty() {
+                    return Err(ToolError::new(
+                        "missing-argument",
+                        "report_feedback needs a message saying what was unclear and what would have helped".into(),
+                    ));
+                }
+                if self.feedback_count >= FEEDBACK_LIMIT {
+                    return Ok(json!({
+                        "recorded": false,
+                        "note": format!("already recorded {} feedback entries for this session; continue the task", FEEDBACK_LIMIT)
+                    }));
+                }
+                self.feedback_count += 1;
+                let c = self.caller.clone();
+                crate::feedback::append(
+                    &self.snapshot.out,
+                    &crate::feedback::Entry {
+                        at: crate::verify::now_iso(),
+                        kind: crate::feedback::normalize_kind(&Self::opt_str(args, "kind").unwrap_or_default()),
+                        subject: Self::opt_str(args, "subject").unwrap_or_default().trim().to_string(),
+                        message: crate::llm::truncate(message, 4_000).to_string(),
+                        source: c.source,
+                        task: if c.task.is_empty() { self.scope.task.clone() } else { c.task },
+                        target: c.target,
+                        model: c.model,
+                        codec: c.codec,
+                        generation: self.snapshot.status.generation,
+                        run: c.run,
+                        client: c.client,
+                    },
+                );
+                Ok(json!({
+                    "recorded": true,
+                    "note": "logged for jazyk's developers; continue the task with your best judgment"
+                }))
             }
             "done" => {
                 // Batch gate: stale anchors are a contract. Each must be re-anchored
@@ -1402,6 +1563,79 @@ mod tests {
             64,
             24_000,
         )
+    }
+
+    // A bare empty list reads as "ask again" and models loop on it; a miss must say what
+    // the graph holds and what to do instead. Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn search_miss_names_the_graph_and_the_next_step() {
+        let mut t = session();
+        let r = t.dispatch("search", &json!({"query": "slides"})).unwrap();
+        assert_eq!(r["hits"].as_array().unwrap().len(), 0);
+        assert_eq!(r["entityCount"], 1);
+        assert!(r["entities"][0].as_str().unwrap().contains("ent:customer"), "{}", r);
+        assert!(r["next"].as_str().unwrap().contains("upsert_entity"), "{}", r);
+        // A hit answers under the same key, so the caller reads one shape.
+        let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
+        assert_eq!(hit["hits"][0]["id"], "ent:customer");
+    }
+
+    // A section that yielded a statement cannot also state none of them.
+    #[test]
+    fn non_normative_contradicts_an_extracted_statement() {
+        let mut t = session();
+        t.dispatch(
+            "upsert_requirement",
+            &json!({
+                "ears": "The Shopping Cart shall hold items a Customer intends to buy.",
+                "entities": ["ent:customer"],
+                "section": "/shop/cart",
+                "quote": "The Shopping Cart holds items a Customer intends to buy."
+            }),
+        )
+        .unwrap();
+        let err = t
+            .dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "non-normative", "note": "just facts"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "contradicts-extraction");
+        assert!(err.message.contains("covered"), "{}", err.message);
+        // The honest mark still goes through.
+        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        // A section that yielded nothing is still free to be non-normative.
+        t.dispatch("set_coverage", &json!({"section": "/shop", "state": "non-normative", "note": "navigation only"}))
+            .unwrap();
+    }
+
+    // Passing the ears statement as the quote is the common miscall; the rejection has to
+    // point at the existing anchor, not just repeat that the quote is absent.
+    #[test]
+    fn reanchor_rejection_names_the_existing_anchor() {
+        let mut t = session();
+        let id = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "ears": "The Shopping Cart shall hold items a Customer intends to buy.",
+                    "entities": ["ent:customer"],
+                    "section": "/shop/cart",
+                    "quote": "The Shopping Cart holds items a Customer intends to buy."
+                }),
+            )
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let err = t
+            .dispatch(
+                "update_requirement",
+                &json!({"id": id, "entities": ["ent:customer"], "section": "shop.md#/shop/cart",
+                        "quote": "The Shopping Cart shall hold items a Customer intends to buy."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "quote-not-found");
+        assert!(err.message.contains("omit `section` and `quote`"), "{}", err.message);
+        // Only-entities is the call that was meant, and it is accepted.
+        t.dispatch("update_requirement", &json!({"id": id, "entities": ["ent:customer"]})).unwrap();
     }
 
     #[test]
@@ -1757,5 +1991,47 @@ mod tests {
         t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
         t.dispatch("done", &json!({"summary": "revised and re-anchored"})).unwrap();
         assert!(t.done.is_some());
+    }
+
+    #[test]
+    fn feedback_logs_with_its_caller_and_stages_nothing() {
+        let dir = std::env::temp_dir().join(format!("jazyk-tool-fb-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let mut t = session();
+        t.snapshot.out = dir.clone();
+        t.caller = crate::feedback::Caller {
+            source: "turn".into(),
+            target: "shop.md".into(),
+            model: "test-model".into(),
+            codec: "native".into(),
+            run: Some("run-1".into()),
+            ..Default::default()
+        };
+        let ok = t
+            .dispatch("report_feedback", &json!({"kind": "ambiguous", "subject": "set_coverage", "message": "covered vs non-normative is unclear for a section of links"}))
+            .unwrap();
+        assert_eq!(ok["recorded"], json!(true));
+        assert!(t.staged.is_empty(), "feedback stages no mutation");
+
+        let logged = crate::feedback::read(&dir, 10);
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0]["kind"], "ambiguous");
+        assert_eq!(logged[0]["task"], "reconcile-doc");
+        assert_eq!(logged[0]["target"], "shop.md");
+        assert_eq!(logged[0]["model"], "test-model");
+        assert_eq!(logged[0]["run"], "run-1");
+
+        // An empty message is the one rejection; an unknown kind is not.
+        let err = t.dispatch("report_feedback", &json!({"kind": "wrong", "message": "  "})).unwrap_err();
+        assert_eq!(err.rule, "missing-argument");
+        t.dispatch("report_feedback", &json!({"kind": "puzzled", "message": "second"})).unwrap();
+        assert_eq!(crate::feedback::read(&dir, 10)[0]["kind"], "other");
+
+        // The cap holds: further calls are acknowledged without a record.
+        for i in 0..5 {
+            t.dispatch("report_feedback", &json!({"kind": "confusing", "message": format!("more {}", i)})).unwrap();
+        }
+        assert_eq!(crate::feedback::read(&dir, 99).len(), FEEDBACK_LIMIT);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

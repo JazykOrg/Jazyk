@@ -296,3 +296,87 @@ definitions:
       summary:
         type: string
     additionalProperties: false
+  reportFeedback:
+    description: >-
+      Request payload of report_feedback. Feedback about jazyk's own prompts and tools,
+      never about the project's documents
+    type: object
+    required:
+      - kind
+      - message
+    properties:
+      kind:
+        type: string
+        enum:
+          - ambiguous
+          - wrong
+          - confusing
+          - missing
+          - other
+        description: An unrecognized value is recorded as other
+      subject:
+        type: string
+        description: What the feedback is about, e.g. a tool name, an argument, an instruction
+      message:
+        type: string
+        description: What was unclear and what would have helped
+    additionalProperties: false
+  reportFeedbackResponse:
+    description: Response of report_feedback
+    type: object
+    properties:
+      recorded:
+        type: boolean
+        description: False when the turn's feedback cap is already spent
+      note:
+        type: string
+    additionalProperties: false
+  feedbackEntry:
+    description: >-
+      One line of the feedback log at <out>/feedback.jsonl. The payload plus the
+      references identifying the caller
+    type: object
+    required:
+      - at
+      - kind
+      - message
+    properties:
+      at:
+        type: string
+        description: ISO 8601 timestamp
+      kind:
+        type: string
+      subject:
+        type: string
+      message:
+        type: string
+      source:
+        type: string
+        enum:
+          - turn
+          - mcp
+        description: The harness the call came through
+      task:
+        type: string
+        description: Task type of the turn, or the MCP serving mode
+      target:
+        type: string
+        description: The turn's work item target. Absent for an MCP session, which has none
+      model:
+        type: string
+      codec:
+        type: string
+        enum:
+          - native
+          - text
+      generation:
+        type: integer
+        minimum: 0
+        description: Store generation when the call was made
+      run:
+        type: string
+        description: Transcript name under <out>/trace, when the call came from a traced run
+      client:
+        type: string
+        description: MCP client name reported at initialize
+    additionalProperties: false

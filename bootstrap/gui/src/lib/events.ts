@@ -1,13 +1,48 @@
 // The live spine: one SSE connection drives query invalidation and the zustand
 // slices. A dropped connection falls back to polling /api/status until it heals.
 import { QueryClient } from '@tanstack/react-query'
-import { get, tokenParam, type Job, type Status } from './api'
+import { get, tokenParam, type Job, type Status, type TraceEvent } from './api'
 import { useApp } from './store'
 
 type WireEvent = {
   seq?: number
   type: string
   [k: string]: unknown
+}
+
+const str = (v: unknown) => (typeof v === 'string' ? v : '')
+const num = (v: unknown) => (typeof v === 'number' ? v : 0)
+
+// The events that say where a build is working, into the turn-progress slice. The
+// files tree and the editor render it in place (docs/frontends/gui.md#files).
+function applyProgress(ev: TraceEvent) {
+  const app = useApp.getState()
+  switch (ev.kind) {
+    case 'waveStart':
+      app.turnsQueued(str(ev.task), Array.isArray(ev.items) ? (ev.items as string[]) : [])
+      break
+    case 'turnStart':
+      app.turnStarted({
+        label: str(ev.label),
+        task: str(ev.task),
+        target: str(ev.target),
+        doc: typeof ev.doc === 'string' ? ev.doc : null,
+        sections: Array.isArray(ev.sections) ? (ev.sections as string[]) : [],
+      })
+      break
+    case 'section':
+      app.turnSection(str(ev.label), str(ev.section))
+      break
+    case 'turnDone': {
+      const summary = str(ev.summary)
+      const staged = `${num(ev.staged)} staged · ${num(ev.rounds)} rounds`
+      app.turnEnded(str(ev.label), 'done', summary ? `${staged} · ${summary}` : staged)
+      break
+    }
+    case 'turnFailed':
+      app.turnEnded(str(ev.label), 'failed', str(ev.error))
+      break
+  }
 }
 
 // One event fans out to the query keys it invalidates; only mounted queries refetch.
@@ -43,16 +78,23 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       app.setJobState(ev.jobId as number, 'running')
       qc.invalidateQueries({ queryKey: ['jobs'] })
       break
-    case 'job.trace':
+    case 'job.trace': {
+      const event = ev.event as TraceEvent
       app.pushTrace({
         jobId: ev.jobId as number,
         // The per-job event number (not the global stream seq): rows merge exactly
         // onto a fetched transcript baseline.
         seq: (ev.n as number) ?? 0,
-        event: ev.event as { kind: string },
+        event,
       })
+      applyProgress(event)
+      // A feedback call lands mid-run; the view refreshes on the call, not at the end.
+      if (event.kind === 'toolCall' && event.name === 'report_feedback')
+        qc.invalidateQueries({ queryKey: ['feedback'] })
       break
+    }
     case 'job.finished':
+      app.turnsSettle()
       app.setJobState(ev.jobId as number, ev.state as string, ev.result as Job['result'])
       for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable'])
         qc.invalidateQueries({ queryKey: [key] })
@@ -102,6 +144,7 @@ export function startEventStream(qc: QueryClient) {
       stopPolling()
       // Anything may have happened while disconnected.
       qc.invalidateQueries()
+      void seed()
     }
     es.onmessage = (m) => {
       try {
@@ -118,9 +161,20 @@ export function startEventStream(qc: QueryClient) {
   }
 
   // Seed job state so the Build view knows about jobs from before this page load.
-  get<{ jobs: Job[] }>(`/api/jobs`)
-    .then((r) => r.jobs.forEach((j) => app.upsertJob(j)))
-    .catch(() => {})
+  // A build already running also replays its events through the progress slice, so
+  // a reload (or a healed connection) shows where it is, not an empty tree.
+  const seed = () =>
+    get<{ jobs: Job[] }>(`/api/jobs`)
+      .then((r) => {
+        r.jobs.forEach((j) => app.upsertJob(j))
+        const running = r.jobs.find((j) => j.state === 'running')
+        if (!running) return
+        return get<{ events?: { event: TraceEvent }[] }>(`/api/jobs/${running.id}`)
+          .then((j) => (j.events ?? []).forEach((e) => applyProgress(e.event)))
+          .catch(() => {})
+      })
+      .catch(() => {})
+  void seed()
   get<{ mode: 'off' | 'queue' | 'watch'; gen?: 'manual' | 'auto' }>(`/api/watch`)
     .then((r) => {
       app.setWatchMode(r.mode)
@@ -136,10 +190,14 @@ export function startEventStream(qc: QueryClient) {
     }
   })
 
+  // Finished turns linger, then fade; one ticker retires them.
+  const sweep = window.setInterval(() => useApp.getState().turnsSweep(), 1000)
+
   connect()
   return () => {
     unsub()
     es?.close()
     stopPolling()
+    clearInterval(sweep)
   }
 }

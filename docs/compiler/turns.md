@@ -29,7 +29,8 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   resolves to the anchor and updates it in place), the fact changed and the turn
   revises it with `update_requirement` carrying the new `ears` plus the new `quote`,
   or the fact is gone and the turn deletes it. The `done` gate rejects a turn that
-  leaves a stale anchor untouched.
+  leaves a stale anchor untouched. The pack also carries the document's
+  [incoming links](#incoming-links).
 - `review-requirement`: judge one changed statement against its computed neighbors.
   The [reconciler](./reconciler.md#waves) picks the neighbors; the turn only judges.
   The pack shows the changed requirement (`ears`, `quote`, source section) and each
@@ -58,10 +59,62 @@ Extraction order inside `reconcile-doc` is deliberate: requirements first, entit
 as requirements need them. An entity that no statement needs is noise. See
 [entity](./model/entity.md#what-is-an-entity).
 
+## Incoming links
+
+A document set describes one subject by splitting it across files. A parent lists its
+parts and links to a file per part; the file details the part. The link is what says
+which entity the file is about, and the parent's turn has already recorded it: the list
+item yielded a requirement, and that requirement introduced the part's entity.
+
+So the `reconcile-doc` pack names every incoming link the graph already resolved:
+
+```
+## Linked from
+- docs/slides.md#/slides "[Introduction](./slide-intro.md)" introduced ent:introduction (Introduction)
+```
+
+The turn reads that as the document's subject: statements in this document are about
+`ent:introduction`, and its requirements reference that entity instead of minting a
+second one for the same concept. Without it, a file linked as a part yields requirements
+tied to nothing the parent knows, the part's entity keeps only the parent's one-line
+mention, and [generation](../consumers/gen.md) sees an entity with a name and no
+content.
+
+A link is resolved by locating the target document in the verbatim quote of an existing
+entity mention or requirement source, so the binding is deterministic and needs no model
+judgment. Links the graph has not yet resolved are not listed: the
+[level order](./reconciler.md#levels) runs a parent before the documents it links to, so
+by the time the part's turn runs, the parent's requirement exists.
+
+## Repeated calls
+
+The same call with the same arguments has the same answer. A model that re-asks a
+question it already asked is stuck, and the harness says so rather than letting the turn
+spend its budget on it:
+
+- The second identical call answers as usual, with a `repeat` field on the result saying
+  the answer is unchanged and to act on it.
+- The third is refused with a `repeated-call` error naming the tool and the way forward:
+  record what the section states, mark its coverage, move on.
+
+Identity is the tool name plus its arguments verbatim, counted per turn. `done` is
+exempt; repairing a rejected `done` legitimately repeats it.
+
+A refusal counts toward the invalid streak, so a model that keeps looping ends the turn
+after three rounds instead of after the whole round budget, and the work it staged
+before getting stuck still commits. The guard is what keeps one unanswerable question
+from costing a document its later sections.
+
 ## Message loop
 
 - The system message states the task, the graph invariants, and the finish contract: the
   turn ends by calling `done`.
+- Directly under the role line, high in every turn's system message, sits the feedback
+  contract: an instruction, a tool, an argument, or an error message that is ambiguous,
+  wrong, or confusing goes to [`report_feedback`](./tools.md#feedback-tool), and the
+  turn then continues with its best judgment. The note is one paragraph, shared by
+  every task type, and says what feedback is not: a problem in the documents is a
+  diagnostic, not feedback.
 - The first user message is the rendered context pack.
 - Each model reply is either tool calls or text. Read tools answer immediately. Write
   tools stage mutations. Results go back as tool results.
@@ -152,8 +205,47 @@ the condensed result, and any reasoning text the model produced. Reasoning carri
 `reasoning_content` or `reasoning` field is emitted as model text, the same as reasoning
 prose in the content. The `compile` command
 renders these live, and the [GUI](../frontends/gui.md) streams them to the browser. The
-event kinds: turn start, tool call, tool result, tool error, model text, turn done,
-turn failed, and a plain note. The [generation](../consumers/gen.md) and verification
-workers emit their own kinds per entity and per ledger row. Verbose mode includes the
-full context pack and raw payloads. The committed changeset with the same information
-persists in the [journal](./graph.md#journal).
+[generation](../consumers/gen.md) and verification workers emit their own kinds per
+entity and per ledger row. The committed changeset with the same information persists
+in the [journal](./graph.md#journal).
+
+Every event carries a `label`: the work it belongs to (`reconcile-doc docs/main.md`,
+`review-entity ent:cart`, `gen ent:cart`, `verify req:...`). The label is the grouping
+key, so a reader can reassemble one turn from an interleaved parallel run. A `step`
+names the position inside the label (`r3` for a turn round, `product 1/2` for a
+generation part).
+
+The event kinds:
+
+- `turnStart`, `turnDone`, `turnFailed`: the turn lifecycle. `turnStart` carries where
+  the turn is working: `task`, `target`, the `doc` when the task is `reconcile-doc`,
+  the dirty `sections` it must process, and the stale anchor count.
+- `toolCall`, `toolResult`, `toolError`: one row per tool call, condensed.
+- `modelText`: prose or reasoning the model produced.
+- `section`: the turn moved to a section. Emitted when an accepted tool call names a
+  section (`set_coverage`, `upsert_requirement`, an entity mention, `read_section`)
+  that differs from the last one, so the sequence of these events is the turn's path
+  through the document. Carries `doc`, `section`, and the `tool` that named it.
+- `llmRequest`, `llmResponse`, `llmRetry`: one model call. The request carries the
+  whole outgoing message list (system prompt, context pack, and the conversation so
+  far) plus the tool names offered; the response carries the raw assistant message,
+  the elapsed milliseconds, and the completion tokens; a retry carries the attempt,
+  the error, and how long the harness waits before trying again. Sticky fallbacks
+  (codec downgrade, streaming, dropped `temperature`) are notes on the same label, so
+  a run's whole conversation with the endpoint is in one place.
+- `note`: a plain line. Verbose notes carry the full context pack and raw payloads.
+- `waveStart`: the reconciler is about to run a wave. Carries the wave number, the
+  `task` its items share (`reconcile-doc`, `review-entity`, `review-requirement`),
+  and their targets, so a reader sees what is queued before any turn starts.
+- `genEntityStart`, `genEntitySkipped`, `genEntityDone`, `genEntityFailed`;
+  `verifyRowStart`, `verifyRowDone`, `verifyRowStale`, `verifyRowError`: the worker
+  kinds.
+
+Payloads are recorded in full and shipped condensed. A transcript keeps every prompt
+and reply as it was sent (capped per message, so one runaway payload cannot fill the
+disk); the live stream and the transcript listing carry the same events with long
+strings elided to a preview plus a byte count. A reader that wants the whole payload
+asks for that one event (see [GUI jobs](../frontends/gui.md#jobs)). Terminal rendering
+follows the [trace level](../frontends/cli.md#jazyk-compile): model calls print one
+timing line at `--verbose` and nothing at the default level, where the tool rows
+already say what happened.

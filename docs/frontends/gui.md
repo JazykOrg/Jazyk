@@ -77,6 +77,10 @@ Project and store reads:
   journal entries between two builds are the release diff (see
   [release diffs](../consumers/pm.md#release-diffs-from-the-journal)).
 - `GET /api/docsgen/{slug}`: the rendered per-entity requirements document.
+- `GET /api/feedback?limit=`: the [feedback log](../compiler/tools.md#feedback-tool),
+  newest first, capped (default 200, maximum 2000). Each entry carries the model's
+  report plus the references that name its caller. An unreadable or absent log is an
+  empty list, never an error.
 
 Documents:
 
@@ -160,15 +164,21 @@ The GUI runs builds and workers itself. `POST /api/jobs` with
 them) queues a job and returns its id. `GET /api/jobs` lists jobs,
 `GET /api/jobs/{id}` returns one job with its state, result, and its whole trace: the
 server keeps every event a job emitted, numbered per job, so a reloaded page shows the
-same history the live stream showed. Tool calls and results carry the condensed line
-and, when it was cut, the full payload beside it. `POST /api/jobs/{id}/cancel`
-requests cancellation.
+same history the live stream showed. `POST /api/jobs/{id}/cancel` requests
+cancellation.
 
 - Every job's trace persists as one JSON-lines file under `<out>/trace/`: a metadata
   line, one line per numbered event, and a final line with the outcome. The activity
   panel lists past jobs from these files, so the history survives server restarts and
   page reloads, and any tool can load a transcript programmatically. Files older
   than 30 days are removed when the server starts.
+- The file holds the [full payloads](../compiler/turns.md#trace-events): every prompt
+  sent and every reply received. What travels to the browser is elided: a string over
+  2000 characters becomes a preview naming its full length, and every object holding
+  one carries `elided: true`. `GET /api/trace/{stem}/{n}` returns event `n` of that
+  transcript with nothing cut. Expanding
+  a row in the activity panel is that fetch. A running job's events are readable the
+  same way, by the same number, because the file is flushed per line.
 - The metadata line and the outcome line each record the store generation at that
   moment, so a run's committed changesets are exactly the journal entries between
   the two. The activity panel renders them inline with the trace.
@@ -217,7 +227,8 @@ and the GUI renders it live without owning the job.
 One workbench page. Navigation swaps panes, never the page. Five regions:
 
 - The rail: a narrow icon strip on the far left: `files`, `graph`, `work`,
-  `settings`. A rail item picks what the sidebar shows; it never navigates away.
+  `feedback`, `settings`. A rail item picks what the sidebar shows; it never
+  navigates away.
 - The sidebar: the navigator for the active rail item. Clicking an entry opens it in
   the center.
 - The center: the open item. The document editor, the deliverable viewer, the map,
@@ -230,7 +241,7 @@ One workbench page. Navigation swaps panes, never the page. Five regions:
   selected run's transcript. See [activity](#activity).
 
 Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`, `/graph`,
-`/work`, and `/settings` pick the center; `?node=` holds the inspector selection;
+`/work`, `/feedback`, and `/settings` pick the center; `?node=` holds the inspector selection;
 `?run=` the selected run. A document takes `?section=` and `?quote=` to reveal and
 highlight a quote; a deliverable file takes `?site=<requirement>` to reveal that
 requirement's first located site, or `?line=` to reveal a line directly. Routes from the earlier tabbed layout redirect to their new
@@ -248,6 +259,16 @@ One explorer over both trees, in two labeled sections:
 - Deliverable: the generated product files, each with its ownership count badge
   (the entities and requirements the ledger binds to it) and a stale dot when a
   bound requirement's verification is stale.
+- Build progress: while a build runs, the documents it is working on say so in
+  place. A document queued in the current wave is dimmed with a waiting mark; the
+  document a turn is reconciling shows a running mark, the section the turn reached,
+  and how many of its dirty sections it has touched. When the turn ends, the row
+  turns into its result (what was staged, or the failure) and fades a few seconds
+  later. Hovering the row holds the result until the pointer leaves. The states come
+  from the [trace events](../compiler/turns.md#trace-events) of the running job, so a
+  build started outside the GUI moves the lock and the counter as always, but does
+  not light the tree up: its events are in its own transcript, not on this server's
+  stream.
 - Linkage: the two sections light each other up. Selecting a document highlights
   the deliverable files bound to it: the requirements whose source anchors in the
   document, joined through the ledger to the files that implement them. Selecting
@@ -309,6 +330,21 @@ per-requirement status chips and the
 [staleness cascade](../consumers/gen.md#the-cascade) explained per row. Rows open
 the inspector. Run actions submit jobs to the activity panel.
 
+### Feedback
+
+The history of the [feedback tool](../compiler/tools.md#feedback-tool): what the
+models reported about jazyk itself, newest first. This view is for jazyk's
+developers, not for the project's authors; nothing here is a statement about the
+documents.
+
+- Each entry shows its kind, its subject, the message, and the references that name
+  the caller: the source, the task, the target, the MCP client, the model, the codec,
+  and the store generation.
+- The kind is a filter: `?kind=` selects one, and the counts sit beside the filters.
+- An entry made during a traced run links to that run, which selects it in the
+  activity panel (`?run=`), so the call sits back in the transcript it came from.
+- A feedback call mid-build refreshes the view as it lands, not at the end of the run.
+
 ### Inspector
 
 The detail pane for one node, opened from anywhere, layered over nothing:
@@ -334,12 +370,25 @@ two parts:
   included), each with kind, state, timing, and its one-line result. Selecting a
   run pins it: a new job starting does not steal the view.
 - The selected run: the transcript as turn groups, newest turn first, the running
-  turn pinned and highlighted with its tool calls streaming in. Every turn shows
-  its command sequence inline (the tool, the condensed arguments, the condensed
-  result); a row expands to the full payloads. The changesets the run committed
-  (the journal entries whose build matches) render inline in order, each
-  expandable to its mutations and reasoning: the trace says what the model did,
-  the changesets say what landed.
+  turn pinned and highlighted with its tool calls streaming in. A turn group is
+  keyed by the event [label](../compiler/turns.md#trace-events), so parallel work
+  reads as one group per document or entity, not as one interleaved stream. The
+  header names what the turn is working on: the document, its dirty sections, and
+  the section it reached.
+- Inside a turn, one card per round. The card header is the round's arithmetic:
+  prompt size, response time, completion tokens, and how many tool calls the answer
+  produced. Expanding it shows the round in full, fetched on demand:
+  - The request: every message in the order it was sent, each collapsible, the
+    system prompt and the [context pack](../compiler/context.md) included. The pack
+    is what the model was asked; nothing about it is inferred from the reply.
+  - The response: the assistant message as it arrived, reasoning field included, and
+    the parsed tool calls with their arguments.
+  - The tool results the harness sent back, each with the full payload.
+  A retry or a sticky fallback (codec downgrade, streaming, dropped `temperature`)
+  shows as its own row in the round, with the error that caused it.
+- The changesets the run committed (the journal entries whose build matches) render
+  inline in order, each expandable to its mutations and reasoning: the trace says
+  what the model did, the changesets say what landed.
 - The control line, visible even collapsed: compile now (with the changed-document
   count), generate now (with the pending-entity count), verify, the
   [watch mode](#watch) select, and the [generation mode](#generation) select. The
@@ -412,6 +461,16 @@ completion, document links, code lens.
   link lands on the requirement's verification detail in the inspector.
 - Coverage renders beside the text from the section tree: covered, non-normative, and
   unprocessed sections are visually distinct.
+- A build in progress is visible in the text. When a turn takes this document, its
+  dirty sections are banded as queued, and the section the turn reached
+  ([`section` events](../compiler/turns.md#trace-events)) is banded as running. Each
+  band marks its first line in the gutter, beside the coverage border. When the turn
+  ends, the bands become its result, green for committed and red for parked, and
+  clear a few seconds later. Hovering a band holds it, and its tooltip names the
+  turn, the section, and the outcome.
+  Section lines come from the last reconciled section tree, the same source as the
+  coverage bands, so they can drift against unsaved edits until the next build
+  commits.
 - The editor diffs against the reconciled baseline (`GET /api/docs/baseline`):
   changed, added, and deleted lines mark the gutter, updated live as the text
   changes. The marks answer what the next compile will see as dirty. A `diff`

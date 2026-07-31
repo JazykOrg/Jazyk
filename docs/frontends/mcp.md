@@ -14,12 +14,19 @@ By default the server exposes the [read tools](../compiler/tools.md#read-tools),
 - `context`, `expand`, `search`, `read_section`, `get_entity`
 - `gen_instructions`, `gen_pending`, `gen_task`, `gen_mark`
 - `verify_pending`, `verify_task`, `verify_mark`
+- `report_feedback` (served in every mode, below)
 - `await_changes` (a server tool, below)
 
 This is the public query, generation, and verification surface. An agent can look up an
 entity, pull a bounded [context pack](../compiler/context.md), follow
 [expansion handles](../compiler/context.md#expansion-handles), and act as a generation
 or verification worker, with no way to mutate the graph.
+
+[`report_feedback`](../compiler/tools.md#feedback-tool) is served in both modes: it
+writes to the feedback log, not the graph. The `initialize` reply carries server
+instructions saying so, so an agent sees the channel before its first call. Each record
+names the client the MCP `initialize` reported, so feedback from an external agent is
+distinguishable from a compilation turn's.
 
 ## External workers
 

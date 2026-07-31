@@ -42,10 +42,26 @@ impl GenSettings {
 // state per requirement. Mirrors docs/consumers/gen.md#the-ledger.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Ledger {
+    // Present only when the deliverable's medium must be produced by a tool.
+    // Mirrors docs/consumers/gen.md#the-build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<Build>,
     #[serde(default)]
     pub entities: BTreeMap<String, EntityGen>,
     #[serde(default)]
     pub requirements: BTreeMap<String, ReqRow>,
+}
+
+// The one command that produces the deliverable's artifact, per deliverable, not per
+// entity. Runs once before any row is judged.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Build {
+    pub run: String,
+    #[serde(default = "dot")]
+    pub cwd: String,
+    // Deliverable-relative paths the command creates. A missing one fails the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub produces: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -276,12 +292,14 @@ pub fn instructions() -> String {
     format!(
         "Generate the entity's part of the deliverable AND the tests for its requirements.\n\
          - Derive the medium from the requirements and the context: what the documents say the deliverable is decides what you write. You choose the layout, the file names, and the build or support files that make your recorded commands executable; every file you write must appear in the manifest you pass to gen_mark.\n\
+         - The deliverable is the artifact itself, never a description of it. A requirement naming a format, a medium, or a piece of content is an obligation to PRODUCE that thing. Writing a document that says the artifact will be in some format, or a manifest listing what the artifact would contain, satisfies nothing. When the medium is text the requirements describe directly (source code, a manuscript, a configuration), your files are the deliverable. When the medium must be produced by a tool (a slide deck, a PDF, a rendered site, a compiled binary, an image), write the source that produces it and return a `build` in the manifest: {{run, cwd, produces}} where `run` executes from the deliverable directory and `produces` lists the artifact paths it creates. The harness runs the build before any test. One build per deliverable: if the package already carries a `build`, reuse it and extend its source instead of recording a second one.\n\
+         - Content requirements are satisfied by content. A requirement saying the artifact shows a title, states a definition, or uses a color is met only when the artifact carries that exact title, that definition, that color value. Never write placeholder filler (`[Project Goal]`, `Lorem ipsum`, `TODO`) in place of what a requirement states. If a requirement does not say what the content is, implement exactly what it does say and nothing more.\n\
          - One toolchain per deliverable: the run commands already recorded (the package lists them) establish the language, the test runner, and the command style; reuse them exactly. Never introduce a second test runner.\n\
          - Every deliverable file belongs to one entity. Never write to a file another entity's task produced (the package lists them); reference it through imports instead and pick a path of your own.\n\
          - Each recorded run command must execute from the deliverable directory as recorded. If it needs a build or configuration file that no task has written yet (package.json, Cargo.toml), return that file as a support file in the manifest step.\n\
          - Every requirement is an obligation; implement each and place a single-line marker comment directly above the implementing site: `req:<id> hash:<hash8>` in the medium's comment syntax, nothing else on that line. The harness strips marker lines from your files and records each location in the ledger, so the delivered file stays clean.\n\
          - Derive one test per requirement. Pick the kind per requirement:\n\
-           - programmatic: any test a command can run (unit, integration, cucumber are examples, not a taxonomy). Write the test into the deliverable and record the exact command that runs only that test, exactly as it must be executed from the deliverable directory. Its exit code is the verdict, so the artifact must propagate failure: a harness that prints a failure and still exits zero verifies nothing.\n\
+           - programmatic: any test a command can run (unit, integration, cucumber are examples, not a taxonomy). Write the test into the deliverable and record the exact command that runs only that test, exactly as it must be executed from the deliverable directory. Its exit code is the verdict, so the artifact must propagate failure: a harness that prints a failure and still exits zero verifies nothing. The test must inspect the artifact the requirement is about, never a document that describes it: asserting that a manifest names a format or that a plan lists a feature is circular, since both sides are your own prose. When a build produces the artifact, open what the build produced. A test must run with no fixture the deliverable does not define; if it needs setup, write that setup file and list it in the manifest. A test must be falsifiable: its assertion has to fail when the requirement is violated. If the only assertion you can write would pass either way, the requirement is not programmatically testable from this artifact; declare it llm instead of writing a test that always passes.\n\
            - llm: the requirement needs judgment, or the deliverable is not executable software. Write a criteria file (the package names its path): front matter with the requirement id and statement hash, then the statement, the quote, the implementing file paths, the steps to confirm, and the verdict contract (PASS or FAIL plus reasoning).\n\
          - Name each test with the suggested testName from the package (requirement id plus hash prefix) and put the single-line marker comment above it.\n\
          - Reference other entities' files through the manifest the package carries.\n\
@@ -416,6 +434,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "changed": changed,
         "generatedFiles": manifest,
         "runCommands": run_commands,
+        "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd, "produces": b.produces})),
     }))
 }
 
@@ -452,6 +471,21 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         }
     }
     let mut ledger = Ledger::load(&store.out);
+    // One build per deliverable: the first task that needs one establishes it, later
+    // tasks receive it in their package and reuse it.
+    // Mirrors docs/consumers/gen.md#the-build.
+    if ledger.build.is_none() {
+        if let Some(run) = manifest["build"]["run"].as_str().map(str::trim).filter(|r| !r.is_empty()) {
+            ledger.build = Some(Build {
+                run: run.to_string(),
+                cwd: manifest["build"]["cwd"].as_str().unwrap_or(".").to_string(),
+                produces: manifest["build"]["produces"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+            });
+        }
+    }
     ledger.entities.insert(
         slug,
         EntityGen {
@@ -605,6 +639,47 @@ mod tests {
         assert_eq!(status, "unverified");
     }
 
+    // One build per deliverable: the first task that needs one establishes it, later
+    // tasks receive it in their package and cannot replace it.
+    // Mirrors docs/consumers/gen.md#the-build.
+    #[test]
+    fn build_is_recorded_once_and_carried_into_later_packages() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-build-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        assert!(task_package(&s, "ent:cart", &gs).unwrap()["build"].is_null());
+
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        mark(
+            &s,
+            "ent:cart",
+            None,
+            &serde_json::json!({
+                "files": ["src/cart.rs"],
+                "build": {"run": "python build_deck.py", "cwd": ".", "produces": ["deck.pptx"]},
+                "tests": [],
+            }),
+            &gs,
+        )
+        .unwrap();
+        let b = Ledger::load(&out).build.unwrap();
+        assert_eq!(b.run, "python build_deck.py");
+        assert_eq!(b.produces, vec!["deck.pptx".to_string()]);
+        // The next task sees it and a second recording does not take.
+        assert_eq!(task_package(&s, "ent:cart", &gs).unwrap()["build"]["run"], "python build_deck.py");
+        mark(
+            &s,
+            "ent:cart",
+            None,
+            &serde_json::json!({"files": ["src/cart.rs"], "build": {"run": "make all"}, "tests": []}),
+            &gs,
+        )
+        .unwrap();
+        assert_eq!(Ledger::load(&out).build.unwrap().run, "python build_deck.py");
+        std::fs::remove_dir_all(&out).ok();
+    }
+
     #[test]
     fn pending_diff_and_mark_lifecycle() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", std::process::id()));
@@ -682,6 +757,8 @@ pub fn run_all(
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
+    // Every prompt this run sends reports under the entity it is generating.
+    let llm = &llm.with_trace(trace);
     let mut targets: Vec<String> = if entities.is_empty() {
         store
             .graph
@@ -828,13 +905,17 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
     let header = format!(
-        "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nAlready generated files (each belongs to its entity; never write to another entity's file): {}\nRecorded run commands (the established toolchain; reuse it): {}\n",
+        "Entity {} ({})\nContext:\n{}\nChanged since last generation: {}\nAlready generated files (each belongs to its entity; never write to another entity's file): {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
         id,
         task["name"].as_str().unwrap_or_default(),
         task["context"].as_str().unwrap_or_default(),
         task["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
         serde_json::to_string(&task["generatedFiles"]).unwrap_or_default(),
         if run_commands.is_empty() { "(none yet; this task establishes them)" } else { &run_commands },
+        match &task["build"] {
+            serde_json::Value::Null => "(none yet)".to_string(),
+            b => b.to_string(),
+        },
     );
     // File ownership: a path recorded for a different entity is off limits. One
     // corrective retry, then the task fails.
@@ -867,7 +948,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
         let user = if k == 0 {
             format!(
-                "{}\nWrite the implementing content for this entity. Derive the medium from the context; choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
+                "{}\nDecide the medium first, from the requirements above.\n- If they describe something you can write directly as text (source code, a manuscript, a configuration, a web page), the file you write IS the artifact.\n- If they name a format you cannot type out (a slide deck, a PDF, an image, a spreadsheet, a compiled binary), the file you write is the SOURCE THAT PRODUCES IT: a script or template that, when run, emits that artifact. Write real, runnable source using a library for the format. You will record its command in the manifest step as the build, and the harness runs it. Do NOT write a document describing the artifact, an outline of it, or a manifest listing what it would contain: prose about a deck is not a deck, and it satisfies nothing.\nThen write the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
                 header, parts, req_lines.join("\n")
             )
         } else {
@@ -877,7 +958,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             )
         };
         let reply = llm
-            .chat(instructions, &user, &format!("gen {} product {}/{}", id, k + 1, parts))
+            .chat(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
             let (mut path, mut body) = parse_file_reply(&reply)?;
@@ -887,7 +968,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                     user, path, owner
                 );
                 let reply2 = llm
-                    .chat(instructions, &retry, &format!("gen {} product retry", id))
+                    .chat(instructions, &retry, &format!("gen {}", id), "product retry")
                     .map_err(|e| format!("product retry: {}", e))?;
                 let (p, b) = parse_file_reply(&reply2)?;
                 if let Some(o) = owner_of(&p) {
@@ -918,14 +999,14 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
     let tests_user = format!(
-        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`. Requirements:\n{}\n\nThe product file:\n{}\n",
+        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`.\nA test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.\nWhen the artifact is produced by a build, the test opens what the build produced, never the source that produces it.\nRequirements:\n{}\n\nThe product file:\n{}\n",
         header,
         product_rel,
         req_lines.join("\n"),
         crate::llm::truncate(&code, 16_000)
     );
     let tests_reply = llm
-        .chat(instructions, &tests_user, &format!("gen {} tests", id))
+        .chat(instructions, &tests_user, &format!("gen {}", id), "tests")
         .map_err(|e| format!("tests file: {}", e))?;
     let mut files = vec![product_rel.clone()];
     let mut tests_rel = String::new();
@@ -938,7 +1019,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 tests_user, path, owner
             );
             let reply2 = llm
-                .chat(instructions, &retry, &format!("gen {} tests retry", id))
+                .chat(instructions, &retry, &format!("gen {}", id), "tests retry")
                 .map_err(|e| format!("tests retry: {}", e))?;
             let (p, b) = parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
             if let Some(o) = owner_of(&p) {
@@ -979,18 +1060,22 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             || (!name.is_empty() && run.contains(name))
     };
     let manifest_user = format!(
-        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nRecorded run commands already in use (reuse this toolchain, never introduce a second test runner): {}\nTest names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {}\nEach programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles. Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
+        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nRecorded run commands already in use (reuse this toolchain, never introduce a second test runner): {}\nBuild already recorded for this deliverable: {}\nTest names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {}\nEach programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"build\": {{\"run\": \"...\", \"cwd\": \".\", \"produces\": [\"...\"]}}, \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles.\n`build` is the one command that produces the deliverable's artifact when its medium must be built rather than written directly (a slide deck, a PDF, a rendered site, a compiled binary, an image): `run` executes from the deliverable directory, `produces` lists the artifact paths it creates. The harness runs it before any test, so the tests inspect what it produced. Omit `build` entirely when the files you wrote are themselves the deliverable, or when one is already recorded above. Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
         id,
         files,
         task["deliverable"].as_str().unwrap_or_default(),
         if run_commands.is_empty() { "(none yet; this task establishes the toolchain)" } else { &run_commands },
+        match &task["build"] {
+            serde_json::Value::Null => "(none; record one only if the medium must be built)".to_string(),
+            b => b.to_string(),
+        },
         if found_names.is_empty() { "(none)".to_string() } else { found_names.join(", ") },
         all_reqs.iter().map(|r| format!("- {} [{}]", r["id"].as_str().unwrap_or(""), r["testName"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
         tests_rel,
         crate::llm::truncate(&tests_code, 12_000)
     );
     let manifest_reply = llm
-        .chat(instructions, &manifest_user, &format!("gen {} manifest", id))
+        .chat(instructions, &manifest_user, &format!("gen {}", id), "manifest")
         .map_err(|e| format!("manifest: {}", e))?;
     let mut manifest_json: serde_json::Value = {
         let text = strip_fences(&manifest_reply);
@@ -1034,7 +1119,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             manifest_user,
             mismatches.join("\n")
         );
-        if let Ok(reply2) = llm.chat(instructions, &retry, &format!("gen {} manifest retry", id)) {
+        if let Ok(reply2) = llm.chat(instructions, &retry, &format!("gen {}", id), "manifest retry") {
             let text = strip_fences(&reply2);
             if let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text[start..=end]) {

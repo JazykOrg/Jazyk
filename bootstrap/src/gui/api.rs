@@ -328,6 +328,22 @@ pub async fn overview(State(st): State<SharedState>) -> Json<Value> {
 }
 
 #[derive(Deserialize)]
+pub struct FeedbackQ {
+    limit: Option<usize>,
+}
+
+// The feedback log, newest first: what models found ambiguous, wrong, or confusing
+// about jazyk's own prompts and tools. Mirrors docs/compiler/tools.md#feedback-tool.
+pub async fn feedback(State(st): State<SharedState>, Query(p): Query<FeedbackQ>) -> Json<Value> {
+    let out = st.out.clone();
+    let limit = p.limit.unwrap_or(200).clamp(1, 2000);
+    let entries = tokio::task::spawn_blocking(move || crate::feedback::read(&out, limit))
+        .await
+        .expect("feedback read task panicked");
+    Json(json!({ "entries": entries }))
+}
+
+#[derive(Deserialize)]
 pub struct JournalQ {
     from: Option<u64>,
     to: Option<u64>,

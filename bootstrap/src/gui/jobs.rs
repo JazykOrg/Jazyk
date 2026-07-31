@@ -15,6 +15,43 @@ use std::sync::{Arc, Condvar, Mutex};
 const JOB_EVENT_RING: usize = 50_000;
 const TRACE_RETENTION_DAYS: u64 = 30;
 
+// Strings longer than this travel as a preview. The transcript on disk keeps the
+// whole payload; a reader asks for the one event it wants to see in full
+// (docs/frontends/gui.md#jobs).
+const WIRE_STRING_CAP: usize = 2_000;
+
+// One event as it goes to the browser: same shape, long strings cut to a preview
+// with their byte count and an `elided` flag beside them.
+fn elide(v: &Value) -> Value {
+    match v {
+        Value::String(s) if s.len() > WIRE_STRING_CAP => {
+            json!(format!("{}… [{} chars total]", crate::llm::truncate(s, WIRE_STRING_CAP), s.len()))
+        }
+        Value::Array(a) => Value::Array(a.iter().map(elide).collect()),
+        Value::Object(o) => {
+            let mut out = serde_json::Map::new();
+            let mut cut = false;
+            for (k, val) in o {
+                if let Value::String(s) = val {
+                    if s.len() > WIRE_STRING_CAP {
+                        cut = true;
+                    }
+                }
+                let next = elide(val);
+                if next != *val {
+                    cut = true;
+                }
+                out.insert(k.clone(), next);
+            }
+            if cut {
+                out.insert("elided".into(), json!(true));
+            }
+            Value::Object(out)
+        }
+        _ => v.clone(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobKind {
     Compile,
@@ -253,13 +290,15 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             let counter = counter.clone();
             Arc::new(move |ev: &TraceEvent| {
                 let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                let payload = json!({ "jobId": id, "n": n, "event": ev });
+                // The file keeps the whole payload; the browser gets it elided and
+                // fetches the one event it wants to read in full.
                 write_line(&writer, &json!({ "n": n, "event": ev }));
+                let payload = json!({ "jobId": id, "n": n, "event": elide(&json!(ev)) });
                 st.jobs.push_event(id, payload.clone());
                 st.events.emit("job.trace", payload);
             })
         };
-        let trace = Trace::to_sink(TraceLevel::Normal, sink, cancel.clone());
+        let trace = Trace::to_sink(TraceLevel::Normal, sink, cancel.clone()).with_run(&stem);
         let result = execute(&st, &kind, &trace);
 
         let (state, result) = match result {
@@ -419,11 +458,17 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
     Json(serde_json::json!({ "traces": list }))
 }
 
-pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<String>) -> Response {
-    if !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return super::api::err(StatusCode::BAD_REQUEST, "invalid trace name");
+fn trace_path(st: &SharedState, stem: &str) -> Option<std::path::PathBuf> {
+    if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return None;
     }
-    let path = st.out.join("trace").join(format!("{}.jsonl", stem));
+    Some(st.out.join("trace").join(format!("{}.jsonl", stem)))
+}
+
+pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<String>) -> Response {
+    let Some(path) = trace_path(&st, &stem) else {
+        return super::api::err(StatusCode::BAD_REQUEST, "invalid trace name");
+    };
     let result = tokio::task::spawn_blocking(move || -> Option<Value> {
         let text = std::fs::read_to_string(&path).ok()?;
         let mut meta = Value::Null;
@@ -436,7 +481,9 @@ pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<Str
             } else if !v["outcome"].is_null() {
                 outcome = v["outcome"].clone();
             } else {
-                events.push(v);
+                // Same elision as the live stream, so a reloaded page and a streaming
+                // one render the same rows.
+                events.push(elide(&v));
             }
         }
         Some(serde_json::json!({ "meta": meta, "outcome": outcome, "events": events }))
@@ -446,5 +493,51 @@ pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<Str
     match result {
         Some(v) => Json(v).into_response(),
         None => super::api::err(StatusCode::NOT_FOUND, format!("no transcript {}", stem)),
+    }
+}
+
+// One event of one transcript, with nothing cut: what the activity panel fetches
+// when a row is expanded (docs/frontends/gui.md#jobs). A running job's events are
+// readable the same way, because the file is flushed per line.
+pub async fn get_trace_event(
+    State(st): State<SharedState>,
+    UrlPath((stem, n)): UrlPath<(String, u64)>,
+) -> Response {
+    let Some(path) = trace_path(&st, &stem) else {
+        return super::api::err(StatusCode::BAD_REQUEST, "invalid trace name");
+    };
+    let found = tokio::task::spawn_blocking(move || -> Option<Value> {
+        let text = std::fs::read_to_string(&path).ok()?;
+        text.lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .find(|v| v["n"].as_u64() == Some(n))
+    })
+    .await
+    .expect("trace event read");
+    match found {
+        Some(v) => Json(v).into_response(),
+        None => super::api::err(StatusCode::NOT_FOUND, format!("no event {} in {}", n, stem)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elision_cuts_long_strings_and_marks_the_event() {
+        let long = "x".repeat(WIRE_STRING_CAP + 500);
+        let ev = json!({"kind": "llmRequest", "label": "reconcile-doc a.md", "step": "r1",
+            "messages": [{"role": "system", "content": "short"}, {"role": "user", "content": long}]});
+        let wire = elide(&ev);
+        assert_eq!(wire["elided"], json!(true));
+        assert_eq!(wire["messages"][0]["content"], json!("short"));
+        assert!(wire["messages"][0]["elided"].is_null());
+        let cut = wire["messages"][1]["content"].as_str().unwrap();
+        assert!(cut.len() < WIRE_STRING_CAP + 100);
+        assert!(cut.ends_with(&format!("[{} chars total]", WIRE_STRING_CAP + 500)));
+        // A small event travels untouched, flag included.
+        let small = json!({"kind": "note", "label": "a", "text": "b"});
+        assert_eq!(elide(&small), small);
     }
 }

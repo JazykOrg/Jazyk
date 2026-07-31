@@ -25,6 +25,9 @@ pub struct BuildReport {
     pub coverage_pct: u32,
 }
 
+// Wave counter for the trace, reset per build so a run's waves number from one.
+static WAVE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 fn workers() -> usize {
     std::env::var("JAZYK_MAX_CONCURRENCY")
         .ok()
@@ -100,6 +103,16 @@ fn run_wave(
     gs: &crate::gen::GenSettings,
     trace: &Trace,
 ) -> (usize, BTreeSet<String>, BTreeSet<String>, Vec<WorkItem>) {
+    // What is queued, before any turn starts: the frontends mark these targets as
+    // waiting (docs/compiler/turns.md#trace-events).
+    if !items.is_empty() {
+        let wave = WAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        trace.event(crate::turn::TraceEvent::WaveStart {
+            wave,
+            task: items[0].task.clone(),
+            items: items.iter().map(|i| i.target.clone()).collect(),
+        });
+    }
     let applied = Mutex::new(0usize);
     let touched = Mutex::new(BTreeSet::new());
     let changed = Mutex::new(BTreeSet::new());
@@ -486,6 +499,7 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
 }
 
 pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    WAVE.store(0, std::sync::atomic::Ordering::Relaxed);
     let store = Mutex::new(Store::load(out));
     let gs = crate::gen::GenSettings::resolve(proj);
     let (parsed, links) = parse_all(proj);

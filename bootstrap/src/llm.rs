@@ -161,35 +161,117 @@ pub struct Llm {
     // Sampling temperature. Defaults to 0, but some models only allow their default;
     // `None` omits the field entirely.
     pub temperature: Option<f64>,
+    // Where this client reports what it sends and receives. None keeps the old
+    // behavior (notices to stderr, no structured events). A runner attaches its own
+    // trace with `with_trace`, so every prompt, reply, and retry reaches the frontend
+    // that started the work (docs/compiler/turns.md#trace-events).
+    pub trace: Option<crate::turn::Trace>,
+}
+
+// Per message, in the recorded prompt. Packs are context-budgeted well below this;
+// the cap only stops a runaway payload from filling the transcript.
+const MESSAGE_CAP: usize = 24_000;
+
+// The outgoing messages as recorded: same shape, long strings cut.
+fn recorded(messages: &[Value]) -> Value {
+    Value::Array(
+        messages
+            .iter()
+            .map(|m| {
+                let mut m = m.clone();
+                if let Some(o) = m.as_object_mut() {
+                    for k in ["content", "reasoning_content", "reasoning"] {
+                        if let Some(s) = o.get(k).and_then(|v| v.as_str()) {
+                            if s.len() > MESSAGE_CAP {
+                                let cut = format!("{} … [{} chars total]", truncate(s, MESSAGE_CAP), s.len());
+                                o.insert(k.to_string(), json!(cut));
+                            }
+                        }
+                    }
+                }
+                m
+            })
+            .collect(),
+    )
+}
+
+fn tool_names(tools: Option<&[Value]>) -> Vec<String> {
+    tools
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(|s| s.to_string()))
+        .collect()
 }
 
 impl Llm {
+    // A client that reports into this trace. Cheap: the trace is a handle.
+    pub fn with_trace(&self, trace: &crate::turn::Trace) -> Llm {
+        Llm { trace: Some(trace.clone()), ..self.clone() }
+    }
+
+    // A provider-behavior notice (a sticky fallback, a rate-limit wait). It belongs to
+    // the work that triggered it, so it goes to the trace when there is one.
+    fn note(&self, label: &str, text: &str) {
+        match &self.trace {
+            Some(t) => t.line(label, text),
+            None => eprintln!("[jazyk] {}", text),
+        }
+    }
+
+    fn event(&self, ev: crate::turn::TraceEvent) {
+        if let Some(t) = &self.trace {
+            t.event(ev);
+        }
+    }
+
     // One turn round: send the full message history, optionally with tool definitions, and
     // return the assistant message object (`content` and, when the model called tools,
     // `tool_calls`) plus the completion tokens the call spent. Transport failures retry
     // immediately; a `tools` rejection surfaces as Err so the turn harness can downgrade
     // the codec.
-    pub fn chat_messages(&self, messages: &[Value], tools: Option<&[Value]>, label: &str) -> Result<(Value, u64), String> {
+    pub fn chat_messages(
+        &self,
+        messages: &[Value],
+        tools: Option<&[Value]>,
+        label: &str,
+        step: &str,
+    ) -> Result<(Value, u64), String> {
         let max = max_retries();
         let mut last = String::new();
         let started = std::time::Instant::now();
         if verbose() {
-            eprintln!("[jazyk] → {}", label);
+            eprintln!("[jazyk] → {} {}", label, step);
         }
+        // The prompt as sent, recorded once for the whole call: retries resend it
+        // unchanged, and a retry says so on its own row.
+        self.event(crate::turn::TraceEvent::LlmRequest {
+            label: label.to_string(),
+            step: step.to_string(),
+            model: self.model.clone(),
+            messages: recorded(messages),
+            tools: tool_names(tools),
+        });
         let mut try_stream = false;
         for attempt in 0..=max {
             let streaming = STREAM_REQUIRED.load(Ordering::Relaxed) || try_stream;
             match self.chat_once(messages, tools, streaming) {
-                Ok(out) => {
+                Ok((msg, tokens)) => {
                     // A streaming probe that succeeds after a non-streaming failure
                     // sticks for the run.
                     if try_stream && !STREAM_REQUIRED.swap(true, Ordering::Relaxed) {
-                        eprintln!("[jazyk] streaming retry succeeded; using SSE for the rest of the run");
+                        self.note(label, "streaming retry succeeded; using SSE for the rest of the run");
                     }
                     if verbose() {
-                        eprintln!("[jazyk] ✓ {} ({} ms)", label, started.elapsed().as_millis());
+                        eprintln!("[jazyk] ✓ {} {} ({} ms)", label, step, started.elapsed().as_millis());
                     }
-                    return Ok(out);
+                    self.event(crate::turn::TraceEvent::LlmResponse {
+                        label: label.to_string(),
+                        step: step.to_string(),
+                        ms: started.elapsed().as_millis() as u64,
+                        tokens,
+                        message: msg.clone(),
+                    });
+                    return Ok((msg, tokens));
                 }
                 Err(e) => {
                     // An endpoint that only serves streaming responses says so; switch
@@ -197,7 +279,7 @@ impl Llm {
                     if e.to_lowercase().contains("stream must be set to true")
                         && !STREAM_REQUIRED.swap(true, Ordering::Relaxed)
                     {
-                        eprintln!("[jazyk] endpoint requires streaming; switching to SSE for the rest of the run");
+                        self.note(label, "endpoint requires streaming; switching to SSE for the rest of the run");
                         continue;
                     }
                     // A provider that rejects reasoning fields echoed back in the
@@ -208,14 +290,14 @@ impl Llm {
                         && e.to_lowercase().contains("reasoning")
                         && !REASONING_UNSUPPORTED.swap(true, Ordering::Relaxed)
                     {
-                        eprintln!("[jazyk] provider rejected reasoning fields in the history; stripping them from requests for the rest of the run");
+                        self.note(label, "provider rejected reasoning fields in the history; stripping them from requests for the rest of the run");
                         continue;
                     }
                     // A model that rejects `temperature` answers 400 (often wrapped by a
                     // proxy). Drop the parameter once, sticky for the run, and retry.
                     let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
                     if looks_400 && self.temperature.is_some() && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed) {
-                        eprintln!("[jazyk] model rejected the request (likely temperature); retrying without it for the rest of the run");
+                        self.note(label, "model rejected the request (likely temperature); retrying without it for the rest of the run");
                         continue;
                     }
                     if tools.is_some() && rejects_tools(&e) && !is_transient(&e) {
@@ -233,24 +315,27 @@ impl Llm {
                         }
                         // A rate limit is not a hiccup: pause before retrying instead of
                         // hammering the window shut.
-                        if last.to_lowercase().contains("rate limit") {
-                            eprintln!(
-                                "[jazyk] {} — rate limited, retrying in 20s ({}/{})",
+                        let wait = if last.to_lowercase().contains("rate limit") { 20 } else { 5 };
+                        let ev = crate::turn::TraceEvent::LlmRetry {
+                            label: label.to_string(),
+                            step: step.to_string(),
+                            attempt: attempt as u32 + 1,
+                            error: truncate(&last, 400),
+                            wait_ms: wait * 1000,
+                        };
+                        match &self.trace {
+                            Some(t) => t.event(ev),
+                            None => eprintln!(
+                                "[jazyk] {} {} - retrying in {}s ({}/{}): {}",
                                 label,
-                                attempt + 1,
-                                max
-                            );
-                            std::thread::sleep(Duration::from_secs(20));
-                        } else {
-                            eprintln!(
-                                "[jazyk] {} — transient error, retrying in 5s ({}/{}): {}",
-                                label,
+                                step,
+                                wait,
                                 attempt + 1,
                                 max,
                                 truncate(&last, 120)
-                            );
-                            std::thread::sleep(Duration::from_secs(5));
+                            ),
                         }
+                        std::thread::sleep(Duration::from_secs(wait));
                     } else {
                         break;
                     }
@@ -258,16 +343,21 @@ impl Llm {
             }
         }
         if verbose() {
-            eprintln!("[jazyk] ✗ {} ({} ms): {}", label, started.elapsed().as_millis(), truncate(&last, 120));
+            eprintln!("[jazyk] ✗ {} {} ({} ms): {}", label, step, started.elapsed().as_millis(), truncate(&last, 120));
+        }
+        // The caller reports the failure itself (a failed turn, a failed entity); this
+        // only keeps the structured record complete for a reader of the transcript.
+        if let Some(t) = &self.trace {
+            t.line(label, &format!("llm call failed after {} ms: {}", started.elapsed().as_millis(), truncate(&last, 400)));
         }
         Err(last)
     }
 
     // Simple one-shot text chat (no history, no tools). Used by small utility paths.
     #[allow(dead_code)]
-    pub fn chat(&self, system: &str, user: &str, label: &str) -> Result<String, String> {
+    pub fn chat(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
         let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
-        let (msg, _tokens) = self.chat_messages(&messages, None, label)?;
+        let (msg, _tokens) = self.chat_messages(&messages, None, label, step)?;
         Ok(msg["content"].as_str().unwrap_or("").to_string())
     }
 

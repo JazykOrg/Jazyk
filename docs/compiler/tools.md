@@ -20,8 +20,13 @@ clever ones.
   rendered pack plus [expansion handles](./context.md#expansion-handles).
 - `expand({handle})`: load the frontier behind a handle, under the same budget rules.
 - `search({query, kind?})`: deterministic lookup over names and aliases: normalized exact
-  match, then alias, then substring, then token overlap. Returns up to 8 results as
-  `{id, name, definition}` lines. No embeddings, no LLM.
+  match, then alias, then substring, then token overlap. Returns `{hits}`, up to 8
+  `{id, name, definition}` entries. No embeddings, no LLM.
+  A miss is an answer, not a dead end: `hits` is empty and the result carries
+  `entityCount`, the graph's entities by id and name (up to 25), and a `next` line
+  saying the search will keep returning this and to create the entity instead. A bare
+  empty list reads as "ask again", and models loop on it; naming the whole graph lets
+  the caller decide without another call.
 - `read_section({ref})`: one section's raw body and its child titles.
 - `get_entity({id})`: one entity with its definition, mentions, requirements, and
   relationships.
@@ -57,7 +62,11 @@ clever ones.
 - `update_requirement({id, ears?, entities?, edges?, section?, quote?})`: a revision
   keeps the id. `section` plus `quote` re-anchor the provenance; the quote must locate
   verbatim in the section. This is the path for a stale anchor whose statement changed
-  meaning: new `ears`, new `quote`, same id.
+  meaning: new `ears`, new `quote`, same id. Omitting both leaves the anchor untouched,
+  which is what a call that only adds an entity reference wants. Passing the `ears`
+  statement as the `quote` is the common miscall, so every rejection on `section` or
+  `quote` names the requirement's existing anchor and says to drop the two fields when
+  only `entities` or `edges` were meant to change.
 - `delete_requirement({id, reason})`.
 - `report_diagnostic({rule, severity, subjects, message, reasoning})`. `rule` is one of
   the review rules: `contradiction`, `duplicate-entity`, `duplicate-requirement`,
@@ -67,7 +76,10 @@ clever ones.
 - `resolve_diagnostic({id, reason})`.
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
   `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
-  counts as absent. A repeated call for the same section within one turn replaces the
+  counts as absent. `non-normative` is rejected for a section that already yielded a
+  requirement, in the store or in this turn's own staged work: the mark and the
+  statement contradict each other, and the statement is the evidence. The rejection
+  names the statements and asks for `covered`. A repeated call for the same section within one turn replaces the
   earlier mark: a changeset carries at most one coverage mark per section. A `covered`
   claim requires a requirement sourced from that section; the `done` gate enforces it.
 - `done({summary})`: end the turn and request commit. Rejected while a stale anchor
@@ -80,6 +92,36 @@ clever ones.
 
 There is no write tool for relationships. Edges exist only as a
 [derived product of requirements](./graph.md#derived-data).
+
+## Feedback tool
+
+`report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
+developers. It reports that a prompt, a tool, a schema, or an error message is
+ambiguous, wrong, confusing, or missing something, not that the project's documents are.
+Findings about the documents are [diagnostics](./model/diagnostic.md); findings about
+jazyk are feedback.
+
+- `kind`: one of `ambiguous`, `wrong`, `confusing`, `missing`, `other`. An unknown value
+  is recorded as `other` rather than rejected.
+- `subject`: what the feedback is about, e.g. a tool name, an argument, an instruction.
+- `message`: what was unclear and what would have helped. Trimmed to 4000 characters.
+
+The tool never touches the graph. It stages no mutation, counts against no mutation
+budget, and passes no gate beyond a non-empty `message`, so a confused model is never
+bounced while asking for help. It is in every [toolset](#task-toolsets), including the
+read-only MCP serving.
+
+Each call appends one JSON line to `<out>/feedback.jsonl`, with the payload plus the
+references that identify the caller: the timestamp, the source (`turn` or `mcp`), the
+task, the work item's target, the model, the codec, the store generation, the run's
+transcript name, and the MCP client name when one is known. The log is append-only and is never
+read back by the compiler. The [GUI](../frontends/gui.md#feedback) renders its history.
+
+A turn records at most 5 feedback entries. Beyond that the call is acknowledged without
+a record, so a confused model cannot flood the log.
+
+The reply is `{recorded, note}`. The note tells the model to continue with its best
+judgment: feedback is not an escape from the work item.
 
 ## Generation tools
 
@@ -145,7 +187,8 @@ try again.
 
 ## Task toolsets
 
-Turns see subsets, not the whole catalog:
+Turns see subsets, not the whole catalog. Every subset carries
+[`report_feedback`](#feedback-tool); it is listed once here, not per task:
 
 - `reconcile-doc`: `context`, `expand`, `search`, `read_section`, `upsert_entity`,
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,

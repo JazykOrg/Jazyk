@@ -309,7 +309,8 @@ pub(crate) fn resolve_llm(
         .or(global.temperature)
         .or(Some(0.0))
         .filter(|t| *t >= 0.0);
-    Llm { base_url, model, api_key, temperature }
+    // The trace is attached per run by whoever starts the work (`with_trace`).
+    Llm { base_url, model, api_key, temperature, trace: None }
 }
 
 fn trace_for(opts: &Options) -> Trace {

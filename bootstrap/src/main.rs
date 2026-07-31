@@ -2,6 +2,7 @@ mod benchmark;
 mod cli;
 mod context;
 mod docsgen;
+mod feedback;
 mod gen;
 mod gui;
 mod jsonrpc;

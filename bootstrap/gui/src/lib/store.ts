@@ -11,6 +11,31 @@ export interface JobTraceRow {
   event: TraceEvent
 }
 
+// Where a build is working, keyed by the turn label (`{task} {target}`), the same
+// key the harness puts on every event (docs/compiler/turns.md#trace-events). The
+// files tree and the editor read this to show progress in place.
+export interface TurnProgress {
+  label: string
+  task: string
+  target: string
+  // The document, when the turn reconciles one. Null for review turns.
+  doc: string | null
+  state: 'queued' | 'running' | 'done' | 'failed'
+  // The turn's dirty sections, and the ones it has reached so far.
+  sections: string[]
+  touched: string[]
+  active: string | null
+  result: string | null
+  since: number
+  // When the entry disappears. Null keeps it: a running turn, or a held one.
+  until: number | null
+  // The pointer is on it, in the tree or in the text: hold the result.
+  held: boolean
+}
+
+// How long a finished turn stays visible before it fades.
+export const LINGER_MS = 6000
+
 interface AppStore {
   connected: boolean
   // A request answered 401: the token is missing or stale (server restart).
@@ -27,6 +52,17 @@ interface AppStore {
   activityOpen: boolean
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
+  turns: Record<string, TurnProgress>
+  turnsQueued: (task: string, targets: string[]) => void
+  turnStarted: (p: { label: string; task: string; target: string; doc: string | null; sections: string[] }) => void
+  turnSection: (label: string, section: string) => void
+  turnEnded: (label: string, state: 'done' | 'failed', result: string) => void
+  turnHold: (label: string, held: boolean) => void
+  // Nothing is running anymore: whatever is still marked running has ended with the
+  // job, so let it fade like the rest.
+  turnsSettle: () => void
+  // Drop what has lingered long enough. Held entries stay.
+  turnsSweep: () => void
   setConnected: (v: boolean) => void
   setAuthRequired: (v: boolean) => void
   bumpTokenEpoch: () => void
@@ -81,6 +117,113 @@ export const useApp = create<AppStore>((set) => ({
     set({ activityOpen: v })
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
+  turns: {},
+  turnsQueued: (task, targets) =>
+    set((s) => {
+      const turns = { ...s.turns }
+      for (const target of targets) {
+        const label = `${task} ${target}`
+        // A wave lists what it will run; an entry already in flight keeps its state.
+        if (turns[label] && turns[label].state === 'running') continue
+        turns[label] = {
+          label,
+          task,
+          target,
+          doc: task === 'reconcile-doc' ? target : null,
+          state: 'queued',
+          sections: [],
+          touched: [],
+          active: null,
+          result: null,
+          since: Date.now(),
+          until: null,
+          held: turns[label]?.held ?? false,
+        }
+      }
+      return { turns }
+    }),
+  turnStarted: (p) =>
+    set((s) => ({
+      turns: {
+        ...s.turns,
+        [p.label]: {
+          ...p,
+          state: 'running',
+          // A retry re-runs the same item: the path through the document starts over.
+          touched: [],
+          active: null,
+          result: null,
+          since: Date.now(),
+          until: null,
+          held: s.turns[p.label]?.held ?? false,
+        },
+      },
+    })),
+  turnSection: (label, section) =>
+    set((s) => {
+      const t = s.turns[label]
+      if (!t) return s
+      return {
+        turns: {
+          ...s.turns,
+          [label]: {
+            ...t,
+            active: section,
+            touched: t.touched.includes(section) ? t.touched : [...t.touched, section],
+          },
+        },
+      }
+    }),
+  turnEnded: (label, state, result) =>
+    set((s) => {
+      const t = s.turns[label]
+      if (!t) return s
+      return {
+        turns: {
+          ...s.turns,
+          [label]: {
+            ...t,
+            state,
+            result,
+            active: null,
+            since: Date.now(),
+            until: t.held ? null : Date.now() + LINGER_MS,
+          },
+        },
+      }
+    }),
+  turnHold: (label, held) =>
+    set((s) => {
+      const t = s.turns[label]
+      if (!t || t.held === held) return s
+      // Letting go re-arms the fade from now, so a result is never yanked away
+      // the instant the pointer leaves it.
+      const until = held || t.state === 'running' || t.state === 'queued' ? null : Date.now() + LINGER_MS
+      return { turns: { ...s.turns, [label]: { ...t, held, until } } }
+    }),
+  turnsSettle: () =>
+    set((s) => {
+      const turns = { ...s.turns }
+      for (const [k, t] of Object.entries(turns)) {
+        if (t.state === 'running' || t.state === 'queued') {
+          turns[k] = {
+            ...t,
+            state: 'done',
+            active: null,
+            result: t.result ?? 'the run ended here',
+            until: t.held ? null : Date.now() + LINGER_MS,
+          }
+        }
+      }
+      return { turns }
+    }),
+  turnsSweep: () =>
+    set((s) => {
+      const now = Date.now()
+      const keep = Object.entries(s.turns).filter(([, t]) => t.held || t.until === null || t.until > now)
+      if (keep.length === Object.keys(s.turns).length) return s
+      return { turns: Object.fromEntries(keep) }
+    }),
 }))
 
 export function applyTheme() {

@@ -37,10 +37,17 @@ interface TraceListing {
   events: number
 }
 
+// Every event is numbered per run: the number is how the full payload is fetched
+// when a row is elided (docs/frontends/gui.md#jobs).
+interface Numbered {
+  n: number
+  event: TraceEvent
+}
+
 interface Transcript {
   meta: TraceMeta | null
   outcome: TraceOutcome | null
-  events: { n: number; event: TraceEvent }[]
+  events: Numbered[]
 }
 
 interface Row {
@@ -69,55 +76,91 @@ function resultLine(result: Record<string, unknown> | null, state: string): stri
 
 const ts = (t: string | null | undefined) => (t ? new Date(t).toLocaleTimeString() : '')
 
-// The transcript is the baseline; live zustand rows extend it past its fetch
-// point. Live rows carry no per-job n, so the seam is found by matching the
-// baseline's last event in the live tail.
-function mergeLive(base: TraceEvent[], live: TraceEvent[]): TraceEvent[] {
+// The transcript is the baseline; live rows extend it past its fetch point. Both
+// sides carry the per-run event number, so the seam is arithmetic.
+function mergeLive(base: Numbered[], live: Numbered[]): Numbered[] {
   if (live.length === 0) return base
   if (base.length === 0) return live
-  const lastKey = JSON.stringify(base[base.length - 1])
-  for (let i = live.length - 1; i >= 0; i--) {
-    if (JSON.stringify(live[i]) === lastKey) return [...base, ...live.slice(i + 1)]
-  }
-  // No overlap: one side is strictly ahead of the other; show the longer view.
-  return live.length > base.length ? live : base
+  const last = base[base.length - 1].n
+  return [...base, ...live.filter((r) => r.n > last)]
+}
+
+// One model call and everything the harness did with its answer.
+interface Round {
+  step: string
+  request?: Numbered
+  response?: Numbered
+  rows: Numbered[]
 }
 
 interface Turn {
+  key: string
   label: string
   start?: TraceEvent
-  rows: TraceEvent[]
+  // Rows before the first model call of the turn (notes, worker events).
+  preRows: Numbered[]
+  rounds: Round[]
   done?: TraceEvent
   failed?: TraceEvent
 }
 
-// Chronological events into turn groups. A turnStart opens a group; unlabeled
-// events outside any turn (notes, gen*, verifyRow*) pool under "build".
-function groupTurns(events: TraceEvent[]): Turn[] {
+// The work an event belongs to. Turn events carry the label; the workers name
+// their entity or requirement, which is the same key their model calls use.
+function labelOf(ev: TraceEvent): string | null {
+  if (typeof ev.label === 'string' && ev.label !== '') return ev.label
+  if (typeof ev.entity === 'string') return `gen ${ev.entity}`
+  if (typeof ev.requirement === 'string') return `verify ${ev.requirement}`
+  return null
+}
+
+// Chronological events into one group per label, each group into rounds. Parallel
+// work interleaves on the wire; the label puts it back together. A second
+// turnStart for a label opens a new group: that is a retry, not more of the same
+// turn. Events with no label (waves, build notes) pool under "build".
+function groupTurns(events: Numbered[]): Turn[] {
   const out: Turn[] = []
-  let cur: Turn | null = null
-  const synthetic = (ev: TraceEvent) => {
-    const last = out[out.length - 1]
-    if (last && !last.start && last.label === 'build') last.rows.push(ev)
-    else out.push({ label: 'build', rows: [ev] })
+  const open = new Map<string, Turn>()
+  const groupFor = (label: string): Turn => {
+    const g = open.get(label)
+    if (g) return g
+    const fresh: Turn = { key: `${label}#${out.length}`, label, preRows: [], rounds: [] }
+    open.set(label, fresh)
+    out.push(fresh)
+    return fresh
   }
-  for (const ev of events) {
+  for (const row of events) {
+    const ev = row.event
+    const label = labelOf(ev) ?? 'build'
     if (ev.kind === 'turnStart') {
-      cur = { label: ev.label ?? '', start: ev, rows: [] }
-      out.push(cur)
-    } else if (ev.kind === 'turnDone' || ev.kind === 'turnFailed') {
-      if (cur) {
-        if (ev.kind === 'turnDone') cur.done = ev
-        else cur.failed = ev
-        cur = null
-      } else synthetic(ev)
-    } else if (cur && (!ev.label || ev.label === cur.label)) {
-      cur.rows.push(ev)
-    } else if (ev.label) {
-      cur = { label: ev.label, rows: [ev] }
-      out.push(cur)
-    } else {
-      synthetic(ev)
+      const fresh: Turn = { key: `${label}#${out.length}`, label, start: ev, preRows: [], rounds: [] }
+      open.set(label, fresh)
+      out.push(fresh)
+      continue
+    }
+    const g = groupFor(label)
+    switch (ev.kind) {
+      case 'turnDone':
+        g.done = ev
+        open.delete(label)
+        break
+      case 'turnFailed':
+        g.failed = ev
+        open.delete(label)
+        break
+      case 'llmRequest':
+        g.rounds.push({ step: String(ev.step ?? ''), request: row, rows: [] })
+        break
+      case 'llmResponse': {
+        const r = g.rounds[g.rounds.length - 1]
+        if (r) r.response = row
+        else g.rounds.push({ step: String(ev.step ?? ''), response: row, rows: [] })
+        break
+      }
+      default: {
+        const r = g.rounds[g.rounds.length - 1]
+        if (r) r.rows.push(row)
+        else g.preRows.push(row)
+      }
     }
   }
   return out
@@ -133,10 +176,143 @@ function pretty(raw: string): string {
 
 const CONDENSE = 200
 
+// The full event behind an elided one. Nothing is fetched until a row is opened,
+// and the answer is cached by run and event number.
+function useFullEvent(stem: string, n: number | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['trace', 'event', stem, n],
+    queryFn: () => get<{ n: number; event: TraceEvent }>(`/api/trace/${stem}/${n}`),
+    enabled: enabled && stem.length > 0 && n !== null,
+    staleTime: Infinity,
+  })
+}
+
+// A payload panel: the elided copy renders immediately, the full one replaces it
+// when it arrives.
+function Payload({ text, loading }: { text: string; loading: boolean }) {
+  return (
+    <pre className="pack trace-full">
+      {loading ? `${text}\n\n(loading the full payload…)` : text}
+    </pre>
+  )
+}
+
+// One message of a request, collapsed to its role and opening words.
+function MessageRow({ m }: { m: Record<string, unknown> }) {
+  const role = String(m.role ?? '?')
+  // A tool-calling reply carries a null content beside its calls; show the calls,
+  // not the word "null".
+  const content =
+    typeof m.content === 'string'
+      ? m.content
+      : m.content == null
+        ? ''
+        : JSON.stringify(m.content, null, 2)
+  const calls = m.tool_calls ? JSON.stringify(m.tool_calls, null, 2) : null
+  const reasoning = typeof m.reasoning_content === 'string' ? m.reasoning_content : null
+  const head = content.replace(/\s+/g, ' ').slice(0, 90)
+  return (
+    <details className="msg">
+      <summary>
+        <span className={`chip msg-${role}`}>{role}</span>
+        <span className="muted mono"> {content.length} chars</span>
+        <span className="muted"> {head}</span>
+      </summary>
+      {reasoning && <pre className="pack msg-body t-model">{reasoning}</pre>}
+      {content && <pre className="pack msg-body">{content}</pre>}
+      {calls && <pre className="pack msg-body">{calls}</pre>}
+    </details>
+  )
+}
+
+// The request behind a round: what the model was actually asked, message by
+// message (docs/frontends/gui.md#activity).
+function RequestView({ stem, row }: { stem: string; row: Numbered }) {
+  const elided = row.event.elided === true
+  const full = useFullEvent(stem, row.n, elided)
+  const ev = (full.data?.event ?? row.event) as TraceEvent
+  const messages = Array.isArray(ev.messages) ? (ev.messages as Record<string, unknown>[]) : []
+  const tools = Array.isArray(ev.tools) ? (ev.tools as string[]) : []
+  return (
+    <div className="round-body">
+      <div className="trace-row t-muted">
+        model {String(ev.model ?? '')} · {messages.length} messages
+        {tools.length > 0 ? ` · tools: ${tools.join(', ')}` : ' · no tools offered'}
+        {elided && full.isLoading ? ' · loading full payload…' : ''}
+        {full.error ? ` · could not load the full payload: ${full.error.message}` : ''}
+      </div>
+      {messages.map((m, i) => (
+        <MessageRow key={i} m={m} />
+      ))}
+    </div>
+  )
+}
+
+// The reply as it arrived, reasoning field and tool calls included.
+function ResponseView({ stem, row }: { stem: string; row: Numbered }) {
+  const elided = row.event.elided === true
+  const full = useFullEvent(stem, row.n, elided)
+  const ev = (full.data?.event ?? row.event) as TraceEvent
+  const m = (ev.message ?? {}) as Record<string, unknown>
+  return (
+    <div className="round-body">
+      <div className="trace-row t-muted">
+        answer · {String(ev.ms ?? 0)} ms · {String(ev.tokens ?? 0)} tokens
+        {elided && full.isLoading ? ' · loading full payload…' : ''}
+      </div>
+      <MessageRow m={m} />
+    </div>
+  )
+}
+
+// One round: the header is its arithmetic, always visible; ▸ opens the prompt and
+// the answer. The tool rows below it stay visible either way, so the reading order
+// is what happened, with the detail one click away.
+function RoundCard({ stem, r, index }: { stem: string; r: Round; index: number }) {
+  const [open, setOpen] = useState(false)
+  const req = r.request?.event
+  const res = r.response?.event
+  const messages = Array.isArray(req?.messages) ? (req.messages as unknown[]).length : 0
+  const chars = typeof req?.messages === 'object' ? JSON.stringify(req?.messages ?? '').length : 0
+  const calls = r.rows.filter((x) => x.event.kind === 'toolCall').length
+  const errors = r.rows.filter((x) => x.event.kind === 'toolError').length
+  return (
+    <div className="round">
+      <div className="round-head">
+        <button className="expand" onClick={() => setOpen(!open)} title="prompt and answer">
+          {open ? '▾' : '▸'}
+        </button>
+        <b className="mono">{r.step || `#${index + 1}`}</b>
+        {messages > 0 && (
+          <span className="muted mono">
+            {messages} msg · {Math.round(chars / 100) / 10}k chars
+          </span>
+        )}
+        {res ? (
+          <span className="muted mono">
+            {String(res.ms ?? 0)} ms · {String(res.tokens ?? 0)} tok
+          </span>
+        ) : (
+          <span className="chip v-stale">waiting</span>
+        )}
+        {calls > 0 && <span className="muted mono">{calls} calls</span>}
+        {errors > 0 && <span className="v-bad mono">{errors} rejected</span>}
+      </div>
+      {open && r.request && <RequestView stem={stem} row={r.request} />}
+      {open && r.response && <ResponseView stem={stem} row={r.response} />}
+      {r.rows.map((row) => (
+        <TraceRow key={row.n} ev={row.event} stem={stem} n={row.n} />
+      ))}
+    </div>
+  )
+}
+
 // One trace row, always visible; ▸ expands the full payload when there is one.
-function TraceRow({ ev }: { ev: TraceEvent }) {
+function TraceRow({ ev, stem, n }: { ev: TraceEvent; stem: string; n: number }) {
   const [open, setOpen] = useState(false)
   const s = (k: string) => String(ev[k] ?? '')
+  const elided = ev.elided === true
+  const fullEv = useFullEvent(stem, n, open && elided)
   let cls = ''
   let line: React.ReactNode
   let full: string | null = typeof ev.full === 'string' ? ev.full : null
@@ -167,6 +343,27 @@ function TraceRow({ ev }: { ev: TraceEvent }) {
     case 'note':
       cls = 't-muted'
       line = <>{linkifyIds(s('text'))}</>
+      break
+    case 'section':
+      cls = 't-muted'
+      line = <>§ {s('section')} <span className="muted">({s('tool')})</span></>
+      break
+    case 'llmRetry':
+      cls = 't-warn'
+      line = (
+        <>
+          ↻ attempt {s('attempt')} failed, retrying in {Number(ev.waitMs ?? 0) / 1000}s: {s('error')}
+        </>
+      )
+      break
+    case 'waveStart':
+      cls = 't-muted'
+      line = (
+        <>
+          ▷ wave {s('wave')}: {s('task')} ×{Array.isArray(ev.items) ? (ev.items as string[]).length : 0}
+        </>
+      )
+      full = Array.isArray(ev.items) ? (ev.items as string[]).join('\n') : null
       break
     case 'genEntityStart':
       line = <>▶ gen <NodeLink id={s('entity')} />{ev.stage ? ` · ${s('stage')}` : ''}</>
@@ -218,26 +415,48 @@ function TraceRow({ ev }: { ev: TraceEvent }) {
       line = <>{ev.kind}</>
   }
 
+  // An elided row expands to the payload as it was recorded, not to the preview.
+  const fullText = (() => {
+    if (!open) return null
+    const src = fullEv.data?.event
+    if (src) {
+      if (typeof src.full === 'string') return src.full
+      if (typeof src.text === 'string') return src.text
+      return JSON.stringify(src, null, 2)
+    }
+    return full
+  })()
+
   return (
     <>
       <div className={`trace-row ${cls}`}>
-        {full !== null && (
+        {(full !== null || elided) && (
           <button className="expand" onClick={() => setOpen(!open)}>
             {open ? '▾' : '▸'}
           </button>
         )}
         {line}
       </div>
-      {open && full !== null && <pre className="pack trace-full">{pretty(full)}</pre>}
+      {open && fullText !== null && (
+        <Payload text={pretty(fullText)} loading={elided && fullEv.isLoading} />
+      )}
     </>
   )
 }
 
-function TurnCard({ g, active }: { g: Turn; active: boolean }) {
+function TurnCard({ g, active, stem }: { g: Turn; active: boolean; stem: string }) {
   const sp = g.label.indexOf(' ')
   const task = sp > 0 ? g.label.slice(0, sp) : g.label || 'build'
   const target = sp > 0 ? g.label.slice(sp + 1) : ''
-  const count = g.rows.length + (g.start ? 1 : 0) + (g.done || g.failed ? 1 : 0)
+  const sections = Array.isArray(g.start?.sections) ? (g.start.sections as string[]) : []
+  // Where the turn got to, from its own section events: the same path the files
+  // tree and the editor draw (docs/compiler/turns.md#trace-events).
+  const path = g.rounds
+    .flatMap((r) => r.rows)
+    .filter((row) => row.event.kind === 'section')
+    .map((row) => String(row.event.section ?? ''))
+  const reached = new Set(path)
+  const at = path[path.length - 1]
   return (
     <div className={`card ${active ? 'turn-active' : ''}`}>
       <div className="row">
@@ -251,15 +470,25 @@ function TurnCard({ g, active }: { g: Turn; active: boolean }) {
         )}
         {g.failed && <span className="chip v-bad">failed</span>}
         {!active && !g.done && !g.failed && <span className="chip sev-none">unfinished</span>}
-        <span className="muted">{count} events</span>
+        {sections.length > 0 && (
+          <span className="muted mono" title={sections.join('\n')}>
+            {reached.size}/{sections.length} sections
+          </span>
+        )}
+        {active && at && <span className="mono">at {at}</span>}
+        <span className="muted">{g.rounds.length} rounds</span>
       </div>
       {g.start && (
         <div className="trace-row t-muted">
           dirty {String(g.start.dirty ?? 0)} · stale {String(g.start.stale ?? 0)}
+          {sections.length > 0 ? ` · ${sections.join(' ')}` : ''}
         </div>
       )}
-      {g.rows.map((ev, i) => (
-        <TraceRow key={i} ev={ev} />
+      {g.preRows.map((row) => (
+        <TraceRow key={row.n} ev={row.event} stem={stem} n={row.n} />
+      ))}
+      {g.rounds.map((r, i) => (
+        <RoundCard key={r.request?.n ?? r.response?.n ?? i} stem={stem} r={r} index={i} />
       ))}
       {g.done?.summary ? (
         <div className="trace-row t-ok">✓ {linkifyIds(String(g.done.summary))}</div>
@@ -476,16 +705,23 @@ export default function Activity() {
   const selId = sel?.id ?? null
   const selLive = sel?.live != null
   const liveEvents = useMemo(
-    () => (selLive ? liveTrace.filter((r) => r.jobId === selId).map((r) => r.event) : []),
+    () =>
+      selLive
+        ? liveTrace.filter((r) => r.jobId === selId).map((r) => ({ n: r.seq, event: r.event }))
+        : [],
     [liveTrace, selLive, selId],
   )
   const events = useMemo(
-    () => mergeLive((transcript.data?.events ?? []).map((e) => e.event), liveEvents),
+    () => mergeLive(transcript.data?.events ?? [], liveEvents),
     [transcript.data, liveEvents],
   )
   const turns = useMemo(() => groupTurns(events), [events])
-  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null
-  const activeTurn = isRunning && lastTurn && !lastTurn.done && !lastTurn.failed ? lastTurn : null
+  // Turns run in parallel: every group still without an outcome is live, not just
+  // the last one on the wire.
+  const activeTurns = useMemo(
+    () => new Set(isRunning ? turns.filter((g) => g.start && !g.done && !g.failed) : []),
+    [turns, isRunning],
+  )
 
   const status = useStatus()
   const fromGen = sel?.fromGen ?? transcript.data?.meta?.generation ?? null
@@ -569,8 +805,8 @@ export default function Activity() {
                 {events.length === 0 && transcript.data && sel.state !== 'queued' && (
                   <p className="muted">no events in this transcript</p>
                 )}
-                {[...turns].reverse().map((g, i) => (
-                  <TurnCard key={turns.length - 1 - i} g={g} active={g === activeTurn} />
+                {[...turns].reverse().map((g) => (
+                  <TurnCard key={g.key} g={g} active={activeTurns.has(g)} stem={stem} />
                 ))}
               </>
             )}

@@ -123,6 +123,50 @@
   flex-shrink: 0;
 }
 
+/* Build progress under a document row (docs/frontends/gui.md#files). */
+.ide-build {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 10.5px;
+  padding: 0 8px 3px 26px;
+  line-height: 1.2;
+}
+
+.ide-build-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+
+.ide-build-count {
+  opacity: 0.75;
+  font-size: 10px;
+}
+
+.ide-build.running .ide-build-mark {
+  animation: jz-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes jz-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-build.running .ide-build-mark {
+    animation: none;
+  }
+}
+
 .ide-main {
   flex: 1;
   display: flex;
@@ -222,6 +266,78 @@
 
 .cov-unprocessed {
   border-left: 3px solid var(--warn);
+}
+
+/* Build bands: where the running turn is in this document, and how it ended.
+   Whole-line backgrounds, faint enough to read the text through
+   (docs/frontends/gui.md#editor). */
+.build-queued {
+  background: color-mix(in srgb, var(--muted) 9%, transparent);
+}
+
+.build-active {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  animation: jz-band 1.6s ease-in-out infinite;
+}
+
+.build-done {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  transition: background 600ms ease-out;
+}
+
+.build-failed {
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+  transition: background 600ms ease-out;
+}
+
+@keyframes jz-band {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--warn) 5%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-active {
+    animation: none;
+  }
+}
+
+/* A dot in the gutter beside the band's first line, so the state reads even
+   where the background tint is subtle. Sits right of the coverage border. */
+.build-active-gutter,
+.build-queued-gutter,
+.build-done-gutter,
+.build-failed-gutter {
+  margin-left: 5px;
+  width: 6px;
+  border-radius: 50%;
+}
+
+.build-active-gutter {
+  background: var(--warn);
+  animation: jz-pulse 1.1s ease-in-out infinite;
+}
+
+.build-queued-gutter {
+  background: var(--muted);
+}
+
+.build-done-gutter {
+  background: var(--accent);
+}
+
+.build-failed-gutter {
+  background: var(--err);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-active-gutter {
+    animation: none;
+  }
 }
 
 /* Always-visible entity mentions (LSP document link ranges). */

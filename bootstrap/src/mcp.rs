@@ -14,7 +14,15 @@ pub struct McpServer {
     write: bool,
     mutation_limit: usize,
     context_budget: usize,
+    // The client name from `initialize`, recorded on feedback entries so an external
+    // agent's report is distinguishable from a compilation turn's.
+    client: std::sync::Mutex<Option<String>>,
 }
+
+// Served at initialize: the one thing an agent should know before its first call.
+const INSTRUCTIONS: &str = "Tools read and (with --write) mutate one jazyk project's semantic graph. \
+If any tool, argument, or error message here is ambiguous, wrong, or confusing, call report_feedback: \
+it reaches jazyk's developers, never touches the graph, and is not a substitute for the work.";
 
 impl McpServer {
     pub fn new(project: crate::project::Project, out: PathBuf, write: bool) -> McpServer {
@@ -24,6 +32,7 @@ impl McpServer {
             project,
             out,
             write,
+            client: std::sync::Mutex::new(None),
         }
     }
 
@@ -139,11 +148,17 @@ impl McpServer {
 
     fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")}
-            })),
+            "initialize" => {
+                if let Some(name) = params["clientInfo"]["name"].as_str() {
+                    *self.client.lock().unwrap() = Some(name.to_string());
+                }
+                Ok(json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
+                    "instructions": INSTRUCTIONS
+                }))
+            }
             "ping" => Ok(json!({})),
             "tools/list" => {
                 let enabled = self.enabled_tools();
@@ -176,7 +191,9 @@ impl McpServer {
                         true,
                     ));
                 }
-                let is_write = !crate::tools::READ_TOOLS.contains(&name.as_str());
+                // Feedback writes the feedback log, never the graph: it commits nothing.
+                let is_write =
+                    !crate::tools::READ_TOOLS.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL;
                 let scope = WorkScope {
                     task: if is_write { "mcp-write".into() } else { "mcp-read".into() },
                     doc: None,
@@ -185,6 +202,14 @@ impl McpServer {
                 };
                 let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
+                // References for a feedback record: the serving mode and the client that
+                // spoke initialize. An MCP session has no work item, so no target.
+                session.caller = crate::feedback::Caller {
+                    source: "mcp".into(),
+                    task: if self.write { "mcp-write".into() } else { "mcp-read".into() },
+                    client: self.client.lock().unwrap().clone(),
+                    ..Default::default()
+                };
                 match session.dispatch(&name, &args) {
                     Ok(v) => {
                         if is_write && !session.staged.is_empty() {

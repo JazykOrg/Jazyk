@@ -79,6 +79,66 @@
   color: var(--warn);
 }
 
+/* One model call inside a turn: header always visible, prompt and answer behind
+   the toggle (docs/frontends/gui.md#activity). */
+.round {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+  margin: 4px 0 4px 2px;
+}
+
+.round-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 1px 0;
+}
+
+.round-head .expand {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.round-head .expand:hover {
+  color: var(--accent);
+  outline: none;
+}
+
+.round-body {
+  margin: 2px 0 6px 14px;
+}
+
+.msg > summary {
+  font-size: 12px;
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-body {
+  margin: 2px 0 6px 12px;
+  max-height: 420px;
+}
+
+.msg-system {
+  color: var(--info);
+}
+.msg-user {
+  color: var(--accent);
+}
+.msg-assistant {
+  color: var(--ink);
+}
+.msg-tool {
+  color: var(--muted);
+}
+
 /* Release diff */
 .diff-line {
   display: block;

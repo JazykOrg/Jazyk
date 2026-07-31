@@ -22,8 +22,20 @@ pub enum TraceLevel {
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "kind")]
 pub enum TraceEvent {
+    // Where the turn works: the task, its target, the document when it has one, and
+    // the dirty sections it must process. The GUI lights those up in place.
     #[serde(rename = "turnStart")]
-    TurnStart { label: String, dirty: usize, stale: usize },
+    #[serde(rename_all = "camelCase")]
+    TurnStart {
+        label: String,
+        task: String,
+        target: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        doc: Option<String>,
+        sections: Vec<String>,
+        dirty: usize,
+        stale: usize,
+    },
     // `summary` is the condensed line the CLI prints; `full` carries the payload
     // behind it (capped) when condensing cut something, so the GUI expands in place.
     #[serde(rename = "toolCall")]
@@ -54,6 +66,23 @@ pub enum TraceEvent {
     TurnFailed { label: String, attempt: u32, error: String },
     #[serde(rename = "note")]
     Note { label: String, text: String, verbose: bool },
+    // The turn moved to a section: an accepted tool call named one, and it differs
+    // from the last. The sequence is the turn's path through the document.
+    #[serde(rename = "section")]
+    Section { label: String, doc: String, section: String, tool: String },
+    // One model call. The request carries the whole outgoing message list, the
+    // response the raw assistant message; both are recorded in full in the
+    // transcript and elided on the wire (docs/compiler/turns.md#trace-events).
+    #[serde(rename = "llmRequest")]
+    LlmRequest { label: String, step: String, model: String, messages: Value, tools: Vec<String> },
+    #[serde(rename = "llmResponse")]
+    LlmResponse { label: String, step: String, ms: u64, tokens: u64, message: Value },
+    #[serde(rename = "llmRetry")]
+    #[serde(rename_all = "camelCase")]
+    LlmRetry { label: String, step: String, attempt: u32, error: String, wait_ms: u64 },
+    // A wave of work items is about to run: what is queued, before any turn starts.
+    #[serde(rename = "waveStart")]
+    WaveStart { wave: u32, task: String, items: Vec<String> },
     // Generation worker events, one entity per bounded task.
     #[serde(rename = "genEntityStart")]
     GenEntityStart { entity: String },
@@ -79,7 +108,7 @@ pub enum TraceEvent {
 // output is unchanged.
 fn render_stderr(ev: &TraceEvent) {
     match ev {
-        TraceEvent::TurnStart { label, dirty, stale } => {
+        TraceEvent::TurnStart { label, dirty, stale, .. } => {
             eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
         }
         TraceEvent::ToolCall { label, name, summary, .. } => eprintln!("[{}] → {} {}", label, name, summary),
@@ -95,6 +124,28 @@ fn render_stderr(ev: &TraceEvent) {
             eprintln!("[{}] turn failed (attempt {}): {}", label, attempt, error)
         }
         TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
+        // The section path is implicit in the tool rows the default level already
+        // prints; naming it again would double every line.
+        TraceEvent::Section { .. } => {}
+        // Model calls print their arithmetic, never their payload: the verbose context
+        // pack note already carries the prompt.
+        TraceEvent::LlmRequest { label, step, messages, .. } => {
+            eprintln!("[{} {}] → llm ({} messages, {} chars)", label, step, messages.as_array().map(|a| a.len()).unwrap_or(0), messages.to_string().len())
+        }
+        TraceEvent::LlmResponse { label, step, ms, tokens, .. } => {
+            eprintln!("[{} {}] ← llm ({} ms, {} tokens)", label, step, ms, tokens)
+        }
+        TraceEvent::LlmRetry { label, step, attempt, error, wait_ms } => eprintln!(
+            "[{} {}] retrying in {}s (attempt {}): {}",
+            label,
+            step,
+            wait_ms / 1000,
+            attempt,
+            llm::truncate(error, 120)
+        ),
+        TraceEvent::WaveStart { wave, task, items } => {
+            eprintln!("[wave {}] {} ({} items)", wave, task, items.len())
+        }
         // Worker events reach stderr only outside the CLI wrappers (which render them
         // themselves, on the exact historical format); keep these plain.
         TraceEvent::GenEntityStart { entity } => eprintln!("[gen {}] start", entity),
@@ -129,18 +180,30 @@ pub struct Trace {
     // in the trace because the trace is already threaded through every runner.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     transcript: Option<std::sync::Arc<std::sync::Mutex<Transcript>>>,
+    // The run's transcript name under <out>/trace, when the run leaves one. Carried so
+    // a record made mid-run (a feedback entry) can name the run it came from.
+    run: Option<String>,
 }
 
 impl Trace {
     pub fn stderr(level: TraceLevel) -> Trace {
-        Trace { level, sink: None, cancel: Default::default(), transcript: None }
+        Trace { level, sink: None, cancel: Default::default(), transcript: None, run: None }
     }
     pub fn to_sink(
         level: TraceLevel,
         sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Trace {
-        Trace { level, sink: Some(sink), cancel, transcript: None }
+        Trace { level, sink: Some(sink), cancel, transcript: None, run: None }
+    }
+    // The transcript name of the run this trace belongs to. A GUI job names its own
+    // (it writes the file itself); a CLI build names the one with_transcript opened.
+    pub fn with_run(mut self, stem: &str) -> Trace {
+        self.run = Some(stem.to_string());
+        self
+    }
+    pub fn run(&self) -> Option<String> {
+        self.run.clone()
     }
     // Persist this trace as a transcript under <out>/trace/, the same format the GUI
     // job runner writes, so a CLI build shows up in the Build view.
@@ -162,6 +225,7 @@ impl Trace {
             let _ = file.flush();
             self.transcript =
                 Some(std::sync::Arc::new(std::sync::Mutex::new(Transcript { file, n: 0, out: out.to_path_buf() })));
+            self.run = Some(stem);
         }
         self
     }
@@ -197,8 +261,20 @@ impl Trace {
             return;
         }
         match &self.sink {
+            // A sink is a structured reader (the GUI); it gets everything the level
+            // kept, payloads included.
             Some(s) => s(&ev),
-            None => render_stderr(&ev),
+            // The terminal is a different audience: model calls and section moves are
+            // noise beside the tool rows, so they render only at Verbose.
+            None => {
+                let terse = matches!(
+                    &ev,
+                    TraceEvent::LlmRequest { .. } | TraceEvent::LlmResponse { .. } | TraceEvent::Section { .. }
+                );
+                if !terse || self.level == TraceLevel::Verbose {
+                    render_stderr(&ev);
+                }
+            }
         }
     }
     pub fn line(&self, prefix: &str, s: &str) {
@@ -327,29 +403,47 @@ impl Codec for TextCodec {
 
 // ---- prompts ----
 
+// The feedback contract, high in every turn's system prompt: the model has a channel
+// for jazyk's own defects, and using it is not an excuse to stop working.
+// Mirrors docs/compiler/turns.md#message-loop and docs/compiler/tools.md#feedback-tool.
+const FEEDBACK_NOTE: &str = "If anything here is ambiguous, wrong, or confusing (these instructions, a tool, its arguments, or an error message), call report_feedback saying what blocked you, then continue with your best judgment. It reaches jazyk's developers, not this project's authors, and never changes the graph. Problems in the documents themselves are not feedback.";
+
+// The note rides directly under the role line: the first paragraph says what the turn
+// is, the second how to report that the rest of the prompt failed it.
+fn with_feedback_note(system: &str) -> String {
+    match system.split_once("\n\n") {
+        Some((role, rest)) => format!("{}\n\n{}\n\n{}", role, FEEDBACK_NOTE, rest),
+        None => format!("{}\n\n{}", system, FEEDBACK_NOTE),
+    }
+}
+
 const RECONCILE_SYSTEM: &str = r#"You are the compilation turn of jazyk, a natural language compiler. Your job: bring the semantic graph in line with one document's changed sections, by calling tools.
 
 The graph holds entities (domain concepts), EARS requirements attached to entities, and a coverage mark per section.
 
+The documents do not necessarily describe software. The SUBJECT is whatever the documents are about and its parts: a service, a slide deck, a book, a course, a schematic, a contract. Read "the system" in any EARS pattern as that subject. An artifact that does nothing still has obligations: it must contain, show, and look like what the documents say.
+
 Work section by section, finishing one before starting the next. For ONE section:
-1. Apply this test to every sentence: does it say what the system or one of its parts IS, DOES, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement. Access and permission rules pass the test too: "All management operations can be performed by Admins only." IS a requirement ("The user management system shall allow only Admins to perform management operations."), not background.
+1. Apply this test to every sentence: does it say what the subject or one of its parts IS, DOES, CONTAINS, SHOWS, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement. Access and permission rules pass the test too: "All management operations can be performed by Admins only." IS a requirement ("The user management system shall allow only Admins to perform management operations."), not background. Content, appearance, and material facts pass the test too, and are the most commonly missed kind: what an artifact says, shows, or contains is an obligation on it ("This slide shows a headline title `Jazyk`" yields "The Introduction slide shall show a headline title `Jazyk`."), and a stated value, color, font, size, or measurement is an obligation on the thing it describes ("The primary color is #248555" yields "The slides shall use #248555 as the primary color."). A stated fact is never "just a fact": the document states it because the result must match it.
 2. A fenced code block giving pseudo code, steps, or an algorithm is a claim about the system, step by step. Extract one requirement per step that states behavior, quoting that step's own line verbatim. A branch is its own obligation: "If stripped line is empty string, continue to next line" is an unwanted-behavior requirement ("If a stripped line is empty, then the system shall skip it."). A variable local to the steps (a loop counter, an accumulator array) is requirement detail, never an entity. A block is an illustration only when it shows sample data or a payload format. The section is covered only when EACH behavioral step has a requirement; extracting one step and skipping the rest is a dishonest coverage claim.
 3. A test case with concrete input and expected output is an event-driven obligation on the system under test: "When given the input lines `321`, `654`, `453`, the sort utility shall output `321`, `453`, `654`." Quote the case's lead-in line; the concrete values ride in the ears text. Reference the entity of the system under test, never the test file or the suite. A test-case section is NEVER non-normative.
 4. A sentence ending in a colon followed by a list is a claim about EACH item. The lead-in sentence alone states nothing; never record it as a requirement by itself. Record one requirement per list item, quoting that item's own bullet line verbatim. An item naming an actor, a component, a sub-system, or a stored field also introduces that entity. An item that is a link still counts: under "The sub-systems are:", the item "[User Management](./user.md)" states that the parent includes the User Management sub-system; record that requirement with entities for both and an edge.
 5. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name: "backend", "backend system", and "the Warehouse backend" are ONE entity. When you reuse under a different wording, record that wording with update_entity add_aliases. Create with upsert_entity only when search finds nothing that means the same thing. Tools take ids (ent:...), never display names.
 6. Tag each requirement with the entity the statement is about (its own grammatical subject) AND every other entity the statement names: "The user account shall have a username" references both the account and the username field; that reference is what ties the field into the graph. Only entities count here: a named operation (createUser) or technology (React) is requirement detail, never an entity. Never substitute a broader system for a named part ("The inventory system manages products" is about the inventory system, not the application containing it). One sentence introduces at most one entity for its subject: "This software is a warehouse management system" defines ONE entity, not two. A pronoun subject (This, It) resolves to the system the document already introduced: "This is a script written in javascript" is an obligation on that existing entity, never a new Script entity minted from the predicate noun.
 7. Record each requirement with upsert_requirement. The quote is copied character for character from the section body shown to you; for a bulleted item, quote that single bullet line exactly as it appears. Never paraphrase, merge, or reflow a quote.
-8. Then set_coverage for the section, exactly once, after its extraction: covered when you recorded (or the pack shows the section already yielded) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossaries defining outside-world terms, changelogs, roadmap wish lists. If any sentence is about the system, extract from it instead.
+8. Then set_coverage for the section, exactly once, after its extraction: covered when you recorded (or the pack shows the section already yielded) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossaries defining outside-world terms, changelogs, roadmap wish lists. If any sentence is about the subject, extract from it instead. These three reasons for non-normative are always wrong and will be rejected: "it states a fact, not a requirement", "it describes content or appearance, not behavior", "it is not a requirement on the system".
 
 Then repeat for the next dirty section. Stale anchors are a contract: for each one, if the document still states the fact, re-record it with upsert_requirement (the same statement with a fresh verbatim quote updates it in place); if the fact is gone, delete_requirement. done is rejected while a stale anchor is untouched. When every dirty section has its coverage mark, call done with a one-line summary. If done is rejected, repair exactly what the error names, then call done again.
 
 Rules:
-- Entities are the system's own parts, actors, and domain objects: a component, a type, a field, a user role, a stored record, a product. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
+- Entities are the subject's own parts, actors, and domain objects: a component, a type, a field, a user role, a stored record, a product, a slide, a chapter. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
 - Technologies, languages, and third-party tools named in a statement (React, Go, PostgreSQL) belong in the ears text, NOT as entities. "The gateway shall be built with Go" references the entity gateway only.
-- Extract only obligations the source itself states; never invent facts the text does not carry. But grammar does not matter: a plain declarative sentence about the system is an obligation, and a sentence naming what something is built with, composed of, or responsible for is a requirement, not background.
+- A sentence whose only content is WHERE something is written is navigation, not an obligation: "The slides themselves are defined under [Slides](./slides.md)" and "This document describes how X works" say nothing the result must satisfy. Skip them. The test is whether the sentence constrains the result or only the documentation of it. A list item that names a part IS a fact about the result ("the sub-systems are: [User Management](./user.md)"), and the difference is that the item names a part, while the navigation sentence names a file.
+- Extract only obligations the source itself states; never invent facts the text does not carry. But grammar does not matter: a plain declarative sentence about the subject is an obligation, and a sentence naming what something is built with, composed of, made to look like, or responsible for is a requirement, not background.
 - The gateway sentences in these instructions are illustrations, not content. Extract only from the section bodies shown in the work pack; a quote that is not in the document will be rejected.
 - When a requirement ties two entities structurally, declare the pair in edges with a relationship type. A sub-system list is the common case: "the sub-systems are: X, Y" ties each sub-system to its parent.
 - Prefer attaching detail to a requirement over minting a new entity; mint a sub-entity only when statements are about it directly.
+- When the pack has a "Linked from" section, another document already listed this one as one of its parts and minted the entity for it. That entity is what this document is about: reference it from the requirements you extract here, and never mint a second entity for the same concept under the document's own heading. E.g. if the pack says a parent's item "[Introduction](./slide-intro.md)" introduced ent:introduction, then every statement in this document is an obligation on ent:introduction.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.
 - The ears text may rephrase the statement into EARS form, but the quote must stay a verbatim copy of the source sentence.
 - A tool error names what was wrong and how to repair the call; fix it and continue.
@@ -381,10 +475,10 @@ Work in this order:
 1. Read the entity and its requirements (gathered across all documents) in the pack below.
 2. If the definition no longer matches the requirements as a whole, refresh it with update_entity.
 3. Judge every lookalike candidate listed below. A name variant ("backend" vs "backend system"), a synonym, or the same thing at different detail is the SAME concept: merge with merge_entities (keep the better-established id) and say why. Merging is the expected outcome for lookalikes; keeping both is the exception and needs a reason. The absorbed name survives as an alias and its requirements follow automatically.
-4. Judge each requirement listed under "Statements naming this entity without referencing it": when the statement is about this entity, add the entity to the requirement with update_requirement (keep ears unchanged, supply the full entities list including the existing ones). A missing reference is what strands an entity unreachable.
+4. Judge each requirement listed under "Statements naming this entity without referencing it": when the statement is about this entity, add the entity to the requirement with update_requirement, passing ONLY id and entities (the full list, including the ones already there). Never pass section or quote on such a call: those two re-anchor the provenance to a different sentence in the document, they are not the ears statement, and a call that only adds a reference must leave them out. A missing reference is what strands an entity unreachable.
 5. Delete duplicate requirements: when two requirements on this entity state the same fact (the same obligation reworded), keep the better-sourced one and delete_requirement the other, saying why. A lead-in sentence's requirement duplicated by its list item's requirement is the common case; keep the item's.
 6. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
-7. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement (keep ears and entities unchanged, supply edges with a relationship type).
+7. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement, passing ONLY id and edges (with a relationship type). Again, no section and no quote.
 8. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
 9. Call done with a one-line summary.
 
@@ -402,6 +496,45 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     if let Some(rec) = store.docs.get(doc) {
         let covered = rec.coverage.len();
         s.push_str(&format!("sections: {} total, {} with coverage\n", rec.sections.len(), covered));
+    }
+
+    // Incoming links the graph already resolved: a parent listed this document as one of
+    // its parts, and that list item minted the part's entity. The link is what says which
+    // entity this document details. Mirrors docs/compiler/turns.md#incoming-links.
+    let mut incoming: Vec<String> = Vec::new();
+    for (id, e) in &store.graph.entities {
+        for m in &e.mentions {
+            if &m.doc != doc && crate::md::doc_links(&m.quote, &m.doc).iter().any(|l| l == doc) {
+                incoming.push(format!(
+                    "- {}#{} \"{}\" introduced {} ({})",
+                    m.doc,
+                    m.section,
+                    crate::llm::truncate(&m.quote, 100),
+                    id,
+                    e.name
+                ));
+            }
+        }
+    }
+    for (id, r) in &store.graph.requirements {
+        if &r.source.doc != doc && crate::md::doc_links(&r.source.quote, &r.source.doc).iter().any(|l| l == doc) {
+            incoming.push(format!(
+                "- {}#{} \"{}\" states {} ({})",
+                r.source.doc,
+                r.source.section,
+                crate::llm::truncate(&r.source.quote, 100),
+                id,
+                crate::llm::truncate(&r.ears, 100)
+            ));
+        }
+    }
+    incoming.sort();
+    incoming.dedup();
+    if !incoming.is_empty() {
+        incoming.truncate(12);
+        s.push_str("\n## Linked from (what other documents already say this one details)\n");
+        s.push_str(&incoming.join("\n"));
+        s.push_str("\n\nThis document details what those statements introduced. Its requirements reference those entities; do not mint a second entity for the same concept.\n");
     }
 
     // Known entities: this document's neighborhood first, then the rest of the graph.
@@ -609,6 +742,17 @@ fn condense(v: &Value, n: usize) -> String {
     llm::truncate(&v.to_string(), n)
 }
 
+// The section a tool call names, when it belongs to this turn's document. Tools carry
+// it as `section` (set_coverage, upsert_requirement, read_section) or under a mention
+// (upsert_entity); either form may be qualified with the document.
+fn named_section(args: &Value, doc: &str) -> Option<String> {
+    let raw = args["section"].as_str().or_else(|| args["mention"]["section"].as_str())?;
+    match crate::model::split_section_ref(raw) {
+        Some((d, sec)) => (d == doc).then_some(sec),
+        None => raw.starts_with('/').then(|| raw.to_string()),
+    }
+}
+
 // The payload behind a condensed line, only when condensing cut something, capped so
 // a huge context pack cannot flood the trace file.
 fn full_payload(v: &Value) -> Option<String> {
@@ -641,13 +785,29 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
     let defs: Vec<&ToolDef> = all_defs.iter().filter(|t| names.contains(&t.name)).collect();
     let mut session = ToolSession::new(snapshot, scope, limits.turn_mutations, limits.context_budget);
     session.gen = gen.clone();
+    // References a feedback entry records: which turn, which model, which run.
+    session.caller = crate::feedback::Caller {
+        source: "turn".into(),
+        target: item.target.clone(),
+        model: llm.model.clone(),
+        run: trace.run(),
+        ..Default::default()
+    };
 
     trace.event(TraceEvent::TurnStart {
         label: prefix.clone(),
+        task: item.task.clone(),
+        target: item.target.clone(),
+        doc: (item.task == "reconcile-doc").then(|| item.target.clone()),
+        sections: item.dirty_sections.clone(),
         dirty: item.dirty_sections.len(),
         stale: item.stale_anchors.len(),
     });
     trace.verbose(&prefix, &format!("--- context pack ---\n{}\n--- end pack ---", pack));
+
+    // Every prompt and reply this turn sends reports under the turn's label.
+    let llm = llm.with_trace(trace);
+    let llm = &llm;
 
     // Codec selection with a first-round probe: native unless the run already learned otherwise.
     let mut mode = llm::tools_mode();
@@ -666,15 +826,24 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
 
     // Accumulates across codec downgrades: a probe round costs tokens too.
     let mut tokens = 0u64;
+    // Where the turn is in its document, for the frontends that show it in place.
+    let turn_doc: Option<String> = (item.task == "reconcile-doc").then(|| item.target.clone());
+    let mut at_section: Option<String> = None;
     'codec: loop {
         let codec: Box<dyn Codec> = if mode == 2 { Box::new(TextCodec) } else { Box::new(NativeCodec) };
+        session.caller.codec = if mode == 2 { "text".into() } else { "native".into() };
         let mut messages = vec![
-            json!({"role": "system", "content": format!("{}{}", system, codec.system_suffix(&defs))}),
+            json!({"role": "system", "content": format!("{}{}", with_feedback_note(system), codec.system_suffix(&defs))}),
             json!({"role": "user", "content": pack.clone()}),
         ];
         let tools_param = codec.tools_param(&defs);
         let mut invalid_streak = 0u32;
         let mut rounds = 0u32;
+        // Identical calls seen this turn, keyed by tool plus canonical arguments. A model
+        // that re-asks a question it already asked is looping, not working; the harness
+        // says so instead of letting it burn the budget.
+        // Mirrors docs/compiler/turns.md#repeated-calls.
+        let mut repeats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
         // The round budget scales with extraction density: a one-action-per-reply model
         // needs a round per mutation, so a dense work item gets at least 8 rounds per
         // dirty section. Mirrors docs/compiler/turns.md#budgets.
@@ -682,8 +851,9 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
 
         while rounds < round_budget {
             rounds += 1;
-            let label = format!("{} r{}", prefix, rounds);
-            let msg = match llm.chat_messages(&messages, tools_param.as_deref(), &label) {
+            // The label groups the turn, the step names the round inside it.
+            let step = format!("r{}", rounds);
+            let msg = match llm.chat_messages(&messages, tools_param.as_deref(), &prefix, &step) {
                 Ok((m, t)) => {
                     tokens += t;
                     m
@@ -770,8 +940,48 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                             full: full_payload(&args),
                         });
                         trace.verbose(&prefix, &format!("full args: {}", args));
+                        // Repeat guard: the same call with the same arguments has the same
+                        // answer. The second one is warned, the third is refused, so a turn
+                        // spends its rounds on the document instead of on a stuck question.
+                        let seen = if name == "done" {
+                            0
+                        } else {
+                            let key = format!("{}|{}", name, args);
+                            let c = repeats.entry(key).or_insert(0);
+                            *c += 1;
+                            *c
+                        };
+                        if seen >= 3 {
+                            errored = true;
+                            let e = crate::tools::ToolError::new(
+                                "repeated-call",
+                                format!(
+                                    "this is call {} to `{}` with identical arguments in this turn, and the answer has not changed. Stop calling it. Act on the answer you already have: record what the section states, mark its coverage, and move to the next section.",
+                                    seen, name
+                                ),
+                            );
+                            trace.event(TraceEvent::ToolError {
+                                label: prefix.clone(),
+                                rule: e.rule.clone(),
+                                message: e.message.clone(),
+                            });
+                            messages.push(codec.result_msg(&id, &name, &e.to_value()));
+                            continue;
+                        }
                         let result = match session.dispatch(&name, &args) {
-                            Ok(v) => {
+                            Ok(mut v) => {
+                                if seen == 2 {
+                                    if let Some(o) = v.as_object_mut() {
+                                        o.insert(
+                                            "repeat".into(),
+                                            json!(format!(
+                                                "you already made this exact `{}` call in this turn; this is the same answer. Do not call it again, act on it.",
+                                                name
+                                            )),
+                                        );
+                                    }
+                                }
+                                let v = v;
                                 trace.event(TraceEvent::ToolResult {
                                     label: prefix.clone(),
                                     name: name.clone(),
@@ -779,6 +989,21 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                                     full: full_payload(&v),
                                 });
                                 trace.verbose(&prefix, &format!("full result: {}", v));
+                                // An accepted call that names a section says where the
+                                // turn is; a rejected one names nothing real.
+                                if let Some(doc) = &turn_doc {
+                                    if let Some(sec) = named_section(&args, doc) {
+                                        if at_section.as_deref() != Some(sec.as_str()) {
+                                            at_section = Some(sec.clone());
+                                            trace.event(TraceEvent::Section {
+                                                label: prefix.clone(),
+                                                doc: doc.clone(),
+                                                section: sec,
+                                                tool: name.clone(),
+                                            });
+                                        }
+                                    }
+                                }
                                 v
                             }
                             Err(e) => {
@@ -844,6 +1069,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn feedback_note_rides_under_the_role_line_of_every_prompt() {
+        for system in [RECONCILE_SYSTEM, REVIEW_REQ_SYSTEM, REVIEW_SYSTEM] {
+            let s = with_feedback_note(system);
+            let paras: Vec<&str> = s.split("\n\n").collect();
+            assert!(paras[0].starts_with("You are the"), "role line stays first");
+            assert_eq!(paras[1], FEEDBACK_NOTE, "the note is the second paragraph");
+            assert!(s.contains("report_feedback"));
+            // Nothing of the original prompt is lost to the insertion.
+            assert!(s.ends_with(system.split_once("\n\n").unwrap().1));
+        }
+    }
+
+    #[test]
     fn text_codec_parses_single_action() {
         let c = TextCodec;
         let msg = json!({"role": "assistant", "content": "I will search first.\n{\"tool\": \"search\", \"args\": {\"query\": \"cart\"}}"});
@@ -856,6 +1094,24 @@ mod tests {
             }
             _ => panic!("expected a call"),
         }
+    }
+
+    #[test]
+    fn section_events_follow_this_document_only() {
+        let doc = "docs/main.md";
+        assert_eq!(named_section(&json!({"section": "/shop/cart"}), doc).as_deref(), Some("/shop/cart"));
+        assert_eq!(
+            named_section(&json!({"section": "docs/main.md#/shop"}), doc).as_deref(),
+            Some("/shop")
+        );
+        // Another document's section says nothing about where this turn is.
+        assert_eq!(named_section(&json!({"section": "docs/other.md#/shop"}), doc), None);
+        // An entity mention carries it one level down.
+        assert_eq!(
+            named_section(&json!({"mention": {"section": "/shop", "quote": "x"}}), doc).as_deref(),
+            Some("/shop")
+        );
+        assert_eq!(named_section(&json!({"query": "cart"}), doc), None);
     }
 
     #[test]

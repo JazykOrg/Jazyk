@@ -2,13 +2,13 @@
 // with the linkage tint between them (docs/frontends/gui.md#files). Selecting a
 // document highlights the deliverable files bound to its requirements; selecting
 // a deliverable file highlights the documents on the other side of the join.
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { post, put, tokenParam, type DelivFileInfo, type DocInfo } from '../lib/api'
 import { useDeliverable, useDocs, useMatrix } from '../lib/queries'
 import { useDocDelivLinks } from '../lib/links'
-import { useApp } from '../lib/store'
+import { useApp, type TurnProgress } from '../lib/store'
 import '../ide/ide.css'
 import '../routes/routes.css'
 
@@ -92,6 +92,41 @@ interface TreeOps {
   doDelete: (p: string) => void
   doRename: (from: string, to: string) => void
   cancel: () => void
+  // Hold this document's build result in place while the pointer is on its row.
+  // Keyed by path, not by turn label: the row is hovered before the turn exists.
+  hold: (path: string, held: boolean) => void
+}
+
+// What the build is doing to this document, under its row. A running turn shows
+// the section it reached; a finished one shows what it staged, until it fades
+// (docs/frontends/gui.md#files).
+function BuildMark({ p }: { p: TurnProgress }) {
+  const cls =
+    p.state === 'running'
+      ? 'v-stale'
+      : p.state === 'failed'
+        ? 'v-bad'
+        : p.state === 'done'
+          ? 'v-ok'
+          : 'muted'
+  const mark = p.state === 'running' ? '▶' : p.state === 'failed' ? '✗' : p.state === 'done' ? '✓' : '◦'
+  const detail =
+    p.state === 'running'
+      ? (p.active ?? 'reading the document')
+      : p.state === 'queued'
+        ? 'queued'
+        : (p.result ?? '')
+  return (
+    <div className={`ide-build ${cls}${p.state === 'running' ? ' running' : ''}`} title={`${p.label}\n${detail}`}>
+      <span className="ide-build-mark">{mark}</span>
+      <span className="ide-build-text mono">{detail}</span>
+      {p.sections.length > 0 && (
+        <span className="ide-build-count mono">
+          {p.touched.length}/{p.sections.length}
+        </span>
+      )}
+    </div>
+  )
 }
 
 function DocLevel({
@@ -100,17 +135,20 @@ function DocLevel({
   current,
   related,
   ops,
+  progress,
 }: {
   node: Tree<DocInfo>
   depth: number
   current: string
   related: Set<string>
   ops: TreeOps
+  progress: Map<string, TurnProgress>
 }) {
   return (
     <>
-      {node.files.map((d) =>
-        ops.renamePath === d.path ? (
+      {node.files.map((d) => {
+        const p = progress.get(d.path)
+        return ops.renamePath === d.path ? (
           <div key={d.path} className="ide-row" style={{ paddingLeft: depth * 12 }}>
             <InlineInput
               initial={d.path}
@@ -119,39 +157,53 @@ function DocLevel({
             />
           </div>
         ) : (
+          // The pointer on the row holds a finished turn's result in place.
           <div
             key={d.path}
-            className={`ide-row${d.path === current ? ' active' : ''}${related.has(d.path) ? ' related' : ''}`}
-            style={{ paddingLeft: depth * 12 }}
+            onMouseEnter={() => ops.hold(d.path, true)}
+            onMouseLeave={() => ops.hold(d.path, false)}
           >
-            <Link to={`/files/docs/${d.path}`} className="ide-doc">
-              <span className="ide-doc-name">{d.path.split('/').pop()}</span>
-              <DiagBadge doc={d} />
-              {d.stale && <span className="dot-stale" title="stale against the graph" />}
-            </Link>
-            <span className="ide-row-actions">
-              <button className="ide-mini" title="rename" onClick={() => ops.startRename(d.path)}>
-                ✎
-              </button>
-              {ops.confirmDelete === d.path ? (
-                <button className="ide-mini ide-confirm" onClick={() => ops.doDelete(d.path)}>
-                  delete?
+            <div
+              className={`ide-row${d.path === current ? ' active' : ''}${related.has(d.path) ? ' related' : ''}`}
+              style={{ paddingLeft: depth * 12 }}
+            >
+              <Link to={`/files/docs/${d.path}`} className="ide-doc">
+                <span className="ide-doc-name">{d.path.split('/').pop()}</span>
+                <DiagBadge doc={d} />
+                {d.stale && <span className="dot-stale" title="stale against the graph" />}
+              </Link>
+              <span className="ide-row-actions">
+                <button className="ide-mini" title="rename" onClick={() => ops.startRename(d.path)}>
+                  ✎
                 </button>
-              ) : (
-                <button className="ide-mini" title="delete" onClick={() => ops.armDelete(d.path)}>
-                  ✕
-                </button>
-              )}
-            </span>
+                {ops.confirmDelete === d.path ? (
+                  <button className="ide-mini ide-confirm" onClick={() => ops.doDelete(d.path)}>
+                    delete?
+                  </button>
+                ) : (
+                  <button className="ide-mini" title="delete" onClick={() => ops.armDelete(d.path)}>
+                    ✕
+                  </button>
+                )}
+              </span>
+            </div>
+            {p && <div style={{ paddingLeft: depth * 12 }}>{<BuildMark p={p} />}</div>}
           </div>
-        ),
-      )}
+        )
+      })}
       {Object.entries(node.dirs).map(([name, child]) => (
         <div key={name}>
           <div className="ide-dir mono" style={{ paddingLeft: 12 + depth * 12 }}>
             {name}/
           </div>
-          <DocLevel node={child} depth={depth + 1} current={current} related={related} ops={ops} />
+          <DocLevel
+            node={child}
+            depth={depth + 1}
+            current={current}
+            related={related}
+            ops={ops}
+            progress={progress}
+          />
         </div>
       ))}
     </>
@@ -212,6 +264,26 @@ export default function Explorer() {
   const matrix = useMatrix()
   const links = useDocDelivLinks()
   const editorDirty = useApp((a) => a.editorDirty)
+  const turns = useApp((a) => a.turns)
+  const turnHold = useApp((a) => a.turnHold)
+
+  // The pointer may already be on the row when the turn appears under it, so the
+  // label is resolved at call time, not captured at render.
+  const holdDoc = useCallback(
+    (path: string, held: boolean) => {
+      const t = Object.values(useApp.getState().turns).find((x) => x.doc === path)
+      if (t) turnHold(t.label, held)
+    },
+    [turnHold],
+  )
+
+  // The running build, per document. One turn per document at a time; a retry
+  // replaces the entry under the same key.
+  const docProgress = useMemo(() => {
+    const m = new Map<string, TurnProgress>()
+    for (const t of Object.values(turns)) if (t.doc) m.set(t.doc, t)
+    return m
+  }, [turns])
 
   const docPath = loc.pathname.startsWith('/files/docs/')
     ? decodeURIComponent(loc.pathname.slice('/files/docs/'.length))
@@ -316,6 +388,7 @@ export default function Explorer() {
     doDelete: (p) => void doDelete(p),
     doRename: (from, to) => void doRename(from, to),
     cancel: cancelTreeEdit,
+    hold: holdDoc,
   }
 
   const rows = matrix.data?.rows ?? {}
@@ -361,6 +434,7 @@ export default function Explorer() {
             current={docPath}
             related={relatedDocs}
             ops={ops}
+            progress={docProgress}
           />
         )}
       </div>

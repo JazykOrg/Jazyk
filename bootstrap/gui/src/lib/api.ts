@@ -189,6 +189,23 @@ export interface JournalEntry {
   tokens: number
 }
 
+// One line of the feedback log: what a model found ambiguous, wrong, or confusing
+// about jazyk's own prompts and tools (docs/compiler/tools.md#feedback-tool).
+export interface FeedbackEntry {
+  at: string
+  kind: string
+  subject?: string
+  message: string
+  source?: string
+  task?: string
+  target?: string
+  model?: string
+  codec?: string
+  generation?: number
+  run?: string
+  client?: string
+}
+
 export interface Job {
   id: number
   kind: { kind: string; entities?: string[]; targets?: string[] }

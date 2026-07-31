@@ -573,9 +573,43 @@ pub fn run_all(
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
+    // Every prompt this run sends reports under the requirement it is judging.
+    let llm = &llm.with_trace(trace);
     let selected = select_rows(store, gs, targets, kind, force);
     if !targets.is_empty() && selected.is_empty() {
         return Err("no ledger rows match the given target(s); run `jazyk gen` first or check the ids".into());
+    }
+    // The build runs once, before any row. A row cannot say anything true about an
+    // artifact that was never produced, so a broken build stops the run instead of
+    // failing every requirement and naming the wrong culprit.
+    // Mirrors docs/consumers/gen.md#runners.
+    if let Some(b) = crate::gen::Ledger::load(&store.out).build.clone() {
+        let cwd = gs.deliverable.join(&b.cwd);
+        trace.line("verify", &format!("build: {} (in {})", b.run, cwd.display()));
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&b.run)
+            .current_dir(&cwd)
+            .output()
+            .map_err(|e| format!("build `{}` could not start in {}: {}", b.run, cwd.display(), e))?;
+        if !out.status.success() {
+            let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
+            evidence.push_str(&String::from_utf8_lossy(&out.stderr));
+            return Err(format!(
+                "build `{}` failed ({}); nothing was verified. Output:\n{}",
+                b.run,
+                out.status,
+                crate::llm::truncate(evidence.trim(), 2000)
+            ));
+        }
+        let missing: Vec<&String> = b.produces.iter().filter(|p| !gs.deliverable.join(p).exists()).collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "build `{}` exited 0 but did not produce {}; nothing was verified",
+                b.run,
+                missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
     }
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     for r in &selected {
@@ -614,7 +648,7 @@ pub fn run_all(
                         task_pkg["context"].as_str().unwrap_or_default(),
                         evidence_input
                     );
-                    match llm.chat(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid)) {
+                    match llm.chat(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge") {
                         Ok(reply) => {
                             let up = reply.to_uppercase();
                             match (up.find("PASS"), up.find("FAIL")) {

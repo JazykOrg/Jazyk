@@ -37,6 +37,57 @@ the file names, and the build files that make its recorded commands executable. 
 binds the layout to the graph is the manifest: every completed task records which
 deliverable files implement which requirements ([the ledger](#the-ledger)).
 
+## The deliverable is the artifact, never a description of it
+
+A requirement naming a format, a medium, or a piece of content is an obligation to
+produce that thing. Writing a document that says the thing will be produced satisfies
+nothing, and a test asserting that such a document mentions the format verifies nothing:
+both sides are prose, and the artifact does not exist. The substitution is the most
+common generation failure, because prose is what a language model produces most easily.
+
+So the rule is: whatever the requirements say the deliverable is, that is what lands
+under the deliverable directory.
+
+- When the medium is text the requirements describe directly (source code, a manuscript,
+  a configuration), the generated files are the deliverable.
+- When the medium is a format a tool must produce (a slide deck, a PDF, a rendered site,
+  a compiled binary, an image), the generated files are the source that produces it,
+  plus [the build](#the-build) that produces it. The produced artifact is the
+  deliverable, and it is what the tests inspect.
+
+Content requirements are satisfied by content, not by placeholders. A requirement saying
+an artifact shows a title, states a definition, or uses a color is met only when the
+artifact carries that exact title, that definition, that color value. A generator that
+does not know what to write is missing a requirement, and the honest outcome is a
+failing row, not invented filler.
+
+## The build
+
+A deliverable whose medium must be produced by a tool records one build command:
+
+```yaml
+build:
+  run: python build_deck.py
+  cwd: .
+  produces:
+  - jazyk.pptx
+```
+
+- The command runs from the deliverable directory, `cwd` relative to it.
+- `produces` lists the artifact paths the command creates, relative to the deliverable.
+  They are the deliverable's real output; the ledger keeps them so a reader knows what
+  the run was supposed to make.
+- The build is per deliverable, not per entity. The first task that needs one records
+  it; every later task receives it in its package and reuses it, the same way run
+  commands establish one toolchain.
+- `jazyk test` runs the build once, before any row is judged. A non-zero exit, or a
+  missing path in `produces`, fails the run and reports the build, since there is
+  nothing to verify when the artifact was not produced. See [runners](#runners).
+- A deliverable that is its own output records no build, and nothing runs.
+
+The build is a fact the generator derives from the requirements, like every other
+choice about form. Jazyk holds no list of media and no template per format.
+
 ## The entity is the unit of generation
 
 Each [entity](../compiler/model/entity.md) generates in one bounded task. The task's
@@ -132,6 +183,22 @@ harness enforces:
   confirm the behavior. The verdict is the test. See
   [criteria files](#criteria-files-for-llm-tests).
 
+A test inspects the artifact the requirement is about, never a document that describes
+it. Asserting that a manifest names a format, that a plan lists a feature, or that a
+comment restates the statement is circular: both sides are the generator's own prose,
+and the test passes whether or not the artifact exists. When the medium is produced by
+[the build](#the-build), the test opens what the build produced. When the deliverable
+cannot be inspected by a command at all, the honest kind is `llm`, not a programmatic
+test pointed at prose.
+
+A test must be falsifiable: its assertion has to fail when the requirement is violated.
+The question that produces one is what change to the artifact would break this
+requirement, and the assertion checks exactly that. A test that passes either way is
+worse than no test, because the ledger then reports `verified` for a requirement nothing
+checked. When no falsifiable assertion is available from the artifact at hand, the row
+is `llm`. Choosing `llm` is a correct outcome, not a failure to try harder; inventing a
+stand-in assertion is the failure.
+
 ## Traceability
 
 Every requirement carries a verbatim `quote`
@@ -174,7 +241,16 @@ metadata file. Two maps:
 - `requirements`: verification state. How each requirement ties to the deliverable and
   how it is verified.
 
+A third key, `build`, is present only when the deliverable's medium must be produced by
+a tool ([the build](#the-build)).
+
 ```yaml
+build:                                    # optional; absent when the files are the output
+  run: python build_deck.py               # runs once, before any row is judged
+  cwd: .                                  # deliverable-relative working dir
+  produces:                               # deliverable-relative artifact paths
+    - jazyk.pptx
+
 entities:
   catalog:
     factHash: 9f2ab4c1d0e77a3b            # hash of name, definition, all referencing statements
@@ -246,6 +322,12 @@ the packaged setup for any harness: context, the location of the implemented pro
 and what to confirm. Editing it flips `stale-test` like any test artifact.
 
 ## Runners
+
+`jazyk test` runs [the build](#the-build) first, once, when the ledger records one. A
+non-zero exit, or a path in `produces` that the command did not create, stops the run
+before any row is judged and reports the build's own output. A row cannot say anything
+true about an artifact that was never produced, so reporting failures per requirement
+would name the wrong culprit.
 
 - `programmatic`: `jazyk test` executes `run` in `cwd` under the deliverable. Exit 0 is
   a pass, anything else is a fail. Before running, the runner greps the artifact for the

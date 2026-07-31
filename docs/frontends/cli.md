@@ -41,9 +41,13 @@ Live trace:
 
 - Default: one line per [turn](../compiler/turns.md) round, showing the tool calls with
   condensed arguments, the condensed results, and the model's reasoning text. See
-  [trace events](../compiler/turns.md#trace-events).
+  [trace events](../compiler/turns.md#trace-events). Endpoint trouble prints here too:
+  retries, rate-limit waits, and the sticky fallbacks (codec downgrade, streaming,
+  dropped `temperature`) are trace events, not stray stderr, so every frontend sees
+  them.
 - `--verbose`: additionally prints the full [context packs](../compiler/context.md) and raw
-  payloads.
+  payloads, plus a line per model call for the request (messages, size) and its answer
+  (elapsed, completion tokens), and the section each accepted call names.
 - `--quiet`: prints only the final summary.
 
 Every build leaves a transcript: `compile`, `check`, `gen`, and `test` persist their

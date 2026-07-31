@@ -20,6 +20,7 @@ import FilesHome from './workbench/FilesHome'
 import Work from './routes/Work'
 import GenTask from './routes/GenTask'
 import VerifyMatrix from './routes/VerifyMatrix'
+import Feedback from './routes/Feedback'
 import Settings from './routes/Settings'
 import Changeset from './routes/Changeset'
 import ReleaseDiff from './routes/ReleaseDiff'
@@ -29,12 +30,14 @@ const RAIL = [
   ['/files', '▤', 'files'],
   ['/graph', '⬡', 'graph'],
   ['/work', '⚒', 'work'],
+  ['/feedback', '⚑', 'feedback'],
   ['/settings', '⚙', 'settings'],
 ] as const
 
 function railMode(pathname: string): string {
   if (pathname.startsWith('/graph')) return '/graph'
   if (pathname.startsWith('/work')) return '/work'
+  if (pathname.startsWith('/feedback')) return '/feedback'
   if (pathname.startsWith('/settings')) return '/settings'
   return '/files'
 }
@@ -100,6 +103,17 @@ export default function App() {
           {mode === '/files' && <Explorer />}
           {mode === '/graph' && <GraphSidebar />}
           {mode === '/work' && <WorkSidebar />}
+          {mode === '/feedback' && (
+            <div className="wb-side-pad muted">
+              <p>
+                what the models reported about jazyk itself: an instruction, a tool, or an error message that was
+                ambiguous, wrong, or confusing.
+              </p>
+              <p>
+                for jazyk's developers. the log is <span className="mono">feedback.jsonl</span> in the out directory.
+              </p>
+            </div>
+          )}
           {mode === '/settings' && (
             <div className="wb-side-pad muted">
               <p>
@@ -125,6 +139,7 @@ export default function App() {
                 <Route path="/work" element={<Scroll><Work /></Scroll>} />
                 <Route path="/work/gen/:id" element={<Scroll><GenTask /></Scroll>} />
                 <Route path="/work/verify" element={<Scroll><VerifyMatrix /></Scroll>} />
+                <Route path="/feedback" element={<Scroll><Feedback /></Scroll>} />
                 <Route path="/settings" element={<Scroll><Settings /></Scroll>} />
                 <Route path="/journal/diff" element={<Scroll><ReleaseDiff /></Scroll>} />
                 <Route path="/journal/:gen" element={<Scroll><Changeset /></Scroll>} />

@@ -956,7 +956,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                             let e = crate::tools::ToolError::new(
                                 "repeated-call",
                                 format!(
-                                    "this is call {} to `{}` with identical arguments in this turn, and the answer has not changed. Stop calling it. Act on the answer you already have: record what the section states, mark its coverage, and move to the next section.",
+                                    "this is call {} to `{}` with identical arguments in this turn, and the answer has not changed. Asking again cannot help. Act on the answer you already have, or finish with done.",
                                     seen, name
                                 ),
                             );

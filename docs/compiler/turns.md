@@ -95,7 +95,7 @@ spend its budget on it:
 - The second identical call answers as usual, with a `repeat` field on the result saying
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
-  record what the section states, mark its coverage, move on.
+  act on the answer already given, or finish with `done`.
 
 Identity is the tool name plus its arguments verbatim, counted per turn. `done` is
 exempt; repairing a rejected `done` legitimately repeats it.

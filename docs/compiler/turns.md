@@ -83,8 +83,8 @@ content.
 A link is resolved by locating the target document in the verbatim quote of an existing
 entity mention or requirement source, so the binding is deterministic and needs no model
 judgment. Links the graph has not yet resolved are not listed: the
-[level order](./reconciler.md#levels) runs a parent before the documents it links to, so
-by the time the part's turn runs, the parent's requirement exists.
+[level order](./reconciler.md#scheduling) runs a parent before the documents it links
+to, so by the time the part's turn runs, the parent's requirement exists.
 
 ## Repeated calls
 

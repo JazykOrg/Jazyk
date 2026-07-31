@@ -100,6 +100,13 @@ A hard per-build turn budget backstops the loop. Work still open when the budget
 is parked in `status.yaml` and reported as an `incomplete-build` diagnostic. The next
 build resumes parked items first. Unfinished work is never silent.
 
+The verdict in `status.yaml` is `converged` only when nothing is parked and no section
+with a body of its own is left unprocessed. A turn that exhausts its round budget commits
+what it staged and reports no failure, so its document is not parked; counting only
+parked items would report a build that stopped halfway as converged. Coverage is the
+other half of the criterion, so a build that ran out of road says `incomplete` and the
+next build picks the sections up.
+
 ## Coverage
 
 Every section carries a coverage state in the store:

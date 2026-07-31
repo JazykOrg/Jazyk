@@ -749,9 +749,24 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let findings = checks(&s, proj, &parked_all);
     s.reconcile_check_diags(findings);
 
-    // Status and verdict.
+    // Status and verdict. Coverage is part of the termination criterion
+    // (docs/compiler/reconciler.md#coverage): a section the build never processed is
+    // work still open, whether or not its turn parked. A turn that exhausts its round
+    // budget commits what it staged and returns no failure, so parked items alone would
+    // report a build that stopped early as converged.
+    // Same filter the uncovered-section check uses: a heading with no body of its own
+    // carries no content to process.
+    let unprocessed = s
+        .docs
+        .values()
+        .flat_map(|rec| {
+            rec.sections.iter().filter(|(r, sec)| {
+                !rec.coverage.contains_key(*r) && !sec.raw.lines().skip(1).all(|l| l.trim().is_empty())
+            })
+        })
+        .count();
     s.status.parked = parked_all.clone();
-    s.status.verdict = if parked_all.is_empty() { "converged".into() } else { "incomplete".into() };
+    s.status.verdict = if parked_all.is_empty() && unprocessed == 0 { "converged".into() } else { "incomplete".into() };
     let n = crate::docsgen::write_all(&s, &crate::gen::GenSettings::resolve(proj));
     if n > 0 {
         trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));

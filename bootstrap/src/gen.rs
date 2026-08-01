@@ -996,6 +996,10 @@ mod tests {
         assert_eq!(one[0].0, "src/a.py");
         assert_eq!(one[0].1.trim(), "print(1)");
 
+        // A fence around the body is the model's markdown habit, not content.
+        let fenced = parse_file_replies("FILE: src/a.py\n```python\nprint(1)\n```\n").unwrap();
+        assert_eq!(fenced[0].1.trim(), "print(1)");
+
         let two = parse_file_replies("FILE: src/a.py\nprint(1)\n\nFILE: build.py\nimport a\na.go()\n").unwrap();
         assert_eq!(two.len(), 2);
         assert_eq!(two[0].0, "src/a.py");
@@ -1266,6 +1270,12 @@ pub fn parse_file_replies(reply: &str) -> Result<Vec<(String, String)>, String> 
         }
     }
     out.push((path, body.join("\n")));
+    // The reply's outer layer is the FILE line, so a fence the model wrapped the file
+    // in survives that first strip. Each file's own body gets unwrapped here, or the
+    // artifact starts with ```python and parses as nothing.
+    for (_, body) in out.iter_mut() {
+        *body = strip_fences(body);
+    }
     // A path that escapes the deliverable is not a file this harness writes.
     out.retain(|(p, _)| !p.is_empty() && !p.starts_with('/') && !p.contains(".."));
     if out.is_empty() {

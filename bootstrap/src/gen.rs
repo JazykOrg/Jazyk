@@ -107,8 +107,9 @@ pub struct Build {
     pub produces: Vec<String>,
     // What happened the last time the build ran. A failure is a fact the next
     // generation task must see, or it writes the same broken part again
-    // (docs/consumers/gen.md#the-build).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // (docs/consumers/gen.md#the-build). The alias reads a ledger written before the
+    // key took its documented spelling.
+    #[serde(default, rename = "lastRun", alias = "last_run", skip_serializing_if = "Option::is_none")]
     pub last_run: Option<BuildRun>,
 }
 

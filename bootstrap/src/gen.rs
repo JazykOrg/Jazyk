@@ -1504,13 +1504,19 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         .filter_map(|r| {
             let rid = r["id"].as_str().unwrap_or_default();
             let name = r["testName"].as_str().unwrap_or_default();
-            let present = !name.is_empty() && tests_code.contains(name);
             let row = manifest_json["tests"]
                 .as_array()
                 .and_then(|a| a.iter().find(|t| t["requirement"].as_str() == Some(rid)).cloned());
+            // The suggested name is a suggestion: a test the generator named its own
+            // way still counts, as long as the name it declared is in the artifact
+            // (docs/consumers/gen.md#file-ownership-and-conventions).
+            let declared_name = row.as_ref().and_then(|t| t["name"].as_str()).unwrap_or("").trim().to_string();
+            let present = (!name.is_empty() && tests_code.contains(name))
+                || (!declared_name.is_empty() && tests_code.contains(&declared_name));
             let programmatic = row.as_ref().map(|t| t["kind"].as_str() == Some("programmatic")).unwrap_or(false);
             let run = row.as_ref().and_then(|t| t["run"].as_str()).unwrap_or("").trim().to_string();
-            let has_run = !run.is_empty() && runs_the_test(&run, name);
+            let selector = if !declared_name.is_empty() && tests_code.contains(&declared_name) { &declared_name } else { name };
+            let has_run = !run.is_empty() && runs_the_test(&run, selector);
             if present && !(programmatic && has_run) {
                 Some(format!(
                     "- {} [{}] is present in the tests file; declare it programmatic with a run command that invokes the tests file and selects this test (reference `{}` or the testName in the command)",
@@ -1640,13 +1646,24 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         let rid = r["id"].as_str().unwrap_or_default();
         let name = r["testName"].as_str().unwrap_or_default();
         let row = declared.iter().find(|t| t["requirement"].as_str() == Some(rid));
+        // The name the row is selected by: the suggestion when the artifact carries
+        // it, otherwise whatever the generator named its test, as long as the artifact
+        // carries that (docs/consumers/gen.md#file-ownership-and-conventions).
+        let declared_name = row.and_then(|t| t["name"].as_str()).unwrap_or("").trim();
+        let selector = if !name.is_empty() && tests_code.contains(name) {
+            name
+        } else if !declared_name.is_empty() && tests_code.contains(declared_name) {
+            declared_name
+        } else {
+            ""
+        };
         let programmatic = row
             .map(|t| {
                 let run = t["run"].as_str().unwrap_or("").trim();
                 t["kind"].as_str() == Some("programmatic")
                     && !run.is_empty()
-                    && tests_code.contains(name)
-                    && runs_the_test(run, name)
+                    && !selector.is_empty()
+                    && runs_the_test(run, selector)
             })
             .unwrap_or(false);
         if programmatic {
@@ -1654,7 +1671,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             tests_manifest.push(serde_json::json!({
                 "requirement": rid, "kind": "programmatic",
                 "label": t["label"].as_str().unwrap_or("test"),
-                "artifact": tests_rel, "name": name,
+                "artifact": tests_rel, "name": selector,
                 "run": t["run"].as_str().unwrap_or(""),
                 "cwd": t["cwd"].as_str().unwrap_or("."),
                 "files": [product_rel],

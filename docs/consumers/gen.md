@@ -211,6 +211,11 @@ reference already generated files through the manifest.
   that contradicts the artifact (a declared programmatic test whose name is absent
   from it, or a present test left undeclared) gets one corrective retry; rows still
   wrong after the retry fall back to `llm` with a criteria file.
+- The suggested test name is a suggestion. What the harness requires is that the name
+  the manifest declares for a requirement is really in the tests artifact and that the
+  command selects it; a generator that named its test its own way has still written a
+  test, and the ledger records the name it used. Only a declared name that appears
+  nowhere in the artifact is a contradiction.
 - A programmatic run command must invoke the tests artifact and select the test: a
   command that names neither the tests artifact nor the test name runs the product,
   not the test, and is invalid. Same corrective retry, same `llm` fallback.

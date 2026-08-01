@@ -1709,7 +1709,14 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             })
             .and_then(|f| f["content"].as_str())
             .map(String::from)
-            .or_else(|| task["buildEntry"]["content"].as_str().map(String::from));
+            // The package's copy was read before this task wrote anything, so the
+            // file on disk is the fresher answer when the manifest returns none.
+            .or_else(|| {
+                entry_path
+                    .as_ref()
+                    .and_then(|p| std::fs::read_to_string(gs.deliverable.join(p)).ok())
+                    .or_else(|| task["buildEntry"]["content"].as_str().map(String::from))
+            });
         if let (Some(entry), Some(content)) = (&entry_path, &entry_content) {
             // Every part: this task's product file plus the ones other tasks wrote.
             let mut parts: Vec<String> = vec![product_rel.clone()];

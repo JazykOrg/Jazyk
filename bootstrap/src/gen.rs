@@ -521,7 +521,7 @@ fn build_entry(ledger: &Ledger, gs: &GenSettings) -> Value {
         }
         let candidate = dir.join(token);
         if candidate.is_file() {
-            let rel = pathdiff(&candidate, &gs.deliverable).unwrap_or_else(|| token.to_string());
+            let rel = norm_rel(&pathdiff(&candidate, &gs.deliverable).unwrap_or_else(|| token.to_string()));
             let content = std::fs::read_to_string(&candidate).unwrap_or_default();
             return json!({"path": rel, "content": crate::llm::truncate(&content, 12_000)});
         }
@@ -536,6 +536,13 @@ fn entry_from_run(run: &str) -> Option<String> {
         .map(|t| t.trim_matches(|c| c == '"' || c == '\''))
         .find(|t| !t.starts_with('-') && t.contains('.') && !t.ends_with("python") && !t.ends_with("python3"))
         .map(String::from)
+}
+
+// Deliverable-relative paths as the manifest writes them: no leading `./`, no
+// duplicate separators. Joining a build's `cwd` produces the other spelling, and a
+// path compared in the wrong spelling silently matches nothing.
+fn norm_rel(p: &str) -> String {
+    p.replace("/./", "/").trim_start_matches("./").to_string()
 }
 
 // A deliverable-relative path, lexically.
@@ -1541,13 +1548,18 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             .as_str()
             .map(String::from)
             .or_else(|| entry_from_run(manifest_json["build"]["run"].as_str().unwrap_or("")));
+        // What the entry would hold after this task: the version it returns, or the
+        // one already on disk when it returns none.
         let entry_content = manifest_json["supportFiles"]
             .as_array()
             .and_then(|a| {
-                a.iter().find(|f| Some(f["path"].as_str().unwrap_or_default()) == entry_path.as_deref())
+                a.iter().find(|f| {
+                    Some(norm_rel(f["path"].as_str().unwrap_or_default())) == entry_path.as_ref().map(|p| norm_rel(p))
+                })
             })
             .and_then(|f| f["content"].as_str())
-            .map(String::from);
+            .map(String::from)
+            .or_else(|| task["buildEntry"]["content"].as_str().map(String::from));
         if let (Some(entry), Some(content)) = (&entry_path, &entry_content) {
             // Every part: this task's product file plus the ones other tasks wrote.
             let mut parts: Vec<String> = vec![product_rel.clone()];
@@ -1564,7 +1576,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             );
             let missing: Vec<String> = parts
                 .into_iter()
-                .filter(|p| p != entry && !p.contains("test"))
+                .map(|p| norm_rel(&p))
+                .filter(|p| p != &norm_rel(entry) && !p.contains("test"))
                 .filter(|p| {
                     let stem = std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string());
                     !stem.map(|st| content.contains(&st)).unwrap_or(true)
@@ -1572,10 +1585,11 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 .collect();
             if !missing.is_empty() {
                 mismatches.push(format!(
-                    "- the build entry `{}` does not name these parts, so `{}` will not carry them: {}. Import each one and call into it; never re-implement a part inside the entry",
+                    "- the build entry `{}` does not name these parts, so `{}` will not carry them: {}. Return `{}` in supportFiles, importing each one and calling into it, and keep everything it already composes; never re-implement a part inside the entry",
                     entry,
                     m.artifact,
-                    missing.join(", ")
+                    missing.join(", "),
+                    entry
                 ));
             }
         }

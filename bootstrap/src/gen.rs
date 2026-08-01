@@ -680,13 +680,22 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // updated so the artifact carries its part too
         // (docs/consumers/gen.md#the-build).
         "buildEntry": build_entry(&ledger, gs),
-        // A standing build failure: the artifact does not exist until it is fixed.
+        // A standing build failure: the artifact does not exist until it is fixed. The
+        // package says whether this entity's own files are what the failure names, so
+        // the task that can fix it knows it is the one (docs/consumers/gen.md#the-build).
         "buildError": ledger
             .build
             .as_ref()
             .and_then(|b| b.last_run.as_ref())
             .filter(|r| !r.ok)
-            .map(|r| json!({"at": r.at, "error": r.error})),
+            .map(|r| {
+                let mine: Vec<String> = ledger
+                    .entities
+                    .get(&slug)
+                    .map(|e| e.files.iter().filter(|f| r.error.contains(f.as_str())).cloned().collect())
+                    .unwrap_or_default();
+                json!({"at": r.at, "error": r.error, "yours": mine})
+            }),
         // Decided once for the deliverable; a task states it, never re-decides it.
         "medium": ledger.medium.as_ref().map(|m| json!({
             "form": m.form, "produced": m.produced, "toolchain": m.toolchain, "artifact": m.artifact,
@@ -1316,10 +1325,18 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         // regenerates next has to fix what broke (docs/consumers/gen.md#the-build).
         match &task["buildError"] {
             serde_json::Value::Null => String::new(),
-            e => format!(
-                "\nTHE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:\n{}\nIf that failure is in a file you write here, fix it: write source that actually runs against the real library API. Do not repeat the broken call.\n",
-                e["error"].as_str().unwrap_or_default()
-            ),
+            e => {
+                let yours: Vec<&str> = e["yours"].as_array().map(|a| a.iter().filter_map(|f| f.as_str()).collect()).unwrap_or_default();
+                format!(
+                    "\nTHE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:\n{}\n{}Write source that runs against the real library API: import the library the toolchain names, exactly as it is spelled, and call the functions it really has. Do not repeat a call or an import the failure above already rejected.\n",
+                    e["error"].as_str().unwrap_or_default(),
+                    if yours.is_empty() {
+                        "The failure is not in a file you own here, but do not add another like it. ".to_string()
+                    } else {
+                        format!("THE FAILURE IS IN YOUR OWN FILE ({}). Fixing it is this task's first job. ", yours.join(", "))
+                    }
+                )
+            }
         },
         id,
         task["name"].as_str().unwrap_or_default(),

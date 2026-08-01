@@ -136,7 +136,8 @@ build:
   nothing to verify when the artifact was not produced. See [runners](#runners).
 - A failed build is recorded, not just printed. The ledger keeps the last run's
   outcome under `build.lastRun` (when, whether it succeeded, and the tail of what it
-  said), and every task package carries the failure while it stands. Regenerating is
+  said), and every task package carries the failure while it stands, together with
+  which of this entity's own files the failure names. Regenerating is
   how it gets fixed: the task that owns a file the failure names sees the message and
   writes source that runs. Without that, a generator repeats the same broken part
   every round, because nothing ever told it the artifact was never produced.

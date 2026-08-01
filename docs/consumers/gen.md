@@ -202,8 +202,11 @@ reference already generated files through the manifest.
   a correction by writing a fresh reply, and a fresh reply drops whatever it forgot;
   the harness holds the rest.
 - A reply in the wrong shape gets one corrective round before the task fails: a tests
-  reply that does not start with its `FILE:` line, a manifest that is not valid JSON.
-  The complaint is quoted back with the same request. Shape is the harness's contract,
+  reply whose `FILE:` line never appears, a manifest that is not valid JSON. The
+  complaint is quoted back with the same request, and the correction shows the shape
+  rather than describing it. A reply that opens with a sentence or a fence and then
+  gives its `FILE:` line is not a shape failure: the preamble is dropped and the file
+  starts at the line. Shape is the harness's contract,
   and a weak model drops it under a long prompt well before it gets the content wrong;
   failing the task over a missing brace throws away work that was otherwise fine.
 - The manifest must agree with the artifacts. The harness scans the tests artifact for

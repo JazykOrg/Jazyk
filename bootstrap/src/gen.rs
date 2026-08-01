@@ -1161,6 +1161,13 @@ pub fn run_all(
 
 pub fn parse_file_reply(reply: &str) -> Result<(String, String), String> {
     let reply = strip_fences(reply);
+    // The contract is a FILE line first. A model that opens with a sentence or a
+    // fence has still answered, so the line is taken where it stands; anything before
+    // it is preamble, and the file starts after it.
+    let reply = match reply.lines().position(|l| l.trim_start().starts_with("FILE:")) {
+        Some(0) | None => reply.clone(),
+        Some(n) => reply.lines().skip(n).collect::<Vec<_>>().join("\n"),
+    };
     let mut lines = reply.splitn(2, '\n');
     let first = lines.next().unwrap_or("").trim();
     let Some(path) = first.strip_prefix("FILE:") else {
@@ -1380,7 +1387,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             Ok(v) => Some(v),
             Err(e) => {
                 let retry = format!(
-                    "{}\nYour reply was not in the required shape ({}). Reply again with the first line exactly `FILE: <path>` and the test file content after it, or exactly `NONE`. No JSON, no prose before the FILE line.",
+                    "{}\nYour reply was not in the required shape ({}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:\n\nFILE: tests/test_example.py\nimport unittest\n\nclass TestExample(unittest.TestCase):\n    def test_name_from_the_list(self):\n        ...\n\nOr reply with exactly NONE when no requirement here can be tested programmatically.",
                     tests_user, e
                 );
                 let again = llm

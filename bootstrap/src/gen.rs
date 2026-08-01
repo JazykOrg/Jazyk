@@ -1526,8 +1526,26 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     if tests_reply.trim() != "NONE" {
         // The shape is the harness's contract, and a weak model drops it under a long
         // prompt before it gets the content wrong: one corrective round, then fail.
-        let parsed = match parse_file_reply(&tests_reply) {
-            Ok(v) => Some(v),
+        let parsed = match parse_file_replies(&tests_reply) {
+            Ok(mut v) => {
+                // Same rule as the product step: the first file is the tests
+                // artifact, anything else the reply wrote is deliverable-wide.
+                let extra: Vec<(String, String)> = v.split_off(1);
+                for (p, content) in extra {
+                    if owner_of(&p).is_some() {
+                        continue;
+                    }
+                    let full = gs.deliverable.join(&p);
+                    if let Some(parent) = full.parent() {
+                        std::fs::create_dir_all(parent).ok();
+                    }
+                    snapshot_baseline(&store.out, gs, &p, &mut baselined);
+                    if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
+                        support_files.push(p);
+                    }
+                }
+                Some(v.remove(0))
+            }
             Err(e) => {
                 let retry = format!(
                     "{}\nYour reply was not in the required shape ({}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:\n\nFILE: tests/test_example.py\nimport unittest\n\nclass TestExample(unittest.TestCase):\n    def test_name_from_the_list(self):\n        ...\n\nOr reply with exactly NONE when no requirement here can be tested programmatically.",

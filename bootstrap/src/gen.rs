@@ -987,6 +987,28 @@ mod tests {
     // A built medium makes the build an obligation: a manifest without one is
     // rejected, and a recorded one always lists the decided artifact.
     // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    // A reply that writes its module and the entry in one answer has written both.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn a_reply_can_carry_more_than_one_file() {
+        let one = parse_file_replies("FILE: src/a.py\nprint(1)\n").unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].0, "src/a.py");
+        assert_eq!(one[0].1.trim(), "print(1)");
+
+        let two = parse_file_replies("FILE: src/a.py\nprint(1)\n\nFILE: build.py\nimport a\na.go()\n").unwrap();
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0].0, "src/a.py");
+        assert_eq!(two[0].1.trim(), "print(1)");
+        assert_eq!(two[1].0, "build.py");
+        assert_eq!(two[1].1.trim(), "import a\na.go()");
+
+        // An escaping path is dropped, not written.
+        let bad = parse_file_replies("FILE: src/a.py\nx\nFILE: ../outside.py\ny\n").unwrap();
+        assert_eq!(bad.len(), 1);
+        assert!(parse_file_replies("no file line here").is_err());
+    }
+
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", std::process::id()));
@@ -1224,6 +1246,34 @@ pub fn run_all(
     Ok(json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "build": build }))
 }
 
+// Every file a reply carries, in order. A step asks for one, but a model that writes
+// its module and the entry point in a single answer has written both, and folding the
+// second into the first leaves a file that cannot parse.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn parse_file_replies(reply: &str) -> Result<Vec<(String, String)>, String> {
+    let (first_path, rest) = parse_file_reply(reply)?;
+    let mut out = Vec::new();
+    let mut path = first_path;
+    let mut body: Vec<&str> = Vec::new();
+    for line in rest.lines() {
+        match line.trim_start().strip_prefix("FILE:") {
+            Some(next) if !next.trim().is_empty() => {
+                out.push((path, body.join("\n")));
+                path = next.trim().to_string();
+                body = Vec::new();
+            }
+            _ => body.push(line),
+        }
+    }
+    out.push((path, body.join("\n")));
+    // A path that escapes the deliverable is not a file this harness writes.
+    out.retain(|(p, _)| !p.is_empty() && !p.starts_with('/') && !p.contains(".."));
+    if out.is_empty() {
+        return Err("no usable file path in the reply".into());
+    }
+    Ok(out)
+}
+
 pub fn parse_file_reply(reply: &str) -> Result<(String, String), String> {
     let reply = strip_fences(reply);
     // The contract is a FILE line first. A model that opens with a sentence or a
@@ -1373,6 +1423,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         )
     };
 
+    // Files a product reply wrote beside the entity's own part.
+    let mut extra_support: Vec<String> = Vec::new();
     // Product content; the model names the file.
     let mut code = String::new();
     let mut product_rel = String::new();
@@ -1393,7 +1445,25 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             .chat(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
-            let (mut path, mut body) = parse_file_reply(&reply)?;
+            let mut written = parse_file_replies(&reply)?;
+            // The first file is this entity's part. Anything else the reply wrote is
+            // deliverable-wide (an entry point, a config), so it lands as a support
+            // file instead of being folded into the product and breaking it.
+            let extra: Vec<(String, String)> = written.split_off(1);
+            let (mut path, mut body) = written.remove(0);
+            for (p, content) in extra {
+                if owner_of(&p).is_some() {
+                    continue;
+                }
+                let full = gs.deliverable.join(&p);
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                snapshot_baseline(&store.out, gs, &p, &mut baselined);
+                if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
+                    extra_support.push(p);
+                }
+            }
             if let Some(owner) = owner_of(&path) {
                 let retry = format!(
                     "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
@@ -1402,7 +1472,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 let reply2 = llm
                     .chat(instructions, &retry, &format!("gen {}", id), "product retry")
                     .map_err(|e| format!("product retry: {}", e))?;
-                let (p, b) = parse_file_reply(&reply2)?;
+                let (p, b) = parse_file_reply(&reply2).map(|(p, b)| (p, b))?;
                 if let Some(o) = owner_of(&p) {
                     return Err(format!("product path `{}` belongs to entity `{}`", p, o));
                 }
@@ -1450,7 +1520,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let mut files = vec![product_rel.clone()];
     // Support files belong to the deliverable, not to this entity
     // (docs/consumers/gen.md#file-ownership-and-conventions).
-    let mut support_files: Vec<String> = Vec::new();
+    let mut support_files: Vec<String> = std::mem::take(&mut extra_support);
     let mut tests_rel = String::new();
     let mut tests_code = String::new();
     if tests_reply.trim() != "NONE" {

@@ -205,6 +205,11 @@ reference already generated files through the manifest.
   support files and no build keeps the ones the first answer gave. Weak models answer
   a correction by writing a fresh reply, and a fresh reply drops whatever it forgot;
   the harness holds the rest.
+- A reply that writes more than one file has written more than one file. The step
+  asks for one, and the first is the entity's part; anything after it lands as a
+  support file, since a reply that writes its module and the entry point together
+  means both, and folding the second into the first leaves a file that cannot even
+  parse.
 - A reply in the wrong shape gets one corrective round before the task fails: a tests
   reply whose `FILE:` line never appears, a manifest that is not valid JSON. The
   complaint is quoted back with the same request, and the correction shows the shape

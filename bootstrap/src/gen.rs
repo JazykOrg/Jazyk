@@ -122,6 +122,42 @@ pub struct BuildRun {
     pub error: String,
 }
 
+// Run the deliverable's build once and record what happened. Ok(()) when there is no
+// build to run or it produced everything it promised; the error is what a reader
+// needs to see. Mirrors docs/consumers/gen.md#the-build.
+pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::turn::Trace, label: &str) -> Result<(), String> {
+    let Some(b) = Ledger::load(out).build.clone() else { return Ok(()) };
+    let cwd = gs.deliverable.join(&b.cwd);
+    trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
+    let done = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&b.run)
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("build `{}` could not start in {}: {}", b.run, cwd.display(), e))?;
+    if !done.status.success() {
+        let mut evidence = String::from_utf8_lossy(&done.stdout).to_string();
+        evidence.push_str(&String::from_utf8_lossy(&done.stderr));
+        // The next generation task needs to see this; printing it here only reaches
+        // whoever is watching (docs/consumers/gen.md#the-build).
+        record_build_run(out, false, &evidence);
+        return Err(format!(
+            "build `{}` failed ({}). Output:\n{}",
+            b.run,
+            done.status,
+            crate::llm::truncate(evidence.trim(), 2000)
+        ));
+    }
+    let missing: Vec<&String> = b.produces.iter().filter(|p| !gs.deliverable.join(p).exists()).collect();
+    if !missing.is_empty() {
+        let names = missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ");
+        record_build_run(out, false, &format!("exited 0 but did not produce {}", names));
+        return Err(format!("build `{}` exited 0 but did not produce {}", b.run, names));
+    }
+    record_build_run(out, true, "");
+    Ok(())
+}
+
 // Record what the build did, for the next task package. Best effort: a ledger that
 // cannot be written does not fail a verification run.
 pub fn record_build_run(out: &Path, ok: bool, error: &str) {
@@ -1157,7 +1193,26 @@ pub fn run_all(
             }
         }
     }
-    Ok(json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures }))
+    // A built deliverable is not generated until the artifact exists, so the run ends
+    // by producing it. The failure is recorded either way, which is what the next run
+    // reads (docs/consumers/gen.md#the-build).
+    let build = match run_build(&store.out, gs, trace, "gen") {
+        Ok(()) => {
+            let produced = Ledger::load(&store.out)
+                .build
+                .map(|b| b.produces.join(", "))
+                .filter(|p| !p.is_empty());
+            if let Some(p) = &produced {
+                trace.line("gen", &format!("built {}", p));
+            }
+            json!({ "ok": true, "produced": produced })
+        }
+        Err(e) => {
+            trace.line("gen", &e);
+            json!({ "ok": false, "error": e })
+        }
+    };
+    Ok(json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "build": build }))
 }
 
 pub fn parse_file_reply(reply: &str) -> Result<(String, String), String> {

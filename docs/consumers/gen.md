@@ -128,6 +128,9 @@ build:
   it, or that quietly drops one, gets the same corrective retry a contradicted
   manifest gets. This is the one composition rule the harness can enforce without
   knowing the medium: whether the entry mentions the files at all.
+- A generation run ends by running the build. A built deliverable is not generated
+  until the artifact exists, so `jazyk gen` produces it as its last step and reports
+  it; a failure there is recorded like any other, which is what the next run reads.
 - `jazyk test` runs the build once, before any row is judged. A non-zero exit, or a
   missing path in `produces`, fails the run and reports the build, since there is
   nothing to verify when the artifact was not produced. See [runners](#runners).

@@ -114,8 +114,12 @@ bounded task, writes them into the configured
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, skipping entities
 whose facts are unchanged (`--force` regenerates everything). Dense entities generate
-in parts. The medium, layout, and run commands are the generator's choices, derived
-from the documents. `jazyk codegen` and `jazyk testgen` are deprecated aliases.
+in parts. The layout and run commands are the generator's choices, derived from the
+documents; the [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+is decided once per deliverable, before the first task. When that medium must be built,
+the run ends by running [the build](../consumers/gen.md#the-build) and says what it
+produced, or what it said when it failed. `jazyk codegen` and `jazyk testgen` are
+deprecated aliases.
 
 ### jazyk test
 

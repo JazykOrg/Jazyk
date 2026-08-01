@@ -583,43 +583,7 @@ pub fn run_all(
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    if let Some(b) = crate::gen::Ledger::load(&store.out).build.clone() {
-        let cwd = gs.deliverable.join(&b.cwd);
-        trace.line("verify", &format!("build: {} (in {})", b.run, cwd.display()));
-        let out = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&b.run)
-            .current_dir(&cwd)
-            .output()
-            .map_err(|e| format!("build `{}` could not start in {}: {}", b.run, cwd.display(), e))?;
-        if !out.status.success() {
-            let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
-            evidence.push_str(&String::from_utf8_lossy(&out.stderr));
-            // The next generation task needs to see this; printing it here only
-            // reaches whoever is watching (docs/consumers/gen.md#the-build).
-            crate::gen::record_build_run(&store.out, false, &evidence);
-            return Err(format!(
-                "build `{}` failed ({}); nothing was verified. Output:\n{}",
-                b.run,
-                out.status,
-                crate::llm::truncate(evidence.trim(), 2000)
-            ));
-        }
-        let missing: Vec<&String> = b.produces.iter().filter(|p| !gs.deliverable.join(p).exists()).collect();
-        if !missing.is_empty() {
-            crate::gen::record_build_run(
-                &store.out,
-                false,
-                &format!("exited 0 but did not produce {}", missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")),
-            );
-            return Err(format!(
-                "build `{}` exited 0 but did not produce {}; nothing was verified",
-                b.run,
-                missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
-            ));
-        }
-        crate::gen::record_build_run(&store.out, true, "");
-    }
+    crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e| format!("{}; nothing was verified", e))?;
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     for r in &selected {
         if trace.is_cancelled() {

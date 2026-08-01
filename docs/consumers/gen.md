@@ -195,6 +195,12 @@ reference already generated files through the manifest.
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
 - The ledger's file lists are sets: the harness deduplicates them on write.
+- A corrective retry never costs the parts of an answer the complaint did not name.
+  The previous answer goes back with it, the request is to change only what the
+  complaint names, and what comes back is merged over it: a retry that returns no
+  support files and no build keeps the ones the first answer gave. Weak models answer
+  a correction by writing a fresh reply, and a fresh reply drops whatever it forgot;
+  the harness holds the rest.
 - A reply in the wrong shape gets one corrective round before the task fails: a tests
   reply that does not start with its `FILE:` line, a manifest that is not valid JSON.
   The complaint is quoted back with the same request. Shape is the harness's contract,

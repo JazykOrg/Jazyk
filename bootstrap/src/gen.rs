@@ -1589,17 +1589,30 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         }
     }
     if !mismatches.is_empty() {
+        // The previous answer goes back with the complaint: a correction changes what
+        // the complaint names and nothing else
+        // (docs/consumers/gen.md#file-ownership-and-conventions).
         let retry = format!(
-            "{}\nYour manifest contradicts the tests file:\n{}\nReturn the corrected, complete JSON manifest object, same schema, no prose.",
+            "{}\nYour answer was:\n{}\n\nIt has these problems:\n{}\nReturn the corrected, complete JSON manifest object, same schema, no prose. Change only what the problems name; keep every other field exactly as you gave it, supportFiles and build included.",
             manifest_user,
+            serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
             mismatches.join("\n")
         );
         if let Ok(reply2) = llm.chat(instructions, &retry, &format!("gen {}", id), "manifest retry") {
-            let text = strip_fences(&reply2);
-            if let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text[start..=end]) {
-                    manifest_json = v;
+            if let Ok(mut v) = parse_manifest(&reply2) {
+                // Merge over the first answer: a retry that forgot a field keeps it.
+                for key in ["supportFiles", "build"] {
+                    let dropped = match &v[key] {
+                        serde_json::Value::Null => true,
+                        serde_json::Value::Array(a) => a.is_empty(),
+                        serde_json::Value::Object(o) => o.is_empty(),
+                        _ => false,
+                    };
+                    if dropped && !manifest_json[key].is_null() {
+                        v[key] = manifest_json[key].clone();
+                    }
                 }
+                manifest_json = v;
             }
         }
     }

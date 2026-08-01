@@ -115,6 +115,19 @@ build:
 - The build is per deliverable, not per entity. The first task that needs one records
   it; every later task receives it in its package and reuses it, the same way run
   commands establish one toolchain.
+- What the build runs is a [support file](#file-ownership-and-conventions), never an
+  entity's own file. One artifact is assembled from every entity's part, and an entry
+  point owned by the entity that happened to generate first would freeze the artifact
+  at that entity's part: no later task may write into it. So the entry belongs to the
+  deliverable, its current content travels in every task package, and each task
+  returns it updated so the artifact includes its part too. The convention the entry
+  uses to include a part (a function it calls, a list it reads) is the generator's,
+  visible to every later task in the entry itself.
+- The entry is checked against the parts, not trusted: every generated file the parts
+  live in must be named in it. An entry that re-implements a part instead of calling
+  it, or that quietly drops one, gets the same corrective retry a contradicted
+  manifest gets. This is the one composition rule the harness can enforce without
+  knowing the medium: whether the entry mentions the files at all.
 - `jazyk test` runs the build once, before any row is judged. A non-zero exit, or a
   missing path in `produces`, fails the run and reports the build, since there is
   nothing to verify when the artifact was not produced. See [runners](#runners).
@@ -169,6 +182,12 @@ reference already generated files through the manifest.
   it needs a build or configuration file no task has written yet (a `package.json`, a
   `Cargo.toml`), the task returns that file as a support file. Recording a command
   that cannot run is a generation defect; verification surfaces it as a failing row.
+- Support files belong to the deliverable, not to an entity. They are what makes the
+  recorded commands runnable (a `package.json`, a `Cargo.toml`, the entry point a
+  build runs), and every task may rewrite one: a manifest that lists more parts than
+  the last task saw is exactly why the file exists. The ledger keeps them in their own
+  `support` list, ownership never applies to them, and their content does not enter an
+  entity's fact hash.
 - The ledger's file lists are sets: the harness deduplicates them on write.
 - The manifest must agree with the artifacts. The harness scans the tests artifact for
   the suggested test names and hands the found list to the manifest step. A manifest
@@ -288,6 +307,10 @@ the first run, and `build`, present only when that medium must be produced by a 
 ([the build](#the-build)).
 
 ```yaml
+support:                                  # deliverable-wide files any task may rewrite
+  - build_deck.py                         # the build's entry point
+  - requirements.txt
+
 medium:                                   # decided once, carried by every task package
   form: Microsoft PowerPoint deck
   produced: built                         # written | built

@@ -141,9 +141,10 @@ graph.
   or reworded since the entity was last generated.
 - `gen_task({entity})`: the full package for one task: the instructions, the
   entity's context pack, its requirements in generation groups, the change diff, the
-  deliverable directory, the `factHash`, and the manifest of already generated files.
-  Layout, file names, and run commands are the worker's choices, recorded in the
-  manifest.
+  deliverable directory, the `factHash`, the manifest of already generated files, and
+  the deliverable's [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+  and build. Layout, file names, and run commands are the worker's choices, recorded
+  in the manifest; the medium is not, it is already decided.
 - `gen_mark({entity, factHash, manifest})`: record the task done. The worker writes the
   deliverable files itself; the `manifest` binds them to the graph:
   `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}]}`.

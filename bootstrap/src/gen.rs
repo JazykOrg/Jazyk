@@ -1445,7 +1445,22 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             .chat(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
-            let mut written = parse_file_replies(&reply)?;
+            // Shape gets one corrective round here too: the product step is where a
+            // long prompt most often costs the FILE line
+            // (docs/consumers/gen.md#file-ownership-and-conventions).
+            let mut written = match parse_file_replies(&reply) {
+                Ok(v) => v,
+                Err(e) => {
+                    let retry = format!(
+                        "{}\nYour reply was not in the required shape ({}). This step takes no JSON. Reply exactly like this, the FILE line first and the file after it:\n\nFILE: path/of/your/choice.ext\n<the content>\n",
+                        user, e
+                    );
+                    let again = llm
+                        .chat(instructions, &retry, &format!("gen {}", id), "product format retry")
+                        .map_err(|e| format!("product format retry: {}", e))?;
+                    parse_file_replies(&again)?
+                }
+            };
             // The first file is this entity's part. Anything else the reply wrote is
             // deliverable-wide (an entry point, a config), so it lands as a support
             // file instead of being folded into the product and breaking it.
@@ -1815,6 +1830,13 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         for f in support {
             let (Some(path), Some(content)) = (f["path"].as_str(), f["content"].as_str()) else { continue };
             if path.starts_with('/') || path.contains("..") {
+                continue;
+            }
+            // A support file belongs to the deliverable, which is exactly why it must
+            // not land on a file some entity owns: this task's own product and tests
+            // included. Ownership is what stops one file from eating another
+            // (docs/consumers/gen.md#file-ownership-and-conventions).
+            if owner_of(path).is_some() || path == product_rel || path == tests_rel {
                 continue;
             }
             let p = gs.deliverable.join(path);

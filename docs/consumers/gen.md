@@ -210,8 +210,13 @@ reference already generated files through the manifest.
   support file, since a reply that writes its module and the entry point together
   means both, and folding the second into the first leaves a file that cannot even
   parse.
-- A reply in the wrong shape gets one corrective round before the task fails: a tests
-  reply whose `FILE:` line never appears, a manifest that is not valid JSON. The
+- A support file never lands on a file an entity owns, this task's own product and
+  tests included. Support files exist so any task may rewrite them; letting one take
+  an owned path would let a manifest step quietly overwrite the module the product
+  step just wrote.
+- A reply in the wrong shape gets one corrective round before the task fails: a
+  product or tests reply whose `FILE:` line never appears, a manifest that is not
+  valid JSON. The
   complaint is quoted back with the same request, and the correction shows the shape
   rather than describing it. A reply that opens with a sentence or a fence and then
   gives its `FILE:` line is not a shape failure: the preamble is dropped and the file

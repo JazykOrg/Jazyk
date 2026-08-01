@@ -650,7 +650,25 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                 .iter()
                 .filter_map(|rid| store.graph.requirements.get(rid).map(|r| r.ears.clone()))
                 .collect();
-            (k, json!({"files": v.files, "holds": holds}))
+            // Under a built medium the entry this task rewrites has to call into
+            // these files, so their content travels with them: a path and a
+            // statement do not say what a part is called
+            // (docs/consumers/gen.md#the-build).
+            let show = ledger.medium.as_ref().map(|m| m.is_built()).unwrap_or(false);
+            let contents: BTreeMap<String, String> = if show {
+                v.files
+                    .iter()
+                    .filter(|f| !f.contains("test"))
+                    .filter_map(|f| {
+                        std::fs::read_to_string(gs.deliverable.join(f))
+                            .ok()
+                            .map(|c| (f.clone(), crate::llm::truncate(&c, 4_000)))
+                    })
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
+            (k, json!({"files": v.files, "holds": holds, "contents": contents}))
         })
         .collect();
     // The established conventions: run commands other tasks already recorded. One

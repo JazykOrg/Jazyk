@@ -123,6 +123,11 @@ build:
   returns it updated so the artifact includes its part too. The convention the entry
   uses to include a part (a function it calls, a list it reads) is the generator's,
   visible to every later task in the entry itself.
+- A task that rewrites the entry sees what it is calling. Under a built medium the
+  package carries the other entities' part files with their content, not just their
+  paths and the statements they hold: an entry is a call site, and a call site needs
+  the name of the thing it calls. Without it a task guesses, and the build dies on a
+  function that does not exist.
 - The entry is checked against the parts, not trusted: every generated file the parts
   live in must be named in it. An entry that re-implements a part instead of calling
   it, or that quietly drops one, gets the same corrective retry a contradicted

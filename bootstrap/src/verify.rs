@@ -595,6 +595,9 @@ pub fn run_all(
         if !out.status.success() {
             let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
             evidence.push_str(&String::from_utf8_lossy(&out.stderr));
+            // The next generation task needs to see this; printing it here only
+            // reaches whoever is watching (docs/consumers/gen.md#the-build).
+            crate::gen::record_build_run(&store.out, false, &evidence);
             return Err(format!(
                 "build `{}` failed ({}); nothing was verified. Output:\n{}",
                 b.run,
@@ -604,12 +607,18 @@ pub fn run_all(
         }
         let missing: Vec<&String> = b.produces.iter().filter(|p| !gs.deliverable.join(p).exists()).collect();
         if !missing.is_empty() {
+            crate::gen::record_build_run(
+                &store.out,
+                false,
+                &format!("exited 0 but did not produce {}", missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")),
+            );
             return Err(format!(
                 "build `{}` exited 0 but did not produce {}; nothing was verified",
                 b.run,
                 missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")
             ));
         }
+        crate::gen::record_build_run(&store.out, true, "");
     }
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     for r in &selected {

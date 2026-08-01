@@ -131,6 +131,12 @@ build:
 - `jazyk test` runs the build once, before any row is judged. A non-zero exit, or a
   missing path in `produces`, fails the run and reports the build, since there is
   nothing to verify when the artifact was not produced. See [runners](#runners).
+- A failed build is recorded, not just printed. The ledger keeps the last run's
+  outcome under `build.lastRun` (when, whether it succeeded, and the tail of what it
+  said), and every task package carries the failure while it stands. Regenerating is
+  how it gets fixed: the task that owns a file the failure names sees the message and
+  writes source that runs. Without that, a generator repeats the same broken part
+  every round, because nothing ever told it the artifact was never produced.
 - A deliverable that is its own output records no build, and nothing runs.
 
 The build is a fact the generator derives from the requirements, like every other
@@ -189,6 +195,11 @@ reference already generated files through the manifest.
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
 - The ledger's file lists are sets: the harness deduplicates them on write.
+- A reply in the wrong shape gets one corrective round before the task fails: a tests
+  reply that does not start with its `FILE:` line, a manifest that is not valid JSON.
+  The complaint is quoted back with the same request. Shape is the harness's contract,
+  and a weak model drops it under a long prompt well before it gets the content wrong;
+  failing the task over a missing brace throws away work that was otherwise fine.
 - The manifest must agree with the artifacts. The harness scans the tests artifact for
   the suggested test names and hands the found list to the manifest step. A manifest
   that contradicts the artifact (a declared programmatic test whose name is absent

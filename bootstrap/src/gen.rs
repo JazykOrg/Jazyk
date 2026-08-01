@@ -105,6 +105,34 @@ pub struct Build {
     // Deliverable-relative paths the command creates. A missing one fails the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub produces: Vec<String>,
+    // What happened the last time the build ran. A failure is a fact the next
+    // generation task must see, or it writes the same broken part again
+    // (docs/consumers/gen.md#the-build).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<BuildRun>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildRun {
+    pub at: String,
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub error: String,
+}
+
+// Record what the build did, for the next task package. Best effort: a ledger that
+// cannot be written does not fail a verification run.
+pub fn record_build_run(out: &Path, ok: bool, error: &str) {
+    let mut ledger = Ledger::load(out);
+    if let Some(b) = ledger.build.as_mut() {
+        b.last_run = Some(BuildRun {
+            at: crate::verify::now_iso(),
+            ok,
+            error: crate::llm::truncate(error.trim(), 1500),
+        });
+        ledger.save(out);
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -608,6 +636,13 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // updated so the artifact carries its part too
         // (docs/consumers/gen.md#the-build).
         "buildEntry": build_entry(&ledger, gs),
+        // A standing build failure: the artifact does not exist until it is fixed.
+        "buildError": ledger
+            .build
+            .as_ref()
+            .and_then(|b| b.last_run.as_ref())
+            .filter(|r| !r.ok)
+            .map(|r| json!({"at": r.at, "error": r.error})),
         // Decided once for the deliverable; a task states it, never re-decides it.
         "medium": ledger.medium.as_ref().map(|m| json!({
             "form": m.form, "produced": m.produced, "toolchain": m.toolchain, "artifact": m.artifact,
@@ -681,6 +716,7 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                     run: run.to_string(),
                     cwd: manifest["build"]["cwd"].as_str().unwrap_or(".").to_string(),
                     produces,
+                    last_run: None,
                 });
             }
             // Under a built medium the build is the only thing that makes an artifact
@@ -1204,8 +1240,17 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
     let header = format!(
-        "The deliverable: {}\n\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity; never write to one of them. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
+        "The deliverable: {}\n{}\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity; never write to one of them. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
         medium_line,
+        // A standing build failure means the artifact does not exist: whoever
+        // regenerates next has to fix what broke (docs/consumers/gen.md#the-build).
+        match &task["buildError"] {
+            serde_json::Value::Null => String::new(),
+            e => format!(
+                "\nTHE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:\n{}\nIf that failure is in a file you write here, fix it: write source that actually runs against the real library API. Do not repeat the broken call.\n",
+                e["error"].as_str().unwrap_or_default()
+            ),
+        },
         id,
         task["name"].as_str().unwrap_or_default(),
         task["context"].as_str().unwrap_or_default(),
@@ -1322,7 +1367,26 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let mut tests_rel = String::new();
     let mut tests_code = String::new();
     if tests_reply.trim() != "NONE" {
-        let (mut path, mut body) = parse_file_reply(&tests_reply).map_err(|e| format!("tests reply: {}", e))?;
+        // The shape is the harness's contract, and a weak model drops it under a long
+        // prompt before it gets the content wrong: one corrective round, then fail.
+        let parsed = match parse_file_reply(&tests_reply) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                let retry = format!(
+                    "{}\nYour reply was not in the required shape ({}). Reply again with the first line exactly `FILE: <path>` and the test file content after it, or exactly `NONE`. No JSON, no prose before the FILE line.",
+                    tests_user, e
+                );
+                let again = llm
+                    .chat(instructions, &retry, &format!("gen {}", id), "tests format retry")
+                    .map_err(|e| format!("tests format retry: {}", e))?;
+                if again.trim() == "NONE" {
+                    None
+                } else {
+                    Some(parse_file_reply(&again).map_err(|e| format!("tests reply: {}", e))?)
+                }
+            }
+        };
+        if let Some((mut path, mut body)) = parsed {
         if let Some(owner) = owner_of(&path) {
             let retry = format!(
                 "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
@@ -1347,6 +1411,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
         std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
         files.push(tests_rel.clone());
+        }
     }
 
     // The manifest: the model declares run commands and any support files it needs;
@@ -1410,11 +1475,26 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let manifest_reply = llm
         .chat(instructions, &manifest_user, &format!("gen {}", id), "manifest")
         .map_err(|e| format!("manifest: {}", e))?;
-    let mut manifest_json: serde_json::Value = {
-        let text = strip_fences(&manifest_reply);
-        let start = text.find('{').ok_or("manifest reply held no JSON object")?;
-        let end = text.rfind('}').ok_or("manifest reply held no JSON object")?;
-        serde_json::from_str(&text[start..=end]).map_err(|e| format!("manifest JSON: {}", e))?
+    let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
+        let text = strip_fences(reply);
+        let start = text.find('{').ok_or("the reply held no JSON object")?;
+        let end = text.rfind('}').ok_or("the reply held no JSON object")?;
+        serde_json::from_str(&text[start..=end]).map_err(|e| format!("{}", e))
+    };
+    let mut manifest_json: serde_json::Value = match parse_manifest(&manifest_reply) {
+        Ok(v) => v,
+        // Malformed JSON is a shape failure, not a content failure: one corrective
+        // round with the parser's complaint quoted back.
+        Err(e) => {
+            let retry = format!(
+                "{}\nYour reply was not valid JSON ({}). Reply again with the same object, valid JSON this time, nothing else: no prose, no trailing commas, every string quoted.",
+                manifest_user, e
+            );
+            let again = llm
+                .chat(instructions, &retry, &format!("gen {}", id), "manifest format retry")
+                .map_err(|e| format!("manifest format retry: {}", e))?;
+            parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
+        }
     };
     // The manifest must agree with the artifact: a present test left undeclared, or a
     // declared programmatic test absent from the artifact, gets one corrective retry.

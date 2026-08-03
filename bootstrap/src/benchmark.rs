@@ -12,7 +12,7 @@ use crate::turn::{run_turn, Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 13] = [
+const CASE_FILES: [&str; 14] = [
     include_str!("../../docs/benchmark/cases/turn-extract.md"),
     include_str!("../../docs/benchmark/cases/turn-declarative.md"),
     include_str!("../../docs/benchmark/cases/turn-density.md"),
@@ -24,6 +24,7 @@ const CASE_FILES: [&str; 13] = [
     include_str!("../../docs/benchmark/cases/turn-review-duplicate.md"),
     include_str!("../../docs/benchmark/cases/turn-review-lookalike.md"),
     include_str!("../../docs/benchmark/cases/turn-review-lint.md"),
+    include_str!("../../docs/benchmark/cases/turn-steps.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
@@ -843,7 +844,7 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        assert_eq!(cases.len(), 15); // thirteen files; turn-review and verify-judge hold two blocks each
+        assert_eq!(cases.len(), 16); // fourteen files; turn-review and verify-judge hold two blocks each
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");

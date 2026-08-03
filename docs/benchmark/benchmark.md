@@ -90,6 +90,10 @@ Extraction tier:
   See [turn-density](./cases/turn-density.md).
 - Edge declaration: a sub-system list becomes typed relationships, not just prose.
   See [turn-edges](./cases/turn-edges.md).
+- Code-block extraction: a fenced pseudo-code block yields one requirement per
+  behavioral step. Prose skill does not predict this one; the sort fixture failed at
+  0% under a model the prose cases scored at 0.93. See
+  [turn-steps](./cases/turn-steps.md).
 - Reuse discipline: the model searches before creating and reuses the existing entity.
   See [turn-reuse](./cases/turn-reuse.md).
 - Repair: the model reads a rejection message and fixes the call. See

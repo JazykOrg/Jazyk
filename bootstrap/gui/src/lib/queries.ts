@@ -3,6 +3,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   get,
   getOr404,
+  type BenchmarkModels,
+  type BenchmarkTable,
   type Deliverable,
   type DocInfo,
   type DocRecord,
@@ -60,6 +62,18 @@ export const useGenPending = () =>
   useQuery({
     queryKey: ['pending', 'gen'],
     queryFn: () => get<{ pending: { entity: string; reason: string; changed: string[] }[] }>('/api/gen/pending'),
+    ...opts,
+  })
+
+export const useBenchmarks = () =>
+  useQuery({ queryKey: ['benchmarks'], queryFn: () => get<BenchmarkTable>('/api/benchmarks'), ...opts })
+
+// The endpoint's own model listing; an empty baseUrl asks about the resolved default.
+export const useBenchmarkModels = (baseUrl: string) =>
+  useQuery({
+    queryKey: ['benchmarks', 'models', baseUrl],
+    queryFn: () =>
+      get<BenchmarkModels>(`/api/benchmarks/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`),
     ...opts,
   })
 

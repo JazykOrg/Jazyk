@@ -413,8 +413,9 @@ The benchmarks tab grades and compares models
   lands in the table and the history.
 
 API: `GET /api/benchmarks` (the merged table), `GET /api/benchmarks/models?baseUrl=`
-(the endpoint's model listing), `POST /api/benchmarks/run` (`{baseUrl?, model?}`,
-returns the job id).
+(the endpoint's model listing), and `POST /api/jobs` with
+`{kind: benchmark, baseUrl?, model?}` (the shared [jobs](#jobs) surface; returns the
+job id).
 
 ## Watch
 

@@ -240,6 +240,50 @@ export interface Deliverable {
   files: DelivFileInfo[]
 }
 
+// ---- benchmarks (docs/frontends/gui.md#benchmarks) ----
+
+export interface BenchmarkCase {
+  score: number
+  checks: string
+  rounds: number
+  tokens: number
+  parRounds: number
+  efficiency: number
+  fail: string
+}
+
+export interface BenchmarkReport {
+  verdicts: { compilation: string; generation: string; verification: string }
+  scores: { extraction: number; review: number; generation: number; verification: number }
+  checks: string
+  efficiency: number
+  tokens: number
+  throughput: number
+  cases: Record<string, BenchmarkCase>
+}
+
+export interface BenchmarkResult {
+  model: string
+  baseUrl: string
+  gradedAt: number
+  caseSetHash: string
+  // Whether the grade was taken on this binary's case set.
+  current: boolean
+  source: 'embedded' | 'history' | 'project'
+  codecs: { native?: BenchmarkReport; text?: BenchmarkReport }
+}
+
+export interface BenchmarkTable {
+  caseSetHash: string
+  results: BenchmarkResult[]
+}
+
+export interface BenchmarkModels {
+  baseUrl: string
+  models: string[]
+  error?: string
+}
+
 export interface VerifyRow {
   status: string
   reason?: string

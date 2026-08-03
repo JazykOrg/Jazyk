@@ -20,6 +20,7 @@ import FilesHome from './workbench/FilesHome'
 import Work from './routes/Work'
 import GenTask from './routes/GenTask'
 import VerifyMatrix from './routes/VerifyMatrix'
+import Benchmarks from './routes/Benchmarks'
 import Feedback from './routes/Feedback'
 import Settings from './routes/Settings'
 import Changeset from './routes/Changeset'
@@ -30,6 +31,7 @@ const RAIL = [
   ['/files', '▤', 'files'],
   ['/graph', '⬡', 'graph'],
   ['/work', '⚒', 'work'],
+  ['/benchmarks', '⚖', 'bench'],
   ['/feedback', '⚑', 'feedback'],
   ['/settings', '⚙', 'settings'],
 ] as const
@@ -37,6 +39,7 @@ const RAIL = [
 function railMode(pathname: string): string {
   if (pathname.startsWith('/graph')) return '/graph'
   if (pathname.startsWith('/work')) return '/work'
+  if (pathname.startsWith('/benchmarks')) return '/benchmarks'
   if (pathname.startsWith('/feedback')) return '/feedback'
   if (pathname.startsWith('/settings')) return '/settings'
   return '/files'
@@ -103,6 +106,18 @@ export default function App() {
           {mode === '/files' && <Explorer />}
           {mode === '/graph' && <GraphSidebar />}
           {mode === '/work' && <WorkSidebar />}
+          {mode === '/benchmarks' && (
+            <div className="wb-side-pad muted">
+              <p>
+                turn capability per model and codec, graded by deterministic checks against the embedded benchmark
+                cases.
+              </p>
+              <p>
+                the table merges results embedded in the binary, the machine-wide history in{' '}
+                <span className="mono">~/.jazyk/benchmarks</span>, and this project's own grades.
+              </p>
+            </div>
+          )}
           {mode === '/feedback' && (
             <div className="wb-side-pad muted">
               <p>
@@ -139,6 +154,7 @@ export default function App() {
                 <Route path="/work" element={<Scroll><Work /></Scroll>} />
                 <Route path="/work/gen/:id" element={<Scroll><GenTask /></Scroll>} />
                 <Route path="/work/verify" element={<Scroll><VerifyMatrix /></Scroll>} />
+                <Route path="/benchmarks" element={<Scroll><Benchmarks /></Scroll>} />
                 <Route path="/feedback" element={<Scroll><Feedback /></Scroll>} />
                 <Route path="/settings" element={<Scroll><Settings /></Scroll>} />
                 <Route path="/journal/diff" element={<Scroll><ReleaseDiff /></Scroll>} />

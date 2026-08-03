@@ -105,6 +105,20 @@ This is the external agent's trigger, in two shapes:
 `watch` is the same trigger wired to the internal loop instead; the notice an agent
 reads is the work item the internal loop would run.
 
+In `manual` [mode](../compiler/reconciler.md#modes-and-releases), gated work prints
+as "awaiting release" instead of prompting the agent to begin, and the notice fires
+again when the release lands. `--once` waits for work that is actually actionable,
+so a released click is what makes it exit.
+
+### jazyk release
+
+`jazyk release [compile|generate]` records a
+[release](../compiler/reconciler.md#modes-and-releases): approve the pending changes
+for the named stage (both when unnamed) without running anything. The watchers wake,
+whichever worker is attached does the work. This is the scriptable form of the GUI's
+release button. An explicit `jazyk compile` or `jazyk gen` is itself a release for
+its stage: a typed command is an approval.
+
 ### jazyk status
 
 Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)):

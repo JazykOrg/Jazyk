@@ -30,6 +30,9 @@ pub struct McpServer {
     // The agent-run benchmark: the open case's sandbox and the run's accumulated
     // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
     bench: std::sync::Mutex<BenchRun>,
+    // The serving's registration in the worker registry, heartbeated while the
+    // process lives. Mirrors docs/compiler/reconciler.md#workers-and-leases.
+    worker: std::sync::Arc<std::sync::Mutex<Option<crate::control::WorkerHandle>>>,
 }
 
 #[derive(Default)]
@@ -126,6 +129,7 @@ impl McpServer {
             client: std::sync::Mutex::new(None),
             open: std::sync::Mutex::new(None),
             bench: std::sync::Mutex::new(BenchRun::default()),
+            worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
             trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
         }
     }
@@ -143,10 +147,12 @@ impl McpServer {
                 .map(|m| format!("{}:{:?}", m.len(), m.modified().ok()))
                 .unwrap_or_default()
         };
-        // Watched surfaces: docs, the ledger, and every file the ledger names.
+        // Watched surfaces: docs, the ledger, every file the ledger names, and the
+        // control file, so a release or mode change wakes the poll.
         let watched = |gs: &crate::gen::GenSettings| -> Vec<std::path::PathBuf> {
             let mut v = self.project.doc_files();
             v.push(crate::gen::Ledger::path(&self.out));
+            v.push(crate::control::Control::path(&self.out));
             let ledger = crate::gen::Ledger::load(&self.out);
             for row in ledger.requirements.values() {
                 for f in &row.files {
@@ -188,19 +194,31 @@ impl McpServer {
             }
         }
         let q = crate::queue::compute(&self.project, &self.out);
+        let c = crate::control::Control::load(&self.project, &self.out);
+        let (c_act, g_act, v_act) = (
+            crate::queue::actionable(&q.compile),
+            crate::queue::actionable(&q.generate),
+            crate::queue::actionable(&q.verify),
+        );
+        let gated = crate::queue::gated(&q.compile) + crate::queue::gated(&q.generate);
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
             "compilationTasks": q.compile.len(),
             "generationTasks": q.generate.len(),
             "verificationTasks": q.verify.len(),
+            "workflow": {"compile": c.compile, "generate": c.generate},
+            "gatedTasks": gated,
             "verdict": q.verdict,
-            "next": if !q.compile.is_empty() {
+            "openDiagnostics": q.open_diags,
+            "next": if c_act > 0 {
                 "compilation_tasks lists the work"
-            } else if !q.generate.is_empty() {
+            } else if g_act > 0 {
                 "generation_tasks lists the work"
-            } else if !q.verify.is_empty() {
+            } else if v_act > 0 {
                 "verification_tasks lists the work"
+            } else if gated > 0 {
+                "work is gated; a release (`jazyk release` or the GUI) opens it, and this poll returns when it lands"
             } else {
                 "nothing to do"
             },
@@ -277,12 +295,25 @@ impl McpServer {
 
     // ---- the compilation lifecycle ----
 
+    // The serving's identity in leases: its registration id, or a pid-scoped
+    // fallback when the client never sent initialize.
+    fn worker_id(&self) -> String {
+        self.worker
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| h.id().to_string())
+            .unwrap_or_else(|| format!("agent-{}", std::process::id()))
+    }
+
     fn compilation_tasks(&self) -> Value {
         let mut q = crate::queue::compute(&self.project, &self.out);
         // An empty queue with a stale `incomplete` verdict settles here: finalize is
         // deterministic and idempotent, and a lister that finds nothing to do may as
-        // well say so truthfully. Mirrors docs/compiler/reconciler.md#the-task-queue.
-        if q.compile_empty() && q.verdict != "converged" && self.open.lock().unwrap().is_none() {
+        // well say so truthfully. A dangling judged diagnostic settles the same way:
+        // finalize resolves or re-enqueues it, and the recompute lists the reviews.
+        // Mirrors docs/compiler/reconciler.md#the-task-queue.
+        if q.compile_empty() && (q.verdict != "converged" || q.dangling_diags) && self.open.lock().unwrap().is_none() {
             let mut s = Store::load(&self.out);
             let parked = s.status.parked.clone();
             let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
@@ -319,6 +350,24 @@ impl McpServer {
             }});
             return v;
         };
+        // The control plane's claims, in order: a gated task awaits its release, a
+        // running internal build owns the queue, a leased task belongs to its holder.
+        // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+        if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["gated"] == true) {
+            return json!({"error": {"rule": "awaiting-release", "message": format!(
+                "`{}` is gated: the workflow is manual and this change is not released yet; `jazyk release compile` or the GUI's compile action approves it", item.target)}});
+        }
+        if let Some(l) = crate::control::build_lease(&self.out) {
+            return json!({"error": {"rule": "build-running", "message": format!(
+                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}});
+        }
+        if let Err(holder) = crate::control::claim(&self.out, &item.target, &self.worker_id()) {
+            return json!({"error": {"rule": "claimed", "message": format!(
+                "`{}` is claimed by worker `{}`; pick another task or wait for the lease to lapse", item.target, holder)}});
+        }
+        if let Some(h) = self.worker.lock().unwrap().as_mut() {
+            h.refresh(Some(&format!("{} {}", item.task, item.target)));
+        }
         // The task's snapshot: the store with section trees synced against the docs on
         // disk, in memory. The commit at finish re-syncs its own fresh store.
         let mut store = Store::load(&self.out);
@@ -360,7 +409,7 @@ impl McpServer {
             "instructions": instructions_field,
             "package": pack,
             "writeTools": write_tools,
-            "note": "where the instructions say `done`, use finish_compilation; writeTools are the write tools in scope for this task",
+            "note": "where the instructions say `done`, use finish_compilation; writeTools are the write tools in scope for this task; the read tools and report_feedback are always in scope",
             "next": "stage findings with the write tools, then finish_compilation with a one-line summary",
         });
         *self.open.lock().unwrap() = Some(OpenTask { item, session, rounds: 0 });
@@ -376,8 +425,13 @@ impl McpServer {
         // The same done gates an in-process turn faces: coverage contract, stale anchors.
         if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
             let v = e.to_value();
+            crate::control::refresh_lease(&self.out, &o.item.target);
             *open = Some(o); // the changeset stays open; repair and finish again
             return v;
+        }
+        crate::control::release_lease(&self.out, &o.item.target);
+        if let Some(h) = self.worker.lock().unwrap().as_mut() {
+            h.refresh(Some(""));
         }
         let staged = std::mem::take(&mut o.session.staged);
         let mut s = Store::load(&self.out);
@@ -412,6 +466,12 @@ impl McpServer {
             let report = crate::reconcile::finalize(&mut s2, &self.project, &parked, &quiet);
             reply["verdict"] = json!(report.verdict);
             reply["coveragePct"] = json!(report.coverage_pct);
+            // The verdict never travels alone (docs/compiler/reconciler.md#convergence).
+            let counts = s2.open_diag_counts();
+            if !counts.is_empty() {
+                reply["openDiagnostics"] = json!(counts);
+                reply["diagnosticsNote"] = json!("open diagnostics stand in the graph; the diagnostics read tool lists them");
+            }
             let q2 = crate::queue::compute(&self.project, &self.out);
             if q2.compile_empty() {
                 reply["next"] = if q2.generate.is_empty() {
@@ -446,6 +506,10 @@ impl McpServer {
         let Some(o) = open.take() else {
             return json!({"error": {"rule": "no-open-task", "message": "no compilation task is open"}});
         };
+        crate::control::release_lease(&self.out, &o.item.target);
+        if let Some(h) = self.worker.lock().unwrap().as_mut() {
+            h.refresh(Some(""));
+        }
         let reason = params["arguments"]["reason"].as_str().unwrap_or("");
         json!({
             "abandoned": format!("{} {}", o.item.task, o.item.target),
@@ -727,6 +791,27 @@ impl McpServer {
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
                     *self.client.lock().unwrap() = Some(name.to_string());
                 }
+                // A task-lifecycle serving is a worker among workers: register it and
+                // heartbeat while the process lives. Mirrors
+                // docs/frontends/mcp.md#the-control-plane-over-mcp.
+                if self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify") {
+                    let client = self.client.lock().unwrap().clone().unwrap_or_else(|| "agent".into());
+                    let mut w = self.worker.lock().unwrap();
+                    match w.as_mut() {
+                        Some(h) => h.set_client(&client),
+                        None => {
+                            *w = Some(crate::control::register(&self.out, "agent", &client));
+                            let wref = self.worker.clone();
+                            std::thread::spawn(move || loop {
+                                std::thread::sleep(std::time::Duration::from_secs(30));
+                                match wref.lock().unwrap().as_mut() {
+                                    Some(h) => h.refresh(None),
+                                    None => break,
+                                }
+                            });
+                        }
+                    }
+                }
                 Ok(json!({
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
@@ -916,6 +1001,8 @@ impl McpServer {
                         ));
                     }
                     o.rounds += 1;
+                    // Activity on the open task keeps its lease alive.
+                    crate::control::refresh_lease(&self.out, &o.item.target);
                     return match o.session.dispatch(&name, &args) {
                         Ok(v) => Ok(text_result(v, false)),
                         Err(e) => Ok(text_result(e.to_value(), true)),
@@ -928,6 +1015,41 @@ impl McpServer {
                     ));
                 }
                 drop(open);
+
+                // The control plane over the stateless generation lifecycle: manual
+                // mode gates begins behind a release, begin claims the entity's
+                // lease, record frees it. Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+                if name == "begin_generation" {
+                    let c = crate::control::Control::load(&self.project, &self.out);
+                    if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "awaiting-release", "message":
+                                "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                            true,
+                        ));
+                    }
+                    if let Some(l) = crate::control::build_lease(&self.out) {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "build-running", "message": format!(
+                                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                            true,
+                        ));
+                    }
+                    if let Some(ent) = args["entity"].as_str() {
+                        if let Err(holder) = crate::control::claim(&self.out, ent, &self.worker_id()) {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "claimed", "message": format!(
+                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse", ent, holder)}}),
+                                true,
+                            ));
+                        }
+                    }
+                }
+                if name == "record_generation" {
+                    if let Some(ent) = args["entity"].as_str() {
+                        crate::control::release_lease(&self.out, ent);
+                    }
+                }
 
                 let store = Store::load(&self.out);
                 if store.docs.is_empty() && store.graph.entities.is_empty() && !self.modes.iter().any(|m| m == "compile") {

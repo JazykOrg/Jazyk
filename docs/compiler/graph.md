@@ -21,7 +21,8 @@ jazyk-out/
     <mirrored doc path>.yaml   # per document: content hash, section tree, coverage
   journal/
     g<generation>.yaml   # one file per committed changeset
-  status.yaml            # generation counter, parked work, budgets spent, verdict
+  status.yaml            # generation counter, parked work, budgets spent, verdict,
+                         # open diagnostic counts by severity
   .lock                  # single-writer lock
 ```
 
@@ -151,6 +152,11 @@ Cleanup is deterministic and never delegated to the model:
   is deleted by the store, journaled.
 - Entity mentions pointing at removed sections are pruned.
 - An entity with zero mentions and zero requirements is deleted, with a tombstone redirect.
+- Deleting a node settles the open judged diagnostics naming it as a subject: one whose
+  subjects are all gone is resolved by the store, journaled; one with surviving subjects
+  re-enqueues them for review, so a turn re-judges the finding. This runs on every
+  deleting commit, turn and GC alike. See
+  [waves](./reconciler.md#waves).
 
 ## Concurrency
 

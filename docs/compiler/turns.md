@@ -30,7 +30,10 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   revises it with `update_requirement` carrying the new `ears` plus the new `quote`,
   or the fact is gone and the turn deletes it. The `done` gate rejects a turn that
   leaves a stale anchor untouched. The pack also carries the document's
-  [incoming links](#incoming-links).
+  [incoming links](#incoming-links). Extraction records the facts as stated, even when
+  sections disagree: judging contradictions belongs to the review tasks that follow,
+  and `report_diagnostic` is not in this task's toolset. A conflict noticed here is
+  not lost; the review wave sees the statements side by side.
 - `review-requirement`: judge one changed statement against its computed neighbors.
   The [reconciler](./reconciler.md#waves) picks the neighbors; the turn only judges.
   The pack shows the changed requirement (`ears`, `quote`, source section) and each
@@ -42,7 +45,13 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   - contradiction: the two statements cannot both hold. Report a `contradiction`
     diagnostic naming both.
   - consistent: no action.
-  It also resolves a pair diagnostic whose condition no longer holds. Focused pairwise
+  It also resolves a pair diagnostic whose condition no longer holds. An open
+  diagnostic naming a requirement that was deleted shows the dead subject marked
+  `(deleted)`: the turn resolves it when the finding died with that requirement, or
+  refiles it against the surviving statements when it still stands. A verdict is owed
+  only for the pairs shown, but a contradiction or duplicate found against a
+  statement the pack did not pair is filed with `report_diagnostic` all the same,
+  provided the evidence is in quotes the turn has read. Focused pairwise
   judgment is deliberate: weak models answer "can these two both hold?" far more
   reliably than "is this entity coherent?".
 - `review-entity`: judge one entity whose facts changed. The model checks that the
@@ -195,6 +204,10 @@ Write tools never touch the store directly. They stage mutations into the turn's
 changeset. Each call is validated the moment it is staged, against the store plus what is
 already staged, and invalid calls are rejected with a repair message. See
 [validation gates](./graph.md#validation-gates).
+
+Read tools show the snapshot the turn began with, not the staged mutations. While
+mutations are staged, every read reply carries a note saying so, so a turn that reads
+back a node it just staged a delete for does not conclude the delete was lost.
 
 Three consecutive invalid rounds abort the turn. The work item is retried once with fresh
 context, then parked with an `incomplete-build` diagnostic.

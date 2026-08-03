@@ -52,6 +52,12 @@ pub fn pending(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Op
             }
         }
         let (status, reason) = status_of(store, rid, row, gs);
+        // A row whose requirement left the graph is not work: no repair applies, and
+        // the next record_generation prunes it. Listing it as actionable is a livelock
+        // (docs/consumers/gen.md#deletion-prunes-the-ledger).
+        if reason == "requirement-gone" {
+            continue;
+        }
         let actionable = match filter.unwrap_or("stale") {
             "all" => true,
             "failing" => status == "failing",
@@ -327,6 +333,12 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             continue;
         }
         let (status, reason) = status_of(store, rid, row, gs);
+        // A dead row is not repairable work; regenerating cannot bring its
+        // requirement back (docs/consumers/gen.md#deletion-prunes-the-ledger).
+        if reason == "requirement-gone" {
+            skipped.push(json!({"requirement": rid, "reason": "requirement left the graph; the row is pruned at the next record_generation, nothing to verify"}));
+            continue;
+        }
         if status == "stale-requirement" || status == "missing" {
             skipped.push(json!({"requirement": rid, "reason": format!("{} ({}); regenerate first", status, reason)}));
             continue;
@@ -345,19 +357,46 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             Err(e) => skipped.push(json!({"requirement": rid, "reason": e})),
         }
     }
-    Ok(json!({
+    // A failing row whose requirement sits inside an open judged diagnostic (a
+    // contradiction, say) may be failing because the documents are wrong, not the
+    // deliverable; the repair then belongs to the document author.
+    let doc_diags: Vec<Value> = rows
+        .iter()
+        .filter(|r| r["verdict"] == "fail")
+        .filter_map(|r| r["requirement"].as_str())
+        .flat_map(|rid| {
+            store
+                .graph
+                .diagnostics
+                .iter()
+                .filter(|(_, d)| {
+                    d.lifecycle == "open"
+                        && crate::store::JUDGED_RULES.contains(&d.rule.as_str())
+                        && d.subjects.iter().any(|s| s == rid)
+                })
+                .map(|(did, d)| json!({"requirement": rid, "diagnostic": did, "rule": d.rule, "message": d.message}))
+                .collect::<Vec<Value>>()
+        })
+        .collect();
+    let mut reply = json!({
         "passed": passed,
         "failed": failed,
         "rows": rows,
         "skipped": skipped,
-        "next": if failed > 0 {
+        "next": if failed > 0 && !doc_diags.is_empty() {
+            "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
+        } else if failed > 0 {
             "a failing row names its requirement; fix the deliverable or the test, then run_tests again"
         } else if !skipped.is_empty() {
             "skipped rows say why; llm rows need begin_verification and record_verdict"
         } else {
             "all selected rows pass"
         }
-    }))
+    });
+    if !doc_diags.is_empty() {
+        reply["openDiagnosticsOnFailingRows"] = json!(doc_diags);
+    }
+    Ok(reply)
 }
 
 // Record a run that judged nothing: the exit code and the output stay, the verdict does
@@ -561,6 +600,24 @@ mod tests {
         });
         gen_mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
         (s, gs)
+    }
+
+    // A row whose requirement left the graph is not actionable work: the queue
+    // excludes it, and the next record buries it.
+    // Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
+    #[test]
+    fn requirement_gone_rows_are_not_actionable() {
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        // The row exists; then the requirement is deleted from the graph.
+        s.graph.requirements.remove("req:shop-1");
+        let listed = pending(&s, &gs, Some("all"), None);
+        assert!(
+            !listed.iter().any(|p| p["requirement"] == "req:shop-1"),
+            "{:?}",
+            listed
+        );
     }
 
     // A command that could not run has judged nothing: the row stays unverified with

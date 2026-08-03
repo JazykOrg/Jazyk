@@ -417,7 +417,9 @@ requirements:
 A requirement's verification status is a pure function of the row, the live graph, and
 the files on disk, recomputed at every read. First match wins:
 
-1. No row, or the test artifact is missing → `missing`.
+1. No row, or the test artifact is missing → `missing`. A row whose requirement id is
+   no longer in the graph is also `missing` (reason `requirement-gone`), but it is
+   never actionable work: see [deletion](#deletion-prunes-the-ledger).
 2. The live statement hash differs from `hashes.requirement` → `stale-requirement`. The
    test verifies a sentence that no longer exists. Regeneration is needed;
    `jazyk test` refuses to run the row and points at `jazyk gen`.
@@ -441,6 +443,21 @@ files and the test (the verdict resets to `none`). If the product does not yet s
 the new statement, the fresh test fails. Hand edits to the deliverable flip exactly the
 rows whose `files` hash moved to `stale-code`. Reruns update verdicts; when the test
 passes, the requirement is `verified`. Nothing in this loop is remembered by a human.
+
+### Deletion prunes the ledger
+
+Deleting a requirement ends its obligation, and its ledger row must not outlive it:
+
+- `record_generation` prunes every row whose requirement id is no longer in the graph,
+  whatever entity the call records. The manifest never needs to name a dead
+  requirement to bury it; absence from the graph is the signal.
+- Until a record runs, such a row reads `missing` with reason `requirement-gone`, and
+  the verification queue excludes it: it is not work, and no repair applies to it.
+  `run_tests` skips it the same way.
+
+Without pruning, a compilation that deletes a requirement leaves a row no tool can
+remove: the manifest only adds and updates, reruns skip the row, and the queue keeps
+naming a repair (regenerate) that provably does not clear it.
 
 ## Criteria files for llm tests
 
@@ -520,8 +537,8 @@ not leave its predecessor behind. Entity ids are stable
 - A merged entity leaves a redirect ([mutations](../compiler/graph.md#mutations)); the
   generator follows it and folds the absorbed files into the survivor's.
 - A renamed entity keeps its id, so its files migrate in place.
-- A requirement deleted by GC leaves its row listed as `requirement-gone` in
-  `verification_tasks` until pruned; removals are never silent.
+- A deleted requirement's row is [pruned at the next record](#deletion-prunes-the-ledger);
+  the journal holds the deletion, so removals are never silent.
 
 Before a run rewrites or removes a deliverable file, the previous content is
 snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per

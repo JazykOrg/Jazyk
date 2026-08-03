@@ -23,6 +23,6 @@ Read in from STDIN line by line:
     For current line, strip out whitespace before and after
     If stripped line is empty string, continue to next line
     Add stripped line to lines
-Sort lines descending. Or ascending if reverse order
+Sort lines ascending. Or descending if reverse order
 Print all sorted lines delimited by newline
 ```

@@ -27,12 +27,6 @@ async function readStdinLines(stream) {
   return processRawLines(rawLines);
 }
 
-// NOTE: docs contradict each other on sort direction (see diagnostics
-// diag:contradiction-1..4). CLI args ("-r reverses sorting order to
-// descending") and both documented test cases imply: default ascending,
-// -r descending. The Execution pseudo code line "Sort lines descending.
-// Or ascending if reverse order" states the opposite and is treated as
-// the outlier. This implementation follows the CLI args + test suite.
 function sortLines(lines, reverse) {
   const sorted = lines.slice().sort();
   if (reverse) sorted.reverse();

@@ -56,6 +56,29 @@ pub enum Op {
     },
 }
 
+// Rules the deterministic checks own: reconciled (reported, updated, resolved) against
+// each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
+pub const CHECK_RULES: [&str; 13] = [
+    "empty-file",
+    "broken-link",
+    "uncovered-section",
+    "suspicious-non-normative",
+    "unused-entity",
+    "unreachable-entity",
+    "stale-provenance",
+    "unstable-extraction",
+    "duplicate-requirement",
+    "section-too-large",
+    "doc-too-large",
+    "entity-too-dense",
+    "incomplete-build",
+];
+
+// Rules a review turn may file through report_diagnostic: judged findings, settled by
+// turns (or by deletion propagation), never by the checks.
+pub const JUDGED_RULES: [&str; 6] =
+    ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"];
+
 pub struct CommitReport {
     pub applied: usize,
     pub skipped: Vec<String>,
@@ -402,6 +425,152 @@ impl Store {
             }
         }
         nbrs
+    }
+
+    // Open diagnostic counts by severity, suppressed excluded: the health line that
+    // rides beside every verdict. Mirrors docs/compiler/reconciler.md#convergence.
+    pub fn open_diag_counts(&self) -> BTreeMap<String, u64> {
+        let mut m: BTreeMap<String, u64> = BTreeMap::new();
+        for d in self.graph.diagnostics.values() {
+            if d.lifecycle == "open" && d.triage.as_deref() != Some("suppressed") {
+                *m.entry(d.severity.clone()).or_insert(0) += 1;
+            }
+        }
+        m
+    }
+
+    // An open judged diagnostic naming this node: reason enough to schedule a review
+    // even when the neighbor computation finds nothing (a partner may be deleted; the
+    // diagnostic itself is the remaining work). Mirrors docs/compiler/reconciler.md#waves.
+    pub fn has_open_judged_diag(&self, id: &str) -> bool {
+        self.graph.diagnostics.values().any(|d| {
+            d.lifecycle == "open" && JUDGED_RULES.contains(&d.rule.as_str()) && d.subjects.iter().any(|s| s == id)
+        })
+    }
+
+    // Whether a pending pair review still has work: the requirement exists and either
+    // computed neighbors or an open judged diagnostic tie it to a judgment.
+    pub fn pair_review_due(&self, rid: &str) -> bool {
+        self.graph.requirements.contains_key(rid)
+            && (!self.pair_review_neighbors(rid).is_empty() || self.has_open_judged_diag(rid))
+    }
+
+    // Deleting nodes settles the open judged diagnostics naming them: all subjects gone
+    // resolves the diagnostic in place (the returned ops go to the journal); surviving
+    // subjects re-enqueue for review, so a turn re-judges the finding. Runs on every
+    // deleting commit, turn and GC alike. Mirrors docs/compiler/graph.md#garbage-collection
+    // and docs/compiler/reconciler.md#waves.
+    fn propagate_deletions(&mut self, deleted: &BTreeSet<String>, build: &str) -> Vec<Op> {
+        let mut resolved = Vec::new();
+        if deleted.is_empty() {
+            return resolved;
+        }
+        let hit: Vec<String> = self
+            .graph
+            .diagnostics
+            .iter()
+            .filter(|(_, d)| {
+                d.lifecycle == "open"
+                    && JUDGED_RULES.contains(&d.rule.as_str())
+                    && d.subjects.iter().any(|s| deleted.contains(s))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for did in hit {
+            let subjects = self.graph.diagnostics[&did].subjects.clone();
+            let survivors: Vec<String> = subjects
+                .iter()
+                .map(|s| self.resolve_id(s).to_string())
+                .filter(|s| self.graph.requirements.contains_key(s) || self.graph.entities.contains_key(s))
+                .collect();
+            if survivors.is_empty() {
+                let d = self.graph.diagnostics.get_mut(&did).unwrap();
+                d.lifecycle = "resolved".to_string();
+                d.updated = Some(build.to_string());
+                resolved.push(Op::ResolveDiagnostic {
+                    id: did,
+                    reason: format!("every subject was deleted ({})", subjects.join(", ")),
+                });
+            } else {
+                for s in survivors {
+                    if self.graph.requirements.contains_key(&s) {
+                        if !self.status.pending.requirements.contains(&s) {
+                            self.status.pending.requirements.push(s);
+                        }
+                    } else if !self.status.pending.entities.contains(&s) {
+                        self.status.pending.entities.push(s);
+                    }
+                }
+            }
+        }
+        resolved
+    }
+
+    // Subjects of open judged diagnostics that no longer exist in the graph.
+    fn missing_diag_subjects(&self) -> BTreeSet<String> {
+        self.graph
+            .diagnostics
+            .values()
+            .filter(|d| d.lifecycle == "open" && JUDGED_RULES.contains(&d.rule.as_str()))
+            .flat_map(|d| d.subjects.iter())
+            .filter(|s| s.starts_with("req:") || s.starts_with("ent:"))
+            .filter(|s| {
+                let r = self.resolve_id(s);
+                !self.graph.requirements.contains_key(r) && !self.graph.entities.contains_key(r)
+            })
+            .cloned()
+            .collect()
+    }
+
+    // Whether any open judged diagnostic names a subject the graph no longer holds:
+    // the queue's signal that the deterministic tail has settling to do.
+    pub fn has_dangling_diags(&self) -> bool {
+        !self.missing_diag_subjects().is_empty()
+    }
+
+    // The level-triggered half of deletion propagation: sweep every open judged
+    // diagnostic for missing subjects and settle it, journaled like GC. A graph
+    // deleted into a stranded state heals here instead of staying wedged.
+    // Mirrors docs/compiler/reconciler.md#waves.
+    pub fn settle_dangling_diags(&mut self) -> Vec<String> {
+        let _flock = FileLock::acquire(&self.out);
+        let missing = self.missing_diag_subjects();
+        if missing.is_empty() {
+            return Vec::new();
+        }
+        let pending_before =
+            (self.status.pending.requirements.len(), self.status.pending.entities.len());
+        let build = format!("g{}", self.status.generation + 1);
+        let ops = self.propagate_deletions(&missing, &build);
+        let actions: Vec<String> = ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::ResolveDiagnostic { id, reason } => Some(format!("resolved {} ({})", id, reason)),
+                _ => None,
+            })
+            .collect();
+        if !ops.is_empty() {
+            self.status.generation += 1;
+            let entry = JournalEntry {
+                build: build.clone(),
+                work_item: WorkItem {
+                    task: "settle-diagnostics".to_string(),
+                    target: "graph".to_string(),
+                    dirty_sections: Vec::new(),
+                    stale_anchors: Vec::new(),
+                },
+                mutations: ops.iter().map(|o| serde_json::to_value(o).unwrap_or_default()).collect(),
+                rounds: 0,
+                tokens: 0,
+            };
+            write_yaml(&self.out.join("journal").join(format!("{}.yaml", build)), &entry);
+            self.save();
+        } else if (self.status.pending.requirements.len(), self.status.pending.entities.len())
+            != pending_before
+        {
+            self.save_status();
+        }
+        actions
     }
 
     // Completing a pair task also completes its mirror: when two changed requirements
@@ -823,6 +992,17 @@ impl Store {
             }
         }
 
+        // Deletion propagation: the ops above may have removed diagnostic subjects.
+        let deleted: BTreeSet<String> = applied
+            .iter()
+            .filter_map(|o| match o {
+                Op::DeleteRequirement { id, .. } | Op::DeleteEntity { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        let auto_resolved = self.propagate_deletions(&deleted, &build);
+        applied.extend(auto_resolved);
+
         self.recompute_relationships();
         self.status.generation += 1;
         self.status.spent.turns += 1;
@@ -1066,15 +1246,23 @@ impl Store {
             })
             .map(|(id, _)| id.clone())
             .collect();
+        let mut deleted: BTreeSet<String> = BTreeSet::new();
         for id in dead_reqs {
             self.graph.requirements.remove(&id);
             actions.push(format!("deleted {} (source section gone)", id));
+            deleted.insert(id);
         }
         for (id, e) in self.graph.entities.iter_mut() {
             let before = e.mentions.len();
             let docs = &self.docs;
+            // A mention whose section is gone, or whose quote no longer locates in it,
+            // is stale prose: left in place it leaks statements the documents no longer
+            // make into later context packs.
             e.mentions.retain(|m| {
-                docs.get(&m.doc).map(|d| d.sections.contains_key(&m.section)).unwrap_or(false)
+                docs.get(&m.doc)
+                    .and_then(|d| d.sections.get(&m.section))
+                    .map(|s| text_contains(&s.raw, &m.quote))
+                    .unwrap_or(false)
             });
             if e.mentions.len() < before {
                 actions.push(format!("pruned {} mention(s) on {}", before - e.mentions.len(), id));
@@ -1091,6 +1279,12 @@ impl Store {
             self.graph.entities.remove(&id);
             self.graph.redirects.insert(id.clone(), String::new());
             actions.push(format!("deleted {} (no mentions, no requirements)", id));
+            deleted.insert(id);
+        }
+        for op in self.propagate_deletions(&deleted, &format!("g{}", self.status.generation + 1)) {
+            if let Op::ResolveDiagnostic { id, reason } = op {
+                actions.push(format!("resolved {} ({})", id, reason));
+            }
         }
         if !actions.is_empty() {
             self.recompute_relationships();
@@ -1162,24 +1356,13 @@ impl Store {
                 }
             }
         }
-        // Deterministic rules whose condition cleared: resolve.
-        const CHECK_RULES: [&str; 13] = [
-            "empty-file",
-            "broken-link",
-            "uncovered-section",
-            "suspicious-non-normative",
-            "unused-entity",
-            "unreachable-entity",
-            "stale-provenance",
-            "unstable-extraction",
-            "duplicate-requirement",
-            "section-too-large",
-            "doc-too-large",
-            "entity-too-dense",
-            "incomplete-build",
-        ];
+        // Deterministic rules whose condition cleared: resolve. Check findings carry
+        // exactly one subject; a multi-subject diagnostic under a shared rule name
+        // (a review turn's duplicate-requirement pair) is judged work, not the checks'
+        // to resolve.
         for d in self.graph.diagnostics.values_mut() {
             if d.lifecycle == "open"
+                && d.subjects.len() == 1
                 && CHECK_RULES.contains(&d.rule.as_str())
                 && !seen.contains(&(d.rule.clone(), d.subjects.clone()))
             {
@@ -1550,5 +1733,100 @@ mod tests {
         // The same pair reported from the other endpoint updates the finding in place.
         s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:b".into(), "req:a".into()]) }], &wi(), 1, 1);
         assert_eq!(s.graph.diagnostics.len(), 1);
+    }
+
+    fn diag(rule: &str, subjects: Vec<&str>) -> Diagnostic {
+        Diagnostic {
+            rule: rule.into(),
+            severity: "error".into(),
+            subjects: subjects.into_iter().map(String::from).collect(),
+            message: "conflict".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    fn seeded_req(doc: &str, ears: &str) -> Requirement {
+        Requirement {
+            ears: ears.into(),
+            entities: vec!["ent:cart".into()],
+            edges: vec![],
+            source: mention(doc, "/t", "The Cart holds items."),
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    // The example-sort failure: deleting one side of a filed contradiction left the
+    // diagnostic open forever. Deletion now settles or re-enqueues.
+    // Mirrors docs/compiler/reconciler.md#waves.
+    #[test]
+    fn deleting_a_subject_settles_or_reenqueues_its_diagnostics() {
+        let dir = std::env::temp_dir().join(format!("jazyk-propagate-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        let mut s = Store { out: dir, ..Default::default() };
+        seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
+        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), mentions: vec![mention("t.md", "/t", "The Cart holds items.")], ..Default::default() });
+        s.graph.requirements.insert("req:t-1".into(), seeded_req("t.md", "The Cart shall hold items."));
+        s.graph.requirements.insert("req:t-2".into(), seeded_req("t.md", "The Cart shall stay empty."));
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: diag("contradiction", vec!["req:t-1", "req:t-2"]) }], &wi(), 1, 0);
+        let did = s.graph.diagnostics.keys().next().unwrap().clone();
+        s.status.pending = PendingReviews::default();
+
+        // One subject deleted: the diagnostic stands, the survivor is re-enqueued.
+        s.apply(vec![Op::DeleteRequirement { id: "req:t-1".into(), reason: "fact gone".into() }], &wi(), 1, 0);
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "open");
+        assert!(s.status.pending.requirements.contains(&"req:t-2".to_string()), "{:?}", s.status.pending.requirements);
+
+        // The open diagnostic alone keeps the survivor's pair review due, with no
+        // computed neighbor left.
+        assert!(s.pair_review_neighbors("req:t-2").is_empty());
+        assert!(s.pair_review_due("req:t-2"));
+
+        // Every subject deleted: the store resolves the diagnostic itself.
+        s.apply(vec![Op::DeleteRequirement { id: "req:t-2".into(), reason: "fact gone".into() }], &wi(), 1, 0);
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+    }
+
+    // A graph deleted into a stranded state before propagation existed heals at the
+    // deterministic tail. Mirrors docs/compiler/reconciler.md#waves.
+    #[test]
+    fn settle_dangling_diags_heals_a_stranded_graph() {
+        let dir = std::env::temp_dir().join(format!("jazyk-settle-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        let mut s = Store { out: dir, ..Default::default() };
+        seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
+        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
+        s.graph.requirements.insert("req:t-2".into(), seeded_req("t.md", "The Cart shall stay empty."));
+        s.graph.diagnostics.insert("diag:contradiction-1".into(), diag("contradiction", vec!["req:gone", "req:t-2"]));
+        s.graph.diagnostics.insert("diag:contradiction-2".into(), diag("contradiction", vec!["req:gone-a", "req:gone-b"]));
+        assert!(s.has_dangling_diags());
+
+        let actions = s.settle_dangling_diags();
+        // All subjects gone: resolved by the store, with a journaled action.
+        assert_eq!(s.graph.diagnostics["diag:contradiction-2"].lifecycle, "resolved");
+        assert!(actions.iter().any(|a| a.contains("diag:contradiction-2")), "{:?}", actions);
+        // A survivor remains: the diagnostic stands and the survivor is re-enqueued.
+        assert_eq!(s.graph.diagnostics["diag:contradiction-1"].lifecycle, "open");
+        assert_eq!(s.status.pending.requirements, vec!["req:t-2".to_string()]);
+        // Idempotent: a second sweep resolves nothing new.
+        assert!(s.settle_dangling_diags().is_empty());
+    }
+
+    // Check reconciliation resolves only its own single-subject findings; a judged
+    // pair filed under a shared rule name is a turn's to resolve.
+    #[test]
+    fn check_reconcile_leaves_judged_pairs_alone() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        s.graph.diagnostics.insert("diag:duplicate-requirement-1".into(), diag("duplicate-requirement", vec!["req:a", "req:b"]));
+        s.reconcile_check_diags(Vec::new());
+        assert_eq!(s.graph.diagnostics["diag:duplicate-requirement-1"].lifecycle, "open");
     }
 }

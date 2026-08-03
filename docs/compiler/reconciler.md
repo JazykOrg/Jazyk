@@ -63,8 +63,28 @@ A build runs in waves:
   - neighbors sharing at least two content tokens qualify, best six by score.
   Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a
   changed requirement also re-enqueues every partner such a diagnostic ties it to, so
-  editing one side of a known pair always re-judges the other. A changed requirement
-  with no neighbors and no sticky partner schedules nothing. When two changed
+  editing one side of a known pair always re-judges the other.
+  Deletion propagates the same way. A commit that deletes a requirement (a turn's
+  `delete_requirement` or the store's own [GC](./graph.md#garbage-collection)) dirties
+  every open judged diagnostic naming it as a subject:
+  - subjects that still exist re-enqueue for review (requirements for pair review,
+    entities for entity review), and the open diagnostic alone is reason enough: such
+    a target schedules even when the neighbor computation finds nothing,
+  - the review pack marks the deleted subject, and the turn either resolves the
+    diagnostic or refiles it against the surviving statements,
+  - a diagnostic left with no existing subjects at all is resolved by the store at
+    commit, journaled; no turn is needed to bury it.
+  Without this, resolving a contradiction by rewriting one side strands the
+  diagnostic open forever: its deleted subject can never be re-judged, and the
+  surviving subject alone never becomes dirty.
+  Propagation is also level-triggered, not just commit-triggered: the deterministic
+  tail sweeps every open judged diagnostic for subjects missing from the graph and
+  applies the same settlement. A graph deleted into a stranded state (before this
+  rule existed, or by hand edits to the out directory) heals at the next build or
+  queue poll instead of staying wedged.
+  A changed requirement
+  with no neighbors, no sticky partner, and no open diagnostic naming it schedules
+  nothing. When two changed
   requirements are each other's only neighbor, the pair is one task, carried by the
   smaller id: judging A against B is judging B against A, and completing the task
   completes both. The turn shows each pair
@@ -75,7 +95,10 @@ A build runs in waves:
   example values (a test case whose expected output encodes a sort order the prose
   contradicts) shares no tokens with its opposite and schedules no pair. The entity
   review is the net for those: it sees the entity's whole statement set and files
-  what pairwise overlap cannot see.
+  what pairwise overlap cannot see. The pair turn is not gagged either: a verdict is
+  owed only for the pairs shown, but a contradiction or duplicate the turn finds
+  against a statement the pack did not pair may be filed with `report_diagnostic`
+  all the same, provided the evidence is in quotes the turn has read.
 - Review: `review-entity` turns for every entity whose fact set changed. Entities that
   share requirements or relationships form one review group; groups run in parallel,
   entities within a group run in order, so a judgment sees the merges and diagnostics of
@@ -133,6 +156,88 @@ pair review, pair review before entity review, reviews before generation. When t
 last compile task finishes, the deterministic tail runs (checks, docsgen, verdict);
 it needs no model, so whichever consumer emptied the queue runs it.
 
+## The control plane
+
+The queue says what work exists. The control plane says whether anyone may act on it
+and who is acting. It is one file plus two directories in the out directory, so every
+consumer (the internal loop, the GUI, an agent over MCP, `jazyk monitor`) reads the
+same intent the same way the queue is the same everywhere. Without it, each frontend
+invents its own policy in process memory and workers fight.
+
+### Modes and releases
+
+`control.yaml` holds the workflow policy and the standing approvals:
+
+- `compile` and `generate`: `auto` or `manual` (the default). Defaults come from the
+  project's [`[workflow]`](./project-settings.md#workflow) section; the file records
+  runtime changes (a GUI toggle, a CLI flag) and survives restarts.
+- `released.compile`: a map of document to the content hash approved for
+  reconciliation. `released.generate`: the graph generation number approved for
+  generation.
+
+In `auto` mode nothing is gated; the behavior is today's. In `manual` mode a change
+still updates the queue (dirty sets are hashing, no model runs), but its tasks carry
+`gated: true` until a release approves them:
+
+- A `reconcile-document` task is gated until `released.compile` maps its document to
+  the document's current content hash. Editing after a release re-gates exactly that
+  document.
+- A `generate-entity` task is gated until `released.generate` equals the graph's
+  current generation. A commit moves the generation, so new graph facts gate new
+  generation work until the next release.
+- Review tasks and `verify-requirement` tasks are never gated: reviews are the
+  second half of a reconciliation already approved, and verification only exists for
+  recorded generation work. The fix-fail-reverify loop stays self-driving.
+
+A release records the approval: `jazyk release [compile|generate]` from the CLI, the
+compile and generate actions in the [GUI](../frontends/gui.md#workflow-modes), or an
+explicit `jazyk compile` or `jazyk gen` (a typed command is an approval; `manual`
+means nothing acts unprompted, not that prompts need a second prompt). Every watcher
+wakes on it: the control file is a watched surface of
+[`await_changes`](../frontends/mcp.md#the-work-loop) and `jazyk monitor`, so the
+release a user clicks is the trigger an attached agent acts on.
+
+Gated work is visible everywhere but actionable nowhere: task lists carry the flag,
+`begin_compilation` and `begin_generation` refuse a gated target with an
+`awaiting-release` error naming the release that would open it, and the notices
+`monitor` prints say "awaiting release" instead of prompting the agent to begin.
+
+### Workers and leases
+
+Two directories make the actors and their claims visible:
+
+- `workers/<id>.yaml`: one file per attached worker session. `kind` (`internal`,
+  `gui`, `agent`), `client` (the MCP client name when there is one), `pid`,
+  `startedAt`, `heartbeatAt`, and the task currently held. A worker refreshes its
+  heartbeat while alive; a file whose heartbeat is older than 90 seconds is stale
+  and swept on the next queue computation. Registration happens at MCP `initialize`
+  for the task-lifecycle servings, at job start in the GUI, and for the lifetime of
+  a `jazyk compile`/`gen`/`test` run.
+- `leases/<task>.yaml`: an exclusive claim on one task. `begin_compilation` and
+  `begin_generation` take the lease (create-new semantics, so exactly one claimant
+  wins); `finish_*` and `abandon_*` release it. A lease names its worker and expires
+  (default 120 seconds, refreshed by any tool call on the open task), so a dead
+  agent's claim evaporates instead of wedging the queue. Task lists show `claimedBy`
+  on leased tasks and consumers skip them.
+
+The internal loop holds one coarse `build` lease for a whole run instead of per-task
+leases: it processes levels in parallel and is not a peer picking tasks one at a
+time. The two granularities exclude each other: `begin_*` refuses while a live build
+lease exists, and a build refuses to start while any live task lease exists, naming
+the holder. The store's commit lock stays underneath as the correctness backstop;
+leases exist so work is not duplicated, not to make commits safe (they already are).
+
+### Dispatch
+
+`worker` in `control.yaml` (`internal`, `agent`, or `any`, default `any`) resolves
+who acts on a release from the GUI:
+
+- `agent`: the GUI records the release and stops; the attached agent's watcher does
+  the work. No agent registered means the GUI says so and offers the internal run.
+- `internal`: the GUI runs its own job, as today.
+- `any`: prefer a live registered agent, fall back to internal. Leases make the race
+  harmless either way.
+
 ## Convergence
 
 The build is done when:
@@ -146,7 +251,13 @@ build resumes parked items first. Unfinished work is never silent.
 
 The verdict in `status.yaml` is `converged` only when nothing is parked, no review is
 pending in the [task queue](#the-task-queue), and no section with a body of its own is
-left unprocessed. A turn that exhausts its round budget commits
+left unprocessed. The verdict speaks to work completion, never to document health: a
+graph can converge with open `error` diagnostics standing. So the verdict never
+travels alone. Open diagnostic counts by severity (suppressed excluded) ride beside
+it: in `status.yaml` (`diagnostics`), in the zero-task `compilation_tasks` reply, in
+the final `finish_compilation` reply, and in `await_changes`
+(`openDiagnostics`). An agent deciding "done" sees the open errors in the same
+breath as `converged`. A turn that exhausts its round budget commits
 what it staged and reports no failure, so its document is not parked; counting only
 parked items would report a build that stopped halfway as converged. Coverage is the
 other half of the criterion, so a build that ran out of road says `incomplete` and the

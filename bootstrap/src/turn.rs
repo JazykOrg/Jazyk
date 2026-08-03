@@ -436,6 +436,7 @@ Work section by section, finishing one before starting the next. For ONE section
 Then repeat for the next dirty section. Stale anchors are a contract: for each one, if the document still states the fact, re-record it with upsert_requirement (the same statement with a fresh verbatim quote updates it in place); if the fact is gone, delete_requirement. done is rejected while a stale anchor is untouched. When every dirty section has its coverage mark, call done with a one-line summary. If done is rejected, repair exactly what the error names, then call done again.
 
 Rules:
+- Record the facts as stated, even when sections disagree: judging contradictions is a later review task's job, and report_diagnostic is not in this task's toolset. A conflict you notice is not lost; the review wave sees the statements side by side.
 - Entities are the subject's own parts, actors, and domain objects: a component, a type, a field, a user role, a stored record, a product, a slide, a chapter. Never file paths, CLI flags, markdown terms, or generic phrases. The document itself (a glossary, a roadmap, an overview) is not an entity.
 - Technologies, languages, and third-party tools named in a statement (React, Go, PostgreSQL) belong in the ears text, NOT as entities. "The gateway shall be built with Go" references the entity gateway only.
 - A sentence whose only content is WHERE something is written is navigation, not an obligation: "The slides themselves are defined under [Slides](./slides.md)" and "This document describes how X works" say nothing the result must satisfy. Skip them. The test is whether the sentence constrains the result or only the documentation of it. A list item that names a part IS a fact about the result ("the sub-systems are: [User Management](./user.md)"), and the difference is that the item names a part, while the navigation sentence names a file.
@@ -462,12 +463,14 @@ Ground each verdict in the quotes as much as the ears statements: the quote is t
 
 Then:
 - If an open diagnostic listed in the pack no longer holds, resolve it with resolve_diagnostic.
+- A diagnostic naming a subject marked (deleted) cannot stand as filed: resolve it, and if the conflict it described still exists between surviving requirements, report a new diagnostic naming them.
 - Call done with a one-line summary naming the verdict per neighbor.
 
 Rules:
-- Judge only the pairs shown. Use read_section or get_entity only when a quote alone cannot settle a verdict.
+- A verdict is owed for each pair shown. Use read_section or get_entity only when a quote alone cannot settle a verdict.
+- A contradiction or duplicate you find against a requirement not shown as a neighbor is real work too: file it with report_diagnostic, provided the evidence is in quotes you have read.
 - A duplicate is the same obligation, not the same topic. Two statements about the same flag that impose different behavior contradict, they do not duplicate.
-- If every pair is consistent, call done immediately with no mutations."#;
+- If every pair is consistent and no diagnostic needs action, call done immediately with no mutations."#;
 
 const REVIEW_SYSTEM: &str = r#"You are the review turn of jazyk, a natural language compiler. Your job: judge one entity whose facts changed, by calling tools.
 
@@ -479,7 +482,7 @@ Work in this order:
 5. Delete duplicate requirements: when two requirements on this entity state the same fact (the same obligation reworded), keep the better-sourced one and delete_requirement the other, saying why. A lead-in sentence's requirement duplicated by its list item's requirement is the common case; keep the item's.
 6. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
 7. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement, passing ONLY id and edges (with a relationship type). Again, no section and no quote.
-8. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic.
+8. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic. One naming a subject marked (deleted) cannot stand as filed: resolve it, and if the finding still stands between surviving statements, report a new diagnostic naming them.
 9. Call done with a one-line summary.
 
 Rules:
@@ -724,19 +727,44 @@ fn review_requirement_pack(store: &Store, rid: &str) -> String {
             }
         }
     }
-    let open: Vec<String> = store
-        .graph
-        .diagnostics
-        .iter()
-        .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|x| x == rid))
-        .map(|(id, d)| format!("- {} ({}, {}): {}", id, d.rule, d.severity, d.message))
-        .collect();
+    let open = open_diagnostics_lines(store, &[rid.to_string()]);
     if !open.is_empty() {
         s.push_str("\n## Open diagnostics naming this requirement (resolve any that no longer hold)\n");
         s.push_str(&open.join("\n"));
         s.push('\n');
     }
     s
+}
+
+// Open diagnostics naming any of the given ids, one line each, with subjects that no
+// longer exist in the graph marked (deleted): such a diagnostic cannot stand as filed,
+// and the turn resolves or refiles it. Mirrors docs/compiler/turns.md#task-types.
+fn open_diagnostics_lines(store: &Store, ids: &[String]) -> Vec<String> {
+    store
+        .graph
+        .diagnostics
+        .iter()
+        .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|x| ids.contains(x)))
+        .map(|(id, d)| {
+            let subjects: Vec<String> = d
+                .subjects
+                .iter()
+                .map(|x| {
+                    let resolved = store.resolve_id(x);
+                    let is_node = x.starts_with("req:") || x.starts_with("ent:");
+                    if !is_node
+                        || store.graph.requirements.contains_key(resolved)
+                        || store.graph.entities.contains_key(resolved)
+                    {
+                        x.clone()
+                    } else {
+                        format!("{} (deleted)", x)
+                    }
+                })
+                .collect();
+            format!("- {} ({}, {}) subjects: {}: {}", id, d.rule, d.severity, subjects.join(", "), d.message)
+        })
+        .collect()
 }
 
 fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) -> String {
@@ -795,6 +823,18 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
         if !unreferenced.is_empty() {
             s.push_str("\n## Statements naming this entity without referencing it (add the reference if the statement is about it)\n");
             s.push_str(&unreferenced.join("\n"));
+            s.push('\n');
+        }
+    }
+    // Open diagnostics naming this entity's requirements: the entity review is the
+    // net for findings the pairwise wave cannot see, so it must see what is filed.
+    // (Diagnostics naming the entity itself already ride in the context pack.)
+    {
+        let ids: Vec<String> = store.requirements_referencing(entity_id);
+        let open = open_diagnostics_lines(store, &ids);
+        if !open.is_empty() {
+            s.push_str("\n## Open diagnostics on this entity's statements (resolve any that no longer hold)\n");
+            s.push_str(&open.join("\n"));
             s.push('\n');
         }
     }

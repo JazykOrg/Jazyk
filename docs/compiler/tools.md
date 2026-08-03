@@ -30,6 +30,11 @@ clever ones.
 - `read_section({ref})`: one section's raw body and its child titles.
 - `get_entity({id})`: one entity with its definition, mentions, requirements, and
   relationships.
+- `diagnostics({lifecycle?, rule?, subject?})`: the diagnostics, `open` by default
+  (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
+  further). Each entry carries id, rule, severity, lifecycle, triage, subjects, and
+  message. This is the read surface for document health; without it an agent can
+  only learn diagnostic state by reading the out directory off disk.
 
 ## Write tools
 
@@ -131,7 +136,9 @@ changeset exactly as an in-process turn does. One task is open at a time per ser
 
 - `compilation_tasks({})`: the queue: kind, target, dirty sections, stale anchor
   count, ready or blocked with the reason. Zero tasks returns the build verdict
-  instead; nothing to do is an answer.
+  instead; nothing to do is an answer. The verdict carries `openDiagnostics`, the
+  open diagnostic counts by severity, so a converged build with standing errors
+  says so ([convergence](./reconciler.md#convergence)).
 - `begin_compilation({task?})`: claim the named task, or the first ready one. Reloads
   the store, syncs section trees in memory, opens a changeset, and returns the work
   package: the task's `instructions` (the same extraction or review contract an
@@ -172,8 +179,10 @@ own tools; jazyk serves no file editing over MCP.
   `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}],
   build?}`. Marking strips every single-line marker comment from the manifest files
   and records each as an anchored site on its requirement's row
-  ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps;
-  the entity leaves `generation_tasks`. A `factHash` that no longer matches the live
+  ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps
+  and [prunes rows](../consumers/gen.md#deletion-prunes-the-ledger) whose requirement
+  left the graph; the entity leaves `generation_tasks`. A `factHash` that no longer
+  matches the live
   graph is recorded but leaves the entity pending, so a graph that moved mid-task is
   never masked.
 
@@ -186,9 +195,12 @@ only the ledger, never the graph.
 - `verification_tasks({filter?, entity?})`: rows needing action, with their derived
   [status](../consumers/gen.md#status-is-derived-never-stored) and a `reason`
   (`not-generated`, `artifact-gone`, `never-run`, `requirement-changed`,
-  `test-changed`, `code-changed`, `failed`, `requirement-gone`). Requirements the
+  `test-changed`, `code-changed`, `failed`). Requirements the
   graph holds but the ledger does not appear as `missing`, so ungenerated work is
-  never silent. Deterministic; no model involved.
+  never silent. Rows whose requirement left the graph are not listed: they are not
+  work, and the next `record_generation`
+  [prunes them](../consumers/gen.md#deletion-prunes-the-ledger). Deterministic; no
+  model involved.
 - `begin_verification({requirement})`: the package for one row: the statement, quote,
   and hash; the context pack; the manifest files; and either the run command
   (`programmatic`) or the criteria and confirm-steps (`llm`).
@@ -224,12 +236,12 @@ Turns see subsets, not the whole catalog. Every subset carries
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,
   `delete_requirement`, `set_coverage`, `done`.
 - `review-requirement`: `context`, `expand`, `search`, `get_entity`, `read_section`,
-  `update_requirement`, `delete_requirement`, `report_diagnostic`,
+  `diagnostics`, `update_requirement`, `delete_requirement`, `report_diagnostic`,
   `resolve_diagnostic`, `done`.
-- `review-entity`: `context`, `expand`, `search`, `get_entity`, `update_entity`,
-  `merge_entities`, `update_requirement` (a review adds missing `edges` when
-  requirements tie entities structurally), `delete_requirement`, `report_diagnostic`,
-  `resolve_diagnostic`, `done`.
+- `review-entity`: `context`, `expand`, `search`, `get_entity`, `diagnostics`,
+  `update_entity`, `merge_entities`, `update_requirement` (a review adds missing
+  `edges` when requirements tie entities structurally), `delete_requirement`,
+  `report_diagnostic`, `resolve_diagnostic`, `done`.
 - `generate-entity` (the in-process generation worker): the read tools, the
   [file and command tools](./turns.md#generation-turns) (in-process only, never served
   over MCP), `record_generation`, `run_tests`, `done`.

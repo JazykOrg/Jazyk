@@ -27,13 +27,6 @@ pub struct AppState {
     // Last emitted pending.changed payload, to emit only on movement.
     pub last_pending: std::sync::Mutex<serde_json::Value>,
     pub jobs: super::jobs::JobManager,
-    // The watch mode: off | queue | watch (docs/frontends/gui.md#watch). Default
-    // queue: changes queue visibly, compiling stays an explicit click; the automatic
-    // loop spends LLM budget, so it is opt-in.
-    pub watch_mode: std::sync::Mutex<String>,
-    // The generation mode: manual | auto (docs/frontends/gui.md#generation). In auto,
-    // a finished compile with a non-empty worklist queues a gen job behind it.
-    pub gen_mode: std::sync::Mutex<String>,
     // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
     pub backoff: std::sync::atomic::AtomicU64,
 }
@@ -51,6 +44,11 @@ impl AppState {
     }
     pub fn gs(&self) -> GenSettings {
         self.gs.read().unwrap().clone()
+    }
+    // The workflow modes are control-plane state, not process memory: shared with
+    // every worker, surviving restarts. Mirrors docs/frontends/gui.md#workflow-modes.
+    pub fn control(&self) -> crate::control::Control {
+        crate::control::Control::load(&self.proj(), &self.out)
     }
 }
 

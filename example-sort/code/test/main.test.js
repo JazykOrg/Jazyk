@@ -72,27 +72,17 @@ test('req_main_js_12_881a9320', () => {
   assert.deepStrictEqual(processRawLines([' x ', '', 'y', '   ']), ['x', 'y']);
 });
 
-test('req_main_js_13_fea7187d', () => {
-  // As stated by the Execution pseudo code: default sort order is DESCENDING.
-  // Contradicts req:main-js-5 and req:main-test-js-1 (see diag:contradiction-1);
-  // this implementation follows the CLI args + test suite, so this test fails
-  // until the documents are reconciled.
-  assert.strictEqual(runCli([], 'a\nc\nb\n'), 'c\nb\na\n');
-});
-
-test('req_main_js_14_16ec4000', () => {
-  // As stated by the Execution pseudo code: reverse order sorts ASCENDING.
-  // Contradicts req:main-js-5 and req:main-test-js-2 (see diag:contradiction-3/4);
-  // this implementation follows the CLI args + test suite, so this test fails
-  // until the documents are reconciled.
-  assert.strictEqual(runCli(['-r'], 'a\nc\nb\n'), 'a\nb\nc\n');
-});
-
 test('req_main_js_15_31c641ea', () => {
   // All sorted lines are printed delimited by newline.
   const out = runCli([], 'b\na\nc\n');
   assert.deepStrictEqual(out.split('\n').filter((l) => l !== ''), ['a', 'b', 'c']);
   assert.strictEqual(out, 'a\nb\nc\n');
+});
+
+test('req_main_js_16_6c7e91df', () => {
+  // Default sort order (no -r) is ascending.
+  assert.strictEqual(runCli([], 'c\na\nb\n'), 'a\nb\nc\n');
+  assert.deepStrictEqual(sortLines(['c', 'a', 'b'], false), ['a', 'b', 'c']);
 });
 
 test('req_main_test_js_1_5f95d5d9', () => {
@@ -101,6 +91,6 @@ test('req_main_test_js_1_5f95d5d9', () => {
 });
 
 test('req_main_test_js_2_1c6d8c96', () => {
-  // Reverse order case: documented input/expected output with -r.
+  // Reverse order case: documented input/expected output with the reverse flag on.
   assert.strictEqual(runCli(['-r'], '321\n654\n453\n'), '654\n453\n321\n');
 });

@@ -158,6 +158,29 @@ The project file never says what the deliverable is. The medium is a fact the do
 state, reaching workers through the graph; see
 [the deliverable](../consumers/gen.md#the-deliverable).
 
+## Workflow
+
+Defaults for the [control plane](./reconciler.md#the-control-plane). All optional.
+
+```toml
+[workflow]
+compile = "manual"
+generate = "manual"
+worker = "agent"
+```
+
+- `compile`, `generate`: `manual` (default) or `auto`. `manual` gates the work
+  behind a [release](./reconciler.md#modes-and-releases): changes queue, nothing
+  acts until approved. `auto` lets a watcher act on changes as they land; it spends
+  LLM budget, so it is opt-in. Explicit commands (`jazyk compile`, `jazyk gen`,
+  `jazyk watch`) are their own approval and run under either mode.
+- `worker`: who acts on a GUI release. `internal`, `agent`, or `any` (default).
+  See [dispatch](./reconciler.md#dispatch).
+
+These are defaults; the live values sit in `control.yaml` in the out directory,
+where a GUI toggle or CLI flag changes them at runtime without editing the project
+file. Deleting `control.yaml` returns to the defaults.
+
 ## Limits
 
 [Turn and build budgets](./turns.md#budgets). All optional.

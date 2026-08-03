@@ -17,6 +17,12 @@ pub struct Queue {
     pub generate: Vec<Value>,
     pub verify: Vec<Value>,
     pub verdict: String,
+    // Open diagnostic counts by severity: the verdict never travels alone
+    // (docs/compiler/reconciler.md#convergence).
+    pub open_diags: std::collections::BTreeMap<String, u64>,
+    // An open judged diagnostic names a subject the graph no longer holds: the
+    // deterministic tail has settling to do (docs/compiler/reconciler.md#waves).
+    pub dangling_diags: bool,
 }
 
 impl Queue {
@@ -28,7 +34,7 @@ impl Queue {
     // do is an answer. Mirrors docs/compiler/tools.md#compilation-tools.
     pub fn compilation_answer(&self) -> Value {
         if self.compile.is_empty() {
-            return json!({
+            let mut v = json!({
                 "tasks": [],
                 "verdict": self.verdict,
                 "note": if self.generate.is_empty() {
@@ -37,6 +43,10 @@ impl Queue {
                     "nothing to compile; generation has pending tasks (generation_tasks lists them)"
                 },
             });
+            if !self.open_diags.is_empty() {
+                v["openDiagnostics"] = json!(self.open_diags);
+            }
+            return v;
         }
         json!({"tasks": self.compile, "next": "begin_compilation claims the first ready task"})
     }
@@ -45,7 +55,11 @@ impl Queue {
     pub fn find(&self, target: Option<&str>) -> Option<WorkItem> {
         let entry = match target {
             Some(t) => self.compile.iter().find(|e| e["target"] == t || e["task"] == t)?,
-            None => self.compile.iter().find(|e| e["ready"] == true)?,
+            // The first task a worker can actually act on: ready, not gated, unclaimed.
+            None => self
+                .compile
+                .iter()
+                .find(|e| e["ready"] == true && e["gated"] != true && e["claimedBy"].is_null())?,
         };
         if entry["ready"] != true {
             return None;
@@ -71,6 +85,8 @@ impl Queue {
 pub fn compute(proj: &Project, out: &Path) -> Queue {
     let mut store = Store::load(out);
     let verdict = store.status.verdict.clone();
+    let open_diags = store.open_diag_counts();
+    let dangling_diags = store.has_dangling_diags();
     let gs = crate::gen::GenSettings::resolve(proj);
     let (parsed, links) = crate::reconcile::parse_all(proj);
     let mut dirty = store.sync_docs(&parsed);
@@ -149,8 +165,7 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         .pending
         .requirements
         .iter()
-        .filter(|rid| store.graph.requirements.contains_key(*rid))
-        .filter(|rid| !store.pair_review_neighbors(rid).is_empty())
+        .filter(|rid| store.pair_review_due(rid))
         // A pair scheduled from both ends runs once; the smaller id carries the task
         // and completion mirrors to the other.
         .filter(|rid| {
@@ -227,5 +242,45 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         })
         .collect();
 
-    Queue { compile, generate, verify, verdict }
+    let mut q = Queue { compile, generate, verify, verdict, open_diags, dangling_diags };
+
+    // Manual mode gates work behind a release; leases mark claimed tasks. Reviews and
+    // verification are never gated. Mirrors docs/compiler/reconciler.md#the-control-plane.
+    let control = crate::control::Control::load(proj, out);
+    if control.compile == "manual" {
+        for t in q.compile.iter_mut().filter(|t| t["kind"] == "reconcile-document") {
+            let doc = t["target"].as_str().unwrap_or_default();
+            let current = store.docs.get(doc).map(|r| r.content_hash.as_str()).unwrap_or_default();
+            if control.released.compile.get(doc).map(String::as_str) != Some(current) {
+                t["gated"] = json!(true);
+            }
+        }
+    }
+    if control.generate == "manual" && control.released.generate != store.status.generation {
+        for t in q.generate.iter_mut() {
+            t["gated"] = json!(true);
+        }
+    }
+    let leases = crate::control::task_leases(out);
+    for t in q.compile.iter_mut().chain(q.generate.iter_mut()) {
+        let target = t["target"].as_str().or_else(|| t["entity"].as_str()).unwrap_or_default();
+        if let Some(l) = leases.get(target) {
+            t["claimedBy"] = json!(l.worker);
+        }
+    }
+    q
+}
+
+// Actionable work: ready, not gated, not claimed by someone else. What monitor
+// notices count and what --once waits for.
+pub fn actionable(tasks: &[Value]) -> usize {
+    tasks
+        .iter()
+        .filter(|t| t["ready"] != false && t["gated"] != true && t["claimedBy"].is_null())
+        .count()
+}
+
+// Gated work: queued but awaiting a release.
+pub fn gated(tasks: &[Value]) -> usize {
+    tasks.iter().filter(|t| t["gated"] == true).count()
 }

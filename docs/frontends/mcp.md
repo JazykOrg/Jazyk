@@ -59,13 +59,32 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
 
 - `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
   generation counter moves, a documentation file changes on disk, a manifest or test
-  file in the deliverable changes, or the ledger changes, or at the timeout (default
-  300 seconds). `timeout_seconds: 0` waits indefinitely. The default returns because
-  most MCP clients bound a tool call with their own timeout and would report an
-  indefinite block as an error; a client configured without that bound passes 0 and
-  holds the call open. The reply carries the changed documents, whether the graph is
-  stale (documents changed but not yet reconciled), the pending generation work, and
-  the pending verification work grouped by reason.
+  file in the deliverable changes, the ledger changes, or the
+  [control plane](../compiler/reconciler.md#the-control-plane) changes (a mode
+  toggle or a release, so the user's click in the GUI is what wakes the agent), or
+  at the timeout (default 300 seconds). `timeout_seconds: 0` waits indefinitely. The
+  default returns because most MCP clients bound a tool call with their own timeout
+  and would report an indefinite block as an error; a client configured without that
+  bound passes 0 and holds the call open. The reply carries the changed documents,
+  whether the graph is stale (documents changed but not yet reconciled), the pending
+  generation work, the pending verification work grouped by reason, and the workflow
+  modes with the gated task counts.
+
+## The control plane over MCP
+
+The serving is a worker among workers, and says so:
+
+- `initialize` registers the serving in the
+  [worker registry](../compiler/reconciler.md#workers-and-leases) under the client's
+  name (kind `agent`), heartbeats while the process lives, and deregisters on exit.
+- `begin_compilation` and `begin_generation` take the task's lease; `finish_*` and
+  `abandon_*` release it. A task another worker holds is refused with `claimed`
+  naming the holder; a live internal build refuses all begins with `build-running`.
+  Any tool call on the open task refreshes its lease.
+- In `manual` mode a gated task is refused with `awaiting-release`: the reply names
+  the release that opens it (`jazyk release compile`, or the GUI). Task lists carry
+  `gated` and `claimedBy` per task, so an agent sees the whole board before
+  claiming.
 
 ## Compilation over MCP
 

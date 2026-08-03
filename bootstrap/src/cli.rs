@@ -371,6 +371,29 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
     }
 }
 
+// Record a release: approve the pending changes for a stage (both when unnamed)
+// without running anything. The scriptable form of the GUI's release button.
+// Mirrors docs/frontends/cli.md#jazyk-release.
+pub fn run_release(paths: &[String], opts: &Options) -> i32 {
+    let stage = paths.first().map(String::as_str);
+    if let Some(s) = stage {
+        if s != "compile" && s != "generate" {
+            eprintln!("jazyk: release takes `compile` or `generate` (or nothing for both)");
+            return 2;
+        }
+    }
+    let (proj, _llm, out) = resolve(&[], opts);
+    crate::control::release(&proj, &out, stage);
+    let q = crate::queue::compute(&proj, &out);
+    println!(
+        "jazyk: released {} — {} compilation, {} generation task(s) now actionable",
+        stage.unwrap_or("compile and generate"),
+        crate::queue::actionable(&q.compile),
+        crate::queue::actionable(&q.generate),
+    );
+    0
+}
+
 // The external agent's trigger: watch the same surfaces `watch` does, perform nothing,
 // print the ready work and which MCP tool begins it on every state change. One block
 // per notice, quiet otherwise; --json prints one object per line.
@@ -384,6 +407,8 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         let mut s = String::new();
         let mut files = proj.doc_files();
         files.push(crate::gen::Ledger::path(&out));
+        // A release or mode change is a state change: the notice fires on the click.
+        files.push(crate::control::Control::path(&out));
         let ledger = crate::gen::Ledger::load(&out);
         for row in ledger.requirements.values() {
             for f in &row.files {
@@ -399,14 +424,15 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         }
         s
     };
-    // Prints the queue notice and reports whether ready work exists. Under --once the
-    // monitor stays silent until it does: one notice, then exit 0.
+    // Prints the queue notice and reports whether actionable work exists (ready, not
+    // gated, not claimed). Under --once the monitor stays silent until it does: one
+    // notice, then exit 0. Gated work prints as awaiting release.
     let once = opts.once;
     let notice = |last: &mut String| -> bool {
         let q = crate::queue::compute(&proj, &out);
-        let has_work = q.compile.iter().any(|t| t["ready"] == true)
-            || !q.generate.is_empty()
-            || !q.verify.is_empty();
+        let has_work = crate::queue::actionable(&q.compile) > 0
+            || crate::queue::actionable(&q.generate) > 0
+            || crate::queue::actionable(&q.verify) > 0;
         if once && !has_work {
             return false;
         }
@@ -420,10 +446,11 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
             .to_string()
         } else {
             let mut s = String::new();
-            let ready = |v: &Vec<serde_json::Value>| v.iter().filter(|t| t["ready"] == true).count();
             if !q.compile.is_empty() {
-                s.push_str(&format!("jazyk: {} compilation task(s), {} ready\n", q.compile.len(), ready(&q.compile)));
-                for t in q.compile.iter().filter(|t| t["ready"] == true).take(5) {
+                let gated = crate::queue::gated(&q.compile);
+                let act = crate::queue::actionable(&q.compile);
+                s.push_str(&format!("jazyk: {} compilation task(s), {} actionable\n", q.compile.len(), act));
+                for t in q.compile.iter().filter(|t| t["ready"] == true && t["gated"] != true).take(5) {
                     let secs = t["dirtySections"].as_array().map(|a| a.len()).unwrap_or(0);
                     let anchors = t["staleAnchors"].as_array().map(|a| a.len()).unwrap_or(0);
                     match t["kind"].as_str().unwrap_or("") {
@@ -436,17 +463,38 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                         k => s.push_str(&format!("  {} {}\n", k, t["target"].as_str().unwrap_or(""))),
                     }
                 }
-                s.push_str("  → call compilation_tasks on the jazyk MCP server to begin\n");
+                if gated > 0 {
+                    s.push_str(&format!(
+                        "  {} gated, awaiting release (`jazyk release compile` or the GUI)\n",
+                        gated
+                    ));
+                }
+                if act > 0 {
+                    s.push_str("  → call compilation_tasks on the jazyk MCP server to begin\n");
+                }
             } else if !q.generate.is_empty() {
-                s.push_str(&format!("jazyk: compilation {}; {} generation task(s) ready\n", q.verdict, q.generate.len()));
-                for t in q.generate.iter().take(5) {
+                let gated = crate::queue::gated(&q.generate);
+                s.push_str(&format!(
+                    "jazyk: compilation {}; {} generation task(s), {} actionable\n",
+                    q.verdict,
+                    q.generate.len(),
+                    crate::queue::actionable(&q.generate)
+                ));
+                for t in q.generate.iter().filter(|t| t["gated"] != true).take(5) {
                     s.push_str(&format!(
                         "  generate {} ({})\n",
                         t["entity"].as_str().unwrap_or(""),
                         t["reason"].as_str().unwrap_or("")
                     ));
                 }
-                s.push_str("  → call generation_tasks on the jazyk MCP server to begin\n");
+                if gated > 0 {
+                    s.push_str(&format!(
+                        "  {} gated, awaiting release (`jazyk release generate` or the GUI)\n",
+                        gated
+                    ));
+                } else {
+                    s.push_str("  → call generation_tasks on the jazyk MCP server to begin\n");
+                }
             } else if !q.verify.is_empty() {
                 s.push_str(&format!("jazyk: {} verification task(s) ready\n", q.verify.len()));
                 s.push_str("  → call verification_tasks on the jazyk MCP server (run_tests covers programmatic rows)\n");
@@ -496,6 +544,11 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     if let Err(e) = watcher.watch(&proj.root, notify::RecursiveMode::Recursive) {
         eprintln!("jazyk: cannot watch {}: {}", proj.root.display(), e);
         return 1;
+    }
+    // The out directory can live outside the root (--out); watch it too so releases
+    // fire events. Best effort: inside the root it is already covered.
+    if !out.starts_with(&proj.root) {
+        watcher.watch(&out, notify::RecursiveMode::NonRecursive).ok();
     }
     let mut last_fp = fingerprint(&proj);
     loop {
@@ -696,6 +749,14 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     if opts.verbose {
         llm::set_verbose(true);
     }
+    // A typed gen is an approval, and generation holds the build lease like a compile.
+    let _build = match crate::control::begin_internal_build(&proj, &out, "generate") {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            return 1;
+        }
+    };
     let store = Store::load(&out);
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.

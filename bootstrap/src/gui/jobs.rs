@@ -338,6 +338,8 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             Ok(json!(report))
         }
         JobKind::Gen { entities, force } => {
+            // The clicked gen is an approval and holds the build lease, same as the CLI.
+            let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
             let store = crate::store::Store::load(&st.out);
             crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
         }
@@ -366,6 +368,43 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
 // ---- handlers ----
 
 pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    // Dispatch by worker preference: with an agent attached and preferred, the click
+    // records the release and the agent does the work. Mirrors
+    // docs/compiler/reconciler.md#dispatch.
+    if let Some(stage) = match body["kind"].as_str() {
+        Some("compile") => Some("compile"),
+        Some("gen") => Some("generate"),
+        _ => None,
+    } {
+        let c = st.control();
+        if c.worker != "internal" {
+            let agents: Vec<String> = crate::control::workers(&st.out)
+                .into_iter()
+                .filter(|w| w.kind == "agent")
+                .map(|w| w.client)
+                .collect();
+            if !agents.is_empty() {
+                crate::control::release(&st.proj(), &st.out, Some(stage));
+                let snap = super::api::workers_snapshot(&st);
+                st.events.emit("control.changed", snap);
+                return (
+                    StatusCode::ACCEPTED,
+                    Json(json!({
+                        "dispatched": "agent",
+                        "agents": agents,
+                        "note": "release recorded; the attached agent picks up the work",
+                    })),
+                )
+                    .into_response();
+            }
+            if c.worker == "agent" {
+                return super::api::err(
+                    StatusCode::CONFLICT,
+                    "worker is `agent` but no agent is attached; start one or set worker to any or internal",
+                );
+            }
+        }
+    }
     let kind = match body["kind"].as_str() {
         Some("compile") => JobKind::Compile,
         Some("benchmark") => JobKind::Benchmark {

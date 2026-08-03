@@ -46,6 +46,24 @@ impl Default for Limits {
     }
 }
 
+// [workflow] defaults for the control plane: auto acts on change, manual gates work
+// behind a release. Live values sit in control.yaml in the out directory.
+// Mirrors docs/compiler/project-settings.md#workflow.
+#[derive(Clone)]
+pub struct Workflow {
+    pub compile: String,  // auto | manual
+    pub generate: String, // auto | manual
+    pub worker: String,   // internal | agent | any
+}
+
+impl Default for Workflow {
+    fn default() -> Self {
+        // Manual by default: a change queues, nothing spends LLM budget unprompted.
+        // Explicit commands are their own approval.
+        Workflow { compile: "manual".into(), generate: "manual".into(), worker: "any".into() }
+    }
+}
+
 #[derive(Clone)]
 pub struct Project {
     pub root: PathBuf,
@@ -57,6 +75,7 @@ pub struct Project {
     // fact the documents state.
     pub gen_deliverable: Option<String>,
     pub gen_worker: Option<String>,
+    pub workflow: Workflow,
     pub llm: LlmSettings,
     pub linting: Linting,
     pub limits: Limits,
@@ -72,6 +91,7 @@ impl Default for Project {
             out: PathBuf::from("./jazyk-out"),
             gen_deliverable: None,
             gen_worker: None,
+            workflow: Workflow::default(),
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
             llm: LlmSettings::default(),
@@ -251,6 +271,15 @@ impl Project {
         }
         if let Some(v) = t.string("gen.worker") {
             p.gen_worker = Some(v);
+        }
+        if let Some(v) = t.string("workflow.compile") {
+            p.workflow.compile = v;
+        }
+        if let Some(v) = t.string("workflow.generate") {
+            p.workflow.generate = v;
+        }
+        if let Some(v) = t.string("workflow.worker") {
+            p.workflow.worker = v;
         }
         p.llm.base_url = t.string("llm.base_url");
         p.llm.model = t.string("llm.model");

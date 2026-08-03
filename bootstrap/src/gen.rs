@@ -810,6 +810,14 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         }
     }
     let mut ledger = Ledger::load(&store.out);
+    // Deletion prunes the ledger: a requirement gone from the graph has no obligation
+    // left, and no manifest can name it. Any record buries the dead rows, whatever
+    // entity it marks. Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
+    let before = ledger.requirements.len();
+    ledger
+        .requirements
+        .retain(|rid, _| store.graph.requirements.contains_key(store.resolve_id(rid)));
+    let pruned = before - ledger.requirements.len();
     // One build per deliverable: the first task that needs one establishes it, later
     // tasks receive it in their package and reuse it.
     // Mirrors docs/consumers/gen.md#the-build.
@@ -936,7 +944,12 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         }
     }
     ledger.save(&store.out);
-    Ok(json!({"marked": id, "files": files.len(), "tests": seeded}))
+    let mut reply = json!({"marked": id, "files": files.len(), "tests": seeded});
+    if pruned > 0 {
+        reply["prunedRows"] = json!(pruned);
+        reply["note"] = json!("pruned ledger row(s) whose requirement left the graph");
+    }
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -1237,6 +1250,42 @@ mod tests {
         let g0 = pkg["requirementGroups"][0].as_array().unwrap();
         assert_eq!(g0.len(), 2);
         assert!(g0[0]["testName"].as_str().unwrap().starts_with("req_shop_1_"));
+    }
+
+    // The example-sort livelock: rows for deleted requirements had no legal removal.
+    // Any record buries them. Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
+    #[test]
+    fn mark_prunes_rows_whose_requirement_left_the_graph() {
+        let out = std::env::temp_dir().join(format!("jazyk-prune-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), "// req:shop-1\nfn t() {}").ok();
+        // A leftover row for a requirement the graph no longer holds.
+        let mut ledger = Ledger::load(&out);
+        let gone: ReqRow = serde_json::from_value(serde_json::json!({
+            "entity": "ent:cart",
+            "test": {"kind": "programmatic", "label": "unit", "artifact": "tests/gone.rs",
+                     "name": "req_gone_1_x", "run": "cargo test req_gone_1_x"},
+            "hashes": {"requirement": "x", "test": "x", "files": "x"},
+            "verdict": "fail",
+        }))
+        .unwrap();
+        ledger.requirements.insert("req:gone-1".into(), gone);
+        ledger.save(&out);
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        let manifest = serde_json::json!({
+            "files": ["tests/cart.rs"],
+            "tests": [{
+                "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+                "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
+            }],
+        });
+        let r = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert_eq!(r["prunedRows"], 1);
+        let ledger = Ledger::load(&out);
+        assert!(!ledger.requirements.contains_key("req:gone-1"));
+        assert!(ledger.requirements.contains_key("req:shop-1"));
     }
 }
 

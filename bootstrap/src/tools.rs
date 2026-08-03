@@ -68,6 +68,14 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {
+            name: "diagnostics",
+            description: "List diagnostics: id, rule, severity, lifecycle, triage, subjects, message. Open ones by default; lifecycle takes open, resolved, or all; rule and subject narrow further.",
+            parameters: obj(
+                json!({"lifecycle": {"type": "string", "enum": ["open", "resolved", "all"]}, "rule": {"type": "string"}, "subject": {"type": "string"}}),
+                &[],
+            ),
+        },
+        ToolDef {
             name: "upsert_entity",
             description: "Create a domain-concept entity, or update it if the name already exists. Entities are concepts, never file paths, CLI flags, or markdown terms. mention cites the section and the verbatim quote that talks about it. Omit scope unless the documents explicitly name a bounded context; an invented scope splits one concept into two.",
             parameters: obj(
@@ -275,7 +283,7 @@ pub fn catalog() -> Vec<ToolDef> {
     ]
 }
 
-pub const READ_TOOLS: [&str; 5] = ["context", "expand", "search", "read_section", "get_entity"];
+pub const READ_TOOLS: [&str; 6] = ["context", "expand", "search", "read_section", "get_entity", "diagnostics"];
 pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
 pub const VERIFY_TOOLS: [&str; 4] = ["verification_tasks", "begin_verification", "run_tests", "record_verdict"];
 // In-process only: a generation turn's file and command tools, never served over MCP.
@@ -294,12 +302,12 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
         ],
         "review-requirement" => vec![
-            "context", "expand", "search", "get_entity", "read_section", "update_requirement", "delete_requirement",
-            "report_diagnostic", "resolve_diagnostic", "done",
+            "context", "expand", "search", "get_entity", "read_section", "diagnostics", "update_requirement",
+            "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
         ],
         "review-entity" => vec![
-            "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "update_requirement",
-            "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
+            "context", "expand", "search", "get_entity", "diagnostics", "update_entity", "merge_entities",
+            "update_requirement", "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
         ],
         // The in-process generation worker: the read tools, the file and command
         // tools, and the generation lifecycle. Mirrors docs/compiler/turns.md#generation-turns.
@@ -323,9 +331,9 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         }
         // The compile serving's write surface; the lifecycle tools live in the server.
         "mcp-compile" => vec![
-            "context", "expand", "search", "read_section", "get_entity", "upsert_entity", "update_entity",
-            "delete_entity", "merge_entities", "upsert_requirement", "update_requirement", "delete_requirement",
-            "set_coverage", "report_diagnostic", "resolve_diagnostic",
+            "context", "expand", "search", "read_section", "get_entity", "diagnostics", "upsert_entity",
+            "update_entity", "delete_entity", "merge_entities", "upsert_requirement", "update_requirement",
+            "delete_requirement", "set_coverage", "report_diagnostic", "resolve_diagnostic",
         ],
         "mcp-write" => catalog()
             .iter()
@@ -874,6 +882,21 @@ impl ToolSession {
     }
 
     pub fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        // Reads see the turn's snapshot, not its staged mutations. Saying so on every
+        // read while writes are staged stops the caller from concluding a staged
+        // delete or update was lost.
+        if READ_TOOLS.contains(&name) && !self.staged.is_empty() {
+            return self.dispatch_inner(name, args).map(|mut v| {
+                if v.is_object() {
+                    v["note"] = json!("reads show the graph as the turn began; this turn's staged mutations apply at commit");
+                }
+                v
+            });
+        }
+        self.dispatch_inner(name, args)
+    }
+
+    fn dispatch_inner(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
             "context" => {
                 let target = Self::str_arg(args, "target")?;
@@ -981,6 +1004,27 @@ impl ToolSession {
                     "scope": e.scope, "mentions": e.mentions.iter().map(|m| json!({"doc": m.doc, "section": m.section, "quote": m.quote})).collect::<Vec<_>>(),
                     "requirements": reqs, "relationships": rels
                 }))
+            }
+            "diagnostics" => {
+                let lifecycle = Self::opt_str(args, "lifecycle").unwrap_or_else(|| "open".to_string());
+                let rule = Self::opt_str(args, "rule");
+                let subject = Self::opt_str(args, "subject");
+                let list: Vec<Value> = self
+                    .snapshot
+                    .graph
+                    .diagnostics
+                    .iter()
+                    .filter(|(_, d)| lifecycle == "all" || d.lifecycle == lifecycle)
+                    .filter(|(_, d)| rule.as_deref().is_none_or(|r| d.rule == r))
+                    .filter(|(_, d)| subject.as_deref().is_none_or(|s| d.subjects.iter().any(|x| x == s)))
+                    .map(|(id, d)| {
+                        json!({
+                            "id": id, "rule": d.rule, "severity": d.severity, "lifecycle": d.lifecycle,
+                            "triage": d.triage, "subjects": d.subjects, "message": d.message,
+                        })
+                    })
+                    .collect();
+                Ok(json!({"diagnostics": list, "count": list.len()}))
             }
             "upsert_entity" => {
                 let name_arg = Self::str_arg(args, "name")?;

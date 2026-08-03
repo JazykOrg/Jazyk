@@ -24,7 +24,7 @@ Expect:
 
 ### Reverse order
 
-Test the follwoing input:
+Test the follwoing input with the reverse flag on:
 
 ```
 321

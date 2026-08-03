@@ -499,6 +499,25 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
 }
 
 pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    // The control plane's build contract: one coarse lease for the run, refused while
+    // an agent is mid-task, and the run itself is an approval in manual mode.
+    // Mirrors docs/compiler/reconciler.md#the-control-plane.
+    let _build = match crate::control::begin_internal_build(proj, out, "compile") {
+        Ok(g) => g,
+        Err(e) => {
+            trace.line("reconcile", &format!("build refused: {}", e));
+            return BuildReport {
+                verdict: "incomplete".into(),
+                dirty_docs: 0,
+                turns: 0,
+                applied: 0,
+                parked: 0,
+                errors: 1,
+                warnings: 0,
+                coverage_pct: 0,
+            };
+        }
+    };
     WAVE.store(0, std::sync::atomic::Ordering::Relaxed);
     let store = Mutex::new(Store::load(out));
     let gs = crate::gen::GenSettings::resolve(proj);
@@ -573,6 +592,12 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         let gc_actions = s.gc();
         if !gc_actions.is_empty() {
             trace.line("reconcile", &format!("gc: {}", gc_actions.join("; ")));
+        }
+        // Settle stranded diagnostics now, so this build's pair wave picks up the
+        // re-enqueued survivors instead of leaving them to the next one.
+        let settled = s.settle_dangling_diags();
+        if !settled.is_empty() {
+            trace.line("reconcile", &format!("settle: {}", settled.join("; ")));
         }
     }
 
@@ -661,8 +686,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         let s = store.lock().unwrap();
         pair_targets
             .iter()
-            .filter(|rid| s.graph.requirements.contains_key(*rid))
-            .filter(|rid| !s.pair_review_neighbors(rid).is_empty())
+            .filter(|rid| s.pair_review_due(rid))
             // A pair scheduled from both ends runs once: when two targets are each
             // other's only neighbor, the smaller id carries the task and completion
             // mirrors to the other.
@@ -794,6 +818,13 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
 // anywhere, so whichever consumer empties the task queue runs it, the internal loop
 // and the MCP serving alike. Mirrors docs/compiler/reconciler.md#the-task-queue.
 pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &Trace) -> BuildReport {
+    // Level-triggered deletion propagation: settle open judged diagnostics whose
+    // subjects left the graph, re-enqueueing survivors for review
+    // (docs/compiler/reconciler.md#waves).
+    let settled = s.settle_dangling_diags();
+    if !settled.is_empty() {
+        trace.line("reconcile", &format!("settle: {}", settled.join("; ")));
+    }
     let findings = checks(s, proj, parked_all);
     s.reconcile_check_diags(findings);
 
@@ -815,15 +846,15 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
         })
         .count();
     // A pending review whose target no longer exists is complete by definition, and so
-    // is a pair review with no computed neighbors: a changed requirement with none
-    // schedules nothing (docs/compiler/reconciler.md#waves).
+    // is a pair review with nothing tying it to a judgment: no computed neighbors and
+    // no open judged diagnostic naming it (docs/compiler/reconciler.md#waves).
     let (exists_e, exists_r): (Vec<String>, Vec<String>) = (
         s.status.pending.entities.iter().filter(|e| s.graph.entities.contains_key(*e)).cloned().collect(),
         s.status
             .pending
             .requirements
             .iter()
-            .filter(|r| s.graph.requirements.contains_key(*r) && !s.pair_review_neighbors(r).is_empty())
+            .filter(|r| s.pair_review_due(r))
             .cloned()
             .collect(),
     );
@@ -840,6 +871,9 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
         trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
     }
     s.status.spent.tokens = crate::llm::tokens_spent();
+    // The verdict never travels alone: open diagnostic counts ride beside it
+    // (docs/compiler/reconciler.md#convergence).
+    s.status.diagnostics = s.open_diag_counts();
     s.save_status();
 
     let (mut errors, mut warnings) = (0usize, 0usize);

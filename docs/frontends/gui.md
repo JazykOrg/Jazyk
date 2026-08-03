@@ -216,7 +216,10 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
 - `docs.changed`: matched documents changed on disk, with whether the graph is now
   stale.
 - `pending.changed`: the generation or verification worklists changed size.
-- `watch.state`: the watch mode or the generation mode changed. Carries both.
+- `watch.state`: the workflow modes changed (compile or generation). Carries both.
+- `control.changed`: the [control plane](../compiler/reconciler.md#the-control-plane)
+  moved: a release landed, a worker registered or dropped, a lease was taken or
+  freed. Carries the workers snapshot the workers strip renders.
 
 External activity surfaces the same way: a `jazyk compile` run from a terminal, or an
 [MCP](./mcp.md) agent committing through write tools, moves the lock and the counter,
@@ -417,40 +420,54 @@ API: `GET /api/benchmarks` (the merged table), `GET /api/benchmarks/models?baseU
 `{kind: benchmark, baseUrl?, model?}` (the shared [jobs](#jobs) surface; returns the
 job id).
 
-## Watch
+## Workflow modes
 
 The GUI always watches the documents (that is what `docs.changed` reports). What a
-change triggers is the watch mode: `GET /api/watch` and `PUT /api/watch` with
-`{mode}`, one of:
+change triggers is the workflow mode, and the mode is not the GUI's private state: it
+lives in the [control plane](../compiler/reconciler.md#the-control-plane)
+(`control.yaml` in the out directory), where the internal loop, `jazyk monitor`, and
+every agent over MCP read the same policy. A mode set in the GUI survives a restart
+and binds the agents too; before the control plane, "manual" was a GUI-process
+variable that no other worker could see, and a watching agent compiled on save
+regardless.
 
-- `off`: changes update the document badges and nothing else.
-- `queue` (the default): changes queue visibly. The control line counts the documents
-  that drifted from the graph and lists them on demand; compiling stays an explicit
-  click. The queue is derived, not stored: a document is queued while its on-disk
-  hash differs from the reconciled hash, so a commit drains it and an external build
-  drains it too.
-- `watch`: changes compile automatically, the same loop as
-  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, and
-  backoff retries for `incomplete` builds. Changes during a running build queue one
-  follow-up compile.
+`GET /api/watch` and `PUT /api/watch` carry `{compile, gen}`, each `auto` or
+`manual`:
 
-`--watch` starts in `watch` mode. Compiling spends LLM budget, so the automatic loop
-is opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: commits
-serialize on the store lock, and the second build finds nothing dirty.
+- `compile: manual` (the default): changes queue visibly and carry `gated: true`.
+  The control line counts the documents that drifted from the graph; compiling is an
+  explicit click. The click records a
+  [release](../compiler/reconciler.md#modes-and-releases), so an attached agent's
+  watcher fires from the same click.
+- `compile: auto`: changes compile automatically, the loop of
+  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate,
+  backoff retries for `incomplete` builds.
+- `gen: manual` (the default): generation runs on click, which likewise records a
+  release.
+- `gen: auto`: a finished compile with a non-empty
+  [generation worklist](../consumers/gen.md#incremental-regeneration) queues a `gen`
+  job behind it.
 
-### Generation
+`--watch` starts with `compile: auto`. Automatic modes spend LLM budget, so both are
+opt-in. With both automatic, a document change compiles and regenerates end to end;
+the chain never loops, because generation does not touch the documents. Running
+`jazyk watch` in a terminal beside the GUI is safe: commits serialize on the store
+lock, and the second build finds nothing dirty.
 
-The same endpoint carries the generation mode: `{gen}`, one of:
+### Workers
 
-- `manual` (the default): generation runs on click.
-- `auto`: when a compile job finishes and the
-  [generation worklist](../consumers/gen.md#incremental-regeneration) is non-empty,
-  a `gen` job for the pending entities queues itself behind it.
+`GET /api/workers` reports the control plane: the modes, the registered
+[workers](../compiler/reconciler.md#workers-and-leases) with their heartbeats and
+held tasks, the live leases, and the gated task counts. The workers strip renders
+it: who is attached ("claude-code agent, awaiting release", "working on reconcile
+docs/orders.md"), and a release button per stage when gated work exists.
 
-Auto generation spends LLM budget, so it is opt-in, like `watch`. With both automatic
-(`watch` + `auto`), a document change compiles and regenerates code end to end. The
-chain never loops: generation does not touch the documents, so it triggers no
-compile; only compile jobs trigger auto generation.
+Compile and generate clicks dispatch by the `worker` preference
+([dispatch](../compiler/reconciler.md#dispatch)): with an agent registered and
+preferred, the click records the release and the agent does the work, its progress
+streaming into the [activity view](#activity) from the MCP transcript; otherwise the
+GUI runs its own job as before. `POST /api/release` with `{stage}` records a release
+without running anything, the button the workers strip uses.
 
 ## Editor
 

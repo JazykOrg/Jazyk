@@ -183,38 +183,98 @@ pub async fn triage(
     }
 }
 
-pub async fn watch_get(State(st): State<SharedState>) -> Json<Value> {
-    Json(json!({
-        "mode": st.watch_mode.lock().unwrap().clone(),
-        "gen": st.gen_mode.lock().unwrap().clone(),
-    }))
+// The workflow modes as the wire reports them. `mode` keeps the legacy select
+// values (`queue` = manual, `watch` = auto) beside the control-plane names.
+fn watch_state(st: &SharedState) -> Value {
+    let c = st.control();
+    json!({
+        "mode": if c.compile == "auto" { "watch" } else { "queue" },
+        "compile": c.compile,
+        "gen": c.generate,
+        "worker": c.worker,
+    })
 }
 
-// The watch mode and the generation mode share the endpoint; either field alone
-// leaves the other untouched. Mirrors docs/frontends/gui.md#watch and #generation.
+pub async fn watch_get(State(st): State<SharedState>) -> Json<Value> {
+    Json(watch_state(&st))
+}
+
+// The workflow modes share the endpoint; either field alone leaves the other
+// untouched. They persist in control.yaml, where every worker reads them.
+// Mirrors docs/frontends/gui.md#workflow-modes.
 pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
-    if let Some(mode) = body["mode"].as_str() {
-        if !["off", "queue", "watch"].contains(&mode) {
-            return err(StatusCode::BAD_REQUEST, "mode must be off, queue, or watch");
+    let mut c = st.control();
+    // `compile` takes the control-plane names; `mode` keeps the legacy ones.
+    if let Some(m) = body["compile"].as_str().or(match body["mode"].as_str() {
+        Some("watch") => Some("auto"),
+        Some("queue") | Some("off") => Some("manual"),
+        Some(_) => return err(StatusCode::BAD_REQUEST, "mode must be queue or watch (compile: manual or auto)"),
+        None => None,
+    }) {
+        if !["manual", "auto"].contains(&m) {
+            return err(StatusCode::BAD_REQUEST, "compile must be manual or auto");
         }
-        *st.watch_mode.lock().unwrap() = mode.to_string();
-    } else if !body["mode"].is_null() {
-        return err(StatusCode::BAD_REQUEST, "mode must be a string");
+        c.compile = m.to_string();
     }
     if let Some(gen) = body["gen"].as_str() {
         if !["manual", "auto"].contains(&gen) {
             return err(StatusCode::BAD_REQUEST, "gen must be manual or auto");
         }
-        *st.gen_mode.lock().unwrap() = gen.to_string();
+        c.generate = gen.to_string();
     } else if !body["gen"].is_null() {
         return err(StatusCode::BAD_REQUEST, "gen must be a string");
     }
-    let state = json!({
-        "mode": st.watch_mode.lock().unwrap().clone(),
-        "gen": st.gen_mode.lock().unwrap().clone(),
-    });
+    if let Some(w) = body["worker"].as_str() {
+        if !["internal", "agent", "any"].contains(&w) {
+            return err(StatusCode::BAD_REQUEST, "worker must be internal, agent, or any");
+        }
+        c.worker = w.to_string();
+    }
+    c.save(&st.out);
+    let state = watch_state(&st);
     st.events.emit("watch.state", state.clone());
     Json(state).into_response()
+}
+
+// The control plane snapshot the workers strip renders: modes, registered workers,
+// live leases, gated counts. Mirrors docs/frontends/gui.md#workers.
+pub fn workers_snapshot(st: &SharedState) -> Value {
+    let c = st.control();
+    let q = crate::queue::compute(&st.proj(), &st.out);
+    json!({
+        "workflow": {"compile": c.compile, "generate": c.generate, "worker": c.worker},
+        "workers": crate::control::workers(&st.out),
+        "leases": crate::control::leases(&st.out).values().collect::<Vec<_>>(),
+        "gated": {
+            "compile": crate::queue::gated(&q.compile),
+            "generate": crate::queue::gated(&q.generate),
+        },
+        "actionable": {
+            "compile": crate::queue::actionable(&q.compile),
+            "generate": crate::queue::actionable(&q.generate),
+            "verify": crate::queue::actionable(&q.verify),
+        },
+    })
+}
+
+pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
+    Json(workers_snapshot(&st))
+}
+
+// Record a release without running anything: the workers strip's button. The wake
+// happens through the control file every watcher watches.
+// Mirrors docs/frontends/gui.md#workers.
+pub async fn release(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    let stage = body["stage"].as_str();
+    if let Some(s) = stage {
+        if s != "compile" && s != "generate" {
+            return err(StatusCode::BAD_REQUEST, "stage must be compile or generate (or absent for both)");
+        }
+    }
+    crate::control::release(&st.proj(), &st.out, stage);
+    let snap = workers_snapshot(&st);
+    st.events.emit("control.changed", snap.clone());
+    Json(snap).into_response()
 }
 
 pub async fn graph(State(st): State<SharedState>) -> Response {

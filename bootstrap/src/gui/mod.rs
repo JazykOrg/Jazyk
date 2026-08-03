@@ -13,14 +13,11 @@ mod state;
 
 use state::SharedState;
 
-fn watch_mode(st: &SharedState) -> String {
-    st.watch_mode.lock().unwrap().clone()
-}
-
-// Watch-mode hook: in `watch` mode a document change enqueues a build. The other
-// modes only surface the change (docs.changed already fired).
+// Auto-compile hook: with `compile: auto` in the control plane a document change
+// enqueues a build. Manual only surfaces the change (docs.changed already fired).
+// Mirrors docs/frontends/gui.md#workflow-modes.
 fn jobs_hook_on_docs_changed(st: &SharedState) {
-    if watch_mode(st) == "watch" {
+    if st.control().compile == "auto" {
         st.jobs.submit(st, jobs::JobKind::Compile);
     }
 }
@@ -34,14 +31,14 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     }
     // Auto generation: a finished compile with a non-empty worklist queues a gen job
     // behind it. Only compile jobs trigger it, so the chain never loops.
-    // Mirrors docs/frontends/gui.md#generation.
-    if st.gen_mode.lock().unwrap().as_str() == "auto" {
+    // Mirrors docs/frontends/gui.md#workflow-modes.
+    if st.control().generate == "auto" {
         let store = crate::store::Store::load(&st.out);
         if !crate::gen::pending(&store, &st.gs()).is_empty() {
             st.jobs.submit(st, jobs::JobKind::Gen { entities: vec![], force: false });
         }
     }
-    if watch_mode(st) != "watch" {
+    if st.control().compile != "auto" {
         return;
     }
     let verdict = crate::store::Store::load(&st.out).status.verdict.clone();
@@ -54,7 +51,7 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     let st = st.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
-        if watch_mode(&st) == "watch" && st.jobs.running_job().is_none() {
+        if st.control().compile == "auto" && st.jobs.running_job().is_none() {
             st.jobs.submit(&st, jobs::JobKind::Compile);
         }
     });
@@ -130,10 +127,14 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         events: events::EventHub::new(),
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
         jobs: jobs::JobManager::new(),
-        watch_mode: std::sync::Mutex::new(if gopts.watch { "watch" } else { "queue" }.to_string()),
-        gen_mode: std::sync::Mutex::new("manual".to_string()),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
+    // --watch is a mode change, recorded where every worker reads it.
+    if gopts.watch {
+        let mut c = st.control();
+        c.compile = "auto".into();
+        c.save(&st.out);
+    }
     jobs::sweep_traces(&st.out);
     let worker = jobs::spawn_worker(st.clone());
 

@@ -1,6 +1,7 @@
 mod benchmark;
 mod cli;
 mod context;
+mod control;
 mod docsgen;
 mod feedback;
 mod gen;
@@ -64,7 +65,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
-    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n");
+    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n  jazyk release [compile|generate]  approve pending changes in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
     s.push_str("\noptions: --llm-base-url URL  --model M  --api-key K  --out DIR\n");
@@ -358,6 +359,7 @@ fn main() {
             }
         },
         "monitor" => cli::run_monitor(&positional, &opts),
+        "release" => cli::run_release(&positional, &opts),
         "gen" => cli::run_gen(&opts, &positional),
         "test" => cli::run_test(&opts, &positional),
         "codegen" | "testgen" => {

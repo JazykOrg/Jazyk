@@ -64,7 +64,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
-    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json]         print ready tasks as the docs change\n");
+    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
     s.push_str("\noptions: --llm-base-url URL  --model M  --api-key K  --out DIR\n");
@@ -288,6 +288,7 @@ fn main() {
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
             "--json" => opts.json = true,
+            "--once" => opts.once = true,
             "--force" => opts.force = true,
             "--list" => opts.list = true,
             "--audit" => opts.audit = true,

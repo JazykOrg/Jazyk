@@ -29,6 +29,7 @@ pub struct Options {
     pub no_token: bool,
     pub mcp: Option<String>,
     pub json: bool,
+    pub once: bool,
 }
 
 impl Default for Options {
@@ -54,6 +55,7 @@ impl Default for Options {
             no_token: false,
             mcp: None,
             json: false,
+            once: false,
         }
     }
 }
@@ -397,8 +399,17 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         }
         s
     };
-    let notice = |last: &mut String| {
+    // Prints the queue notice and reports whether ready work exists. Under --once the
+    // monitor stays silent until it does: one notice, then exit 0.
+    let once = opts.once;
+    let notice = |last: &mut String| -> bool {
         let q = crate::queue::compute(&proj, &out);
+        let has_work = q.compile.iter().any(|t| t["ready"] == true)
+            || !q.generate.is_empty()
+            || !q.verify.is_empty();
+        if once && !has_work {
+            return false;
+        }
         let rendered = if json_mode {
             serde_json::json!({
                 "compilation": q.compile,
@@ -453,9 +464,12 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
             std::io::stdout().flush().ok();
             *last = rendered;
         }
+        has_work
     };
     let mut last_notice = String::new();
-    notice(&mut last_notice);
+    if notice(&mut last_notice) && once {
+        return 0;
+    }
     use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -472,7 +486,9 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                 let fp = fingerprint(&proj);
                 if fp != last_fp {
                     last_fp = fp;
-                    notice(&mut last_notice);
+                    if notice(&mut last_notice) && once {
+                        return 0;
+                    }
                 }
             }
         }
@@ -492,7 +508,9 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         let fp = fingerprint(&proj);
         if fp != last_fp {
             last_fp = fp;
-            notice(&mut last_notice);
+            if notice(&mut last_notice) && once {
+                return 0;
+            }
         }
     }
     0

@@ -79,11 +79,12 @@ the loop that owns resuming it.
 
 ### jazyk monitor
 
-`jazyk monitor [--json]` watches the same surfaces `watch` does but performs nothing:
-on every state change it prints the ready work from
+`jazyk monitor [--json] [--once]` watches the same surfaces `watch` does but performs
+nothing: on every state change it prints the ready work from
 [the task queue](../compiler/reconciler.md#the-task-queue) and which MCP tool begins
 it, then goes quiet until the next change. One block per notice; `--json` prints one
-JSON object per line instead. E.g.:
+JSON object per line instead. Output is flushed per notice, so a pipe reads events as
+they happen. E.g.:
 
 ```
 jazyk: 1 compilation task ready
@@ -91,10 +92,18 @@ jazyk: 1 compilation task ready
   → call compilation_tasks on the jazyk MCP server to begin
 ```
 
-This is the external agent's trigger: the agent runs `jazyk monitor` as a background
-process and acts on each notice through [MCP](./mcp.md#the-work-loop). `watch` is the
-same trigger wired to the internal loop instead; the notice an agent reads is the work
-item the internal loop would run.
+This is the external agent's trigger, in two shapes:
+
+- Stream: the agent runs `jazyk monitor` under its own process monitor (any harness
+  facility that turns a background command's output lines into events) and acts on
+  each notice through [MCP](./mcp.md#the-work-loop). The process runs until killed.
+- One shot: `--once` blocks silently until the queue holds ready work, prints that
+  one notice, and exits 0. Built for "wake me when there is something to do": a
+  background shell awaiting the exit, or a script chaining
+  `jazyk monitor --once && <act>`.
+
+`watch` is the same trigger wired to the internal loop instead; the notice an agent
+reads is the work item the internal loop would run.
 
 ### jazyk status
 

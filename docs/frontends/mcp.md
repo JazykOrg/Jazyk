@@ -55,14 +55,17 @@ The agent-facing loop, common to all three toolsets:
 
 To watch for new work instead of polling, either run
 [`jazyk monitor`](./cli.md#jazyk-monitor) as a background process and act on each
-notice it prints, or call `await_changes`:
+notice it prints (`--once` for a single blocking wake-up), or call `await_changes`:
 
 - `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
   generation counter moves, a documentation file changes on disk, a manifest or test
   file in the deliverable changes, or the ledger changes, or at the timeout (default
-  300 seconds). The reply carries the changed documents, whether the graph is stale
-  (documents changed but not yet reconciled), the pending generation work, and the
-  pending verification work grouped by reason.
+  300 seconds). `timeout_seconds: 0` waits indefinitely. The default returns because
+  most MCP clients bound a tool call with their own timeout and would report an
+  indefinite block as an error; a client configured without that bound passes 0 and
+  holds the call open. The reply carries the changed documents, whether the graph is
+  stale (documents changed but not yet reconciled), the pending generation work, and
+  the pending verification work grouped by reason.
 
 ## Compilation over MCP
 

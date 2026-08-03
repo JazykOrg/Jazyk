@@ -132,9 +132,11 @@ impl McpServer {
 
     // The server's own long poll: returns when the graph's generation counter moves, a
     // documentation file changes on disk, or the ledger or a watched deliverable file
-    // changes, or at the timeout. Mirrors docs/frontends/mcp.md#the-work-loop.
+    // changes, or at the timeout. timeout_seconds 0 waits indefinitely; the default
+    // returns because most MCP clients bound a tool call with their own timeout.
+    // Mirrors docs/frontends/mcp.md#the-work-loop.
     fn await_changes(&self, params: &Value) -> Value {
-        let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300).clamp(1, 3600);
+        let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300);
         let gs = crate::gen::GenSettings::resolve(&self.project);
         let fingerprint = |path: &std::path::Path| -> String {
             std::fs::metadata(path)
@@ -159,10 +161,11 @@ impl McpServer {
         let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> =
             watched(&gs).into_iter().map(|f| (f.clone(), fingerprint(&f))).collect();
         let start_gen = Store::load(&self.out).status.generation;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+        let deadline = (timeout > 0)
+            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600)));
         let mut changed_docs: Vec<String> = Vec::new();
         let mut changed = false;
-        while std::time::Instant::now() < deadline {
+        while deadline.is_none_or(|d| std::time::Instant::now() < d) {
             std::thread::sleep(std::time::Duration::from_secs(2));
             let store = Store::load(&self.out);
             if store.status.generation != start_gen {
@@ -785,8 +788,8 @@ impl McpServer {
                 }
                 tools.push(json!({
                     "name": "await_changes",
-                    "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s). Carries the task counts per queue and which tool lists the work.",
-                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}, "additionalProperties": false}
+                    "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work.",
+                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
                 }));
                 Ok(json!({"tools": tools}))
             }

@@ -535,16 +535,16 @@ impl McpServer {
                     return json!({"error": {"rule": "fixture", "message": e}});
                 }
                 let r = &store.graph.requirements[&case.target];
+                reply["instructions"] = json!("Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.");
                 reply["package"] = json!({
                     "statement": r.ears,
                     "quote": r.source.quote,
                     "files": case.deliverable.keys().map(|f| gs.deliverable.join(f).to_string_lossy().to_string()).collect::<Vec<_>>(),
-                    "instructions": "Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.",
                 });
             }
             _ => {
                 let (instructions, pack) =
-                    crate::turn::task_prompt(&store, &item, &self.project.limits, &self.project.linting, &gs);
+                    crate::turn::task_prompt(&store, &item, &self.project.limits, &case.lint, &gs);
                 reply["instructions"] = json!(instructions);
                 reply["package"] = json!(pack);
                 if case.task_type == "generate-entity" {
@@ -709,7 +709,13 @@ impl McpServer {
         });
         crate::benchmark::append_history(&model, "agent", &[("agent".to_string(), report.clone())]);
         b.scored.clear();
-        json!({"model": model, "codec": "agent", "report": report, "recorded": "appended to ~/.jazyk/benchmarks/history.yaml"})
+        json!({
+            "model": model,
+            "codec": "agent",
+            "report": report,
+            "verdictsLegend": "compilation verdicts order not-capable < extraction < review; review is the highest (extraction plus review judgment). generation and verification are capable or not-capable. unmeasured means the tier was never attempted.",
+            "recorded": "appended to ~/.jazyk/benchmarks/history.yaml",
+        })
     }
 
     fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {

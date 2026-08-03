@@ -86,11 +86,14 @@ the work with the same write tools a compilation turn holds:
 - `benchmark_cases()`: the case list with each case's tier and state (pending, scored,
   open), and the run's progress.
 - `begin_case({case?})`: claim the named case or the first pending one. The reply is
-  the same instructions and work package an in-process turn gets. A generation case
-  names the sandbox deliverable directory by absolute path: the agent writes there
-  with its own file tools, records with `record_generation`, and proves the work with
-  `run_tests`, all against the sandbox. A verification case carries the criteria and
-  the implementing files; the agent judges and passes its verdict to `finish_case`.
+  the same instructions and work package an in-process turn gets, built from the
+  case fixture (including the case's own lint rules, not the serving project's).
+  Every reply has the same shape: top-level `instructions` plus a `package`. A
+  generation case names the sandbox deliverable directory by absolute path: the agent
+  writes there with its own file tools, records with `record_generation`, and proves
+  the work with `run_tests`, all against the sandbox. A verification case's package
+  carries the statement, the quote, and the implementing file paths; the agent judges
+  and passes its verdict to `finish_case`.
 - The write tools stage into the open case's sandbox exactly as
   [compilation over MCP](../frontends/mcp.md#compilation-over-mcp) stages into the
   project, gated by the case's task type.
@@ -100,7 +103,10 @@ the work with the same write tools a compilation turn holds:
 - `benchmark_report({model})`: after the last case, compute tier scores and workflow
   verdicts, append the run to the [machine-wide history](#machine-wide-history), and
   return the report. `model` names the agent honestly (e.g. `claude-sonnet-4.6
-  (agent)`); the client name from `initialize` is the default.
+  (agent)`); the client name from `initialize` is the default. The reply carries a
+  legend for the verdict scale (`not-capable < extraction < review` for compilation,
+  `review` being the highest), so a driver reads the ordering without consulting
+  these docs.
 
 Grading is identical to an endpoint run with two substitutions, both recorded on the
 entry: the codec is `agent` (a third column beside `native` and `text`), and rounds

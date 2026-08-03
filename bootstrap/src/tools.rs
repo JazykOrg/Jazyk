@@ -107,7 +107,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key: a match returns the existing id with updated true and refreshes it in place. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type.",
+            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key: a match returns the existing id with updated true and refreshes it in place. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type, one of: generalization, realization, composition, aggregation, association, dependency, reference.",
             parameters: obj(
                 json!({
                     "ears": {"type": "string"},
@@ -194,7 +194,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_generation",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. Next: run_tests to verify.",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. Next: run_tests to verify.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},

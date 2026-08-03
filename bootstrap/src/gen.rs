@@ -230,7 +230,7 @@ fn dot() -> String {
     ".".into()
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct RowHashes {
     pub requirement: String,
     pub test: String,
@@ -337,7 +337,19 @@ impl Ledger {
 // programmatic artifacts are part of the deliverable.
 pub fn artifact_path(out: &Path, gs: &GenSettings, test: &TestRef) -> PathBuf {
     if test.kind == "llm" {
-        out.join("gen").join(&test.artifact)
+        // Criteria live in the out directory when the built-in worker wrote them; an
+        // external worker writes them where it writes everything else, under the
+        // deliverable. The recorded path resolves against both, out first, so neither
+        // home reads as a gone artifact.
+        let in_out = out.join("gen").join(&test.artifact);
+        if in_out.exists() {
+            return in_out;
+        }
+        let in_deliverable = gs.deliverable.join(&test.artifact);
+        if in_deliverable.exists() {
+            return in_deliverable;
+        }
+        in_out
     } else {
         gs.deliverable.join(&test.artifact)
     }
@@ -485,7 +497,7 @@ pub fn decide_medium(store: &Store, llm: &crate::llm::Llm) -> Result<Medium, Str
 pub fn instructions() -> String {
     format!(
         "Generate the entity's part of the deliverable AND the tests for its requirements.\n\
-         - Derive the medium from the requirements and the context: what the documents say the deliverable is decides what you write. You choose the layout, the file names, and the build or support files that make your recorded commands executable; every file you write must appear in the manifest you pass to gen_mark.\n\
+         - Derive the medium from the requirements and the context: what the documents say the deliverable is decides what you write. You choose the layout, the file names, and the build or support files that make your recorded commands executable; every file you write must appear in the manifest you record when the task is done.\n\
          - The deliverable is the artifact itself, never a description of it. A requirement naming a format, a medium, or a piece of content is an obligation to PRODUCE that thing. Writing a document that says the artifact will be in some format, or a manifest listing what the artifact would contain, satisfies nothing. When the medium is text the requirements describe directly (source code, a manuscript, a configuration), your files are the deliverable. When the medium must be produced by a tool (a slide deck, a PDF, a rendered site, a compiled binary, an image), write the source that produces it and return a `build` in the manifest: {{run, cwd, produces}} where `run` executes from the deliverable directory and `produces` lists the artifact paths it creates. The harness runs the build before any test. One build per deliverable: if the package already carries a `build`, reuse it and extend its source instead of recording a second one.\n\
          - Content requirements are satisfied by content. A requirement saying the artifact shows a title, states a definition, or uses a color is met only when the artifact carries that exact title, that definition, that color value. Never write placeholder filler (`[Project Goal]`, `Lorem ipsum`, `TODO`) in place of what a requirement states. If a requirement does not say what the content is, implement exactly what it does say and nothing more.\n\
          - One toolchain per deliverable: the run commands already recorded (the package lists them) establish the language, the test runner, and the command style; reuse them exactly. Never introduce a second test runner.\n\
@@ -858,6 +870,14 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                 .first()
                 .map(|e| store.resolve_id(e).to_string())
                 .unwrap_or_else(|| id.to_string());
+            // A re-record that changes nothing keeps its verdict: the hashes say the
+            // requirement, the test, and the files are the very state the last run
+            // judged, and discarding that judgment would punish an idempotent call.
+            let prior = ledger.requirements.get(&rid).filter(|row| row.hashes == hashes);
+            let (verdict, last_run, exit_code, evidence) = match prior {
+                Some(row) => (row.verdict.clone(), row.last_run.clone(), row.exit_code, row.evidence.clone()),
+                None => ("none".into(), None, None, None),
+            };
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
@@ -866,10 +886,10 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                     sites: sites_by_rid.remove(&rid).unwrap_or_default(),
                     test,
                     hashes,
-                    verdict: "none".into(),
-                    last_run: None,
-                    exit_code: None,
-                    evidence: None,
+                    verdict,
+                    last_run,
+                    exit_code,
+                    evidence,
                 },
             );
             seeded += 1;

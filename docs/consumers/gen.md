@@ -439,12 +439,19 @@ passes, the requirement is `verified`. Nothing in this loop is remembered by a h
 
 ## Criteria files for llm tests
 
-For `kind: llm` rows, generation writes `gen/criteria/req-<slug>.md` in the out
-directory (metadata, not deliverable): front matter with the requirement id and the full
-statement hash; body with the statement, the verbatim quote, the manifest file paths,
-the steps to confirm, and the verdict contract (`PASS` or `FAIL` plus reasoning). It is
-the packaged setup for any harness: context, the location of the implemented product,
-and what to confirm. Editing it flips `stale-test` like any test artifact.
+For `kind: llm` rows, generation writes a criteria file: front matter with the
+requirement id and the full statement hash; body with the statement, the verbatim
+quote, the manifest file paths, the steps to confirm, and the verdict contract (`PASS`
+or `FAIL` plus reasoning). It is the packaged setup for any harness: context, the
+location of the implemented product, and what to confirm. Editing it flips
+`stale-test` like any test artifact.
+
+The built-in worker writes it to `gen/criteria/req-<slug>.md` in the out directory
+(metadata, not deliverable). An external worker has no reason to know the out
+directory and writes it where it writes everything else, under the deliverable. The
+recorded artifact path resolves against both homes, the out directory first, so
+neither reads as a gone artifact. Recording an identical manifest keeps existing
+verdicts; only changed hashes reset a row.
 
 ## Runners
 

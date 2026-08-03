@@ -287,11 +287,17 @@ impl McpServer {
         let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
         session.caller = self.caller(&item.task, &item.target);
+        let write_tools: Vec<&str> = toolset(&item.task)
+            .into_iter()
+            .filter(|t| !crate::tools::READ_TOOLS.contains(t) && *t != "done" && *t != crate::tools::FEEDBACK_TOOL)
+            .collect();
         let reply = json!({
             "task": {"kind": item.task, "target": item.target,
                      "dirtySections": item.dirty_sections, "staleAnchors": item.stale_anchors},
             "instructions": instructions,
             "package": pack,
+            "writeTools": write_tools,
+            "note": "where the instructions say `done`, use finish_compilation; writeTools are the write tools in scope for this task",
             "next": "stage findings with the write tools, then finish_compilation with a one-line summary",
         });
         *self.open.lock().unwrap() = Some(OpenTask { item, session, rounds: 0 });

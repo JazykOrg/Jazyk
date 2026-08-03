@@ -26,36 +26,43 @@ endpoint, the same configuration a build would use. See [CLI](../frontends/cli.m
 
 ## Report
 
-Per codec, the benchmark reports:
+The grade is a scale, not a boolean: a model that finds four of five planted
+requirements is worth knowing about, and a pass/fail verdict would erase the
+difference. Per codec, the benchmark reports:
 
-- a verdict, the highest tier whose cases all pass. Tiers route work instead of
-  rejecting models:
-  - `not capable`: an extraction-tier case fails. The harness still holds (gates
-    bounce junk), but graph density and judgment degrade.
-  - `extraction`: every extraction-tier case passes. The model can drive
-    `reconcile-doc` turns.
-  - `review`: extraction plus every review-tier case passes. The model can also be
-    trusted with `review-entity` judgment.
+- per-case scores: checks passed over checks total (0 to 1), with the first failing
+  check named. An aborted turn scores 0 with the abort reason.
+- per-tier scores: the mean case score for `extraction`, `review`, `generation`, and
+  `verification`. These are the scale results; a tier at 0.8 says most of the skill
+  is there and names what is missing.
+- a verdict per workflow, routing work instead of rejecting models:
+  - compilation: `not-capable`, `extraction` (can drive `reconcile-doc` turns), or
+    `review` (can also be trusted with review judgment). A tier is held when every
+    one of its cases scores 1.
+  - generation: `capable` when every generation-tier case scores 1, else
+    `not-capable`. A capable model writes real files with the file tools, records an
+    honest manifest, and its tests are falsifiable.
+  - verification: `capable` when every verification-tier case scores 1: the model
+    judges a satisfied criteria file `pass` AND a violated one `fail`. A model that
+    says pass to everything is exactly what this tier exists to catch.
+- efficiency: per case, the rounds and completion tokens spent, and the ratio of the
+  case's `par_rounds` (the rounds a competent model needs, part of the case
+  definition) to the rounds used, capped at 1. The codec's efficiency is the mean
+  over completed cases. Efficiency never gates a verdict; a correct but wasteful
+  model is routed with open eyes, and the token numbers say what a build will cost.
+- throughput: a blended token rate (tokens/s), completion tokens over wall time
+  across all rounds.
 - A codec where no turn ever produced a completion (e.g. the endpoint rejects every
   call) is reported as `unmeasured`, not `not capable`. Nothing was graded, so the
   codec gets no verdict and no results entry. When both codecs are unmeasured the
   run writes no results and exits non-zero.
-- a score: the fraction of checks passed across all cases,
-- per-case results: pass or fail, with the first failing check named,
-- throughput: a blended token rate (tokens/s), completion tokens over wall time across
-  all rounds.
-
-Throughput does not gate the verdict. It is reported so a correct but slow model is
-visible before a full build is attempted.
-
-Generation quality (the [gen workflow](../consumers/gen.md)) is not yet graded; the
-verification ledger reports it truthfully after the fact.
 
 ## Results file
 
 Every run writes `<out>/benchmark/results.yaml`, one entry per model:
 
-- verdict, score, throughput, and each case's pass or first failing check, per codec,
+- the workflow verdicts, tier scores, efficiency, throughput, and each case's score,
+  rounds, tokens, and first failing check, per codec,
 - `caseSetHash`: a hash over every embedded case definition. Two results compare only
   when their hashes match; a verdict quoted without its hash is stale after any case
   edit,
@@ -103,11 +110,33 @@ Review tier:
 - Lint application: a project lint rule is reported where it fires and nowhere else.
   See [turn-review-lint](./cases/turn-review-lint.md).
 
+Generation tier (a real `generate-entity` [turn](../compiler/turns.md#generation-turns)
+against a fixture graph and a temp deliverable):
+
+- Product and manifest honesty: the turn writes real files with the file tools,
+  records the manifest, and every recorded file exists with its marker sites anchored.
+  See [gen-basic](./cases/gen-basic.md).
+- Test falsifiability: each recorded programmatic command passes as recorded, and
+  fails after the harness plants a break (a mandated exact value replaced in the
+  product). A test that passes either way scores nothing.
+  See [gen-basic](./cases/gen-basic.md#checks).
+
+Verification tier (the llm-judge path over a planted ledger row):
+
+- Judged pass: criteria whose implementing file satisfies the statement come back
+  `pass`. See [verify-judge](./cases/verify-judge.md).
+- Judged fail: criteria whose implementing file violates the statement come back
+  `fail`. The pair is the point: a sycophant passes the first and flunks the second.
+
 Tool-call fidelity has no dedicated case. Every case exercises it: a model that cannot
 emit valid calls passes nothing.
 
 ## Deterministic grading
 
 Every check is deterministic code over the staged mutations and the resulting sandbox
-graph. There is no LLM judge. A benchmark graded by a model would inherit the weakness
-it is supposed to measure.
+state: the graph for compilation cases, the ledger, the files on disk, and the exit
+codes of recorded commands for generation cases, the recorded verdict for
+verification cases. There is no LLM judge grading answers. A benchmark graded by a
+model would inherit the weakness it is supposed to measure; the verification tier
+grades a model's judgment against planted ground truth, which is judgment measured
+by code.

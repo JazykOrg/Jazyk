@@ -12,7 +12,7 @@ use crate::turn::{run_turn, Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 11] = [
+const CASE_FILES: [&str; 13] = [
     include_str!("../../docs/benchmark/cases/turn-extract.md"),
     include_str!("../../docs/benchmark/cases/turn-declarative.md"),
     include_str!("../../docs/benchmark/cases/turn-density.md"),
@@ -24,11 +24,17 @@ const CASE_FILES: [&str; 11] = [
     include_str!("../../docs/benchmark/cases/turn-review-duplicate.md"),
     include_str!("../../docs/benchmark/cases/turn-review-lookalike.md"),
     include_str!("../../docs/benchmark/cases/turn-review-lint.md"),
+    include_str!("../../docs/benchmark/cases/gen-basic.md"),
+    include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
 
 struct Case {
     name: String,
     tier: String,
+    // The rounds a competent model needs; efficiency compares against it.
+    par_rounds: u32,
+    // Verification fixtures: implementing files written under the temp deliverable.
+    deliverable: BTreeMap<String, String>,
     task_type: String,
     target: String,
     docs: BTreeMap<String, String>,
@@ -88,9 +94,21 @@ fn parse_cases() -> Vec<Case> {
                     .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
                     .unwrap_or_default()
             };
+            let tier = v["tier"].as_str().unwrap_or("extraction").to_string();
+            let default_par = match tier.as_str() {
+                "review" => 3,
+                "generation" => 10,
+                "verification" => 1,
+                _ => 6,
+            };
             cases.push(Case {
                 name: v["name"].as_str().unwrap_or("unnamed").to_string(),
-                tier: v["tier"].as_str().unwrap_or("extraction").to_string(),
+                par_rounds: v["par"]["rounds"].as_u64().unwrap_or(default_par) as u32,
+                deliverable: obj(&v["given"]["deliverable"])
+                    .into_iter()
+                    .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
+                    .collect(),
+                tier,
                 task_type: v["task"]["type"].as_str().unwrap_or_default().to_string(),
                 target: v["task"]["target"].as_str().unwrap_or_default().to_string(),
                 docs: obj(&v["given"]["docs"])
@@ -369,6 +387,187 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
     }
 }
 
+
+// Tiers with unknown names grade as extraction, the strictest default.
+fn tier_key(t: &str) -> &'static str {
+    match t {
+        "review" => "review",
+        "generation" => "generation",
+        "verification" => "verification",
+        _ => "extraction",
+    }
+}
+
+// Generation and verification checks: deterministic code over the ledger, the files on
+// disk, and the exit codes of recorded commands. Mirrors
+// docs/benchmark/benchmark.md#deterministic-grading.
+const WORKFLOW_CHECKS: [&str; 5] =
+    ["generationRecorded", "rowPerRequirement", "testsPass", "testFalsifiable", "verdictIs"];
+
+fn eval_workflow_check(
+    kind: &str,
+    arg: &Value,
+    store: &Store,
+    gs: &crate::gen::GenSettings,
+    target: &str,
+) -> Option<String> {
+    let ledger = crate::gen::Ledger::load(&store.out);
+    match kind {
+        "generationRecorded" => {
+            let slug = crate::gen::slug_of(target);
+            match ledger.entities.get(&slug) {
+                None => Some("record_generation never landed".into()),
+                Some(e) if e.files.is_empty() => Some("the manifest recorded no files".into()),
+                Some(e) => {
+                    for f in &e.files {
+                        if !gs.deliverable.join(f).exists() {
+                            return Some(format!("recorded file `{}` does not exist", f));
+                        }
+                    }
+                    if e.fact_hash != crate::gen::fact_hash(store, target) {
+                        return Some("the recorded factHash is stale".into());
+                    }
+                    None
+                }
+            }
+        }
+        "rowPerRequirement" => {
+            for rid in crate::gen::reqs_of_sorted(store, target) {
+                if !ledger.requirements.contains_key(&rid) {
+                    return Some(format!("no test row for {}", rid));
+                }
+            }
+            None
+        }
+        "testsPass" => {
+            let mut ran = 0;
+            for (rid, row) in &ledger.requirements {
+                if row.test.kind != "programmatic" {
+                    continue;
+                }
+                ran += 1;
+                match crate::verify::run_programmatic(store, rid, gs) {
+                    Ok(r) if r.pass => {}
+                    Ok(r) => return Some(format!("{} fails as recorded (exit {})", rid, r.code)),
+                    Err(e) => return Some(format!("{}: {}", rid, e)),
+                }
+            }
+            if ran == 0 {
+                return Some("no programmatic test rows to run".into());
+            }
+            None
+        }
+        "testFalsifiable" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let needle = arg["replace"].as_str().unwrap_or_default();
+            let Some(row) = ledger.requirements.get(rid) else {
+                return Some(format!("no row for {}", rid));
+            };
+            if row.test.kind != "programmatic" {
+                return Some(format!("{} is not a programmatic row", rid));
+            }
+            // Break the product (never the test), rerun, restore. A test that still
+            // passes with the mandated value gone verifies nothing.
+            let slug = crate::gen::slug_of(target);
+            let files = ledger.entities.get(&slug).map(|e| e.files.clone()).unwrap_or_default();
+            let mut touched: Vec<(std::path::PathBuf, String)> = Vec::new();
+            for f in &files {
+                if *f == row.test.artifact {
+                    continue;
+                }
+                let p = gs.deliverable.join(f);
+                if let Ok(text) = std::fs::read_to_string(&p) {
+                    if text.contains(needle) {
+                        std::fs::write(&p, text.replace(needle, "BROKEN")).ok();
+                        touched.push((p, text));
+                    }
+                }
+            }
+            if touched.is_empty() {
+                return Some(format!("the mandated value `{}` appears in no product file", needle));
+            }
+            let verdict = crate::verify::run_programmatic(store, rid, gs);
+            for (p, text) in &touched {
+                std::fs::write(p, text).ok();
+            }
+            match verdict {
+                Ok(r) if r.pass => Some(format!("{}'s test still passes with the product broken; not falsifiable", rid)),
+                Ok(_) => None,
+                Err(e) => Some(format!("broken-product rerun errored: {}", e)),
+            }
+        }
+        "verdictIs" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let want = arg["verdict"].as_str().unwrap_or_default();
+            match ledger.requirements.get(rid) {
+                None => Some(format!("no ledger row for {}", rid)),
+                Some(row) if row.verdict == want => None,
+                Some(row) => Some(format!("verdict is `{}`, expected `{}`", row.verdict, want)),
+            }
+        }
+        other => Some(format!("unknown workflow check `{}`", other)),
+    }
+}
+
+// Seed the llm-judge fixture for a verify-requirement case: the implementing files
+// under the temp deliverable, the criteria file, and the ledger row the judge reads.
+fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSettings) -> Result<(), String> {
+    let rid = &case.target;
+    let r = store.graph.requirements.get(rid).ok_or_else(|| format!("fixture has no requirement {}", rid))?;
+    for (f, text) in &case.deliverable {
+        let p = gs.deliverable.join(f);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(&p, text).map_err(|e| e.to_string())?;
+    }
+    let files: Vec<String> = case.deliverable.keys().cloned().collect();
+    let artifact = format!("criteria/req-{}.md", crate::gen::req_slug(rid));
+    let criteria = format!(
+        "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n{}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
+        rid,
+        hash_hex(&r.ears),
+        rid,
+        r.ears,
+        r.source.quote,
+        files.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")
+    );
+    let crit_path = store.out.join("gen").join(&artifact);
+    if let Some(parent) = crit_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&crit_path, &criteria).map_err(|e| e.to_string())?;
+    let test = crate::gen::TestRef {
+        kind: "llm".into(),
+        label: "judge".into(),
+        artifact,
+        name: crate::gen::test_name(rid, &r.ears),
+        run: format!("jazyk test {}", rid),
+        cwd: ".".into(),
+    };
+    let mut ledger = crate::gen::Ledger::load(&store.out);
+    ledger.requirements.insert(
+        rid.clone(),
+        crate::gen::ReqRow {
+            entity: r.entities.first().cloned().unwrap_or_default(),
+            files: files.clone(),
+            sites: Vec::new(),
+            hashes: crate::gen::RowHashes {
+                requirement: hash_hex(&r.ears),
+                test: crate::gen::hash_file(&crate::gen::artifact_path(&store.out, gs, &test)),
+                files: crate::gen::hash_files(gs, &files),
+            },
+            test,
+            verdict: "none".into(),
+            last_run: None,
+            exit_code: None,
+            evidence: None,
+        },
+    );
+    ledger.save(&store.out);
+    Ok(())
+}
+
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
     let cases = parse_cases();
     if cases.is_empty() {
@@ -384,11 +583,14 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
     for (codec_name, mode) in [("native", 1u8), ("text", 2u8)] {
         let started = std::time::Instant::now();
         let tokens_before = llm::tokens_spent();
-        let mut extraction_ok = true;
-        let mut review_ok = true;
+        // Per-tier perfection (drives verdicts) and per-tier score sums (the scale).
+        let mut tier_ok: BTreeMap<&str, bool> = BTreeMap::new();
+        let mut tier_sum: BTreeMap<&str, (f64, usize)> = BTreeMap::new();
         let mut checks_passed = 0usize;
         let mut checks_total = 0usize;
-        let mut case_results: Vec<(String, String)> = Vec::new();
+        let mut eff_sum = 0.0f64;
+        let mut eff_n = 0usize;
+        let mut case_results: Vec<(String, Value)> = Vec::new();
         // A codec where no turn ever produces a completion is unmeasured, not graded.
         // Mirrors docs/benchmark/benchmark.md#report.
         let mut any_completion = false;
@@ -415,31 +617,62 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
                 stale_anchors: Vec::new(),
             };
             let case_start = std::time::Instant::now();
-            let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &crate::gen::GenSettings::from_out(&store.out), &trace);
-            let staged = out.session.staged.len();
-            any_completion |= out.tokens > 0;
+            let case_tokens_before = llm::tokens_spent();
+            // The generation turn writes into a temp deliverable beside the sandbox.
+            let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into() };
+            std::fs::create_dir_all(&gs.deliverable).ok();
             let mut fail: Option<String> = None;
-            // An aborted turn fails the case with the abort reason. Its checks are
-            // skipped and count as failed: an untouched fixture satisfying a check is
-            // not evidence. Mirrors docs/benchmark/benchmark.md#runs.
-            if let Some(why) = &out.failed {
-                fail = Some(format!("turn aborted: {}", why));
-                if first_abort.is_none() {
-                    first_abort = Some(why.clone());
+            let mut aborted = false;
+            let (rounds, staged) = if case.task_type == "verify-requirement" {
+                // The llm-judge path: no turn, one judgment over a planted row.
+                match seed_verification(case, &store, &gs) {
+                    Ok(()) => {
+                        if let Err(e) = crate::verify::run_all(&store, llm, &gs, std::slice::from_ref(&case.target), None, true, &trace) {
+                            fail = Some(format!("judge run failed: {}", e));
+                        }
+                    }
+                    Err(e) => fail = Some(format!("fixture: {}", e)),
                 }
-                checks_total += case.checks.len();
+                (1u32, 0usize)
             } else {
-                // A native case that silently downgraded mid-turn did not pass natively.
-                if mode == 1 && llm::tools_mode() == 2 {
-                    fail = Some("endpoint or model rejected native tool calls".into());
+                let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &gs, &trace);
+                let staged = out.session.staged.len();
+                // An aborted turn fails the case with the abort reason. Its checks are
+                // skipped and count as failed: an untouched fixture satisfying a check
+                // is not evidence. Mirrors docs/benchmark/benchmark.md#runs.
+                if let Some(why) = &out.failed {
+                    fail = Some(format!("turn aborted: {}", why));
+                    aborted = true;
+                    if first_abort.is_none() {
+                        first_abort = Some(why.clone());
+                    }
+                } else {
+                    // A native case that silently downgraded mid-turn did not pass natively.
+                    if mode == 1 && llm::tools_mode() == 2 {
+                        fail = Some("endpoint or model rejected native tool calls".into());
+                    }
+                    if staged > 0 {
+                        store.apply(out.session.staged, &item, out.rounds, 0);
+                    }
                 }
-                if staged > 0 {
-                    store.apply(out.session.staged, &item, out.rounds, 0);
-                }
+                (out.rounds, staged)
+            };
+            let case_tokens = llm::tokens_spent() - case_tokens_before;
+            any_completion |= case_tokens > 0;
+            let mut case_passed = 0usize;
+            checks_total += case.checks.len();
+            if !aborted {
                 for (kind, arg) in &case.checks {
-                    checks_total += 1;
-                    match eval_check(kind, arg, &store, staged) {
-                        None => checks_passed += 1,
+                    let verdict = if WORKFLOW_CHECKS.contains(&kind.as_str()) {
+                        eval_workflow_check(kind, arg, &store, &gs, &case.target)
+                    } else {
+                        eval_check(kind, arg, &store, staged)
+                    };
+                    match verdict {
+                        None => {
+                            case_passed += 1;
+                            checks_passed += 1;
+                        }
                         Some(why) => {
                             if fail.is_none() {
                                 fail = Some(format!("{}: {}", kind, why));
@@ -448,30 +681,48 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
                     }
                 }
             }
+            // The scale: this case's score, and its efficiency against par.
+            let case_score = if case.checks.is_empty() { 0.0 } else { case_passed as f64 / case.checks.len() as f64 };
+            let efficiency = if aborted { 0.0 } else { (case.par_rounds as f64 / rounds.max(1) as f64).min(1.0) };
+            if !aborted {
+                eff_sum += efficiency;
+                eff_n += 1;
+            }
+            let e = tier_sum.entry(tier_key(&case.tier)).or_insert((0.0, 0));
+            e.0 += case_score;
+            e.1 += 1;
             std::fs::remove_dir_all(&tmp).ok();
+            case_results.push((
+                case.name.clone(),
+                serde_json::json!({
+                    "score": (case_score * 100.0).round() / 100.0,
+                    "checks": format!("{}/{}", case_passed, case.checks.len()),
+                    "rounds": rounds,
+                    "tokens": case_tokens,
+                    "parRounds": case.par_rounds,
+                    "efficiency": (efficiency * 100.0).round() / 100.0,
+                    "fail": fail.clone().unwrap_or_default(),
+                }),
+            ));
             match &fail {
                 None => {
-                    case_results.push((case.name.clone(), "pass".into()));
                     println!(
-                        "  {:22} pass  ({} rounds, {} staged, {:.0}s)",
+                        "  {:22} 1.00  ({} rounds, par {}, {} tok, {:.0}s)",
                         case.name,
-                        out.rounds,
-                        staged,
+                        rounds,
+                        case.par_rounds,
+                        case_tokens,
                         case_start.elapsed().as_secs_f32()
                     );
                 }
                 Some(why) => {
-                    if case.tier == "review" {
-                        review_ok = false;
-                    } else {
-                        extraction_ok = false;
-                    }
-                    case_results.push((case.name.clone(), why.clone()));
+                    *tier_ok.entry(tier_key(&case.tier)).or_insert(true) = false;
                     println!(
-                        "  {:22} FAIL  {} ({} rounds, {:.0}s)",
+                        "  {:22} {:.2}  {} ({} rounds, {:.0}s)",
                         case.name,
+                        case_score,
                         why,
-                        out.rounds,
+                        rounds,
                         case_start.elapsed().as_secs_f32()
                     );
                 }
@@ -487,28 +738,52 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
             );
             continue;
         }
-        // The verdict is the highest tier whose cases all pass; review implies
-        // extraction. Mirrors docs/benchmark/benchmark.md#report.
-        let verdict = match (extraction_ok, review_ok) {
+        // Verdicts per workflow: a tier is held when every one of its cases scored 1.
+        // Mirrors docs/benchmark/benchmark.md#report.
+        let ok = |t: &str| *tier_ok.get(t).unwrap_or(&true);
+        let compilation = match (ok("extraction"), ok("review")) {
             (true, true) => "review",
             (true, false) => "extraction",
-            _ => "not capable",
+            _ => "not-capable",
         };
-        any_usable |= extraction_ok;
+        let generation = if ok("generation") { "capable" } else { "not-capable" };
+        let verification = if ok("verification") { "capable" } else { "not-capable" };
+        any_usable |= ok("extraction");
         let secs = started.elapsed().as_secs_f64();
         let tokens = llm::tokens_spent() - tokens_before;
         let throughput = if secs > 0.0 { tokens as f64 / secs } else { 0.0 };
+        let tier_score = |t: &str| -> f64 {
+            tier_sum.get(t).map(|(sum, n)| if *n == 0 { 0.0 } else { sum / *n as f64 }).unwrap_or(0.0)
+        };
+        let efficiency = if eff_n == 0 { 0.0 } else { eff_sum / eff_n as f64 };
         println!(
-            "  verdict: {}  score {}/{} checks  throughput ~{:.0} tok/s",
-            verdict, checks_passed, checks_total, throughput
+            "  verdicts: compilation {}  generation {}  verification {}",
+            compilation, generation, verification
+        );
+        println!(
+            "  scores: extraction {:.2}  review {:.2}  generation {:.2}  verification {:.2}  ({}/{} checks)",
+            tier_score("extraction"), tier_score("review"), tier_score("generation"), tier_score("verification"),
+            checks_passed, checks_total
+        );
+        println!(
+            "  efficiency {:.2} (rounds vs par)  tokens {}  throughput ~{:.0} tok/s",
+            efficiency, tokens, throughput
         );
         codec_reports.push((
             codec_name.to_string(),
             serde_json::json!({
-                "verdict": verdict,
-                "score": format!("{}/{}", checks_passed, checks_total),
+                "verdicts": {"compilation": compilation, "generation": generation, "verification": verification},
+                "scores": {
+                    "extraction": (tier_score("extraction") * 100.0).round() / 100.0,
+                    "review": (tier_score("review") * 100.0).round() / 100.0,
+                    "generation": (tier_score("generation") * 100.0).round() / 100.0,
+                    "verification": (tier_score("verification") * 100.0).round() / 100.0,
+                },
+                "checks": format!("{}/{}", checks_passed, checks_total),
+                "efficiency": (efficiency * 100.0).round() / 100.0,
+                "tokens": tokens,
                 "throughput": throughput.round() as u64,
-                "cases": case_results.iter().cloned().collect::<BTreeMap<String, String>>(),
+                "cases": case_results.iter().cloned().collect::<BTreeMap<String, Value>>(),
             }),
         ));
     }
@@ -568,7 +843,16 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        assert_eq!(cases.len(), 12); // eleven files, turn-review holds two blocks
+        assert_eq!(cases.len(), 15); // thirteen files; turn-review and verify-judge hold two blocks each
+        // The new tiers parse with their pars and fixtures.
+        let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
+        assert_eq!(gen.tier, "generation");
+        assert_eq!(gen.task_type, "generate-entity");
+        assert_eq!(gen.par_rounds, 10);
+        let vj = cases.iter().filter(|c| c.tier == "verification").count();
+        assert_eq!(vj, 2);
+        let vp = cases.iter().find(|c| c.name == "verify-judge-pass").unwrap();
+        assert!(!vp.deliverable.is_empty());
         assert!(cases.iter().any(|c| c.name == "turn-declarative"));
         assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
         let extract = cases.iter().find(|c| c.name == "turn-extract").unwrap();

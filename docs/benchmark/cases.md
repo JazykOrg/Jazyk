@@ -10,16 +10,24 @@ one `yaml` block; each block is one case.
 
 - `name`: unique case name, usually the file stem.
 - `description`: one sentence stating the skill the case grades.
-- `tier`: `extraction` (the default) or `review`. The verdict is the highest tier whose
-  cases all pass. See [report](./benchmark.md#report).
-- `task`: the turn to run. `type` is `reconcile-doc` or `review-entity`, `target` is a
-  document path or an entity id. See [task types](../compiler/turns.md#task-types).
+- `tier`: `extraction` (the default), `review`, `generation`, or `verification`.
+  Tier scores and workflow verdicts derive from these; see
+  [report](./benchmark.md#report).
+- `par` (optional): `rounds`, the rounds a competent model needs; the efficiency
+  ratio compares against it. Defaults per tier when omitted.
+- `task`: the work to run. `type` is `reconcile-doc`, `review-entity`,
+  `generate-entity` (a [generation turn](../compiler/turns.md#generation-turns) into
+  a temp deliverable), or `verify-requirement` (the llm-judge path over a planted
+  ledger row); `target` is a document path, an entity id, or a requirement id.
 - `given`: the fixture.
   - `docs`: map of document path → markdown text. These are the only source files the
     case sees.
   - `graph` (optional): nodes pre-seeded into the sandbox store before the turn runs:
     `entities` and `requirements` maps keyed by id, and a `coverage` map of section
     reference → state.
+  - `deliverable` (optional, verification cases): map of deliverable-relative path →
+    content, the implementing files the judged row names. The harness builds the
+    ledger row and its criteria file from the target requirement.
   - `lint` (optional): project [lint rules](../compiler/project-settings.md#linting)
     the turn runs under, as `warnings` and `errors` lists.
 - `assert`: an array of checks. All must pass. Each check is deterministic and runs over

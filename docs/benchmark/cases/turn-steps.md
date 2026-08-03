@@ -7,7 +7,7 @@ still stall on a document whose substance sits inside a fence (the sort-utility
 fixture's failure mode). See [ears](../../compiler/concepts/ears.md#code-blocks-state-obligations)
 and [case format](../cases.md#case-format).
 
-```yaml
+````yaml
 name: turn-steps
 description: Extract one requirement per behavioral step of a fenced pseudo-code block.
 par:
@@ -47,4 +47,4 @@ assert:
   - coverageSet:
       section: 'docs/dedupe.md#/dedupe/steps'
       state: covered
-```
+````

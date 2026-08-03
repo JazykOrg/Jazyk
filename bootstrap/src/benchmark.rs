@@ -54,21 +54,30 @@ pub fn case_set_hash() -> String {
 }
 
 // Pull every fenced ```yaml block out of a markdown file.
+// A case whose fixture holds a fenced code block needs a four-backtick outer fence
+// (CommonMark's own rule); the closer must match the opener's length, so inner
+// three-backtick fences pass through as content.
 fn yaml_blocks(md: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut cur: Option<String> = None;
+    let mut cur: Option<(String, usize)> = None;
     for line in md.lines() {
+        let t = line.trim();
         match &mut cur {
-            None if line.trim() == "```yaml" => cur = Some(String::new()),
-            Some(buf) => {
-                if line.trim() == "```" {
-                    out.push(cur.take().unwrap());
+            None => {
+                let ticks = t.chars().take_while(|c| *c == '`').count();
+                if ticks >= 3 && t[ticks..].trim() == "yaml" {
+                    cur = Some((String::new(), ticks));
+                }
+            }
+            Some((buf, ticks)) => {
+                if !t.is_empty() && t.chars().all(|c| c == '`') && t.len() >= *ticks {
+                    let (b, _) = cur.take().unwrap();
+                    out.push(b);
                 } else {
                     buf.push_str(line);
                     buf.push('\n');
                 }
             }
-            None => {}
         }
     }
     out
@@ -141,6 +150,15 @@ pub fn parse_cases() -> Vec<Case> {
             });
         }
     }
+    // A case with no checks is unwinnable and grades a lie (0/0); a fixture whose
+    // yaml was truncated by an inner fence is the known way to produce one. Refuse it
+    // loudly instead of grading it silently.
+    for c in &cases {
+        if c.checks.is_empty() {
+            eprintln!("jazyk: case `{}` has no checks; its yaml block is broken (inner fence?)", c.name);
+        }
+    }
+    cases.retain(|c| !c.checks.is_empty());
     cases
 }
 
@@ -971,6 +989,9 @@ mod tests {
         assert_eq!(gen.tier, "generation");
         assert_eq!(gen.task_type, "generate-entity");
         assert_eq!(gen.par_rounds, 10);
+        let steps = cases.iter().find(|c| c.name == "turn-steps").unwrap();
+        assert_eq!(steps.checks.len(), 5); // an inner fence must not sever the asserts
+        assert!(steps.docs["docs/dedupe.md"].contains("remember the line"), "fixture doc truncated");
         let vj = cases.iter().filter(|c| c.tier == "verification").count();
         assert_eq!(vj, 2);
         let vp = cases.iter().find(|c| c.name == "verify-judge-pass").unwrap();

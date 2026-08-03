@@ -91,7 +91,8 @@ fn instructions_for(modes: &[String], write: bool) -> String {
         s.push_str(
             "BENCHMARK LOOP: you are the model under test. Call benchmark_cases; for each pending \
              case, begin_case, follow the returned instructions exactly as if it were real work \
-             (stage graph writes with the write tools; for a generation case write real files into \
+             (stage graph writes with the write tools; a reconcile case never files diagnostics, the \
+             review cases do; for a generation case write real files into \
              the named sandbox deliverable with your own tools, record_generation, run_tests; for a \
              verification case judge the criteria against the files), then finish_case (verification \
              cases pass verdict and evidence). After the last case call benchmark_report with an \
@@ -639,8 +640,9 @@ impl McpServer {
             "efficiency": (efficiency * 100.0).round() / 100.0,
             "fail": fail.clone().unwrap_or_default(),
         });
+        b.scored.retain(|e| e["name"] != entry["name"]);
         b.scored.push(entry.clone());
-        let remaining = cases.len() - b.scored.len();
+        let remaining = cases.len().saturating_sub(b.scored.len());
         json!({
             "scored": entry,
             "next": if remaining > 0 {

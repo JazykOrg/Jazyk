@@ -768,6 +768,29 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         })
         .unwrap_or_default();
 
+    // Validate the manifest's test rows before any side effect: a rejection must
+    // leave the deliverable untouched, or the retry sees files already stripped.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    if let Some(tests) = manifest["tests"].as_array() {
+        for t in tests {
+            let kind = t["kind"].as_str().unwrap_or("programmatic");
+            let rid = t["requirement"].as_str().unwrap_or("?");
+            if kind == "programmatic" {
+                if t["artifact"].as_str().unwrap_or("").trim().is_empty() {
+                    return Err(format!(
+                        "test row for {} has an empty artifact; name the tests file the row's run command executes, or declare the row llm",
+                        rid
+                    ));
+                }
+                if t["run"].as_str().unwrap_or("").trim().is_empty() {
+                    return Err(format!(
+                        "test row for {} has an empty run command; record the exact command that runs only that test, or declare the row llm",
+                        rid
+                    ));
+                }
+            }
+        }
+    }
     // Strip marker lines from the manifest files and collect the sites they anchor.
     // The marker is a wire format: the worker localizes while writing, the harness
     // records and cleans. Runs before hashing so every hash sees the stripped bytes.

@@ -106,7 +106,9 @@ Grading is identical to an endpoint run with two substitutions, both recorded on
 entry: the codec is `agent` (a third column beside `native` and `text`), and rounds
 count the agent's tool calls per case (tokens are unknowable from outside the agent
 and stay null). Efficiency against par therefore compares call discipline, not
-context cost. The checks, the scores, and the verdicts are the same code path, so an
+context cost, and is comparable only within the `agent` codec: an in-process turn
+batches several calls into one round, so `par_rounds` undercounts what honest
+sequential MCP calls need. The checks, the scores, and the verdicts are the same code path, so an
 agent's grade sits in the same table as an endpoint's.
 
 ## Machine-wide history

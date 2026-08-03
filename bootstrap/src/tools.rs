@@ -141,7 +141,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. rule is one of: contradiction, duplicate-entity, duplicate-requirement, missing-link, ambiguity. severity: error, warning, info, or none. Severity error only when two statements cannot both hold.",
+            description: "Record a judgment about the graph or documents. rule is one of: contradiction, duplicate-entity, duplicate-requirement, missing-link, ambiguity, lint (a project lint rule violation). severity: error, warning, info, or none. Severity error only when two statements cannot both hold.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string"},
@@ -1519,7 +1519,7 @@ impl ToolSession {
                     ));
                 }
                 crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &args["manifest"], &gs)
-                    .map_err(|e| ToolError::new("unknown-id", e))
+                    .map_err(|e| ToolError::new("bad-manifest", e))
             }
             "verification_tasks" => {
                 let gs = self.gen_settings();

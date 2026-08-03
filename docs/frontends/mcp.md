@@ -72,7 +72,9 @@ calls, exactly one at a time:
   provenance, and scope rules hold because they are the same code path.
 - `finish_compilation` runs the `done` gates (coverage contract, stale anchors),
   commits atomically, and updates [the task queue](../compiler/reconciler.md#the-task-queue).
-  A gate failure leaves the changeset open and names the repair.
+  A gate failure leaves the changeset open and names the repair. `beginNext: true`
+  claims the next ready task in the same call and carries its package in the reply,
+  saving a round trip per task; the default reply only names the next task.
 - `abandon_compilation` drops the staged work. An abandoned task leaves no trace, the
   same contract as an aborted turn. A server that dies mid-task loses only staging;
   any process recomputes the queue and the task reappears.
@@ -111,6 +113,15 @@ run_tests → build + commands run, verdicts recorded
 A fix-fail-reverify cycle is self-terminating: editing a deliverable file re-stales
 exactly the rows whose files hash moved, and the pending list shrinks monotonically
 once tests pass.
+
+## Transcripts
+
+Every serving leaves a transcript: one JSON-lines file under `<out>/trace`
+(`<ts>-mcp-<client>.jsonl`), one `toolCall`/`toolResult`/`toolError` event per call
+with condensed payloads, labeled by the open task when one exists (`reconcile-doc
+docs/api.md`) and by the serving otherwise. The same format the compile trace writes
+([trace events](../compiler/turns.md#trace-events)), so an MCP session is reviewable
+beside a build: what an agent asked, what it was told, and where it stumbled.
 
 ## Reads and locking
 

@@ -822,7 +822,7 @@ pub struct TurnOutput {
     pub failed: Option<String>,
 }
 
-fn condense(v: &Value, n: usize) -> String {
+pub fn condense(v: &Value, n: usize) -> String {
     llm::truncate(&v.to_string(), n)
 }
 
@@ -839,7 +839,7 @@ fn named_section(args: &Value, doc: &str) -> Option<String> {
 
 // The payload behind a condensed line, only when condensing cut something, capped so
 // a huge context pack cannot flood the trace file.
-fn full_payload(v: &Value) -> Option<String> {
+pub fn full_payload(v: &Value) -> Option<String> {
     let s = v.to_string();
     if s.len() <= 160 {
         None

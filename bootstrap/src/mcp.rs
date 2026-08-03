@@ -24,6 +24,9 @@ pub struct McpServer {
     // The open compilation task: a ToolSession holding the staged changeset across
     // calls. Single-flight per serving. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     open: std::sync::Mutex<Option<OpenTask>>,
+    // The session transcript: one event per call under <out>/trace, reviewable beside
+    // a build. Mirrors docs/frontends/mcp.md#transcripts.
+    trace: crate::turn::Trace,
 }
 
 struct OpenTask {
@@ -78,6 +81,7 @@ fn instructions_for(modes: &[String], write: bool) -> String {
 
 impl McpServer {
     pub fn new(project: crate::project::Project, out: PathBuf, modes: Vec<String>, write: bool) -> McpServer {
+        let out_for_trace = out.clone();
         McpServer {
             mutation_limit: project.limits.turn_mutations,
             context_budget: project.limits.context_budget,
@@ -87,6 +91,7 @@ impl McpServer {
             write,
             client: std::sync::Mutex::new(None),
             open: std::sync::Mutex::new(None),
+            trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
         }
     }
 
@@ -212,6 +217,7 @@ impl McpServer {
             writeln!(out, "{}", resp).ok();
             out.flush().ok();
         }
+        self.trace.finish_transcript("done", &json!({"modes": self.modes}));
     }
 
     fn caller(&self, task: &str, target: &str) -> crate::feedback::Caller {
@@ -362,6 +368,15 @@ impl McpServer {
             reply["next"] = json!(q2.compilation_answer());
             return reply;
         }
+        // beginNext claims the next ready task in the same call, saving a round trip
+        // per task. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+        if params["arguments"]["beginNext"].as_bool() == Some(true) {
+            let began = self.begin_compilation(&json!({"arguments": {}}));
+            if began["error"].is_null() {
+                reply["began"] = began;
+                return reply;
+            }
+        }
         reply["next"] = json!(q.compilation_answer());
         reply
     }
@@ -414,8 +429,8 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "finish_compilation",
-                        "description": "Run the done gates (every dirty section marked, every stale anchor resolved) and commit the open changeset atomically. A gate failure names the repair and keeps the changeset open. The reply names the next ready task; the finish that empties the queue reports the verdict.",
-                        "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": false}
+                        "description": "Run the done gates (every dirty section marked, every stale anchor resolved) and commit the open changeset atomically. A gate failure names the repair and keeps the changeset open. The reply names the next ready task; beginNext: true claims it in the same call and carries its package. The finish that empties the queue reports the verdict.",
+                        "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "beginNext": {"type": "boolean"}}, "required": ["summary"], "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "abandon_compilation",
@@ -432,6 +447,48 @@ impl McpServer {
             }
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or_default().to_string();
+                // The transcript row: the call under its task's label, condensed the
+                // same way a turn's rows are. Mirrors docs/frontends/mcp.md#transcripts.
+                let label = match self.open.lock().unwrap().as_ref() {
+                    Some(o) => format!("{} {}", o.item.task, o.item.target),
+                    None => format!("mcp {}", self.modes.join(",")),
+                };
+                self.trace.event(crate::turn::TraceEvent::ToolCall {
+                    label: label.clone(),
+                    name: name.clone(),
+                    summary: crate::turn::condense(&params["arguments"], 160),
+                    full: crate::turn::full_payload(&params["arguments"]),
+                });
+                let reply = self.tool_call(&name, params, &label);
+                if let Ok(v) = &reply {
+                    let is_err = v["isError"] == true;
+                    let text = v["content"][0]["text"].as_str().unwrap_or_default();
+                    let parsed: Value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
+                    if is_err {
+                        self.trace.event(crate::turn::TraceEvent::ToolError {
+                            label,
+                            rule: parsed["error"]["rule"].as_str().unwrap_or("error").to_string(),
+                            message: parsed["error"]["message"].as_str().unwrap_or(text).to_string(),
+                        });
+                    } else {
+                        self.trace.event(crate::turn::TraceEvent::ToolResult {
+                            label,
+                            name: name.clone(),
+                            summary: crate::turn::condense(&parsed, 160),
+                            full: crate::turn::full_payload(&parsed),
+                        });
+                    }
+                }
+                reply
+            }
+            _ => Err((-32601, format!("method not found: {}", method))),
+        }
+    }
+
+    fn tool_call(&self, name: &str, params: &Value, _label: &str) -> Result<Value, (i64, String)> {
+        {
+            {
+                let name = name.to_string();
                 match name.as_str() {
                     "await_changes" => return Ok(text_result(self.await_changes(params), false)),
                     "compilation_tasks" if self.modes.iter().any(|m| m == "compile") => {
@@ -528,7 +585,6 @@ impl McpServer {
                     Err(e) => Ok(text_result(e.to_value(), true)),
                 }
             }
-            _ => Err((-32601, format!("method not found: {}", method))),
         }
     }
 }

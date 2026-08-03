@@ -247,6 +247,11 @@ reference already generated files through the manifest.
 - A programmatic run command must invoke the tests artifact and select the test: a
   command that names neither the tests artifact nor the test name runs the product,
   not the test, and is invalid. Same corrective retry, same `llm` fallback.
+- Recording enforces the shape for every worker: `record_generation` rejects a
+  programmatic row whose `artifact` or `run` is empty, naming the row and the missing
+  field. An empty artifact resolves to the deliverable directory itself and fails at
+  run time with a path that explains nothing; the rejection at record time says what
+  to fix.
 
 ## Dense entities generate in parts
 

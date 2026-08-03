@@ -23,6 +23,36 @@ persisted evidence is each fixture's `jazyk-out/` (journal, status, graph shards
 None of the failed-again triggers fired (junk >5%, duplicates >20% after review,
 non-convergence, incremental cross-contamination, local model unable to complete F1).
 
+## The graded benchmark: gemma4:e4b-mlx across all four tiers (2026-08-03)
+
+First run of the scaled benchmark (per-case check fractions, per-workflow verdicts,
+efficiency against par). The scale replaces the old boolean verdict and it changes the
+routing conclusion:
+
+| tier | native | text |
+| --- | --- | --- |
+| extraction | 0.55 | 0.93 |
+| review | 1.00 | 1.00 |
+| generation | 0.00 | 0.50 |
+| verification | 1.00 | 1.00 |
+| efficiency (rounds vs par) | 0.79 | 0.82 |
+| tokens (whole run) | 67k | 36k |
+
+- The text codec dominates for this model: higher scores at half the tokens. Route
+  gemma through `JAZYK_CODEC=text`.
+- Verification judgment is perfect in both directions: the satisfied fixture came back
+  `pass`, the violated one `fail`. gemma is a usable llm-test judge.
+- Review judgment is perfect; extraction under text is near-capable (0.93; misses one
+  declarative entity and one enumeration item).
+- Generation is not routable to gemma: native cannot drive the file tools at all;
+  text wrote files but recorded a programmatic row with an empty artifact (that
+  manifest shape is now rejected at record time). Use `gen.worker = "pipeline"` for
+  models below the generation tier, or an external agent over MCP.
+- The stuck-repeat guard changed failure semantics mid-measurement: with refusals
+  feeding the abort streak, four extraction cases died at 0.00; with refusals kept out
+  of the streak (the current behavior), the same cases scored 0.17 to 0.67 and the
+  turns kept their staged work. Partial credit is real signal, not noise.
+
 ## Findings worth keeping
 
 - `gemma4:e4b-mlx`, the model whose truncated JSON broke the old one-shot pipeline,

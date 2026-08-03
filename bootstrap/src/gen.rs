@@ -853,6 +853,23 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                 run: t["run"].as_str().unwrap_or_default().to_string(),
                 cwd: t["cwd"].as_str().unwrap_or(".").to_string(),
             };
+            // A programmatic row without an artifact or a run command cannot execute;
+            // rejecting here names the fix, where a run-time failure names a path that
+            // explains nothing. Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+            if test.kind == "programmatic" {
+                if test.artifact.trim().is_empty() {
+                    return Err(format!(
+                        "test row for {} has an empty artifact; name the tests file the row's run command executes, or declare the row llm",
+                        rid
+                    ));
+                }
+                if test.run.trim().is_empty() {
+                    return Err(format!(
+                        "test row for {} has an empty run command; record the exact command that runs only that test, or declare the row llm",
+                        rid
+                    ));
+                }
+            }
             let row_files: Vec<String> = dedup_keep_order(
                 t["files"]
                     .as_array()

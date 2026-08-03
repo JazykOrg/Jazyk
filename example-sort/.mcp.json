@@ -3,7 +3,7 @@
     "jazyk": {
       "args": [
         "mcp",
-        "graph"
+        "compile,generate,verify"
       ],
       "command": "jazyk"
     }

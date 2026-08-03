@@ -200,8 +200,19 @@ Run-level knobs are environment variables only, since they tune one run, not the
   (default 500). Bounds the request rate even when calls fail fast in a tight loop.
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
-- `JAZYK_READ_TIMEOUT`: seconds to wait on one LLM response before the call fails
-  (default 300). Bounds runaway calls: a stalled endpoint costs at most the timeout
-  times the retries, not an open-ended wait.
+- `JAZYK_READ_TIMEOUT`: seconds to wait for the next byte of one LLM response before
+  the call fails (default 300). Bounds stalls: a dead endpoint costs at most the
+  timeout times the retries, not an open-ended wait. It does not bound a response
+  that keeps streaming; the two knobs below do.
+- `JAZYK_MAX_COMPLETION_TOKENS`: cap on one response's completion, sent as
+  `max_tokens` on every request (default 4096). This is the loop detector: a small
+  model stuck repeating itself hits the cap and the call fails as
+  `runaway completion` instead of generating forever. The stream reader enforces the
+  same cap on accumulated content, so a server that ignores the field is still
+  bounded. An endpoint that rejects the field gets one retry without it, sticky for
+  the run, the same fallback contract as `temperature`.
+- `JAZYK_CALL_TIMEOUT`: seconds for one whole LLM call (default 600).
+  `JAZYK_READ_TIMEOUT` waits for the next byte; this bounds the call even when bytes
+  keep arriving.
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
   [trace events](./turns.md#trace-events) including full context packs and raw payloads.

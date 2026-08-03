@@ -25,6 +25,10 @@ static STREAM_REQUIRED: AtomicBool = AtomicBool::new(false);
 // strips them from outgoing messages; the turn's own transcript keeps them.
 static REASONING_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
+// Set once a provider rejects the `max_tokens` completion cap; the rest of the run
+// omits it and relies on the stream reader's own cap.
+static MAX_TOKENS_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+
 pub fn tools_mode() -> u8 {
     TOOLS_MODE.load(Ordering::Relaxed)
 }
@@ -125,6 +129,29 @@ fn max_retries() -> usize {
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(2)
+}
+
+// Completion cap for one response, sent as `max_tokens` and enforced again on streamed
+// content. This is the loop detector: a small model stuck repeating tokens is bounded
+// by the cap, not by its context window. Tunable with JAZYK_MAX_COMPLETION_TOKENS;
+// default 4096. See docs/compiler/project-settings.md#environment-tuning.
+fn max_completion_tokens() -> u64 {
+    std::env::var("JAZYK_MAX_COMPLETION_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(4096)
+        .max(256)
+}
+
+// Wall clock for one whole LLM call. JAZYK_READ_TIMEOUT waits for the next byte; this
+// bounds a call whose bytes keep arriving. Tunable with JAZYK_CALL_TIMEOUT; default 600.
+fn call_timeout() -> Duration {
+    let secs = std::env::var("JAZYK_CALL_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(600)
+        .max(30);
+    Duration::from_secs(secs)
 }
 
 // Whether an error looks transient (worth retrying) versus a hard client error.
@@ -293,6 +320,17 @@ impl Llm {
                         self.note(label, "provider rejected reasoning fields in the history; stripping them from requests for the rest of the run");
                         continue;
                     }
+                    // A provider that rejects `max_tokens` names it. Drop the cap once,
+                    // sticky for the run, and retry; the stream reader still bounds the
+                    // completion. Checked before the temperature fallback so the named
+                    // rejection is not misread as a temperature one.
+                    if e.contains("400")
+                        && e.to_lowercase().contains("max_tokens")
+                        && !MAX_TOKENS_UNSUPPORTED.swap(true, Ordering::Relaxed)
+                    {
+                        self.note(label, "provider rejected max_tokens; omitting the completion cap for the rest of the run");
+                        continue;
+                    }
                     // A model that rejects `temperature` answers 400 (often wrapped by a
                     // proxy). Drop the parameter once, sticky for the run, and retry.
                     let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
@@ -392,6 +430,9 @@ impl Llm {
                 payload["temperature"] = json!(t);
             }
         }
+        if !MAX_TOKENS_UNSUPPORTED.load(Ordering::Relaxed) {
+            payload["max_tokens"] = json!(max_completion_tokens());
+        }
         if let Some(tools) = tools {
             payload["tools"] = json!(tools);
         }
@@ -428,7 +469,7 @@ impl Llm {
         };
 
         if streaming {
-            return read_stream_message(BufReader::new(resp.into_reader()));
+            return read_stream_message(BufReader::new(resp.into_reader()), max_completion_tokens(), call_timeout());
         }
 
         let mut resp_body = String::new();
@@ -455,8 +496,11 @@ impl Llm {
 // into the same field they arrived in, so the assembled message carries what a
 // non-streaming reply would; tool-call deltas accumulate per index (id and name arrive
 // first, arguments append across chunks). Non-`data:` lines (blanks, comments) are
-// skipped.
-fn read_stream_message<R: BufRead>(reader: R) -> Result<(Value, u64), String> {
+// skipped. Two runaway bounds: accumulated content is capped (a server ignoring
+// `max_tokens` streams a looping model forever otherwise), and the whole call has a
+// wall-clock deadline (per-read timeouts reset on every chunk, so a live stream never
+// trips them).
+fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duration) -> Result<(Value, u64), String> {
     struct TcAcc {
         id: String,
         name: String,
@@ -467,9 +511,29 @@ fn read_stream_message<R: BufRead>(reader: R) -> Result<(Value, u64), String> {
     let mut reasoning = String::new();
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
+    let started = std::time::Instant::now();
+    // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
+    // still bounding a server that ignores `max_tokens`.
+    let cap_chars = (cap_tokens as usize).saturating_mul(6);
 
     for line in reader.lines() {
         let line = line.map_err(|e| format!("read: {}", e))?;
+        if started.elapsed() > deadline {
+            return Err(format!(
+                "runaway completion: call exceeded {}s wall clock (JAZYK_CALL_TIMEOUT)",
+                deadline.as_secs()
+            ));
+        }
+        let streamed = content.len()
+            + reasoning_content.len()
+            + reasoning.len()
+            + tcs.iter().map(|t| t.args.len()).sum::<usize>();
+        if streamed > cap_chars {
+            return Err(format!(
+                "runaway completion: streamed past the {} token cap (JAZYK_MAX_COMPLETION_TOKENS); the model is likely looping",
+                cap_tokens
+            ));
+        }
         {
             let line = line.trim_end_matches('\r').to_string();
             let Some(data) = line.strip_prefix("data:") else { continue };
@@ -611,7 +675,7 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"Recording it."}}]}"#,
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"done","arguments":"{}"}}]}}]}"#,
         ]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["reasoning_content"], "the section states a fact");
         assert_eq!(msg["content"], "Recording it.");
         assert_eq!(msg["tool_calls"][0]["function"]["name"], "done");
@@ -620,15 +684,24 @@ mod tests {
     #[test]
     fn stream_keeps_reasoning_field_variant() {
         let body = sse(&[r#"{"choices":[{"delta":{"reasoning":"thinking"}}]}"#]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["reasoning"], "thinking");
         assert!(msg.get("reasoning_content").is_none());
     }
 
     #[test]
+    fn stream_past_cap_is_a_runaway() {
+        // A looping model streams the same phrase forever; the reader stops at the cap.
+        let chunk = r#"{"choices":[{"delta":{"content":"same words again and again "}}]}"#;
+        let body = sse(&vec![chunk; 400]);
+        let err = read_stream_message(body.as_bytes(), 256, Duration::from_secs(600)).unwrap_err();
+        assert!(err.contains("runaway completion"), "{}", err);
+    }
+
+    #[test]
     fn stream_without_reasoning_adds_no_field() {
         let body = sse(&[r#"{"choices":[{"delta":{"content":"plain"}}]}"#]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes()).unwrap();
+        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["content"], "plain");
         assert!(msg.get("reasoning_content").is_none());
         assert!(msg.get("reasoning").is_none());

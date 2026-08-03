@@ -66,6 +66,9 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       qc.invalidateQueries({ queryKey: ['pending'] })
       qc.invalidateQueries({ queryKey: ['matrix'] })
       break
+    case 'control.changed':
+      qc.invalidateQueries({ queryKey: ['workers'] })
+      break
     case 'watch.state':
       app.setWatchMode(ev.mode as 'off' | 'queue' | 'watch')
       if (ev.gen) app.setGenMode(ev.gen as 'manual' | 'auto')

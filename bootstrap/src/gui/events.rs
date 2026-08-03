@@ -176,6 +176,42 @@ pub fn spawn_store_watcher(st: SharedState) {
 
 // Watch the documents with native file events: debounce bursts, then diff a
 // per-file fingerprint so editor temp files and out-dir writes never signal.
+// Emits control.changed when the control plane moves: a release, a mode change, a
+// worker registering or dropping, a lease taken or freed. Polling: the surfaces are
+// tiny files, and a 2 second cadence is livelier than a heartbeat needs.
+// Mirrors docs/frontends/gui.md#events.
+pub fn spawn_control_watcher(st: SharedState) {
+    std::thread::spawn(move || {
+        let fingerprint = |st: &SharedState| -> String {
+            let mut s = String::new();
+            let meta = |p: &std::path::Path| {
+                std::fs::metadata(p).map(|m| format!("{}:{:?};", m.len(), m.modified().ok())).unwrap_or_default()
+            };
+            s.push_str(&meta(&crate::control::Control::path(&st.out)));
+            for dir in ["workers", "leases"] {
+                if let Ok(entries) = std::fs::read_dir(st.out.join(dir)) {
+                    let mut names: Vec<String> = entries
+                        .flatten()
+                        .map(|e| format!("{}{}", e.file_name().to_string_lossy(), meta(&e.path())))
+                        .collect();
+                    names.sort();
+                    s.push_str(&names.join(""));
+                }
+            }
+            s
+        };
+        let mut last = fingerprint(&st);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let now = fingerprint(&st);
+            if now != last {
+                last = now;
+                st.events.emit("control.changed", super::api::workers_snapshot(&st));
+            }
+        }
+    });
+}
+
 // Emits docs.changed; the watch-mode compile trigger hooks in here.
 pub fn spawn_docs_watcher(st: SharedState) {
     std::thread::spawn(move || {

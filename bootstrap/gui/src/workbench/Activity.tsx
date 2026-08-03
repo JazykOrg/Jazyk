@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { get, post, put, type Job, type JournalEntry, type TraceEvent } from '../lib/api'
-import { useDocs, useGenPending, useJournal, useStatus } from '../lib/queries'
+import { useDocs, useGenPending, useJournal, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
 import '../routes/routes.css'
@@ -563,6 +563,44 @@ function Changesets({ from, to }: { from: number; to: number }) {
   )
 }
 
+// The workers strip: who is attached, what they hold, and the release buttons when
+// gated work exists. Mirrors docs/frontends/gui.md#workers.
+function WorkersStrip() {
+  const { data: w } = useWorkers()
+  if (!w) return null
+  const agents = w.workers.filter((x) => x.kind === 'agent')
+  const gatedC = w.gated?.compile ?? 0
+  const gatedG = w.gated?.generate ?? 0
+  const held = w.leases.filter((l) => l.task !== 'build')
+  if (agents.length === 0 && gatedC === 0 && gatedG === 0 && held.length === 0) return null
+  return (
+    <span className="muted" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+      {agents.map((a) => (
+        <span key={a.id} title={`agent worker ${a.id} (pid ${a.pid})`}>
+          ⚡ {a.client || 'agent'}
+          {a.task ? ` · ${a.task}` : ' · idle'}
+        </span>
+      ))}
+      {gatedC > 0 && (
+        <button
+          title="approve the pending document changes; the attached worker compiles them"
+          onClick={() => post('/api/release', { stage: 'compile' })}
+        >
+          release compile {gatedC}
+        </button>
+      )}
+      {gatedG > 0 && (
+        <button
+          title="approve the pending graph changes for generation"
+          onClick={() => post('/api/release', { stage: 'generate' })}
+        >
+          release gen {gatedG}
+        </button>
+      )}
+    </span>
+  )
+}
+
 // The control line: run actions and the automatic modes, visible even collapsed.
 function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const { data: s } = useStatus()
@@ -581,6 +619,7 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
       <button className="toggle" onClick={() => setOpen(!open)} title="run history">
         {open ? '▾' : '▸'} activity
       </button>
+      <WorkersStrip />
       {running ? (
         <span className="v-stale">
           ▶ {running.kind.kind} running{queued > 0 ? ` (+${queued} queued)` : ''}
@@ -595,10 +634,9 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
         <span className="muted">{s?.verdict || 'no build yet'}</span>
       )}
       <span className="bar-right">
-        <label className="muted" title="off: changes only update badges · queue: changes queue, compiling is a click · watch: compile on change (spends LLM budget)">
+        <label className="muted" title="manual: changes queue and await a release, compiling is a click · auto: compile on change (spends LLM budget). Shared with agents via control.yaml.">
           compile
-          <select value={watchMode} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
-            <option value="off">off</option>
+          <select value={watchMode === 'watch' ? 'watch' : 'queue'} onChange={(e) => put('/api/watch', { mode: e.target.value })}>
             <option value="queue">manual</option>
             <option value="watch">auto</option>
           </select>

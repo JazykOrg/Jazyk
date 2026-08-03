@@ -155,6 +155,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         };
         events::spawn_store_watcher(st.clone());
         events::spawn_docs_watcher(st.clone());
+        events::spawn_control_watcher(st.clone());
         let addr = listener.local_addr().expect("listener addr");
         // Fell back off the busy default port: say who owns it, so a stale tab or
         // bookmark on the default port is explainable at a glance.

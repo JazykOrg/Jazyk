@@ -37,6 +37,17 @@ export const useCoverage = () =>
     ...opts,
   })
 
+export type WorkersSnapshot = {
+  workflow: { compile: string; gen?: string; generate: string; worker: string }
+  workers: { id: string; kind: string; client: string; pid: number; heartbeat_at: number; task: string }[]
+  leases: { task: string; worker: string; expires_at: number }[]
+  gated: { compile: number; generate: number }
+  actionable: { compile: number; generate: number; verify: number }
+}
+
+export const useWorkers = () =>
+  useQuery({ queryKey: ['workers'], queryFn: () => get<WorkersSnapshot>('/api/workers'), ...opts })
+
 export const useJournal = (limit = 50) =>
   useQuery({
     queryKey: ['journal', limit],

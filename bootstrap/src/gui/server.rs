@@ -76,6 +76,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/trace/{stem}/{n}", get(jobs::get_trace_event))
         .route("/settings", get(api::settings_get).put(api::settings_put))
         .route("/watch", get(api::watch_get).put(api::watch_put))
+        .route("/workers", get(api::workers))
+        .route("/release", post(api::release))
         .route("/events", get(events::sse))
         .route("/shutdown", post(api::shutdown));
     Router::new()

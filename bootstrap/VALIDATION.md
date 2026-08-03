@@ -48,6 +48,11 @@ routing conclusion:
   text wrote files but recorded a programmatic row with an empty artifact (that
   manifest shape is now rejected at record time). Use `gen.worker = "pipeline"` for
   models below the generation tier, or an external agent over MCP.
+- Run-to-run variance is real: a rerun an hour later saw the text codec collapse to
+  0.14 with every extraction case aborting on prose-only replies, while the small-pack
+  review and verification cases stayed at 1.00. The endpoint, not the model: a loaded
+  local server degrades, and big packs degrade first. Grade local models from a fresh
+  endpoint, and treat a collapsed codec beside a recent healthy grade as noise.
 - The stuck-repeat guard changed failure semantics mid-measurement: with refusals
   feeding the abort streak, four extraction cases died at 0.00; with refusals kept out
   of the streak (the current behavior), the same cases scored 0.17 to 0.67 and the

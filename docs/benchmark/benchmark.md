@@ -57,6 +57,11 @@ difference. Per codec, the benchmark reports:
   codec gets no verdict and no results entry. When both codecs are unmeasured the
   run writes no results and exits non-zero.
 
+A local endpoint's grade varies run to run: a loaded server starts truncating or
+answering prose, and a codec that scored high an hour earlier collapses to aborts. A
+collapsed grade beside a recent healthy one is endpoint trouble first, model second;
+rerun before concluding. The scorecard keeps history for exactly this comparison.
+
 ## Results file
 
 Every run writes `<out>/benchmark/results.yaml`, one entry per model:

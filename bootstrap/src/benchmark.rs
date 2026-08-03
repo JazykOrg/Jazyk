@@ -29,26 +29,26 @@ const CASE_FILES: [&str; 14] = [
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
 
-struct Case {
-    name: String,
-    tier: String,
+pub struct Case {
+    pub name: String,
+    pub tier: String,
     // The rounds a competent model needs; efficiency compares against it.
-    par_rounds: u32,
+    pub par_rounds: u32,
     // Verification fixtures: implementing files written under the temp deliverable.
-    deliverable: BTreeMap<String, String>,
-    task_type: String,
-    target: String,
-    docs: BTreeMap<String, String>,
-    entities: BTreeMap<String, Value>,
-    requirements: BTreeMap<String, Value>,
-    coverage: BTreeMap<String, String>,
-    lint: Linting,
-    checks: Vec<(String, Value)>,
+    pub deliverable: BTreeMap<String, String>,
+    pub task_type: String,
+    pub target: String,
+    pub docs: BTreeMap<String, String>,
+    pub entities: BTreeMap<String, Value>,
+    pub requirements: BTreeMap<String, Value>,
+    pub coverage: BTreeMap<String, String>,
+    pub lint: Linting,
+    pub checks: Vec<(String, Value)>,
 }
 
 // The results file compares only within one case set: hash every embedded case
 // definition. Mirrors docs/benchmark/benchmark.md#results-file.
-fn case_set_hash() -> String {
+pub fn case_set_hash() -> String {
     let blocks: Vec<String> = CASE_FILES.iter().flat_map(|f| yaml_blocks(f)).collect();
     hash_hex(&blocks.join("\n---\n"))
 }
@@ -74,7 +74,7 @@ fn yaml_blocks(md: &str) -> Vec<String> {
     out
 }
 
-fn parse_cases() -> Vec<Case> {
+pub fn parse_cases() -> Vec<Case> {
     let mut cases = Vec::new();
     for file in CASE_FILES {
         for block in yaml_blocks(file) {
@@ -151,7 +151,7 @@ fn source_ref(v: &Value) -> Option<SourceRef> {
 }
 
 // Seed a sandbox store from a case fixture. The sandbox writes to a throwaway out dir.
-fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
+pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
     let mut s = Store { out: tmp.to_path_buf(), ..Default::default() };
     for (doc, text) in &case.docs {
         s.docs.insert(
@@ -232,7 +232,7 @@ fn find_entity(store: &Store, ident: &str) -> Option<String> {
 
 // Evaluate one check against the resulting store and the staged-mutation count.
 // Returns None on pass, or a short failure description.
-fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<String> {
+pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<String> {
     let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     match kind {
         "entityExists" => {
@@ -390,7 +390,7 @@ fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<S
 
 
 // Tiers with unknown names grade as extraction, the strictest default.
-fn tier_key(t: &str) -> &'static str {
+pub fn tier_key(t: &str) -> &'static str {
     match t {
         "review" => "review",
         "generation" => "generation",
@@ -402,10 +402,10 @@ fn tier_key(t: &str) -> &'static str {
 // Generation and verification checks: deterministic code over the ledger, the files on
 // disk, and the exit codes of recorded commands. Mirrors
 // docs/benchmark/benchmark.md#deterministic-grading.
-const WORKFLOW_CHECKS: [&str; 5] =
+pub const WORKFLOW_CHECKS: [&str; 5] =
     ["generationRecorded", "rowPerRequirement", "testsPass", "testFalsifiable", "verdictIs"];
 
-fn eval_workflow_check(
+pub fn eval_workflow_check(
     kind: &str,
     arg: &Value,
     store: &Store,
@@ -512,7 +512,7 @@ fn eval_workflow_check(
 
 // Seed the llm-judge fixture for a verify-requirement case: the implementing files
 // under the temp deliverable, the criteria file, and the ledger row the judge reads.
-fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSettings) -> Result<(), String> {
+pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSettings) -> Result<(), String> {
     let rid = &case.target;
     let r = store.graph.requirements.get(rid).ok_or_else(|| format!("fixture has no requirement {}", rid))?;
     for (f, text) in &case.deliverable {
@@ -822,7 +822,7 @@ fn home_history_path() -> Option<std::path::PathBuf> {
 
 // Append one run to the machine-wide history: grades outlive the project that
 // produced them. Mirrors docs/benchmark/benchmark.md#machine-wide-history.
-fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Value)]) {
+pub fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Value)]) {
     let Some(path) = home_history_path() else { return };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();

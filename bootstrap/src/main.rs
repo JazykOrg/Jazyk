@@ -338,7 +338,7 @@ fn main() {
             Some(arg) => {
                 // The toolsets served, comma separated: compile, generate, verify, graph.
                 let modes: Vec<String> = arg.split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
-                let known = ["compile", "generate", "verify", "graph"];
+                let known = ["compile", "generate", "verify", "benchmark", "graph"];
                 if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
                     eprintln!("{}", cmd_usage("mcp").unwrap());
                     2

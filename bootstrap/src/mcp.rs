@@ -27,6 +27,27 @@ pub struct McpServer {
     // The session transcript: one event per call under <out>/trace, reviewable beside
     // a build. Mirrors docs/frontends/mcp.md#transcripts.
     trace: crate::turn::Trace,
+    // The agent-run benchmark: the open case's sandbox and the run's accumulated
+    // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
+    bench: std::sync::Mutex<BenchRun>,
+}
+
+#[derive(Default)]
+struct BenchRun {
+    open: Option<OpenCase>,
+    // One entry per finished case: name, tier, score, calls, par, fail.
+    scored: Vec<Value>,
+}
+
+struct OpenCase {
+    idx: usize,
+    item: WorkItem,
+    // The sandbox master: staged work applies here at finish, checks read it.
+    store: Store,
+    session: ToolSession,
+    calls: u32,
+    tmp: std::path::PathBuf,
+    gs: crate::gen::GenSettings,
 }
 
 struct OpenTask {
@@ -66,6 +87,18 @@ fn instructions_for(modes: &[String], write: bool) -> String {
              tools, and record_verdict with evidence. ",
         );
     }
+    if modes.iter().any(|m| m == "benchmark") {
+        s.push_str(
+            "BENCHMARK LOOP: you are the model under test. Call benchmark_cases; for each pending \
+             case, begin_case, follow the returned instructions exactly as if it were real work \
+             (stage graph writes with the write tools; for a generation case write real files into \
+             the named sandbox deliverable with your own tools, record_generation, run_tests; for a \
+             verification case judge the criteria against the files), then finish_case (verification \
+             cases pass verdict and evidence). After the last case call benchmark_report with an \
+             honest model name for the agent you are. You are graded deterministically; gaming a \
+             check grades the gaming, not the skill. ",
+        );
+    }
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
@@ -91,6 +124,7 @@ impl McpServer {
             write,
             client: std::sync::Mutex::new(None),
             open: std::sync::Mutex::new(None),
+            bench: std::sync::Mutex::new(BenchRun::default()),
             trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
         }
     }
@@ -179,6 +213,13 @@ impl McpServer {
                     t
                 }
                 "generate" => toolset("mcp-generate"),
+                "benchmark" => {
+                    let mut t = toolset("mcp-compile");
+                    t.extend(crate::tools::GEN_TOOLS);
+                    t.push("run_tests");
+                    t.extend(["benchmark_cases", "begin_case", "finish_case", "benchmark_report"]);
+                    t
+                }
                 "verify" => toolset("mcp-verify"),
                 _ => toolset(if self.write { "mcp-write" } else { "mcp-read" }),
             };
@@ -410,6 +451,265 @@ impl McpServer {
         })
     }
 
+
+    // ---- the agent-run benchmark ----
+    // Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
+
+    fn benchmark_cases(&self) -> Value {
+        let cases = crate::benchmark::parse_cases();
+        let b = self.bench.lock().unwrap();
+        let scored: std::collections::BTreeMap<String, &Value> = b
+            .scored
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap_or("").to_string(), e))
+            .collect();
+        let rows: Vec<Value> = cases
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let state = if b.open.as_ref().map(|o| o.idx) == Some(i) {
+                    json!("open")
+                } else if let Some(e) = scored.get(&c.name) {
+                    json!(format!("scored {}", e["score"]))
+                } else {
+                    json!("pending")
+                };
+                json!({"name": c.name, "tier": c.tier, "task": c.task_type, "state": state})
+            })
+            .collect();
+        let done = b.scored.len();
+        json!({
+            "cases": rows,
+            "scored": done,
+            "total": cases.len(),
+            "next": if done >= cases.len() {
+                "all cases scored; call benchmark_report with an honest model name"
+            } else {
+                "begin_case claims the first pending case"
+            },
+        })
+    }
+
+    fn begin_case(&self, params: &Value) -> Value {
+        let cases = crate::benchmark::parse_cases();
+        let mut b = self.bench.lock().unwrap();
+        if let Some(o) = &b.open {
+            return json!({"error": {"rule": "case-open", "message": format!(
+                "case `{}` is already open; finish_case first", cases[o.idx].name)}});
+        }
+        let scored: std::collections::BTreeSet<String> =
+            b.scored.iter().filter_map(|e| e["name"].as_str().map(String::from)).collect();
+        let want = params["arguments"]["case"].as_str();
+        let Some((idx, case)) = cases
+            .iter()
+            .enumerate()
+            .find(|(_, c)| match want {
+                Some(w) => c.name == w,
+                None => !scored.contains(&c.name),
+            })
+        else {
+            return json!({"error": {"rule": "no-pending-case", "message": "no pending case; benchmark_cases shows the run, benchmark_report closes it"}});
+        };
+        let tmp = std::env::temp_dir().join(format!("jazyk-mcp-bench-{}-{}", std::process::id(), case.name));
+        std::fs::remove_dir_all(&tmp).ok();
+        let store = crate::benchmark::sandbox(case, &tmp);
+        let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into() };
+        std::fs::create_dir_all(&gs.deliverable).ok();
+        let item = WorkItem {
+            task: case.task_type.clone(),
+            target: case.target.clone(),
+            dirty_sections: match case.task_type.as_str() {
+                "reconcile-doc" => store.docs.get(&case.target).map(|r| r.sections.keys().cloned().collect()).unwrap_or_default(),
+                _ => Vec::new(),
+            },
+            stale_anchors: Vec::new(),
+        };
+        let mut reply = json!({
+            "case": {"name": case.name, "tier": case.tier, "task": case.task_type, "target": case.target},
+            "next": "do the work, then finish_case",
+        });
+        match case.task_type.as_str() {
+            "verify-requirement" => {
+                if let Err(e) = crate::benchmark::seed_verification(case, &store, &gs) {
+                    return json!({"error": {"rule": "fixture", "message": e}});
+                }
+                let r = &store.graph.requirements[&case.target];
+                reply["package"] = json!({
+                    "statement": r.ears,
+                    "quote": r.source.quote,
+                    "files": case.deliverable.keys().map(|f| gs.deliverable.join(f).to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "instructions": "Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.",
+                });
+            }
+            _ => {
+                let (instructions, pack) =
+                    crate::turn::task_prompt(&store, &item, &self.project.limits, &self.project.linting, &gs);
+                reply["instructions"] = json!(instructions);
+                reply["package"] = json!(pack);
+                if case.task_type == "generate-entity" {
+                    reply["deliverableDir"] = json!(gs.deliverable.to_string_lossy());
+                    reply["note"] = json!("write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open");
+                }
+            }
+        }
+        let scope = match item.task.as_str() {
+            "reconcile-doc" => WorkScope {
+                task: item.task.clone(),
+                doc: Some(item.target.clone()),
+                target: item.target.clone(),
+                target_sections: item.dirty_sections.clone(),
+                stale_anchors: Vec::new(),
+            },
+            _ => WorkScope {
+                task: item.task.clone(),
+                doc: None,
+                target: item.target.clone(),
+                target_sections: Vec::new(),
+                stale_anchors: Vec::new(),
+            },
+        };
+        let mut session = ToolSession::new(store.clone(), scope, self.mutation_limit, self.context_budget);
+        session.gen = gs.clone();
+        session.caller = self.caller("benchmark", &case.name);
+        b.open = Some(OpenCase { idx, item, store, session, calls: 0, tmp, gs });
+        reply
+    }
+
+    fn finish_case(&self, params: &Value) -> Value {
+        let cases = crate::benchmark::parse_cases();
+        let mut b = self.bench.lock().unwrap();
+        let Some(mut o) = b.open.take() else {
+            return json!({"error": {"rule": "no-open-case", "message": "no case is open; begin_case first"}});
+        };
+        let case = &cases[o.idx];
+        // Turn cases face the same done gates a turn does; a rejection keeps the case
+        // open, same contract as finish_compilation.
+        if case.task_type == "reconcile-doc" || case.task_type.starts_with("review-") {
+            let summary = params["arguments"]["summary"].as_str().unwrap_or("(finish)").to_string();
+            if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
+                let v = e.to_value();
+                b.open = Some(o);
+                return v;
+            }
+            let staged = std::mem::take(&mut o.session.staged);
+            if !staged.is_empty() {
+                o.store.apply(staged, &o.item, o.calls, 0);
+            }
+        }
+        if case.task_type == "verify-requirement" {
+            let verdict = params["arguments"]["verdict"].as_str().unwrap_or("");
+            if verdict != "pass" && verdict != "fail" {
+                b.open = Some(o);
+                return json!({"error": {"rule": "bad-argument", "message": "finish_case on a verification case needs verdict: pass or fail"}});
+            }
+            let evidence = params["arguments"]["evidence"].as_str().unwrap_or("");
+            if let Err(e) = crate::verify::mark(&o.store, &case.target, verdict, None, Some(evidence), &o.gs) {
+                b.open = Some(o);
+                return json!({"error": {"rule": "bad-argument", "message": e}});
+            }
+        }
+        // Grade: the same deterministic checks an endpoint run faces.
+        let staged_count = 0usize;
+        let (mut passed, mut fail): (usize, Option<String>) = (0, None);
+        for (kind, arg) in &case.checks {
+            let verdict = if crate::benchmark::WORKFLOW_CHECKS.contains(&kind.as_str()) {
+                crate::benchmark::eval_workflow_check(kind, arg, &o.store, &o.gs, &case.target)
+            } else {
+                crate::benchmark::eval_check(kind, arg, &o.store, staged_count.max(1))
+            };
+            match verdict {
+                None => passed += 1,
+                Some(why) => {
+                    if fail.is_none() {
+                        fail = Some(format!("{}: {}", kind, why));
+                    }
+                }
+            }
+        }
+        let score = if case.checks.is_empty() { 0.0 } else { passed as f64 / case.checks.len() as f64 };
+        let efficiency = (case.par_rounds as f64 / o.calls.max(1) as f64).min(1.0);
+        std::fs::remove_dir_all(&o.tmp).ok();
+        let entry = json!({
+            "name": case.name,
+            "tier": case.tier,
+            "score": (score * 100.0).round() / 100.0,
+            "checks": format!("{}/{}", passed, case.checks.len()),
+            "calls": o.calls,
+            "parRounds": case.par_rounds,
+            "efficiency": (efficiency * 100.0).round() / 100.0,
+            "fail": fail.clone().unwrap_or_default(),
+        });
+        b.scored.push(entry.clone());
+        let remaining = cases.len() - b.scored.len();
+        json!({
+            "scored": entry,
+            "next": if remaining > 0 {
+                format!("{} case(s) pending; begin_case claims the next", remaining)
+            } else {
+                "all cases scored; call benchmark_report with an honest model name".into()
+            },
+        })
+    }
+
+    fn benchmark_report(&self, params: &Value) -> Value {
+        let mut b = self.bench.lock().unwrap();
+        if b.open.is_some() {
+            return json!({"error": {"rule": "case-open", "message": "a case is open; finish_case first"}});
+        }
+        if b.scored.is_empty() {
+            return json!({"error": {"rule": "nothing-scored", "message": "no cases scored yet; begin_case starts the run"}});
+        }
+        let model = params["arguments"]["model"]
+            .as_str()
+            .map(String::from)
+            .or_else(|| self.client.lock().unwrap().clone().map(|c| format!("{} (agent)", c)))
+            .unwrap_or_else(|| "unnamed-agent".into());
+        let mut tier_sum: std::collections::BTreeMap<&str, (f64, usize)> = Default::default();
+        let mut tier_ok: std::collections::BTreeMap<&str, bool> = Default::default();
+        let (mut eff_sum, mut checks_p, mut checks_t) = (0.0f64, 0usize, 0usize);
+        for e in &b.scored {
+            let t = crate::benchmark::tier_key(e["tier"].as_str().unwrap_or(""));
+            let sc = e["score"].as_f64().unwrap_or(0.0);
+            let en = tier_sum.entry(t).or_insert((0.0, 0));
+            en.0 += sc;
+            en.1 += 1;
+            if sc < 1.0 {
+                tier_ok.insert(t, false);
+            }
+            eff_sum += e["efficiency"].as_f64().unwrap_or(0.0);
+            let parts: Vec<usize> = e["checks"].as_str().unwrap_or("0/0").split('/').filter_map(|x| x.parse().ok()).collect();
+            if parts.len() == 2 {
+                checks_p += parts[0];
+                checks_t += parts[1];
+            }
+        }
+        // A tier never attempted is unmeasured, not capable: a partial run says what
+        // it graded and nothing more.
+        let ran = |t: &str| tier_sum.contains_key(t);
+        let ok = |t: &str| ran(t) && *tier_ok.get(t).unwrap_or(&true);
+        let ts = |t: &str| tier_sum.get(t).map(|(s, n)| if *n == 0 { 0.0 } else { ((s / *n as f64) * 100.0).round() / 100.0 }).unwrap_or(0.0);
+        let report = json!({
+            "verdicts": {
+                "compilation": if !ran("extraction") { "unmeasured" } else {
+                    match (ok("extraction"), ok("review") && ran("review")) {
+                        (true, true) => "review", (true, false) => "extraction", _ => "not-capable",
+                    }
+                },
+                "generation": if !ran("generation") { "unmeasured" } else if ok("generation") { "capable" } else { "not-capable" },
+                "verification": if !ran("verification") { "unmeasured" } else if ok("verification") { "capable" } else { "not-capable" },
+            },
+            "scores": {"extraction": ts("extraction"), "review": ts("review"), "generation": ts("generation"), "verification": ts("verification")},
+            "checks": format!("{}/{}", checks_p, checks_t),
+            "efficiency": ((eff_sum / b.scored.len() as f64) * 100.0).round() / 100.0,
+            "tokens": Value::Null,
+            "throughput": Value::Null,
+            "cases": b.scored.iter().map(|e| (e["name"].as_str().unwrap_or("").to_string(), e.clone())).collect::<std::collections::BTreeMap<String, Value>>(),
+        });
+        crate::benchmark::append_history(&model, "agent", &[("agent".to_string(), report.clone())]);
+        b.scored.clear();
+        json!({"model": model, "codec": "agent", "report": report, "recorded": "appended to ~/.jazyk/benchmarks/history.yaml"})
+    }
+
     fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
@@ -451,6 +751,28 @@ impl McpServer {
                         "name": "abandon_compilation",
                         "description": "Drop the open changeset without committing. The task stays in the queue.",
                         "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                }
+                if self.modes.iter().any(|m| m == "benchmark") {
+                    tools.push(json!({
+                        "name": "benchmark_cases",
+                        "description": "The benchmark case list with each case's tier and state, and the run's progress. Next: begin_case.",
+                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "begin_case",
+                        "description": "Claim the named case or the first pending one, against a throwaway sandbox. The reply carries the same instructions and package an in-process turn gets; do the work exactly as if it were real. One case open at a time.",
+                        "inputSchema": {"type": "object", "properties": {"case": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "finish_case",
+                        "description": "Grade the open case with its deterministic checks and discard the sandbox. Turn cases face the done gates first (a rejection keeps the case open; repair and finish again). Verification cases pass verdict (pass|fail) and evidence.",
+                        "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "verdict": {"type": "string", "enum": ["pass", "fail"]}, "evidence": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "benchmark_report",
+                        "description": "Close the run: tier scores, workflow verdicts, efficiency over the scored cases, appended to the machine-wide history under the given model name (name the agent honestly, e.g. claude-sonnet-4.6 (agent)).",
+                        "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}}, "additionalProperties": false}
                     }));
                 }
                 tools.push(json!({
@@ -518,6 +840,18 @@ impl McpServer {
                     "abandon_compilation" if self.modes.iter().any(|m| m == "compile") => {
                         return Ok(text_result(self.abandon_compilation(params), false))
                     }
+                    "benchmark_cases" if self.modes.iter().any(|m| m == "benchmark") => {
+                        return Ok(text_result(self.benchmark_cases(), false))
+                    }
+                    "begin_case" if self.modes.iter().any(|m| m == "benchmark") => {
+                        return Ok(text_result(self.begin_case(params), false))
+                    }
+                    "finish_case" if self.modes.iter().any(|m| m == "benchmark") => {
+                        return Ok(text_result(self.finish_case(params), false))
+                    }
+                    "benchmark_report" if self.modes.iter().any(|m| m == "benchmark") => {
+                        return Ok(text_result(self.benchmark_report(params), false))
+                    }
                     _ => {}
                 }
                 let args = params["arguments"].clone();
@@ -531,6 +865,31 @@ impl McpServer {
                     && !crate::tools::GEN_TOOLS.contains(&name.as_str())
                     && !crate::tools::VERIFY_TOOLS.contains(&name.as_str());
 
+                // An open benchmark case takes every call first: the sandbox is the
+                // world under test. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
+                {
+                    let mut b = self.bench.lock().unwrap();
+                    if let Some(o) = b.open.as_mut() {
+                        let allowed = {
+                            let mut t = toolset(&o.item.task);
+                            t.extend(crate::tools::GEN_TOOLS);
+                            t.push("run_tests");
+                            t
+                        };
+                        if !allowed.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "wrong-toolset", "message": format!(
+                                    "`{}` is not part of a {} case", name, o.item.task)}}),
+                                true,
+                            ));
+                        }
+                        o.calls += 1;
+                        return match o.session.dispatch(&name, &args) {
+                            Ok(v) => Ok(text_result(v, false)),
+                            Err(e) => Ok(text_result(e.to_value(), true)),
+                        };
+                    }
+                }
                 // Graph writes stage into the open task's changeset. Mirrors
                 // docs/frontends/mcp.md#compilation-over-mcp.
                 let mut open = self.open.lock().unwrap();

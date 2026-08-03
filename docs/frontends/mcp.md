@@ -18,6 +18,11 @@ separated; each adds its tools to the union:
   ledger.
 - `jazyk mcp verify`: the [verification tools](../compiler/tools.md#verification-tools).
   Small enough to hand a subagent whose only job is judging one row.
+- `jazyk mcp benchmark`: the agent under test performs the
+  [benchmark cases](../benchmark/benchmark.md#agent-run-benchmarks) against sandbox
+  stores and is graded by the same deterministic checks as an endpoint run. Built to
+  hand a subagent: the serving is self-contained and touches no project state beyond
+  the machine-wide history its report appends.
 - `jazyk mcp graph`: the read tools only, for retrieval consumers. `--write` adds the
   raw write tools without the task lifecycle, for debugging and manual graph surgery;
   each write commits as its own changeset.

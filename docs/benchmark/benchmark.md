@@ -76,6 +76,39 @@ Every run writes `<out>/benchmark/results.yaml`, one entry per model:
 The entry updates in place per model. Analysis history lives in the scorecard
 (`bootstrap/VALIDATION.md`); the raw run history is machine-wide (below).
 
+## Agent-run benchmarks
+
+A coding agent is graded the same way an endpoint is: by performing the cases. The
+`jazyk mcp benchmark` [toolset](../compiler/tools.md#task-toolsets) serves each case
+as a claimable task against a throwaway sandbox store, and the agent under test does
+the work with the same write tools a compilation turn holds:
+
+- `benchmark_cases()`: the case list with each case's tier and state (pending, scored,
+  open), and the run's progress.
+- `begin_case({case?})`: claim the named case or the first pending one. The reply is
+  the same instructions and work package an in-process turn gets. A generation case
+  names the sandbox deliverable directory by absolute path: the agent writes there
+  with its own file tools, records with `record_generation`, and proves the work with
+  `run_tests`, all against the sandbox. A verification case carries the criteria and
+  the implementing files; the agent judges and passes its verdict to `finish_case`.
+- The write tools stage into the open case's sandbox exactly as
+  [compilation over MCP](../frontends/mcp.md#compilation-over-mcp) stages into the
+  project, gated by the case's task type.
+- `finish_case({summary?, verdict?, evidence?})`: run the `done` gates, apply the
+  staged work to the sandbox, grade with the case's deterministic checks, and return
+  the score with the first failing check named. The sandbox is discarded either way.
+- `benchmark_report({model})`: after the last case, compute tier scores and workflow
+  verdicts, append the run to the [machine-wide history](#machine-wide-history), and
+  return the report. `model` names the agent honestly (e.g. `claude-sonnet-4.6
+  (agent)`); the client name from `initialize` is the default.
+
+Grading is identical to an endpoint run with two substitutions, both recorded on the
+entry: the codec is `agent` (a third column beside `native` and `text`), and rounds
+count the agent's tool calls per case (tokens are unknowable from outside the agent
+and stay null). Efficiency against par therefore compares call discipline, not
+context cost. The checks, the scores, and the verdicts are the same code path, so an
+agent's grade sits in the same table as an endpoint's.
+
 ## Machine-wide history
 
 Every run also appends one entry to `~/.jazyk/benchmarks/history.yaml`, keyed by

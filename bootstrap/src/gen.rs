@@ -1037,6 +1037,42 @@ mod tests {
         assert!(parse_file_replies("no file line here").is_err());
     }
 
+    // The extra files a reply wrote are sorted by what the manifest says, not by the
+    // order they arrived in: the build's entry and declared support are the
+    // deliverable's, a second module or test file is the entity's.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn extra_files_are_classified_by_the_manifest() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-extra-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        for f in ["src/cart.rs", "src/cart_util.rs", "build.rs", "Cargo.toml"] {
+            std::fs::write(gs.deliverable.join(f), "// x").ok();
+        }
+        // The task wrote its part plus three more; the manifest calls two of them the
+        // deliverable's (one as support, one as the build's entry).
+        mark(
+            &s,
+            "ent:cart",
+            None,
+            &serde_json::json!({
+                "files": ["src/cart.rs", "src/cart_util.rs"],
+                "supportFiles": ["Cargo.toml"],
+                "build": {"run": "cargo build --release", "cwd": "."},
+                "tests": [],
+            }),
+            &gs,
+        )
+        .unwrap();
+        let ledger = Ledger::load(&out);
+        assert_eq!(ledger.support, vec!["Cargo.toml".to_string()]);
+        let mine = &ledger.entities["cart"].files;
+        assert!(mine.contains(&"src/cart_util.rs".to_string()), "{:?}", mine);
+        assert!(!mine.contains(&"Cargo.toml".to_string()), "{:?}", mine);
+        std::fs::remove_dir_all(&out).ok();
+    }
+
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", std::process::id()));
@@ -1457,8 +1493,10 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         )
     };
 
-    // Files a product reply wrote beside the entity's own part.
-    let mut extra_support: Vec<String> = Vec::new();
+    // Files a reply wrote beside the step's own file. Whether each belongs to this
+    // entity or to the deliverable is the manifest's call, made below
+    // (docs/consumers/gen.md#file-ownership-and-conventions).
+    let mut extra_written: Vec<String> = Vec::new();
     // Product content; the model names the file.
     let mut code = String::new();
     let mut product_rel = String::new();
@@ -1466,7 +1504,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
         let user = if k == 0 {
             format!(
-                "{}\n{}\nWrite the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
+                "{}\n{}\nWrite the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Write more files the same way when this part needs them (a dependency manifest, an entry point, a second module): another `FILE: <path>` line on its own, then that file. The first file is this entity's part. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
                 header, medium_directive(&medium), parts, req_lines.join("\n")
             )
         } else {
@@ -1510,7 +1548,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 }
                 snapshot_baseline(&store.out, gs, &p, &mut baselined);
                 if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
-                    extra_support.push(p);
+                    extra_written.push(p);
                 }
             }
             if let Some(owner) = owner_of(&path) {
@@ -1550,7 +1588,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
     let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
     let tests_user = format!(
-        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it. If no requirement can be tested programmatically, reply with exactly `NONE`.\nA test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.\n{}\nRequirements:\n{}\n\nThe product file:\n{}\n",
+        "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it; more files follow the same way, each after its own `FILE: <path>` line, when the tests need them (a fixture, a conftest). The first file is the tests artifact. If no requirement can be tested programmatically, reply with exactly `NONE`.\nA test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.\n{}\nRequirements:\n{}\n\nThe product file:\n{}\n",
         header,
         match &medium {
             Some(m) if m.is_built() => format!(
@@ -1567,9 +1605,9 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         .chat(instructions, &tests_user, &format!("gen {}", id), "tests")
         .map_err(|e| format!("tests file: {}", e))?;
     let mut files = vec![product_rel.clone()];
-    // Support files belong to the deliverable, not to this entity
+    // Files the manifest declares as the deliverable's, filled in once it is parsed
     // (docs/consumers/gen.md#file-ownership-and-conventions).
-    let mut support_files: Vec<String> = std::mem::take(&mut extra_support);
+    let mut support_files: Vec<String> = Vec::new();
     let mut tests_rel = String::new();
     let mut tests_code = String::new();
     if tests_reply.trim() != "NONE" {
@@ -1590,7 +1628,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                     }
                     snapshot_baseline(&store.out, gs, &p, &mut baselined);
                     if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
-                        support_files.push(p);
+                        extra_written.push(p);
                     }
                 }
                 Some(v.remove(0))
@@ -1944,6 +1982,27 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 "run": format!("jazyk test {}", rid),
                 "files": [product_rel],
             }));
+        }
+    }
+    // The extra files a step wrote are sorted now that the manifest is known: the
+    // deliverable keeps what the manifest calls support or runs as the build entry,
+    // the entity keeps the rest (docs/consumers/gen.md#file-ownership-and-conventions).
+    let declared_support: Vec<String> = manifest_json["supportFiles"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|f| f["path"].as_str().map(norm_rel)).collect())
+        .unwrap_or_default();
+    let build_entry_path = task["buildEntry"]["path"]
+        .as_str()
+        .map(norm_rel)
+        .or_else(|| entry_from_run(manifest_json["build"]["run"].as_str().unwrap_or("")).map(|p| norm_rel(&p)));
+    for p in extra_written {
+        let n = norm_rel(&p);
+        let deliverable_wide =
+            declared_support.iter().any(|d| *d == n) || build_entry_path.as_deref() == Some(n.as_str());
+        if deliverable_wide {
+            support_files.push(p);
+        } else if !files.contains(&p) {
+            files.push(p);
         }
     }
     let mut manifest = serde_json::json!({"files": files, "tests": tests_manifest, "supportFiles": support_files});

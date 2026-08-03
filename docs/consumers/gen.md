@@ -210,11 +210,17 @@ reference already generated files through the manifest.
   support files and no build keeps the ones the first answer gave. Weak models answer
   a correction by writing a fresh reply, and a fresh reply drops whatever it forgot;
   the harness holds the rest.
-- A reply that writes more than one file has written more than one file. The step
-  asks for one, and the first is the entity's part; anything after it lands as a
-  support file, since a reply that writes its module and the entry point together
-  means both, and folding the second into the first leaves a file that cannot even
-  parse.
+- A step may return several files, and the contract says so. Nearly a third of
+  generated replies carry more than one `FILE:` block, because a part that needs a
+  dependency manifest, an entry point, or a second module is a normal thing to write.
+  The first block is the entity's part; the rest are files the task wrote too.
+  Tolerating what the protocol forbade is how a `requirements.txt` header once
+  swallowed five files into one.
+- Which of those extra files belongs to the entity is decided by the manifest, not by
+  the order they arrived in. A file the manifest lists in `supportFiles`, or names as
+  the build's entry point, belongs to the deliverable; everything else the task wrote
+  belongs to the entity that wrote it. Classifying by arrival would make a second test
+  file deliverable-wide, unowned, and rewritable by any later task.
 - A support file never lands on a file an entity owns, this task's own product and
   tests included. Support files exist so any task may rewrite them; letting one take
   an owned path would let a manifest step quietly overwrite the module the product

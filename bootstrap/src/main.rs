@@ -13,6 +13,7 @@ mod md;
 mod model;
 mod parallel;
 mod project;
+mod queue;
 mod reconcile;
 mod store;
 mod tools;
@@ -63,7 +64,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
-    s.push_str("  jazyk mcp graph [--write]      the graph MCP server over stdio\n");
+    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json]         print ready tasks as the docs change\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
     s.push_str("\noptions: --llm-base-url URL  --model M  --api-key K  --out DIR\n");
@@ -200,9 +201,11 @@ fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "mcp" => format!(
-            "usage: jazyk mcp graph [--write]\n\n\
-             Serve the graph MCP server over stdio. Read tools by default; --write adds\n\
-             the write tools.\n\n\
+            "usage: jazyk mcp <toolsets>\n\n\
+             Serve the tool registry over stdio as an MCP server. <toolsets> is a comma\n\
+             list of: compile (perform compilation tasks), generate (the generation\n\
+             workflow), verify (the verification workflow), graph (read tools; --write\n\
+             adds raw write tools).\n\n\
              {}",
             COMMON_OUT
         ),
@@ -284,6 +287,7 @@ fn main() {
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,
+            "--json" => opts.json = true,
             "--force" => opts.force = true,
             "--list" => opts.list = true,
             "--audit" => opts.audit = true,
@@ -331,16 +335,28 @@ fn main() {
             }
         }
         "mcp" => match positional.first().map(|s| s.as_str()) {
-            Some("graph") => {
-                let (proj, _llm, out) = cli::resolve(&[], &opts);
-                mcp::McpServer::new(proj, out, opts.write).run();
-                0
+            Some(arg) => {
+                // The toolsets served, comma separated: compile, generate, verify, graph.
+                let modes: Vec<String> = arg.split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
+                let known = ["compile", "generate", "verify", "graph"];
+                if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
+                    eprintln!("{}", cmd_usage("mcp").unwrap());
+                    2
+                } else if opts.write && !modes.iter().any(|m| m == "graph") {
+                    eprintln!("jazyk: --write applies to the graph toolset only; compile gates writes behind begin_compilation");
+                    2
+                } else {
+                    let (proj, _llm, out) = cli::resolve(&[], &opts);
+                    mcp::McpServer::new(proj, out, modes, opts.write).run();
+                    0
+                }
             }
             _ => {
                 eprintln!("{}", cmd_usage("mcp").unwrap());
                 2
             }
         },
+        "monitor" => cli::run_monitor(&positional, &opts),
         "gen" => cli::run_gen(&opts, &positional),
         "test" => cli::run_test(&opts, &positional),
         "codegen" | "testgen" => {

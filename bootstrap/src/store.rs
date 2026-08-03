@@ -811,6 +811,21 @@ impl Store {
         self.status.spent.turns += 1;
         self.status.spent.rounds += rounds as u64;
         self.status.spent.tokens += tokens;
+        // A reconcile commit owes reviews for what it touched; recording them here is
+        // what makes the task queue derivable by any process, not just the loop that
+        // ran the ingest. Mirrors docs/compiler/reconciler.md#the-task-queue.
+        if work_item.task == "reconcile-doc" {
+            for id in &touched {
+                if self.graph.entities.contains_key(id) && !self.status.pending.entities.contains(id) {
+                    self.status.pending.entities.push(id.clone());
+                }
+            }
+            for id in &changed_reqs {
+                if self.graph.requirements.contains_key(id) && !self.status.pending.requirements.contains(id) {
+                    self.status.pending.requirements.push(id.clone());
+                }
+            }
+        }
         let entry = JournalEntry {
             build: build.clone(),
             work_item: work_item.clone(),
@@ -824,6 +839,19 @@ impl Store {
         );
         self.save();
         CommitReport { applied: applied.len(), skipped, touched_entities: touched, changed_requirements: changed_reqs }
+    }
+
+    // A completed review task pays its debt: the target leaves the pending block, and
+    // the queue stops offering it. Completion, not commit: a review that stages nothing
+    // still completes. Persists immediately so any process sees it.
+    pub fn complete_review(&mut self, task: &str, target: &str) {
+        let _flock = FileLock::acquire(&self.out);
+        match task {
+            "review-entity" => self.status.pending.entities.retain(|e| e != target),
+            "review-requirement" => self.status.pending.requirements.retain(|r| r != target),
+            _ => return,
+        }
+        self.save_status();
     }
 
     // Relationships are a materialized view over requirements: group requirement edges by
@@ -1219,6 +1247,49 @@ mod tests {
             sections,
             coverage: BTreeMap::new(),
         });
+    }
+
+    // A reconcile commit records the reviews it owes; completing a review pays the
+    // debt. What makes the task queue derivable by any process.
+    // Mirrors docs/compiler/reconciler.md#the-task-queue.
+    #[test]
+    fn reconcile_commit_records_pending_reviews_and_completion_clears_them() {
+        // Own directory: this test reloads from disk, and the shared tmp dir is
+        // stomped by parallel tests.
+        let dir = std::env::temp_dir().join(format!("jazyk-pending-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        let mut s = Store { out: dir, ..Default::default() };
+        seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
+        let ops = vec![
+            Op::CreateEntity { id: "ent:cart".into(), entity: Entity { name: "Cart".into(), ..Default::default() } },
+            Op::CreateRequirement {
+                id: "req:t-1".into(),
+                requirement: Requirement {
+                    ears: "The Cart shall hold items.".into(),
+                    entities: vec!["ent:cart".into()],
+                    edges: vec![],
+                    source: mention("t.md", "/t", "The Cart holds items."),
+                    confidence: None,
+                    reasoning: None,
+                    created: None,
+                    updated: None,
+                },
+            },
+        ];
+        s.apply(ops, &wi(), 1, 0);
+        assert_eq!(s.status.pending.entities, vec!["ent:cart".to_string()]);
+        assert_eq!(s.status.pending.requirements, vec!["req:t-1".to_string()]);
+        // A review changeset owes nothing new.
+        let review = WorkItem { task: "review-entity".into(), target: "ent:cart".into(), dirty_sections: vec![], stale_anchors: vec![] };
+        s.apply(vec![], &review, 1, 0);
+        assert_eq!(s.status.pending.entities.len(), 1);
+        // Completion pays the debt, task by task.
+        s.complete_review("review-requirement", "req:t-1");
+        s.complete_review("review-entity", "ent:cart");
+        assert!(s.status.pending.is_empty());
+        // And it persisted: a fresh load agrees.
+        assert!(Store::load(&s.out).status.pending.is_empty());
     }
 
     #[test]

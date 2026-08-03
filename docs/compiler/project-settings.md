@@ -139,6 +139,7 @@ Settings for the [generation workflow](../consumers/gen.md). All optional.
 ```toml
 [gen]
 deliverable = "../project2"
+worker = "agentic"
 ```
 
 - `deliverable`: the directory the end product is generated into, resolved relative to
@@ -148,6 +149,10 @@ deliverable = "../project2"
   [glob](#glob)); the default glob keeps `docs/` as source. Generation metadata (the
   ledger, criteria files) always stays in the out directory; only the product lands
   here.
+
+- `worker`: the built-in generation worker. `agentic` (default) runs each entity as a
+  [generation turn](./turns.md#generation-turns) with file and command tools;
+  `pipeline` keeps the fixed file-reply sequence, for models too weak to drive tools.
 
 The project file never says what the deliverable is. The medium is a fact the documents
 state, reaching workers through the graph; see

@@ -1,36 +1,56 @@
 # MCP
 
-`jazyk mcp graph` serves the [tool registry](../compiler/tools.md) over stdio as an MCP server:
-line-delimited JSON-RPC per the Model Context Protocol. It dispatches the same tool
-implementations the compiler's own [turns](../compiler/turns.md) use. There is one registry, not
-a second API beside it.
+`jazyk mcp <toolsets>` serves the [tool registry](../compiler/tools.md) over stdio as an
+MCP server: line-delimited JSON-RPC per the Model Context Protocol. It dispatches the
+same tool implementations the compiler's own [turns](../compiler/turns.md) use. There is
+one registry, not a second API beside it.
 
-## Default serving
+## Toolsets
 
-By default the server exposes the [read tools](../compiler/tools.md#read-tools), the
-[generation tools](../compiler/tools.md#generation-tools), and the
-[verification tools](../compiler/tools.md#verification-tools):
+The argument names what the serving is for. One serving can carry several, comma
+separated; each adds its tools to the union:
 
-- `context`, `expand`, `search`, `read_section`, `get_entity`
-- `gen_instructions`, `gen_pending`, `gen_task`, `gen_mark`
-- `verify_pending`, `verify_task`, `verify_mark`
-- `report_feedback` (served in every mode, below)
-- `await_changes` (a server tool, below)
+- `jazyk mcp compile`: the [compilation lifecycle](../compiler/tools.md#compilation-tools)
+  plus the [write tools](../compiler/tools.md#write-tools). The agent performs
+  compilation tasks from [the task queue](../compiler/reconciler.md#the-task-queue).
+- `jazyk mcp generate`: the [generation tools](../compiler/tools.md#generation-tools).
+  The agent writes the deliverable with its own editor and shell; jazyk holds the
+  ledger.
+- `jazyk mcp verify`: the [verification tools](../compiler/tools.md#verification-tools).
+  Small enough to hand a subagent whose only job is judging one row.
+- `jazyk mcp graph`: the read tools only, for retrieval consumers. `--write` adds the
+  raw write tools without the task lifecycle, for debugging and manual graph surgery;
+  each write commits as its own changeset.
 
-This is the public query, generation, and verification surface. An agent can look up an
-entity, pull a bounded [context pack](../compiler/context.md), follow
-[expansion handles](../compiler/context.md#expansion-handles), and act as a generation
-or verification worker, with no way to mutate the graph.
+Every serving includes the [read tools](../compiler/tools.md#read-tools),
+[`report_feedback`](../compiler/tools.md#feedback-tool), and `await_changes` (below).
 
-[`report_feedback`](../compiler/tools.md#feedback-tool) is served in both modes: it
-writes to the feedback log, not the graph. The `initialize` reply carries server
-instructions saying so, so an agent sees the channel before its first call. Each record
-names the client the MCP `initialize` reported, so feedback from an external agent is
-distinguishable from a compilation turn's.
+The `initialize` reply carries server instructions describing the work loop for the
+toolsets served, so an agent that reads nothing else still knows the entry point, the
+order of calls, and that a tool error names its own repair. The prompting lives in
+three places, most specific wins: server instructions carry the loop, each
+`begin_*` package carries the task's own contract, and each tool description names
+what to call next.
 
-## External workers
+## The work loop
 
-The server adds one tool of its own:
+The agent-facing loop, common to all three toolsets:
+
+1. Ask for work: `compilation_tasks`, `generation_tasks`, or `verification_tasks`.
+   Zero tasks is an answer, not an error; the compilation list carries the build
+   verdict when the queue is empty.
+2. Begin the first ready task: `begin_compilation`, `begin_generation`,
+   `begin_verification`. The reply is the task package: instructions plus everything
+   the task needs.
+3. Do the work: compilation stages graph writes, generation edits deliverable files
+   with the agent's own tools, verification runs or judges tests.
+4. Finish: `finish_compilation` commits the changeset, `record_generation` records the
+   manifest, `run_tests` and `record_verdict` record verdicts. The reply names the
+   next ready task, so the loop chains without re-listing.
+
+To watch for new work instead of polling, either run
+[`jazyk monitor`](./cli.md#jazyk-monitor) as a background process and act on each
+notice it prints, or call `await_changes`:
 
 - `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
   generation counter moves, a documentation file changes on disk, a manifest or test
@@ -39,54 +59,68 @@ The server adds one tool of its own:
   (documents changed but not yet reconciled), the pending generation work, and the
   pending verification work grouped by reason.
 
-Three workflows ride this surface, each an LLM harness that any agent can replace:
+## Compilation over MCP
 
-1. Compilation (docs → graph) is jazyk's own harness: `jazyk compile` or `jazyk watch`.
-   Workers do not mutate the graph; when `await_changes` reports `graphStale`, the
-   reconciler needs to run.
-2. Generation (graph → deliverable + tests): drain `gen_pending`; for each entity fetch
-   `gen_task`, write the files, `gen_mark` with the manifest.
-3. Verification (tests → verdicts): drain `verify_pending`; for each row fetch
-   `verify_task`, run the command or judge the criteria, `verify_mark` the verdict.
+Compilation tasks mutate the graph, so the serving holds an open changeset between
+calls, exactly one at a time:
 
-The loop this enables: a human edits documentation in an editor while `jazyk watch`
-reconciles beside it. The external agent sits in `await_changes`; when it returns, the
-agent generates, verifies, and fixes until both pending lists drain, and the deliverable
-appears in the same editor the human is writing prose in. E.g.:
+- `begin_compilation` claims a task from the queue, reloads the store, syncs the
+  section trees in memory, and opens a changeset. The write tools stage into it,
+  validated by the same [gates](../compiler/graph.md#validation-gates) a compilation
+  turn faces, scoped to the task's document the same way.
+- Write tools outside an open task are rejected toward `begin_compilation`. Identity,
+  provenance, and scope rules hold because they are the same code path.
+- `finish_compilation` runs the `done` gates (coverage contract, stale anchors),
+  commits atomically, and updates [the task queue](../compiler/reconciler.md#the-task-queue).
+  A gate failure leaves the changeset open and names the repair.
+- `abandon_compilation` drops the staged work. An abandoned task leaves no trace, the
+  same contract as an aborted turn. A server that dies mid-task loses only staging;
+  any process recomputes the queue and the task reappears.
+- When a commit empties the compile queue, the serving runs the deterministic tail
+  itself (checks, docsgen, verdict), because none of it needs a model. The final
+  `finish_compilation` reply carries the verdict and the generation tasks that became
+  ready.
+
+## Generation and verification over MCP
+
+Generation is stateless on the server: `begin_generation` returns the package, the
+agent edits files and runs commands with its own tools, `record_generation` records
+the manifest. Jazyk deliberately serves no file-editing tools here; a coding agent
+brings its own, and the in-process worker's file tools
+([generation turns](../compiler/turns.md#generation-turns)) are not served over MCP.
+
+Verification: `run_tests` executes recorded programmatic tests (the build first, then
+the commands) and records verdicts as a side effect. `llm` rows go through
+`begin_verification` for the criteria and `record_verdict` for the judgment.
+
+E.g. the loop after a docs edit:
 
 ```
-await_changes → {changedDocs: [docs/orders.md], graphStale: false,
-                 genPending: [{entity: ent:order, changed: [req:orders-4 (added)]}],
-                 verifyPending: {requirement-changed: 1}}
-gen_task {entity: ent:order} → instructions + context + diff + deliverable + factHash
-(worker writes src/order.rs and tests/order.rs, runs the tests)
-gen_mark {entity: ent:order, factHash, manifest} → ledger updated
-verify_task {requirement: req:orders-4} → run command
-(worker runs it; exit 0)
-verify_mark {requirement: req:orders-4, verdict: pass} → verified; back to await_changes
+await_changes → {changedDocs: [docs/orders.md], graphStale: true, ...}
+compilation_tasks → [{kind: reconcile-document, target: docs/orders.md, ready: true}]
+begin_compilation → instructions + dirty sections + stale anchors + known entities
+(agent stages upsert_requirement / set_coverage ...)
+finish_compilation → {committed: true, next: {kind: review-entity, target: ent:order}}
+... reviews the same way; last finish → {verdict: converged, generation: [ent:order]}
+begin_generation {entity: ent:order} → package
+(agent edits src/order.rs, tests/order.rs with its own tools)
+record_generation {entity: ent:order, factHash, manifest} → ledger updated
+run_tests → build + commands run, verdicts recorded
 ```
 
 A fix-fail-reverify cycle is self-terminating: editing a deliverable file re-stales
-exactly the rows whose files hash moved, and `verify_pending` shrinks monotonically once
-tests pass.
-
-## Write mode
-
-`--write` adds the [write tools](../compiler/tools.md#write-tools). With it, an external agent
-(e.g. a coding agent) can drive the same toolset a compilation turn uses, for debugging and
-manual compilation:
-
-- same tools and schemas (see [task toolsets](../compiler/tools.md#task-toolsets)),
-- same [validation gates](../compiler/graph.md#validation-gates), with the same repair-oriented
-  errors,
-- same [journal](../compiler/graph.md#journal), so manual changes are audited like any turn.
+exactly the rows whose files hash moved, and the pending list shrinks monotonically
+once tests pass.
 
 ## Reads and locking
 
 Reads load the persisted graph from the out directory (see
-[storage layout](../compiler/graph.md#storage-layout)). The server never compiles. If no graph
-exists yet, every tool answers with guidance to run `jazyk compile` first.
+[storage layout](../compiler/graph.md#storage-layout)). The server never compiles on
+its own. If no graph exists yet, the compile toolset offers the queue (a first build
+is just a queue where every document is dirty); the other toolsets answer with
+guidance to compile first.
 
-Readers do not lock. They read the generation counter, load shards, and retry if the counter
-moved mid-read. Writers respect the store lock, so one changeset commits at a time even with a
-compile running next to the server. See [concurrency](../compiler/graph.md#concurrency).
+Readers do not lock. They read the generation counter, load shards, and retry if the
+counter moved mid-read. Writers respect the store lock, so one changeset commits at a
+time even with a compile running next to the server. See
+[concurrency](../compiler/graph.md#concurrency).

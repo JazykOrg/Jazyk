@@ -37,7 +37,7 @@ fn workers() -> usize {
 }
 
 // Parse every matched document. Returns (doc -> (content hash, sections), doc -> links).
-fn parse_all(proj: &Project) -> (BTreeMap<String, (String, BTreeMap<String, Section>)>, BTreeMap<String, Vec<String>>) {
+pub fn parse_all(proj: &Project) -> (BTreeMap<String, (String, BTreeMap<String, Section>)>, BTreeMap<String, Vec<String>>) {
     let mut parsed = BTreeMap::new();
     let mut links = BTreeMap::new();
     for f in proj.doc_files() {
@@ -55,7 +55,7 @@ fn parse_all(proj: &Project) -> (BTreeMap<String, (String, BTreeMap<String, Sect
 // Breadth-first levels over the document link graph, starting from the root documents.
 // The root level runs alone (it seeds the vocabulary); unreachable documents come last in
 // path order. With no roots configured, every document is its own level, in path order.
-fn schedule_levels(dirty: &[DirtyDoc], links: &BTreeMap<String, Vec<String>>, proj: &Project) -> Vec<Vec<DirtyDoc>> {
+pub fn schedule_levels(dirty: &[DirtyDoc], links: &BTreeMap<String, Vec<String>>, proj: &Project) -> Vec<Vec<DirtyDoc>> {
     let roots: Vec<String> = links.keys().filter(|d| proj.is_root_file(d)).cloned().collect();
     if roots.is_empty() {
         return dirty.iter().map(|d| vec![d.clone()]).collect();
@@ -654,6 +654,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             pair_targets.insert(p.target.clone());
         }
     }
+    // Reviews owed from earlier builds or other consumers: the pending block is the
+    // durable form of changed_all (docs/compiler/reconciler.md#the-task-queue).
+    pair_targets.extend(store.lock().unwrap().status.pending.requirements.iter().cloned());
     let pair_items: Vec<WorkItem> = {
         let s = store.lock().unwrap();
         pair_targets
@@ -677,6 +680,16 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             let (applied, touched, _changed, parked) = run_wave(&store, llm, &pair_items, &proj.limits, &proj.linting, &gs, trace);
             applied_total += applied;
             touched_all.extend(touched);
+            // A completed pair review pays its pending debt; a parked one keeps it.
+            {
+                let parked_t: BTreeSet<&String> = parked.iter().map(|p| &p.target).collect();
+                let mut s = store.lock().unwrap();
+                for item in &pair_items {
+                    if !parked_t.contains(&item.target) {
+                        s.complete_review("review-requirement", &item.target);
+                    }
+                }
+            }
             parked_all.extend(parked);
             let mut s = store.lock().unwrap();
             s.gc();
@@ -696,6 +709,15 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     for p in &previously_parked {
         if p.task == "review-entity" {
             review_targets.insert(p.target.clone());
+        }
+    }
+    // Reviews owed from earlier builds or other consumers.
+    {
+        let s = store.lock().unwrap();
+        for id in &s.status.pending.entities {
+            if s.graph.entities.contains_key(id) {
+                review_targets.insert(id.clone());
+            }
         }
     }
     let groups = review_groups(&store.lock().unwrap(), &review_targets);
@@ -735,6 +757,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                 };
                 let (a, _t, _c, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, &gs, trace);
                 *applied.lock().unwrap() += a;
+                if p.is_empty() {
+                    store.lock().unwrap().complete_review("review-entity", id);
+                }
                 parked.lock().unwrap().extend(p);
             }
         });
@@ -746,14 +771,26 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
 
     // Checks and status.
     let mut s = store.into_inner().unwrap();
-    let findings = checks(&s, proj, &parked_all);
+    let mut report = finalize(&mut s, proj, &parked_all, trace);
+    report.dirty_docs = total_dirty;
+    report.turns = turns;
+    report.applied = applied_total;
+    report
+}
+
+// The deterministic tail of a build: checks, verdict, docsgen, status. No model
+// anywhere, so whichever consumer empties the task queue runs it, the internal loop
+// and the MCP serving alike. Mirrors docs/compiler/reconciler.md#the-task-queue.
+pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &Trace) -> BuildReport {
+    let findings = checks(s, proj, parked_all);
     s.reconcile_check_diags(findings);
 
     // Status and verdict. Coverage is part of the termination criterion
     // (docs/compiler/reconciler.md#coverage): a section the build never processed is
     // work still open, whether or not its turn parked. A turn that exhausts its round
     // budget commits what it staged and returns no failure, so parked items alone would
-    // report a build that stopped early as converged.
+    // report a build that stopped early as converged. Pending reviews are open work the
+    // same way.
     // Same filter the uncovered-section check uses: a heading with no body of its own
     // carries no content to process.
     let unprocessed = s
@@ -765,9 +802,28 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             })
         })
         .count();
-    s.status.parked = parked_all.clone();
-    s.status.verdict = if parked_all.is_empty() && unprocessed == 0 { "converged".into() } else { "incomplete".into() };
-    let n = crate::docsgen::write_all(&s, &crate::gen::GenSettings::resolve(proj));
+    // A pending review whose target no longer exists is complete by definition, and so
+    // is a pair review with no computed neighbors: a changed requirement with none
+    // schedules nothing (docs/compiler/reconciler.md#waves).
+    let (exists_e, exists_r): (Vec<String>, Vec<String>) = (
+        s.status.pending.entities.iter().filter(|e| s.graph.entities.contains_key(*e)).cloned().collect(),
+        s.status
+            .pending
+            .requirements
+            .iter()
+            .filter(|r| s.graph.requirements.contains_key(*r) && !s.pair_review_neighbors(r).is_empty())
+            .cloned()
+            .collect(),
+    );
+    s.status.pending.entities = exists_e;
+    s.status.pending.requirements = exists_r;
+    s.status.parked = parked_all.to_vec();
+    s.status.verdict = if parked_all.is_empty() && unprocessed == 0 && s.status.pending.is_empty() {
+        "converged".into()
+    } else {
+        "incomplete".into()
+    };
+    let n = crate::docsgen::write_all(s, &crate::gen::GenSettings::resolve(proj));
     if n > 0 {
         trace.line("reconcile", &format!("docsgen: {} requirements document(s)", n));
     }
@@ -798,9 +854,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     }
     BuildReport {
         verdict: s.status.verdict.clone(),
-        dirty_docs: total_dirty,
-        turns,
-        applied: applied_total,
+        dirty_docs: 0,
+        turns: 0,
+        applied: 0,
         parked: parked_all.len(),
         errors,
         warnings,

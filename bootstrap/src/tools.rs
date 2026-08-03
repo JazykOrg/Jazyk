@@ -183,23 +183,18 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
-            name: "gen_instructions",
-            description: "The generation contract every worker follows: one task per entity producing the deliverable files and the tests for its requirements, traceability markers, the two test kinds, the parts protocol for dense entities. The medium derives from the context; the contract never names one.",
+            name: "generation_tasks",
+            description: "Entities whose facts differ from the ledger, each with the requirement ids added, removed, or reworded since the entity was last generated. Zero tasks means generation is current. Next: begin_generation on one entity.",
             parameters: obj(json!({}), &[]),
         },
         ToolDef {
-            name: "gen_pending",
-            description: "Entities whose facts differ from the ledger, each with the requirement ids added, removed, or reworded since the entity was last generated.",
-            parameters: obj(json!({}), &[]),
-        },
-        ToolDef {
-            name: "gen_task",
-            description: "The full generation package for one entity: instructions, context pack, requirement groups (with suggested test names), change diff, the deliverable directory, factHash, and the manifest of already generated files. The worker writes the files itself and chooses layout, names, and run commands.",
+            name: "begin_generation",
+            description: "The full generation package for one entity: instructions (the generation contract), context pack, requirement groups (with suggested test names), change diff, the deliverable directory, factHash, the manifest of already generated files with what each holds, the medium, and the build. Write the deliverable files with your own tools, then record_generation with the manifest.",
             parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
-            name: "gen_mark",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the gen_task package already carries rather than recording a second one. Pass the factHash from the gen_task package.",
+            name: "record_generation",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. Next: run_tests to verify.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
@@ -218,18 +213,23 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
-            name: "verify_pending",
-            description: "Ledger rows needing action, with derived status (missing, stale-requirement, stale-test, stale-code, failing, unverified) and reason. Deterministic; no model involved.",
+            name: "verification_tasks",
+            description: "Ledger rows needing action, with derived status (missing, stale-requirement, stale-test, stale-code, failing, unverified) and reason. Deterministic; no model involved. Next: run_tests for programmatic rows, begin_verification for llm rows.",
             parameters: obj(json!({"filter": {"type": "string", "enum": ["stale", "failing", "all"]}, "entity": {"type": "string"}}), &[]),
         },
         ToolDef {
-            name: "verify_task",
-            description: "The verification package for one requirement: statement, quote, factHash, context pack, implementing files, and either the run command (programmatic) or the criteria (llm).",
+            name: "begin_verification",
+            description: "The verification package for one requirement: statement, quote, factHash, context pack, implementing files, and either the run command (programmatic) or the criteria (llm). For llm rows, judge the criteria against the deliverable and record_verdict.",
             parameters: obj(json!({"requirement": {"type": "string"}}), &["requirement"]),
         },
         ToolDef {
-            name: "verify_mark",
-            description: "Record a pass or fail verdict with evidence. Pass the factHash from the verify_task package; if the graph moved meanwhile the verdict is recorded but the row stays pending.",
+            name: "run_tests",
+            description: "Run the recorded programmatic tests: the build once, then each selected row's command, verdicts recorded as a side effect. requirements selects rows (requirement or entity ids); empty runs every non-verified row. llm rows are skipped here; judge them and record_verdict.",
+            parameters: obj(json!({"requirements": {"type": "array", "items": {"type": "string"}}}), &[]),
+        },
+        ToolDef {
+            name: "record_verdict",
+            description: "Record a pass or fail verdict with evidence, for a row you judged (llm rows; run_tests records programmatic rows itself). Pass the factHash from the begin_verification package; if the graph moved meanwhile the verdict is recorded but the row stays pending.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -240,6 +240,33 @@ pub fn catalog() -> Vec<ToolDef> {
                 &["requirement", "verdict"],
             ),
         },
+        // The generation turn's file and command tools: in-process only, never served
+        // over MCP (an external agent brings its own editor). Names and shapes track
+        // the Agent Client Protocol's file-system and terminal methods.
+        // Mirrors docs/compiler/turns.md#generation-turns.
+        ToolDef {
+            name: "read_text_file",
+            description: "One deliverable file's content. path is relative to the deliverable directory; line (1-based) and limit select a slice of a large file.",
+            parameters: obj(
+                json!({"path": {"type": "string"}, "line": {"type": "integer"}, "limit": {"type": "integer"}}),
+                &["path"],
+            ),
+        },
+        ToolDef {
+            name: "write_text_file",
+            description: "Write one deliverable file, creating parent directories. path is relative to the deliverable directory. A path recorded for another entity is rejected with the owner named; reference other entities' files instead of rewriting them.",
+            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}}), &["path", "content"]),
+        },
+        ToolDef {
+            name: "list_files",
+            description: "The deliverable's file tree, paths relative to the deliverable directory. path narrows to a subdirectory.",
+            parameters: obj(json!({"path": {"type": "string"}}), &[]),
+        },
+        ToolDef {
+            name: "run_command",
+            description: "Execute a shell command under the deliverable directory (cwd is deliverable-relative, default .). Returns the exit code and output tail. Use it to run the build you wrote and read its failures; record the final commands in the manifest.",
+            parameters: obj(json!({"command": {"type": "string"}, "cwd": {"type": "string"}}), &["command"]),
+        },
         ToolDef {
             name: "done",
             description: "End the turn and request commit of the staged mutations. summary says what was done.",
@@ -249,8 +276,10 @@ pub fn catalog() -> Vec<ToolDef> {
 }
 
 pub const READ_TOOLS: [&str; 5] = ["context", "expand", "search", "read_section", "get_entity"];
-pub const GEN_TOOLS: [&str; 4] = ["gen_instructions", "gen_pending", "gen_task", "gen_mark"];
-pub const VERIFY_TOOLS: [&str; 3] = ["verify_pending", "verify_task", "verify_mark"];
+pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
+pub const VERIFY_TOOLS: [&str; 4] = ["verification_tasks", "begin_verification", "run_tests", "record_verdict"];
+// In-process only: a generation turn's file and command tools, never served over MCP.
+pub const FILE_TOOLS: [&str; 4] = ["read_text_file", "write_text_file", "list_files", "run_command"];
 // Feedback about jazyk itself, not about the graph: served in every toolset, read-only
 // MCP included. See docs/compiler/tools.md#feedback-tool.
 pub const FEEDBACK_TOOL: &str = "report_feedback";
@@ -272,13 +301,37 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             "context", "expand", "search", "get_entity", "update_entity", "merge_entities", "update_requirement",
             "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
         ],
-        "mcp-read" => {
+        // The in-process generation worker: the read tools, the file and command
+        // tools, and the generation lifecycle. Mirrors docs/compiler/turns.md#generation-turns.
+        "generate-entity" => {
+            let mut v = READ_TOOLS.to_vec();
+            v.extend(FILE_TOOLS);
+            v.extend(["begin_generation", "record_generation", "run_tests", "done"]);
+            v
+        }
+        // MCP servings. Mirrors docs/compiler/tools.md#task-toolsets.
+        "mcp-generate" => {
             let mut v = READ_TOOLS.to_vec();
             v.extend(GEN_TOOLS);
+            v.push("run_tests");
+            v
+        }
+        "mcp-verify" => {
+            let mut v = READ_TOOLS.to_vec();
             v.extend(VERIFY_TOOLS);
             v
         }
-        "mcp-write" => catalog().iter().map(|t| t.name).filter(|n| *n != "done").collect(),
+        // The compile serving's write surface; the lifecycle tools live in the server.
+        "mcp-compile" => vec![
+            "context", "expand", "search", "read_section", "get_entity", "upsert_entity", "update_entity",
+            "delete_entity", "merge_entities", "upsert_requirement", "update_requirement", "delete_requirement",
+            "set_coverage", "report_diagnostic", "resolve_diagnostic",
+        ],
+        "mcp-write" => catalog()
+            .iter()
+            .map(|t| t.name)
+            .filter(|n| *n != "done" && !FILE_TOOLS.contains(n))
+            .collect(),
         _ => READ_TOOLS.to_vec(),
     };
     if !v.contains(&FEEDBACK_TOOL) {
@@ -379,6 +432,9 @@ fn junk_name(name: &str) -> Option<&'static str> {
 pub struct WorkScope {
     pub task: String,
     pub doc: Option<String>,
+    // The work item's target: the entity id for a generate-entity turn (file
+    // ownership checks name it), empty when the task has no single target.
+    pub target: String,
     pub target_sections: Vec<String>,
     // Requirement ids whose quote stopped locating; the done gate holds the turn to
     // addressing each one. See docs/compiler/graph.md#validation-gates.
@@ -434,6 +490,109 @@ impl ToolSession {
 
     fn gen_settings(&self) -> crate::gen::GenSettings {
         self.gen.clone()
+    }
+
+    // The generation turn's file and command tools, sandboxed to the deliverable.
+    // In-process only. Mirrors docs/compiler/turns.md#generation-turns.
+    fn deliverable_path(&self, rel: &str) -> Result<std::path::PathBuf, ToolError> {
+        let rel = rel.trim().trim_start_matches("./");
+        if rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|c| c == "..") {
+            return Err(ToolError::new(
+                "bad-path",
+                format!("`{}` must be a relative path under the deliverable directory, without `..`", rel),
+            ));
+        }
+        Ok(self.gen.deliverable.join(rel))
+    }
+
+    fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        match name {
+            "read_text_file" => {
+                let rel = Self::str_arg(args, "path")?;
+                let path = self.deliverable_path(&rel)?;
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| ToolError::new("not-found", format!("cannot read `{}`: {}; list_files shows what exists", rel, e)))?;
+                let start = args["line"].as_u64().map(|l| (l as usize).saturating_sub(1)).unwrap_or(0);
+                let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(usize::MAX);
+                let lines: Vec<&str> = text.lines().skip(start).take(limit).collect();
+                let total = text.lines().count();
+                Ok(json!({"content": lines.join("\n"), "totalLines": total}))
+            }
+            "write_text_file" => {
+                let rel = Self::str_arg(args, "path")?;
+                let content = Self::str_arg(args, "content")?;
+                let path = self.deliverable_path(&rel)?;
+                // File ownership: a path recorded for another entity is off limits.
+                // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+                let own = crate::gen::slug_of(&self.scope.target);
+                let ledger = crate::gen::Ledger::load(&self.snapshot.out);
+                if let Some((owner, _)) = ledger
+                    .entities
+                    .iter()
+                    .find(|(slug, e)| slug.as_str() != own && e.files.iter().any(|f| f == &rel))
+                {
+                    return Err(ToolError::new(
+                        "file-owned",
+                        format!(
+                            "`{}` belongs to entity `{}`; never write to another entity's file. Reference it (import, include, read) and pick a path of your own",
+                            rel, owner
+                        ),
+                    ));
+                }
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                std::fs::write(&path, &content).map_err(|e| ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e)))?;
+                Ok(json!({"written": rel, "bytes": content.len()}))
+            }
+            "list_files" => {
+                let rel = Self::opt_str(args, "path").unwrap_or_default();
+                let root = if rel.is_empty() { self.gen.deliverable.clone() } else { self.deliverable_path(&rel)? };
+                let mut out: Vec<String> = Vec::new();
+                let mut stack = vec![root.clone()];
+                while let Some(dir) = stack.pop() {
+                    let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.starts_with('.') || name == "target" || name == "node_modules" || name == "jazyk-out" {
+                            continue;
+                        }
+                        if p.is_dir() {
+                            stack.push(p);
+                        } else if let Ok(r) = p.strip_prefix(&self.gen.deliverable) {
+                            out.push(r.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                }
+                out.sort();
+                out.truncate(500);
+                Ok(json!({"files": out}))
+            }
+            "run_command" => {
+                let command = Self::str_arg(args, "command")?;
+                let cwd_rel = Self::opt_str(args, "cwd").unwrap_or_else(|| ".".into());
+                let cwd = if cwd_rel == "." { self.gen.deliverable.clone() } else { self.deliverable_path(&cwd_rel)? };
+                let out = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&command)
+                    .current_dir(&cwd)
+                    .output()
+                    .map_err(|e| ToolError::new("io-error", format!("cannot run `{}` in {}: {}", command, cwd.display(), e)))?;
+                let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+                text.push_str(&String::from_utf8_lossy(&out.stderr));
+                let tail: String = {
+                    let lines: Vec<&str> = text.lines().collect();
+                    let start = lines.len().saturating_sub(60);
+                    lines[start..].join("\n")
+                };
+                Ok(json!({
+                    "exitCode": out.status.code().unwrap_or(-1),
+                    "output": crate::llm::truncate(&tail, 6000),
+                }))
+            }
+            _ => unreachable!(),
+        }
     }
 
     // An existing or staged entity whose name tokens contain, or are contained by, the
@@ -1328,28 +1487,29 @@ impl ToolSession {
                 self.stage(Op::SetCoverage { doc, section: sec, state, note })?;
                 Ok(json!({"set": true}))
             }
-            "gen_instructions" => {
-                Ok(json!({"instructions": crate::gen::instructions()}))
-            }
-            "gen_pending" => {
+            "generation_tasks" => {
                 let gs = self.gen_settings();
-                Ok(json!(crate::gen::pending(&self.snapshot, &gs)))
+                let tasks = crate::gen::pending(&self.snapshot, &gs);
+                if tasks.is_empty() {
+                    return Ok(json!({"tasks": [], "note": "generation is current; nothing to do"}));
+                }
+                Ok(json!({"tasks": tasks, "next": "begin_generation on one entity"}))
             }
-            "gen_task" => {
+            "begin_generation" => {
                 let entity = Self::str_arg(args, "entity")?;
                 let gs = self.gen_settings();
                 let id = self.snapshot.resolve_id(&entity).to_string();
                 crate::gen::task_package(&self.snapshot, &id, &gs)
                     .map_err(|e| ToolError::new("unknown-id", e))
             }
-            "gen_mark" => {
+            "record_generation" => {
                 let entity = Self::str_arg(args, "entity")?;
                 let gs = self.gen_settings();
                 let id = self.snapshot.resolve_id(&entity).to_string();
                 let Some(seen) = Self::opt_str(args, "factHash") else {
                     return Err(ToolError::new(
                         "bad-argument",
-                        "factHash is required; pass the factHash from the gen_task package".into(),
+                        "factHash is required; pass the factHash from the begin_generation package".into(),
                     ));
                 };
                 if !args["manifest"].is_object() {
@@ -1361,18 +1521,28 @@ impl ToolSession {
                 crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &args["manifest"], &gs)
                     .map_err(|e| ToolError::new("unknown-id", e))
             }
-            "verify_pending" => {
+            "verification_tasks" => {
                 let gs = self.gen_settings();
                 let filter = Self::opt_str(args, "filter");
                 let entity = Self::opt_str(args, "entity");
-                Ok(json!(crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref())))
+                let tasks = crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref());
+                if tasks.is_empty() {
+                    return Ok(json!({"tasks": [], "note": "nothing pending; every targeted row is verified"}));
+                }
+                Ok(json!({"tasks": tasks, "next": "run_tests for programmatic rows; begin_verification then record_verdict for llm rows"}))
             }
-            "verify_task" => {
+            "begin_verification" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let gs = self.gen_settings();
                 crate::verify::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
             }
-            "verify_mark" => {
+            "run_tests" => {
+                let gs = self.gen_settings();
+                let targets = Self::str_list(args, "requirements");
+                crate::verify::run_selected(&self.snapshot, &gs, &targets)
+                    .map_err(|e| ToolError::new("build-failed", e))
+            }
+            "record_verdict" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let verdict = Self::str_arg(args, "verdict")?;
                 let gs = self.gen_settings();
@@ -1381,6 +1551,7 @@ impl ToolSession {
                 crate::verify::mark(&self.snapshot, &rid, &verdict, seen.as_deref(), evidence.as_deref(), &gs)
                     .map_err(|e| ToolError::new("bad-argument", e))
             }
+            "read_text_file" | "write_text_file" | "list_files" | "run_command" => self.file_tool(name, args),
             // Feedback about jazyk's own prompts and tools. It stages nothing, spends no
             // mutation budget, and passes no gate beyond a non-empty message: a model
             // asking for help is never bounced. Mirrors docs/compiler/tools.md#feedback-tool.
@@ -1557,6 +1728,7 @@ mod tests {
             WorkScope {
                 task: "reconcile-doc".into(),
                 doc: Some("shop.md".into()),
+                target: "shop.md".into(),
                 target_sections: vec!["/shop".into(), "/shop/cart".into()],
                 stale_anchors: Vec::new(),
             },
@@ -1893,6 +2065,7 @@ mod tests {
             WorkScope {
                 task: "reconcile-doc".into(),
                 doc: Some("shop.md".into()),
+                target: "shop.md".into(),
                 target_sections: vec!["/shop/cart".into()],
                 stale_anchors: vec!["req:shop-1".into()],
             },

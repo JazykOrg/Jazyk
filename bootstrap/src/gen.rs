@@ -18,6 +18,10 @@ pub const GROUP: usize = 20;
 #[derive(Clone)]
 pub struct GenSettings {
     pub deliverable: PathBuf,
+    // The built-in worker: "agentic" (a generation turn with file and command tools,
+    // the default) or "pipeline" (the fixed file-reply sequence).
+    // Mirrors docs/compiler/project-settings.md#generation.
+    pub worker: String,
 }
 
 impl GenSettings {
@@ -28,13 +32,13 @@ impl GenSettings {
             // out of the product's way (docs/compiler/project-settings.md#generation).
             None => proj.root.clone(),
         };
-        GenSettings { deliverable }
+        GenSettings { deliverable, worker: proj.gen_worker.clone().unwrap_or_else(|| "agentic".into()) }
     }
 
     // Placeholder for sessions with no project (benchmark cases). Gen tools are absent
     // from those toolsets, so the path is never read.
     pub fn from_out(out: &Path) -> GenSettings {
-        GenSettings { deliverable: out.join("gen").join("deliverable") }
+        GenSettings { deliverable: out.join("gen").join("deliverable"), worker: "agentic".into() }
     }
 }
 
@@ -896,7 +900,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product") };
+        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into() };
         (s, gs)
     }
 
@@ -1189,6 +1193,8 @@ pub fn run_all(
     gs: &GenSettings,
     entities: &[String],
     force: bool,
+    limits: &crate::project::Limits,
+    lint: &crate::project::Linting,
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
@@ -1277,7 +1283,12 @@ pub fn run_all(
                 continue;
             }
         };
-        match gen_one(store, llm, gs, id, &task) {
+        let result = if gs.worker == "pipeline" {
+            gen_one(store, llm, gs, id, &task)
+        } else {
+            gen_turn(store, llm, gs, id, limits, lint, trace)
+        };
+        match result {
             Ok(files) => {
                 trace.event(TraceEvent::GenEntityDone { entity: id.clone(), files });
                 regenerated += 1;
@@ -1314,6 +1325,44 @@ pub fn run_all(
 // its module and the entry point in a single answer has written both, and folding the
 // second into the first leaves a file that cannot parse.
 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+// The agentic worker: one entity as a generation turn on the harness, with the file
+// and command tools. Success is the ledger's word, never the model's: the turn must
+// have left record_generation's mark with current facts and existing files.
+// Mirrors docs/compiler/turns.md#generation-turns.
+fn gen_turn(
+    store: &Store,
+    llm: &crate::llm::Llm,
+    gs: &GenSettings,
+    id: &str,
+    limits: &crate::project::Limits,
+    lint: &crate::project::Linting,
+    trace: &crate::turn::Trace,
+) -> Result<usize, String> {
+    let item = crate::model::WorkItem {
+        task: "generate-entity".into(),
+        target: id.to_string(),
+        dirty_sections: Vec::new(),
+        stale_anchors: Vec::new(),
+    };
+    let out = crate::turn::run_turn(llm, store.clone(), &item, limits, lint, gs, trace);
+    if let Some(e) = out.failed {
+        return Err(e);
+    }
+    let ledger = Ledger::load(&store.out);
+    let hash = fact_hash(store, id);
+    match ledger.entities.get(&slug_of(id)) {
+        Some(e) if e.fact_hash == hash && !e.files.is_empty() && e.files.iter().all(|f| gs.deliverable.join(f).exists()) => {
+            Ok(e.files.len())
+        }
+        Some(e) if e.fact_hash != hash => Err(format!(
+            "the turn recorded factHash {} but the graph says {}; the task package carries the current one",
+            e.fact_hash, hash
+        )),
+        Some(_) => Err("the turn recorded files that do not exist under the deliverable".into()),
+        None => Err("the turn ended without record_generation; nothing landed in the ledger".into()),
+    }
+}
+
 pub fn parse_file_replies(reply: &str) -> Result<Vec<(String, String)>, String> {
     let (first_path, rest) = parse_file_reply(reply)?;
     let mut out = Vec::new();

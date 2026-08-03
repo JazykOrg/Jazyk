@@ -77,6 +77,25 @@ retries on its own with backoff (30s doubling to 5 minutes, reset by any file ch
 instead of idling until the next edit. Unfinished work is never silent, and watch is
 the loop that owns resuming it.
 
+### jazyk monitor
+
+`jazyk monitor [--json]` watches the same surfaces `watch` does but performs nothing:
+on every state change it prints the ready work from
+[the task queue](../compiler/reconciler.md#the-task-queue) and which MCP tool begins
+it, then goes quiet until the next change. One block per notice; `--json` prints one
+JSON object per line instead. E.g.:
+
+```
+jazyk: 1 compilation task ready
+  reconcile docs/template.md (2 dirty sections, 1 stale anchor)
+  → call compilation_tasks on the jazyk MCP server to begin
+```
+
+This is the external agent's trigger: the agent runs `jazyk monitor` as a background
+process and acts on each notice through [MCP](./mcp.md#the-work-loop). `watch` is the
+same trigger wired to the internal loop instead; the notice an agent reads is the work
+item the internal loop would run.
+
 ### jazyk status
 
 Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)):

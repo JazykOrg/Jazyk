@@ -333,7 +333,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         }
         JobKind::Gen { entities, force } => {
             let store = crate::store::Store::load(&st.out);
-            crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, trace)
+            crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
         }
         JobKind::Verify { targets, test_kind, force } => {
             let store = crate::store::Store::load(&st.out);

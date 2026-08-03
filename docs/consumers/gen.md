@@ -323,7 +323,7 @@ prose has two carriers:
 - Anchored sites in [the ledger](#the-ledger). While writing, a worker puts a
   single-line marker comment directly above each implementing site: `req:catalog-3
   hash:a1b2c3d4` in the medium's comment syntax, nothing else on the line. The marker
-  is a wire format, not part of the product: `gen_mark` strips every marker line from
+  is a wire format, not part of the product: `record_generation` strips every marker line from
   the written files and records each as a site on the requirement's row: the file, the
   line, and `head`, the verbatim next significant line. The deliverable carries no
   Jazyk metadata; the binding lives in the out directory.
@@ -431,7 +431,7 @@ the test kind, the test itself, and the verdict of an `llm` run.
 ### The cascade
 
 Rewording a requirement flips its row to `stale-requirement` and moves its entity's
-`factHash`, so `gen_pending` lists the entity. Generation rewrites the implementing
+`factHash`, so `generation_tasks` lists the entity. Generation rewrites the implementing
 files and the test (the verdict resets to `none`). If the product does not yet satisfy
 the new statement, the fresh test fails. Hand edits to the deliverable flip exactly the
 rows whose `files` hash moved to `stale-code`. Reruns update verdicts; when the test
@@ -509,7 +509,7 @@ not leave its predecessor behind. Entity ids are stable
   generator follows it and folds the absorbed files into the survivor's.
 - A renamed entity keeps its id, so its files migrate in place.
 - A requirement deleted by GC leaves its row listed as `requirement-gone` in
-  `verify_pending` until pruned; removals are never silent.
+  `verification_tasks` until pruned; removals are never silent.
 
 Before a run rewrites or removes a deliverable file, the previous content is
 snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
@@ -539,10 +539,20 @@ every targeted row is `verified`, 1 otherwise.
 Generation and verification are defined by the
 [generation tools](../compiler/tools.md#generation-tools) and
 [verification tools](../compiler/tools.md#verification-tools), not by the built-in
-commands. `jazyk gen` and `jazyk test` are workers: they ask for the pending lists and
-the task packages in-process, call the configured model, and mark results. An external
-agent connected to [`jazyk mcp graph`](../frontends/mcp.md) is another worker with the
-same contract: same instructions, same context, same change diffs, same ledger.
+commands. `jazyk gen` and `jazyk test` are workers: they consume the same task
+packages in-process, drive the configured model, and mark results. An external agent
+connected to [`jazyk mcp generate`](../frontends/mcp.md#toolsets) is another worker
+with the same contract: same instructions, same context, same change diffs, same
+ledger.
+
+The two workers hold the same power. The external agent edits files and runs commands
+with its own tools; the built-in worker runs each entity as a
+[generation turn](../compiler/turns.md#generation-turns) whose toolset carries file
+and command tools sandboxed to the deliverable, so it too writes multiple files, runs
+the build it wrote, reads failures, and repairs its own work before recording. A task
+succeeds when the ledger says so: the harness checks that `record_generation` landed
+for the entity, not the model's word. What separates the workers is model quality,
+never capability.
 
 ## Forced decisions
 

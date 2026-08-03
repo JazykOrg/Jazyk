@@ -487,7 +487,91 @@ Rules:
 - Severity: error only when two statements cannot both hold; warning for real but repairable issues; info for observations.
 - If everything is coherent, call done immediately with no mutations."#;
 
+const GENERATE_SYSTEM: &str = r#"You are the generation turn of jazyk, a natural language compiler. Your job: produce ONE entity's part of the deliverable AND the tests for its requirements, by calling tools. The package below carries the contract, the requirements, the medium, and what other tasks already produced.
+
+Workflow:
+1. Read the package. The medium decision in it is already made; never re-decide it. list_files and read_text_file show what exists.
+2. Write your files with write_text_file, paths relative to the deliverable. Multiple files are normal: source, tests, support files. Never write to another entity's file (the package names their files and what they hold); reference them instead.
+3. Make it real: when the package names a build, extend its source and use run_command to run it; when your test commands need a runner or config file that does not exist, write it. run_command shows you exit codes and failures; fix your work until the commands you will record actually succeed.
+4. Record with record_generation: the manifest lists every file you wrote, one test row per requirement, and the build when the medium is built. run_tests then verifies the programmatic rows.
+5. Call done with a one-line summary. The harness checks the ledger, not your word: a turn that never called record_generation has failed the task.
+
+Rules:
+- The deliverable is the artifact, never a description of it; content requirements are satisfied by the exact content the statements name, never placeholders.
+- A test must be falsifiable: its assertion fails when the requirement is violated, and it inspects the artifact (or what the build produced), never prose about it. A requirement with no falsifiable programmatic assertion is declared kind llm in the manifest.
+- Marker lines (`req:<id> hash:<hash8>` in the medium's comment syntax, alone on a line, directly above the implementing site) are stripped by the harness at record time and become anchored traceability sites.
+- A tool error names what was wrong and how to repair the call; fix it and continue."#;
+
 // ---- initial packs ----
+
+// One task's system prompt and work pack, by task type. The single source both
+// consumers use: run_turn hands them to the in-process model, begin_compilation ships
+// them over MCP as instructions plus package. Mirrors docs/compiler/turns.md#task-types.
+pub fn task_prompt(
+    store: &Store,
+    item: &WorkItem,
+    limits: &Limits,
+    lint: &Linting,
+    gen: &crate::gen::GenSettings,
+) -> (&'static str, String) {
+    match item.task.as_str() {
+        "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(store, item, limits.context_budget)),
+        "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(store, &item.target)),
+        "generate-entity" => (GENERATE_SYSTEM, generate_pack(store, &item.target, gen)),
+        _ => (REVIEW_SYSTEM, review_pack(store, &item.target, limits.context_budget, lint)),
+    }
+}
+
+// The generation turn's pack: the task package rendered for a model. The same fields
+// begin_generation serves over MCP. Mirrors docs/compiler/turns.md#generation-turns.
+fn generate_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> String {
+    let pkg = match crate::gen::task_package(store, target, gs) {
+        Ok(p) => p,
+        Err(e) => return format!("# Work item: generate {}\n(package error: {})\n", target, e),
+    };
+    let mut s = format!("# Work item: generate entity {} ({})\n", target, pkg["name"].as_str().unwrap_or(""));
+    s.push_str(&format!("deliverable directory: {}\n", pkg["deliverable"].as_str().unwrap_or(".")));
+    s.push_str(&format!("factHash (pass to record_generation): {}\n", pkg["factHash"].as_str().unwrap_or("")));
+    if !pkg["medium"].is_null() {
+        s.push_str(&format!("medium (already decided; never re-decide): {}\n", pkg["medium"]));
+    }
+    if !pkg["build"].is_null() {
+        s.push_str(&format!("recorded build (reuse and extend; never record a second): {}\n", pkg["build"]));
+    }
+    let run_commands = pkg["runCommands"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
+    if !run_commands.is_empty() {
+        s.push_str(&format!("recorded run commands (the established toolchain; reuse it): {}\n", run_commands));
+    }
+    s.push_str(&format!(
+        "changed since last generation: {}\n",
+        pkg["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+    ));
+    s.push_str(&format!(
+        "other entities' files (never write to them; `holds` says what is inside): {}\n",
+        pkg["generatedFiles"]
+    ));
+    s.push_str("\n## Requirements (one test row each; testName is the required test name)\n");
+    for group in pkg["requirementGroups"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        for r in group.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            s.push_str(&format!(
+                "- {} [{}]: {}\n  quote: {}\n",
+                r["id"].as_str().unwrap_or(""),
+                r["testName"].as_str().unwrap_or(""),
+                r["ears"].as_str().unwrap_or(""),
+                r["quote"].as_str().unwrap_or("")
+            ));
+        }
+    }
+    s.push_str("\n## Context\n");
+    s.push_str(pkg["context"].as_str().unwrap_or(""));
+    s.push_str("\n## Contract\n");
+    s.push_str(pkg["instructions"].as_str().unwrap_or(""));
+    s.push('\n');
+    s
+}
 
 fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     let mut s = String::new();
@@ -770,16 +854,19 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         "reconcile-doc" => WorkScope {
             task: item.task.clone(),
             doc: Some(item.target.clone()),
+            target: item.target.clone(),
             target_sections: item.dirty_sections.clone(),
             stale_anchors: item.stale_anchors.clone(),
         },
-        _ => WorkScope { task: item.task.clone(), doc: None, target_sections: Vec::new(), stale_anchors: Vec::new() },
+        _ => WorkScope {
+            task: item.task.clone(),
+            doc: None,
+            target: item.target.clone(),
+            target_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+        },
     };
-    let (system, pack) = match item.task.as_str() {
-        "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(&snapshot, item, limits.context_budget)),
-        "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(&snapshot, &item.target)),
-        _ => (REVIEW_SYSTEM, review_pack(&snapshot, &item.target, limits.context_budget, lint)),
-    };
+    let (system, pack) = task_prompt(&snapshot, item, limits, lint, gen);
     let names = toolset(&item.task);
     let all_defs = catalog();
     let defs: Vec<&ToolDef> = all_defs.iter().filter(|t| names.contains(&t.name)).collect();

@@ -923,7 +923,7 @@ mod tests {
             out,
             store,
             generation: 0,
-            gen: GenSettings { deliverable: deliv },
+            gen: GenSettings { deliverable: deliv, worker: "agentic".into() },
             overlay: HashMap::new(),
             next_srv_id: 1,
         };
@@ -963,7 +963,7 @@ mod tests {
             out,
             store,
             generation: 0,
-            gen: GenSettings { deliverable: tmp.join("product") },
+            gen: GenSettings { deliverable: tmp.join("product"), worker: "agentic".into() },
             overlay: HashMap::new(),
             next_srv_id: 1,
         };

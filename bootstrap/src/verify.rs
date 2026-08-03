@@ -284,6 +284,82 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     })
 }
 
+// The `run_tests` tool: the build once, then every selected programmatic row, verdicts
+// recorded as a side effect. No model anywhere, so any toolset can serve it; `llm` rows
+// are listed as skipped and go through record_verdict.
+// Mirrors docs/compiler/tools.md#verification-tools.
+pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
+    let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
+    crate::gen::run_build(&store.out, gs, &quiet, "run_tests").map_err(|e| format!("{}; nothing was verified", e))?;
+    let ledger = Ledger::load(&store.out);
+    // Explicit targets (requirement or entity ids), or every non-verified row.
+    let selected: Vec<String> = if targets.is_empty() {
+        pending(store, gs, Some("stale"), None)
+            .iter()
+            .filter_map(|p| p["requirement"].as_str().map(String::from))
+            .collect()
+    } else {
+        let mut v: Vec<String> = Vec::new();
+        for t in targets {
+            let id = store.resolve_id(t).to_string();
+            if ledger.requirements.contains_key(&id) {
+                v.push(id);
+            } else {
+                for (rid, row) in &ledger.requirements {
+                    if store.resolve_id(&row.entity) == id && !v.contains(rid) {
+                        v.push(rid.clone());
+                    }
+                }
+            }
+        }
+        v
+    };
+    let (mut passed, mut failed) = (0u64, 0u64);
+    let mut rows: Vec<Value> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    for rid in &selected {
+        let Some(row) = ledger.requirements.get(rid) else {
+            skipped.push(json!({"requirement": rid, "reason": "no ledger row; generate first"}));
+            continue;
+        };
+        if row.test.kind != "programmatic" {
+            skipped.push(json!({"requirement": rid, "reason": "llm row; judge it and record_verdict"}));
+            continue;
+        }
+        let (status, reason) = status_of(store, rid, row, gs);
+        if status == "stale-requirement" || status == "missing" {
+            skipped.push(json!({"requirement": rid, "reason": format!("{} ({}); regenerate first", status, reason)}));
+            continue;
+        }
+        match run_programmatic(store, rid, gs) {
+            Ok(r) => {
+                let verdict = if r.pass { "pass" } else { "fail" };
+                mark(store, rid, verdict, None, Some(&r.evidence), gs).ok();
+                if r.pass {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+                rows.push(json!({"requirement": rid, "verdict": verdict, "exitCode": r.code, "evidence": r.tail}));
+            }
+            Err(e) => skipped.push(json!({"requirement": rid, "reason": e})),
+        }
+    }
+    Ok(json!({
+        "passed": passed,
+        "failed": failed,
+        "rows": rows,
+        "skipped": skipped,
+        "next": if failed > 0 {
+            "a failing row names its requirement; fix the deliverable or the test, then run_tests again"
+        } else if !skipped.is_empty() {
+            "skipped rows say why; llm rows need begin_verification and record_verdict"
+        } else {
+            "all selected rows pass"
+        }
+    }))
+}
+
 // Record a run that judged nothing: the exit code and the output stay, the verdict does
 // not move. A row with an exit code and no verdict reads as `runner-failed`
 // (docs/consumers/gen.md#status-is-derived-never-stored).
@@ -465,7 +541,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product") };
+        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into() };
         std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
         std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");

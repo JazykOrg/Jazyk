@@ -89,6 +89,42 @@ A build runs in waves:
   problems are invisible to the model. The deterministic checks own them.
   Thresholds live in [limits](./project-settings.md#limits).
 
+## The task queue
+
+The reconciler's schedule is durable, derived state, not a private plan inside one
+`compile` invocation. Any process computes the same queue from the same inputs: the
+docs on disk, the graph, the ledger, and `status.yaml`. That is what lets an external
+agent perform compilation over [MCP](../frontends/mcp.md#compilation-over-mcp) with the
+same semantics as `jazyk compile`, and lets an interrupted build resume from any
+consumer.
+
+Task kinds, in dependency order:
+
+- `reconcile-document`: derived from the section-tree diff, uncovered sections, and
+  stale anchors. Ready when every document in an earlier
+  [level](#scheduling) is clean.
+- `review-requirement`: a changed requirement judged against its computed neighbors.
+  Ready when no reconcile task is pending.
+- `review-entity`: an entity whose facts changed. Ready when no reconcile or
+  pair-review task is pending.
+- `generate-entity` and `verify-requirement`: [generation](../consumers/gen.md) and
+  verification pending, derived from the ledger. Generation is ready when the compile
+  queue is empty; a row's verification is ready when its entity is generated.
+
+Everything above is derivable from disk except which reviews are owed: the ingest
+turns that made an entity's facts change may have run in another process. So the
+commit records it. Every committed changeset from a reconcile task adds its touched
+entities and changed requirements to a `pending` block in `status.yaml`; a completed
+review task removes its target. Review tasks then derive from `pending` exactly as
+dirty sections derive from the section-tree diff. Parked work items persist beside it
+as before, and resume first.
+
+A consumer that just takes the first ready task and finishes it walks the same path
+the internal loop walks: roots before the documents they link to, ingest before
+pair review, pair review before entity review, reviews before generation. When the
+last compile task finishes, the deterministic tail runs (checks, docsgen, verdict);
+it needs no model, so whichever consumer emptied the queue runs it.
+
 ## Convergence
 
 The build is done when:
@@ -100,8 +136,9 @@ A hard per-build turn budget backstops the loop. Work still open when the budget
 is parked in `status.yaml` and reported as an `incomplete-build` diagnostic. The next
 build resumes parked items first. Unfinished work is never silent.
 
-The verdict in `status.yaml` is `converged` only when nothing is parked and no section
-with a body of its own is left unprocessed. A turn that exhausts its round budget commits
+The verdict in `status.yaml` is `converged` only when nothing is parked, no review is
+pending in the [task queue](#the-task-queue), and no section with a body of its own is
+left unprocessed. A turn that exhausts its round budget commits
 what it staged and reports no failure, so its document is not parked; counting only
 parked items would report a build that stopped halfway as converged. Coverage is the
 other half of the criterion, so a build that ran out of road says `incomplete` and the

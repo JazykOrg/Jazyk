@@ -56,6 +56,7 @@ pub struct Project {
     // [gen] settings: where the deliverable lives. Never what it is; the medium is a
     // fact the documents state.
     pub gen_deliverable: Option<String>,
+    pub gen_worker: Option<String>,
     pub llm: LlmSettings,
     pub linting: Linting,
     pub limits: Limits,
@@ -70,6 +71,7 @@ impl Default for Project {
             root: PathBuf::from("."),
             out: PathBuf::from("./jazyk-out"),
             gen_deliverable: None,
+            gen_worker: None,
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
             llm: LlmSettings::default(),
@@ -246,6 +248,9 @@ impl Project {
         }
         if let Some(v) = t.string("gen.deliverable") {
             p.gen_deliverable = Some(v);
+        }
+        if let Some(v) = t.string("gen.worker") {
+            p.gen_worker = Some(v);
         }
         p.llm.base_url = t.string("llm.base_url");
         p.llm.model = t.string("llm.model");

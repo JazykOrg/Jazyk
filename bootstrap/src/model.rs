@@ -183,10 +183,31 @@ pub struct Status {
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parked: Vec<WorkItem>,
+    // Reviews owed: recorded at commit by reconcile changesets, removed when a review
+    // task completes. What makes the task queue derivable by any process.
+    // Mirrors docs/compiler/reconciler.md#the-task-queue.
+    #[serde(default, skip_serializing_if = "PendingReviews::is_empty")]
+    pub pending: PendingReviews,
     #[serde(default)]
     pub spent: Spent,
     #[serde(default)]
     pub verdict: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PendingReviews {
+    // Entity ids whose facts changed since their last review-entity turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<String>,
+    // Requirement ids created or reworded since their last pair review.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<String>,
+}
+
+impl PendingReviews {
+    pub fn is_empty(&self) -> bool {
+        self.entities.is_empty() && self.requirements.is_empty()
+    }
 }
 
 // The in-memory graph: the contents of the graph/ shard files.

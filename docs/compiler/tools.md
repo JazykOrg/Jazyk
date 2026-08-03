@@ -123,37 +123,59 @@ a record, so a confused model cannot flood the log.
 The reply is `{recorded, note}`. The note tells the model to continue with its best
 judgment: feedback is not an escape from the work item.
 
+## Compilation tools
+
+Compilation over MCP is task-based: the agent performs work items from
+[the task queue](./reconciler.md#the-task-queue), staging graph writes into an open
+changeset exactly as an in-process turn does. One task is open at a time per serving.
+
+- `compilation_tasks({})`: the queue: kind, target, dirty sections, stale anchor
+  count, ready or blocked with the reason. Zero tasks returns the build verdict
+  instead; nothing to do is an answer.
+- `begin_compilation({task?})`: claim the named task, or the first ready one. Reloads
+  the store, syncs section trees in memory, opens a changeset, and returns the work
+  package: the task's `instructions` (the same extraction or review contract an
+  in-process turn gets as its system prompt) and the same pack (dirty section bodies,
+  statements already extracted per section, known entities, incoming links, stale
+  anchors). The [write tools](#write-tools) stage into the open changeset; outside an
+  open task they are rejected toward `begin_compilation`.
+- `finish_compilation({summary})`: run the `done` gates, commit atomically, update the
+  queue, and return `{committed, next}` with the next ready task. A gate failure
+  leaves the changeset open and names the repair. The finish that empties the queue
+  also runs the deterministic tail (checks, docsgen, verdict) and reports the verdict
+  and any generation tasks that became ready.
+- `abandon_compilation({reason})`: drop the staged changeset. Leaves no trace.
+
 ## Generation tools
 
 [Generation](../consumers/gen.md) is a workflow over the graph, so its steps are tools
 too. Any agent that speaks MCP can be the generation worker; `jazyk gen` is one such
-worker and consumes the same task packages in-process. These tools read the graph and
-the [ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
-graph.
+worker in-process ([generation turns](./turns.md#generation-turns)). These tools read
+the graph and the [ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they
+never mutate the graph. The agent edits deliverable files and runs commands with its
+own tools; jazyk serves no file editing over MCP.
 
-- `gen_instructions({})`: the generation contract as text: one bounded task per
-  entity producing both the entity's part of the deliverable and the tests for its
-  requirements, the traceability markers, the two test kinds, and the parts protocol
-  for dense entities. The worker derives the medium from the context; the contract
-  never names one.
-- `gen_pending({})`: entities whose facts differ from the ledger:
+- `generation_tasks({})`: entities whose facts differ from the ledger:
   `{entity, reason, changed}` where `changed` lists the requirement ids added, removed,
   or reworded since the entity was last generated.
-- `gen_task({entity})`: the full package for one task: the instructions, the
-  entity's context pack, its requirements in generation groups, the change diff, the
-  deliverable directory, the `factHash`, the manifest of already generated files, and
-  the deliverable's [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+- `begin_generation({entity})`: the full package for one task: the instructions (the
+  generation contract: both halves per entity, traceability markers, the two test
+  kinds, the parts protocol), the entity's context pack, its requirements in
+  generation groups, the change diff, the deliverable directory, the `factHash`, the
+  manifest of already generated files with what each holds, and the deliverable's
+  [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
   and build. Layout, file names, and run commands are the worker's choices, recorded
-  in the manifest; the medium is not, it is already decided.
-- `gen_mark({entity, factHash, manifest})`: record the task done. The worker writes the
-  deliverable files itself; the `manifest` binds them to the graph:
-  `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}]}`.
-  Marking strips every single-line marker comment from the manifest files and records
-  each as an anchored site on its requirement's row
+  in the manifest; the medium is not, it is already decided. Stateless on the server:
+  beginning claims nothing and holds nothing.
+- `record_generation({entity, factHash, manifest})`: record the task done. The worker
+  writes the deliverable files itself; the `manifest` binds them to the graph:
+  `{files: [...], tests: [{requirement, kind, label, artifact, name, run, cwd}],
+  build?}`. Marking strips every single-line marker comment from the manifest files
+  and records each as an anchored site on its requirement's row
   ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps;
-  the entity leaves `gen_pending`. A `factHash` that no longer matches the live graph
-  is recorded but leaves the entity pending, so a graph that moved mid-task is never
-  masked.
+  the entity leaves `generation_tasks`. A `factHash` that no longer matches the live
+  graph is recorded but leaves the entity pending, so a graph that moved mid-task is
+  never masked.
 
 ## Verification tools
 
@@ -161,18 +183,25 @@ Verification runs the tests the ledger records and feeds verdicts back. Same wor
 model: `jazyk test` is the built-in worker; any MCP agent is another. These tools write
 only the ledger, never the graph.
 
-- `verify_pending({filter?, entity?})`: rows needing action, with their derived
+- `verification_tasks({filter?, entity?})`: rows needing action, with their derived
   [status](../consumers/gen.md#status-is-derived-never-stored) and a `reason`
   (`not-generated`, `artifact-gone`, `never-run`, `requirement-changed`,
   `test-changed`, `code-changed`, `failed`, `requirement-gone`). Requirements the
   graph holds but the ledger does not appear as `missing`, so ungenerated work is
   never silent. Deterministic; no model involved.
-- `verify_task({requirement})`: the package for one row: the statement, quote, and
-  hash; the context pack; the manifest files; and either the run command
+- `begin_verification({requirement})`: the package for one row: the statement, quote,
+  and hash; the context pack; the manifest files; and either the run command
   (`programmatic`) or the criteria and confirm-steps (`llm`).
-- `verify_mark({requirement, verdict, factHash?, evidence?})`: record a `pass` or
+- `run_tests({requirements?})`: execute the recorded programmatic tests: the
+  [build](../consumers/gen.md#the-build) first, once, then each selected row's
+  command. Verdicts and evidence are recorded as a side effect and returned. `llm`
+  rows are skipped here; they go through `record_verdict`. This is how a worker
+  verifies without hand-rolling the harness, and it serves in the generation toolset
+  too.
+- `record_verdict({requirement, verdict, factHash?, evidence?})`: record a `pass` or
   `fail` verdict with its evidence, rebaselining the test and files hashes. A stale
-  `factHash` is recorded but the row stays pending, the same protection `gen_mark` has.
+  `factHash` is recorded but the row stays pending, the same protection
+  `record_generation` has.
 
 ## Validation and errors
 
@@ -201,8 +230,17 @@ Turns see subsets, not the whole catalog. Every subset carries
   `merge_entities`, `update_requirement` (a review adds missing `edges` when
   requirements tie entities structurally), `delete_requirement`, `report_diagnostic`,
   `resolve_diagnostic`, `done`.
-- `jazyk mcp graph` (default): the read, generation, and verification tools, plus
-  `await_changes`. See [MCP](../frontends/mcp.md#default-serving).
-- `jazyk mcp graph --write`: everything.
+- `generate-entity` (the in-process generation worker): the read tools, the
+  [file and command tools](./turns.md#generation-turns) (in-process only, never served
+  over MCP), `record_generation`, `run_tests`, `done`.
+- `jazyk mcp compile`: the read tools, the [compilation tools](#compilation-tools),
+  and the write tools (gated behind an open task), plus `await_changes`.
+- `jazyk mcp generate`: the read tools, the [generation tools](#generation-tools),
+  `run_tests`, plus `await_changes`.
+- `jazyk mcp verify`: the read tools and the
+  [verification tools](#verification-tools), plus `await_changes`.
+- `jazyk mcp graph`: the read tools, plus `await_changes`; `--write` adds the raw
+  write tools, each call committing as its own changeset. See
+  [MCP](../frontends/mcp.md#toolsets).
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).

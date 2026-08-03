@@ -55,9 +55,46 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   reference the review adds with `update_requirement`. A missing reference is what
   strands an entity cluster unreachable from the roots.
 
+- `generate-entity`: produce one entity's part of the deliverable and its tests. See
+  [generation turns](#generation-turns).
+
 Extraction order inside `reconcile-doc` is deliberate: requirements first, entities only
 as requirements need them. An entity that no statement needs is noise. See
 [entity](./model/entity.md#what-is-an-entity).
+
+A turn's consumer is interchangeable: the same work item, pack, and toolset serve the
+in-process loop and an external agent over
+[MCP](../frontends/mcp.md#compilation-over-mcp). The pack is the prompt in both cases;
+the system-prompt text rides in the MCP package as `instructions`.
+
+## Generation turns
+
+The `generate-entity` turn replaces the fixed file-reply pipeline: the model works the
+task with tools instead of answering a fixed sequence of prompts. Its toolset adds
+file and command tools, sandboxed to the deliverable directory and served in-process
+only (an external agent brings its own editor; see
+[MCP](../frontends/mcp.md#generation-and-verification-over-mcp)):
+
+- `read_text_file({path, line?, limit?})`: one file's content, path relative to the
+  deliverable.
+- `write_text_file({path, content})`: write one file. A path recorded for another
+  entity is rejected with the owner named
+  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)).
+- `list_files({path?})`: the deliverable tree.
+- `run_command({command, cwd?})`: execute a shell command under the deliverable,
+  bounded by a timeout; the exit code and output tail come back. This is how the turn
+  runs the build it wrote, reads the traceback, and fixes its own work.
+- `run_tests({requirements?})` and `record_generation({...})`: the same tools the
+  [generation toolset](./tools.md#generation-tools) serves over MCP.
+
+The names and shapes track the Agent Client Protocol's file-system and terminal
+methods, so a future ACP serving is a transport change, not a redesign.
+
+The finish contract: `record_generation` records the manifest, then `done` ends the
+turn. A turn that ends without recording fails the task; the harness checks the
+ledger, not the model's word. Command execution during generation is the same trust
+decision as `jazyk test` running recorded commands, made at generation time; the
+sandbox is the deliverable directory, and paths that escape it are rejected.
 
 ## Incoming links
 

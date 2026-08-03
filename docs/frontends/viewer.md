@@ -28,7 +28,7 @@ never compiles.
 
 When the [ledger](../consumers/gen.md#the-ledger) exists, the viewer overlays
 verification state, derived at render time exactly as
-[`verify_pending`](../compiler/tools.md#verification-tools) derives it:
+[`verification_tasks`](../compiler/tools.md#verification-tools) derives it:
 
 - The header gains a verification summary: verified, failing, stale, and unverified
   counts, plus not-generated requirements.

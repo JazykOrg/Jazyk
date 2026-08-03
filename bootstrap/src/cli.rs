@@ -28,6 +28,7 @@ pub struct Options {
     pub gui_dist: Option<String>,
     pub no_token: bool,
     pub mcp: Option<String>,
+    pub json: bool,
 }
 
 impl Default for Options {
@@ -52,6 +53,7 @@ impl Default for Options {
             gui_dist: None,
             no_token: false,
             mcp: None,
+            json: false,
         }
     }
 }
@@ -367,6 +369,135 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
     }
 }
 
+// The external agent's trigger: watch the same surfaces `watch` does, perform nothing,
+// print the ready work and which MCP tool begins it on every state change. One block
+// per notice, quiet otherwise; --json prints one object per line.
+// Mirrors docs/frontends/cli.md#jazyk-monitor.
+pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
+    let (proj, _llm, out) = resolve(paths, opts);
+    let json_mode = opts.json;
+    let gs = crate::gen::GenSettings::resolve(&proj);
+    // The watched surfaces: docs plus the ledger and its files, same as await_changes.
+    let fingerprint = |proj: &Project| -> String {
+        let mut s = String::new();
+        let mut files = proj.doc_files();
+        files.push(crate::gen::Ledger::path(&out));
+        let ledger = crate::gen::Ledger::load(&out);
+        for row in ledger.requirements.values() {
+            for f in &row.files {
+                files.push(gs.deliverable.join(f));
+            }
+        }
+        files.sort();
+        files.dedup();
+        for f in files {
+            if let Ok(md) = std::fs::metadata(&f) {
+                s.push_str(&format!("{}:{}:{:?};", f.display(), md.len(), md.modified().ok()));
+            }
+        }
+        s
+    };
+    let notice = |last: &mut String| {
+        let q = crate::queue::compute(&proj, &out);
+        let rendered = if json_mode {
+            serde_json::json!({
+                "compilation": q.compile,
+                "generation": q.generate,
+                "verification": q.verify,
+                "verdict": q.verdict,
+            })
+            .to_string()
+        } else {
+            let mut s = String::new();
+            let ready = |v: &Vec<serde_json::Value>| v.iter().filter(|t| t["ready"] == true).count();
+            if !q.compile.is_empty() {
+                s.push_str(&format!("jazyk: {} compilation task(s), {} ready\n", q.compile.len(), ready(&q.compile)));
+                for t in q.compile.iter().filter(|t| t["ready"] == true).take(5) {
+                    let secs = t["dirtySections"].as_array().map(|a| a.len()).unwrap_or(0);
+                    let anchors = t["staleAnchors"].as_array().map(|a| a.len()).unwrap_or(0);
+                    match t["kind"].as_str().unwrap_or("") {
+                        "reconcile-document" => s.push_str(&format!(
+                            "  reconcile {} ({} dirty section(s), {} stale anchor(s))\n",
+                            t["target"].as_str().unwrap_or(""),
+                            secs,
+                            anchors
+                        )),
+                        k => s.push_str(&format!("  {} {}\n", k, t["target"].as_str().unwrap_or(""))),
+                    }
+                }
+                s.push_str("  → call compilation_tasks on the jazyk MCP server to begin\n");
+            } else if !q.generate.is_empty() {
+                s.push_str(&format!("jazyk: compilation {}; {} generation task(s) ready\n", q.verdict, q.generate.len()));
+                for t in q.generate.iter().take(5) {
+                    s.push_str(&format!(
+                        "  generate {} ({})\n",
+                        t["entity"].as_str().unwrap_or(""),
+                        t["reason"].as_str().unwrap_or("")
+                    ));
+                }
+                s.push_str("  → call generation_tasks on the jazyk MCP server to begin\n");
+            } else if !q.verify.is_empty() {
+                s.push_str(&format!("jazyk: {} verification task(s) ready\n", q.verify.len()));
+                s.push_str("  → call verification_tasks on the jazyk MCP server (run_tests covers programmatic rows)\n");
+            } else {
+                s.push_str("jazyk: nothing to do\n");
+            }
+            s
+        };
+        if rendered != *last {
+            print!("{}", rendered);
+            if !json_mode {
+                println!();
+            }
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            *last = rendered;
+        }
+    };
+    let mut last_notice = String::new();
+    notice(&mut last_notice);
+    use notify::Watcher;
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if res.is_ok() {
+            tx.send(()).ok();
+        }
+    }) {
+        Ok(w) => w,
+        Err(_) => {
+            // Polling fallback.
+            let mut last_fp = fingerprint(&proj);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let fp = fingerprint(&proj);
+                if fp != last_fp {
+                    last_fp = fp;
+                    notice(&mut last_notice);
+                }
+            }
+        }
+    };
+    if let Err(e) = watcher.watch(&proj.root, notify::RecursiveMode::Recursive) {
+        eprintln!("jazyk: cannot watch {}: {}", proj.root.display(), e);
+        return 1;
+    }
+    let mut last_fp = fingerprint(&proj);
+    loop {
+        if rx.recv().is_err() {
+            break;
+        }
+        // Debounce the burst, then re-check the fingerprint.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        while rx.try_recv().is_ok() {}
+        let fp = fingerprint(&proj);
+        if fp != last_fp {
+            last_fp = fp;
+            notice(&mut last_notice);
+        }
+    }
+    0
+}
+
 pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(paths, opts);
     let fingerprint = |proj: &Project| -> String {
@@ -560,7 +691,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
         _ => {}
     });
     let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "gen");
-    let result = crate::gen::run_all(&store, &llm, &gs, entities, opts.force, &trace);
+    let result = crate::gen::run_all(&store, &llm, &gs, entities, opts.force, &proj.limits, &proj.linting, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),

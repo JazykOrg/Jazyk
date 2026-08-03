@@ -397,6 +397,7 @@ requirements:
       files: <hash over the manifest files, sorted, concatenated>
     verdict: none                         # none | pass | fail (last run outcome)
     lastRun: 2026-07-03T18:40:00Z
+    exitCode: 0                           # programmatic runs only; absent for llm rows
     evidence: "cargo test: 1 passed"      # or the llm verdict reasoning, short
 ```
 
@@ -412,7 +413,9 @@ the files on disk, recomputed at every read. First match wins:
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
 5. Otherwise the last verdict: `pass` → `verified`, `fail` → `failing`,
-   `none` → `unverified`.
+   `none` → `unverified`. A run whose command never executed leaves the verdict at
+   `none` and the reason at `runner-failed`, so a broken machine reads as unverified,
+   not as a failing deliverable (see [runners](#runners)).
 
 Hashes are written at exactly two moments: generation marks a task done (all three), and
 a test run completes (`test` and `files` rebaseline, never `requirement`). Every
@@ -448,12 +451,36 @@ would name the wrong culprit.
 - `programmatic`: `jazyk test` executes `run` in `cwd` under the deliverable. Exit 0 is
   a pass, anything else is a fail. Before running, the runner greps the artifact for the
   test `name`; if absent the row is `stale-test`, not `failing`, and nothing executes.
+  The row records the exit code beside the output, so a verdict can be read back
+  without rerunning it.
 - `llm`: two harnesses, one contract. `jazyk test` packages the criteria file and the
   requirement's context in-process and asks the configured model for a verdict. An
   external agent connected to [`jazyk mcp graph`](../frontends/mcp.md) does the same
   through the [verification tools](../compiler/tools.md#verification-tools), using its
   own abilities to inspect or exercise the deliverable. Whichever harness runs, the
   ledger row comes out the same shape.
+
+### A test that could not run says nothing
+
+A command that never executed has not judged the requirement, so the row reads
+`unverified` with reason `runner-failed` and keeps the output as evidence. The run
+clears any previous verdict: it moved the row's `lastRun` and learned nothing, so the
+honest state is unknown, not yesterday's answer restated with today's timestamp. Recording it
+as `failing` would blame the deliverable for a broken machine, and the two are
+indistinguishable in a status table.
+
+The harness cannot read a runner's mind, so it uses two signals that need no knowledge
+of the tool:
+
+- Exit `127` or `126`: the command was not found, or was not executable. That is the
+  runner, never the requirement.
+- Every executed row in the run failed, none passed, and their evidence is identical
+  once the command line is stripped. One broken runner produces one message, repeated;
+  N unmet requirements do not. The run reports the runner once and leaves every row
+  unverified.
+
+Anything else is a real verdict. A row that fails on its own assertion, beside rows
+that pass, is exactly what verification is for.
 
 `jazyk test --audit` rebuilds the ledger from the artifacts: it scans the deliverable
 and the criteria directory for the test names derived from the live statements,

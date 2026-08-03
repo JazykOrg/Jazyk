@@ -198,6 +198,11 @@ pub struct ReqRow {
     pub verdict: String, // none | pass | fail
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run: Option<String>,
+    // The exit code of the last programmatic run. Present without a verdict means the
+    // command ran and told us nothing: the runner failed, not the requirement
+    // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
 }
@@ -859,6 +864,7 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                     hashes,
                     verdict: "none".into(),
                     last_run: None,
+                    exit_code: None,
                     evidence: None,
                 },
             );

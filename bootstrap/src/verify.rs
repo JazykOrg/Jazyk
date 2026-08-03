@@ -31,6 +31,10 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     match row.verdict.as_str() {
         "pass" => ("verified".into(), "passed".into()),
         "fail" => ("failing".into(), "failed".into()),
+        // A command ran and left a code, yet no verdict was recorded: the runner
+        // failed and the requirement was never exercised
+        // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+        _ if row.exit_code.is_some() => ("unverified".into(), "runner-failed".into()),
         _ => ("unverified".into(), "never-run".into()),
     }
 }
@@ -195,6 +199,7 @@ pub fn mark(store: &Store, rid: &str, verdict: &str, fact_hash_seen: Option<&str
         return Err(format!("no ledger row for `{}`", rid));
     };
     row.verdict = verdict.to_string();
+    row.exit_code = None;
     row.last_run = Some(now_iso());
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
@@ -212,7 +217,25 @@ pub fn mark(store: &Store, rid: &str, verdict: &str, fact_hash_seen: Option<&str
 
 // Run one programmatic row: grep the artifact for the test name first (absent means
 // stale-test, not failing), then execute the command; the exit code is the verdict.
-pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<(bool, String), String> {
+// What one programmatic run produced. `tail` is the output alone: a run compares tails
+// with other rows to tell one broken runner from many unmet requirements
+// (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+pub struct ProgRun {
+    pub pass: bool,
+    pub code: i32,
+    pub tail: String,
+    pub evidence: String,
+}
+
+impl ProgRun {
+    // The command was never executed: not found, or not executable. Nothing here says
+    // anything about the requirement.
+    pub fn runner_failed(&self) -> bool {
+        self.code == 126 || self.code == 127
+    }
+}
+
+pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<ProgRun, String> {
     let rid = store.resolve_id(rid).to_string();
     let ledger = Ledger::load(&store.out);
     let Some(row) = ledger.requirements.get(&rid) else {
@@ -252,7 +275,30 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<(b
         .rev()
         .collect::<Vec<_>>()
         .join(" | ");
-    Ok((pass, format!("{}: {}", row.test.run, crate::llm::truncate(&tail, 300))))
+    let tail = crate::llm::truncate(&tail, 300);
+    Ok(ProgRun {
+        pass,
+        code: out.status.code().unwrap_or(-1),
+        evidence: format!("{}: {}", row.test.run, tail),
+        tail,
+    })
+}
+
+// Record a run that judged nothing: the exit code and the output stay, the verdict does
+// not move. A row with an exit code and no verdict reads as `runner-failed`
+// (docs/consumers/gen.md#status-is-derived-never-stored).
+pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str) {
+    let rid = store.resolve_id(rid).to_string();
+    let mut ledger = Ledger::load(&store.out);
+    if let Some(row) = ledger.requirements.get_mut(&rid) {
+        // The previous verdict is not today's answer: this run moved lastRun and
+        // learned nothing, so the row is unknown rather than stale-but-confident.
+        row.verdict = "none".into();
+        row.exit_code = Some(code);
+        row.evidence = Some(crate::llm::truncate(evidence, 300));
+        row.last_run = Some(now_iso());
+        ledger.save(&store.out);
+    }
 }
 
 // Rebuild the ledger from the artifacts: existing rows refresh their test and files
@@ -345,7 +391,8 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                     test,
                     hashes,
                     verdict: "none".into(),
-                    last_run: None,
+                        last_run: None,
+                    exit_code: None,
                     evidence: None,
                 },
             );
@@ -440,6 +487,33 @@ mod tests {
         (s, gs)
     }
 
+    // A command that could not run has judged nothing: the row stays unverified with
+    // reason runner-failed, and a real verdict later clears it.
+    // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
+    #[test]
+    fn a_runner_failure_is_not_a_failing_requirement() {
+        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+
+        record_runner_failure(&s, "req:shop-1", 127, "sh: pytest: command not found");
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.verdict, "none");
+        assert_eq!(row.exit_code, Some(127));
+        let (status, reason) = status_of(&s, "req:shop-1", row, &gs);
+        assert_eq!(status, "unverified");
+        assert_eq!(reason, "runner-failed");
+
+        // A verdict from a working runner clears the mark.
+        mark(&s, "req:shop-1", "fail", None, Some("assert failed"), &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.exit_code, None);
+        assert_eq!(status_of(&s, "req:shop-1", row, &gs).0, "failing");
+        std::fs::remove_dir_all(&out).ok();
+    }
+
     #[test]
     fn status_matrix_and_cascade() {
         let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", std::process::id()));
@@ -480,7 +554,7 @@ mod tests {
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "failing");
 
         // Programmatic run: `true` exits 0.
-        let (pass, _) = run_programmatic(&s, "req:shop-1", &gs).unwrap();
+        let pass = run_programmatic(&s, "req:shop-1", &gs).unwrap().pass;
         assert!(pass);
     }
 
@@ -585,6 +659,8 @@ pub fn run_all(
     // Mirrors docs/consumers/gen.md#runners.
     crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e| format!("{}; nothing was verified", e))?;
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
+    // Failed programmatic runs, judged together at the end of the run.
+    let mut held: Vec<(String, ProgRun, String)> = Vec::new();
     for r in &selected {
         if trace.is_cancelled() {
             break;
@@ -653,7 +729,14 @@ pub fn run_all(
             }
         } else {
             match run_programmatic(store, &rid, gs) {
-                Ok((pass, evidence)) => Some((pass, evidence)),
+                Ok(run) if run.pass => Some((true, run.evidence)),
+                // A failure waits: whether it is the deliverable's or the machine's is
+                // decided once, when the run knows how the other rows went
+                // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+                Ok(run) => {
+                    held.push((rid.clone(), run, r["test"]["run"].as_str().unwrap_or("").to_string()));
+                    None
+                }
                 Err(e) => {
                     trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: format!(": {}", e) });
                     None
@@ -679,10 +762,51 @@ pub fn run_all(
             None => skipped += 1,
         }
     }
+    // One broken runner says the same thing to every row it touched; unmet requirements
+    // do not agree with each other. When nothing passed and every failure carries the
+    // identical output, the machine is what failed, and no row learned anything.
+    let identical = held.len() > 1
+        && verified == 0
+        && held.windows(2).all(|w| w[0].1.tail == w[1].1.tail);
+    let mut runner_failed = 0u64;
+    skipped = skipped.saturating_sub(held.len() as u64);
+    for (rid, run, cmd) in held {
+        if run.runner_failed() || identical {
+            record_runner_failure(store, &rid, run.code, &run.evidence);
+            runner_failed += 1;
+            trace.event(TraceEvent::VerifyRowError {
+                requirement: rid.clone(),
+                message: format!(
+                    " not judged: the runner failed (exit {}): {}",
+                    run.code,
+                    crate::llm::truncate(&run.tail, 120)
+                ),
+            });
+            continue;
+        }
+        mark(store, &rid, "fail", None, Some(&run.evidence), gs).ok();
+        failing += 1;
+        trace.event(TraceEvent::VerifyRowDone {
+            requirement: rid,
+            verdict: "fail".into(),
+            run: cmd,
+            evidence: run.evidence,
+        });
+    }
+    if runner_failed > 0 {
+        trace.line(
+            "verify",
+            &format!(
+                "{} row(s) were not judged: the test runner itself failed. Fix the runner, then rerun; the deliverable was never exercised",
+                runner_failed
+            ),
+        );
+    }
     Ok(json!({
         "rows": selected.len(),
         "verified": verified,
         "failing": failing,
+        "runnerFailed": runner_failed,
         "stale": stale,
         "skipped": skipped,
     }))

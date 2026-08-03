@@ -643,21 +643,32 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
     }
     match result {
         Ok(sum) => {
-            let (verified, failing, stale, skipped) = (
+            let (verified, failing, stale, skipped, runner_failed) = (
                 sum["verified"].as_u64().unwrap_or(0),
                 sum["failing"].as_u64().unwrap_or(0),
                 sum["stale"].as_u64().unwrap_or(0),
                 sum["skipped"].as_u64().unwrap_or(0),
+                sum["runnerFailed"].as_u64().unwrap_or(0),
             );
             if sum["rows"].as_u64().unwrap_or(0) == 0 {
                 println!("jazyk: nothing to do; every targeted row is verified");
             } else {
                 println!(
-                    "jazyk: test done — {} verified, {} failing, {} stale, {} skipped",
-                    verified, failing, stale, skipped
+                    "jazyk: test done — {} verified, {} failing, {} stale, {} skipped{}",
+                    verified,
+                    failing,
+                    stale,
+                    skipped,
+                    // A run the machine broke reads differently from a run the
+                    // deliverable failed (docs/consumers/gen.md#runners).
+                    if runner_failed > 0 {
+                        format!(", {} not judged (the test runner failed)", runner_failed)
+                    } else {
+                        String::new()
+                    }
                 );
             }
-            if failing > 0 || stale > 0 || skipped > 0 {
+            if failing > 0 || stale > 0 || skipped > 0 || runner_failed > 0 {
                 1
             } else {
                 0

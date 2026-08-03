@@ -909,6 +909,7 @@ mod tests {
                 hashes: RowHashes::default(),
                 verdict: "none".into(),
                 last_run: None,
+                exit_code: None,
                 evidence: None,
             },
         );

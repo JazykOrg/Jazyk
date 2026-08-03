@@ -663,6 +663,16 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             .iter()
             .filter(|rid| s.graph.requirements.contains_key(*rid))
             .filter(|rid| !s.pair_review_neighbors(rid).is_empty())
+            // A pair scheduled from both ends runs once: when two targets are each
+            // other's only neighbor, the smaller id carries the task and completion
+            // mirrors to the other.
+            .filter(|rid| {
+                let nbrs = s.pair_review_neighbors(rid);
+                !(nbrs.len() == 1
+                    && nbrs[0].as_str() < rid.as_str()
+                    && pair_targets.contains(&nbrs[0])
+                    && s.pair_review_neighbors(&nbrs[0]).iter().any(|x| x == *rid))
+            })
             .map(|rid| WorkItem {
                 task: "review-requirement".into(),
                 target: rid.clone(),
@@ -680,13 +690,15 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             let (applied, touched, _changed, parked) = run_wave(&store, llm, &pair_items, &proj.limits, &proj.linting, &gs, trace);
             applied_total += applied;
             touched_all.extend(touched);
-            // A completed pair review pays its pending debt; a parked one keeps it.
+            // A completed pair review pays its pending debt (and its mirror's: a pair
+            // judged once is judged); a parked one keeps it.
             {
                 let parked_t: BTreeSet<&String> = parked.iter().map(|p| &p.target).collect();
                 let mut s = store.lock().unwrap();
                 for item in &pair_items {
                     if !parked_t.contains(&item.target) {
                         s.complete_review("review-requirement", &item.target);
+                        s.complete_pair_mirrors(&item.target);
                     }
                 }
             }

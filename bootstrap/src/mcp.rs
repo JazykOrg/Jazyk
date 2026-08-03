@@ -252,6 +252,13 @@ impl McpServer {
     }
 
     fn begin_compilation(&self, params: &Value) -> Value {
+        self.begin_compilation_inner(params, None)
+    }
+
+    // elide_kind: the kind the caller just finished via beginNext; a chained task of
+    // the same kind skips the repeated instructions text (the agent saw it one reply
+    // ago), which is the bulk of the package on review-heavy builds.
+    fn begin_compilation_inner(&self, params: &Value, elide_kind: Option<&str>) -> Value {
         if let Some(o) = self.open.lock().unwrap().as_ref() {
             return json!({"error": {"rule": "task-open", "message": format!(
                 "task `{} {}` is already open with {} staged mutation(s); finish_compilation or abandon_compilation first",
@@ -297,10 +304,15 @@ impl McpServer {
             .into_iter()
             .filter(|t| !crate::tools::READ_TOOLS.contains(t) && *t != "done" && *t != crate::tools::FEEDBACK_TOOL)
             .collect();
+        let instructions_field = if elide_kind == Some(item.task.as_str()) {
+            json!("(same contract as the task you just finished; unchanged)")
+        } else {
+            json!(instructions)
+        };
         let reply = json!({
             "task": {"kind": item.task, "target": item.target,
                      "dirtySections": item.dirty_sections, "staleAnchors": item.stale_anchors},
-            "instructions": instructions,
+            "instructions": instructions_field,
             "package": pack,
             "writeTools": write_tools,
             "note": "where the instructions say `done`, use finish_compilation; writeTools are the write tools in scope for this task",
@@ -336,6 +348,9 @@ impl McpServer {
         }
         if o.item.task.starts_with("review-") {
             s.complete_review(&o.item.task, &o.item.target);
+            if o.item.task == "review-requirement" {
+                s.complete_pair_mirrors(&o.item.target);
+            }
         }
         // A resumed parked item is no longer parked.
         if s.status.parked.iter().any(|p| p.target == o.item.target && p.task == o.item.task) {
@@ -371,7 +386,7 @@ impl McpServer {
         // beginNext claims the next ready task in the same call, saving a round trip
         // per task. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
         if params["arguments"]["beginNext"].as_bool() == Some(true) {
-            let began = self.begin_compilation(&json!({"arguments": {}}));
+            let began = self.begin_compilation_inner(&json!({"arguments": {}}), Some(o.item.task.as_str()));
             if began["error"].is_null() {
                 reply["began"] = began;
                 return reply;
@@ -526,7 +541,7 @@ impl McpServer {
                             json!({"error": {"rule": "wrong-toolset", "message": format!(
                                 "`{}` is not part of a {} task; this task's write tools: {}",
                                 name, o.item.task,
-                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && **t != "done").cloned().collect::<Vec<_>>().join(", "))}}),
+                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && **t != "done" && **t != crate::tools::FEEDBACK_TOOL).cloned().collect::<Vec<_>>().join(", "))}}),
                             true,
                         ));
                     }

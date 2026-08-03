@@ -143,6 +143,7 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     let reconcile_open = !compile.is_empty();
 
     // Reviews owed, recorded at commit. Pair reviews before entity reviews.
+    let pending_reqs: std::collections::BTreeSet<&String> = store.status.pending.requirements.iter().collect();
     let pair: Vec<&String> = store
         .status
         .pending
@@ -150,6 +151,15 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         .iter()
         .filter(|rid| store.graph.requirements.contains_key(*rid))
         .filter(|rid| !store.pair_review_neighbors(rid).is_empty())
+        // A pair scheduled from both ends runs once; the smaller id carries the task
+        // and completion mirrors to the other.
+        .filter(|rid| {
+            let nbrs = store.pair_review_neighbors(rid);
+            !(nbrs.len() == 1
+                && nbrs[0].as_str() < rid.as_str()
+                && pending_reqs.contains(&nbrs[0])
+                && store.pair_review_neighbors(&nbrs[0]).iter().any(|x| x == *rid))
+        })
         .collect();
     for rid in &pair {
         compile.push(json!({

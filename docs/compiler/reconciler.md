@@ -64,10 +64,18 @@ A build runs in waves:
   Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a
   changed requirement also re-enqueues every partner such a diagnostic ties it to, so
   editing one side of a known pair always re-judges the other. A changed requirement
-  with no neighbors and no sticky partner schedules nothing. The turn shows each pair
+  with no neighbors and no sticky partner schedules nothing. When two changed
+  requirements are each other's only neighbor, the pair is one task, carried by the
+  smaller id: judging A against B is judging B against A, and completing the task
+  completes both. The turn shows each pair
   side by side and requires one verdict per neighbor (duplicate, contradiction, or
   consistent); see [turns](./turns.md#task-types). Neighbor selection is the
   reconciler's, never the model's.
+  Its reach is lexical by design: a contradiction expressible only through concrete
+  example values (a test case whose expected output encodes a sort order the prose
+  contradicts) shares no tokens with its opposite and schedules no pair. The entity
+  review is the net for those: it sees the entity's whole statement set and files
+  what pairwise overlap cannot see.
 - Review: `review-entity` turns for every entity whose fact set changed. Entities that
   share requirements or relationships form one review group; groups run in parallel,
   entities within a group run in order, so a judgment sees the merges and diagnostics of

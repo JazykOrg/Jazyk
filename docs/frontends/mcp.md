@@ -74,7 +74,9 @@ calls, exactly one at a time:
   commits atomically, and updates [the task queue](../compiler/reconciler.md#the-task-queue).
   A gate failure leaves the changeset open and names the repair. `beginNext: true`
   claims the next ready task in the same call and carries its package in the reply,
-  saving a round trip per task; the default reply only names the next task.
+  saving a round trip per task; the default reply only names the next task. A chained
+  task of the same kind elides the repeated instructions text (the agent saw it one
+  reply ago); a kind change ships the full contract again.
 - `abandon_compilation` drops the staged work. An abandoned task leaves no trace, the
   same contract as an aborted turn. A server that dies mid-task loses only staging;
   any process recomputes the queue and the task reappears.

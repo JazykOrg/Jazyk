@@ -404,6 +404,23 @@ impl Store {
         nbrs
     }
 
+    // Completing a pair task also completes its mirror: when two changed requirements
+    // are each other's only neighbor, one judgment covers the pair, and scheduling the
+    // reverse would judge the identical pair again.
+    // Mirrors docs/compiler/reconciler.md#waves.
+    pub fn complete_pair_mirrors(&mut self, rid: &str) {
+        let judged: std::collections::BTreeSet<String> = self.pair_review_neighbors(rid).into_iter().collect();
+        for r in self.status.pending.requirements.clone() {
+            if r == rid || !judged.contains(&r) {
+                continue;
+            }
+            let nbrs = self.pair_review_neighbors(&r);
+            if !nbrs.is_empty() && nbrs.iter().all(|n| n == rid) {
+                self.complete_review("review-requirement", &r);
+            }
+        }
+    }
+
     // ---- commit ----
 
     // Apply a staged changeset atomically: reconcile creates by natural key against nodes

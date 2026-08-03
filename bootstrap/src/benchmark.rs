@@ -570,6 +570,12 @@ fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSettings) -
 }
 
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
+    run_traced(llm, out, &Trace::stderr(TraceLevel::Quiet))
+}
+
+// The GUI's entry: per-case lines reach the job's trace as notes, so a running grade
+// shows progress instead of a spinner. Mirrors docs/frontends/gui.md#benchmarks.
+pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
     let cases = parse_cases();
     if cases.is_empty() {
         eprintln!("jazyk: no benchmark cases parsed");
@@ -715,6 +721,7 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
                         case_tokens,
                         case_start.elapsed().as_secs_f32()
                     );
+                    progress.line("benchmark", &format!("{} {} 1.00 ({} rounds, {} tok)", codec_name, case.name, rounds, case_tokens));
                 }
                 Some(why) => {
                     *tier_ok.entry(tier_key(&case.tier)).or_insert(true) = false;
@@ -726,6 +733,7 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
                         rounds,
                         case_start.elapsed().as_secs_f32()
                     );
+                    progress.line("benchmark", &format!("{} {} {:.2} {}", codec_name, case.name, case_score, why));
                 }
             }
         }
@@ -796,11 +804,124 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
         return 2;
     }
     write_results(out, &llm.model, &codec_reports);
+    append_history(&llm.model, &llm.base_url, &codec_reports);
     if any_usable {
         0
     } else {
         1
     }
+}
+
+// Known results embedded at compile time; curation is manual.
+// Mirrors docs/benchmark/benchmark.md#machine-wide-history.
+const KNOWN_RESULTS: &str = include_str!("../../docs/benchmark/known-results.yaml");
+
+fn home_history_path() -> Option<std::path::PathBuf> {
+    std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".jazyk").join("benchmarks").join("history.yaml"))
+}
+
+// Append one run to the machine-wide history: grades outlive the project that
+// produced them. Mirrors docs/benchmark/benchmark.md#machine-wide-history.
+fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Value)]) {
+    let Some(path) = home_history_path() else { return };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let mut root: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_norway::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({"runs": []}));
+    let graded_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = serde_json::json!({
+        "model": model,
+        "baseUrl": base_url,
+        "gradedAt": graded_at,
+        "caseSetHash": case_set_hash(),
+        "codecs": codec_reports.iter().cloned().collect::<BTreeMap<String, Value>>(),
+    });
+    if let Some(runs) = root["runs"].as_array_mut() {
+        runs.push(entry);
+    }
+    if let Ok(text) = serde_norway::to_string(&root) {
+        std::fs::write(&path, text).ok();
+    }
+}
+
+// The merged comparison table: embedded known results, the machine-wide history
+// (latest per model and codec), and the project's own results file. Every entry
+// carries its source and whether its caseSetHash matches this binary's.
+pub fn all_results(out: &std::path::Path) -> Value {
+    let current_hash = case_set_hash();
+    let mut rows: Vec<Value> = Vec::new();
+    let mut push = |model: &str, base_url: &str, graded_at: u64, hash: &str, codecs: &Value, source: &str| {
+        rows.push(serde_json::json!({
+            "model": model,
+            "baseUrl": base_url,
+            "gradedAt": graded_at,
+            "caseSetHash": hash,
+            "current": hash == current_hash,
+            "codecs": codecs,
+            "source": source,
+        }));
+    };
+    if let Ok(known) = serde_norway::from_str::<Value>(KNOWN_RESULTS) {
+        for e in known["results"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            push(
+                e["model"].as_str().unwrap_or("?"),
+                e["baseUrl"].as_str().unwrap_or(""),
+                e["gradedAt"].as_u64().unwrap_or(0),
+                e["caseSetHash"].as_str().unwrap_or(""),
+                &e["codecs"],
+                "embedded",
+            );
+        }
+    }
+    if let Some(path) = home_history_path() {
+        if let Some(hist) = std::fs::read_to_string(&path).ok().and_then(|s| serde_norway::from_str::<Value>(&s).ok()) {
+            // Latest per (model, caseSetHash): history is append-only, the table shows tips.
+            let mut latest: BTreeMap<(String, String), &Value> = BTreeMap::new();
+            for e in hist["runs"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+                let key = (
+                    e["model"].as_str().unwrap_or("?").to_string(),
+                    e["caseSetHash"].as_str().unwrap_or("").to_string(),
+                );
+                let newer = latest.get(&key).map(|p| p["gradedAt"].as_u64() <= e["gradedAt"].as_u64()).unwrap_or(true);
+                if newer {
+                    latest.insert(key, e);
+                }
+            }
+            for e in latest.values() {
+                push(
+                    e["model"].as_str().unwrap_or("?"),
+                    e["baseUrl"].as_str().unwrap_or(""),
+                    e["gradedAt"].as_u64().unwrap_or(0),
+                    e["caseSetHash"].as_str().unwrap_or(""),
+                    &e["codecs"],
+                    "history",
+                );
+            }
+        }
+    }
+    let project = out.join("benchmark").join("results.yaml");
+    if let Some(v) = std::fs::read_to_string(&project).ok().and_then(|s| serde_norway::from_str::<Value>(&s).ok()) {
+        if let Some(map) = v.as_object() {
+            for (model, e) in map {
+                push(
+                    model,
+                    "",
+                    e["gradedAt"].as_u64().unwrap_or(0),
+                    e["caseSetHash"].as_str().unwrap_or(""),
+                    &e["codecs"],
+                    "project",
+                );
+            }
+        }
+    }
+    rows.sort_by(|a, b| b["gradedAt"].as_u64().cmp(&a["gradedAt"].as_u64()));
+    serde_json::json!({"caseSetHash": current_hash, "results": rows})
 }
 
 // One entry per model in <out>/benchmark/results.yaml, updated in place. Mirrors

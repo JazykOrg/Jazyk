@@ -1,0 +1,4 @@
+# Known benchmark results, embedded into the binary at compile time.
+# Curated by hand from machine-wide history entries worth publishing.
+# Shape per entry: {model, baseUrl, gradedAt, caseSetHash, codecs: {native|text: report}}
+results: []

@@ -58,6 +58,8 @@ pub enum JobKind {
     Gen { entities: Vec<String>, force: bool },
     Verify { targets: Vec<String>, test_kind: Option<String>, force: bool },
     Audit,
+    // Grade a model: endpoint and model override the resolved settings when given.
+    Benchmark { base_url: Option<String>, model: Option<String> },
 }
 
 impl JobKind {
@@ -67,6 +69,7 @@ impl JobKind {
             JobKind::Gen { .. } => "gen",
             JobKind::Verify { .. } => "verify",
             JobKind::Audit => "audit",
+            JobKind::Benchmark { .. } => "benchmark",
         }
     }
     fn as_value(&self) -> Value {
@@ -77,6 +80,9 @@ impl JobKind {
                 json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force })
             }
             JobKind::Audit => json!({ "kind": "audit" }),
+            JobKind::Benchmark { base_url, model } => {
+                json!({ "kind": "benchmark", "baseUrl": base_url, "model": model })
+            }
         }
     }
 }
@@ -343,6 +349,17 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             let store = crate::store::Store::load(&st.out);
             Ok(crate::verify::audit(&store, &st.gs()))
         }
+        JobKind::Benchmark { base_url, model } => {
+            let mut llm = st.llm();
+            if let Some(b) = base_url {
+                llm.base_url = b.clone();
+            }
+            if let Some(m) = model {
+                llm.model = m.clone();
+            }
+            let code = crate::benchmark::run_traced(&llm, &st.out, trace);
+            Ok(json!({"exit": code, "results": crate::benchmark::all_results(&st.out)}))
+        }
     }
 }
 
@@ -351,6 +368,10 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
 pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
     let kind = match body["kind"].as_str() {
         Some("compile") => JobKind::Compile,
+        Some("benchmark") => JobKind::Benchmark {
+            base_url: body["baseUrl"].as_str().map(String::from),
+            model: body["model"].as_str().map(String::from),
+        },
         Some("gen") => JobKind::Gen {
             entities: str_list(&body["entities"]),
             force: body["force"].as_bool().unwrap_or(false),

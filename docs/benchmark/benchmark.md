@@ -73,8 +73,27 @@ Every run writes `<out>/benchmark/results.yaml`, one entry per model:
   edit,
 - `gradedAt`: unix seconds of the run.
 
-The entry updates in place per model. History lives in the scorecard
-(`bootstrap/VALIDATION.md`), not the artifact.
+The entry updates in place per model. Analysis history lives in the scorecard
+(`bootstrap/VALIDATION.md`); the raw run history is machine-wide (below).
+
+## Machine-wide history
+
+Every run also appends one entry to `~/.jazyk/benchmarks/history.yaml`, keyed by
+nothing and never overwritten: model, endpoint, `gradedAt`, `caseSetHash`, and the
+per-codec report. Grades outlive the project that produced them, so a model graded
+once is comparable everywhere, and endpoint variance shows up as history instead of
+overwriting itself.
+
+Known results ship in the binary: `docs/benchmark/known-results.yaml` is embedded at
+compile time, so a fresh install compares its local model against curated grades
+(popular models, both codecs) before running anything. An embedded entry is marked
+`source: embedded`; a locally graded model with the same `caseSetHash` sits beside it,
+never replaces it. Curation is manual: a run worth publishing is copied into the file
+by hand.
+
+The comparison surface is the [GUI benchmarks tab](../frontends/gui.md#benchmarks):
+configure the endpoint, pick a model, kick off a run, and compare grades across
+models and codecs.
 
 Unmeasured codecs are omitted from the entry, and a run where both codecs are
 unmeasured does not touch the file. A dead endpoint never overwrites a real grade.

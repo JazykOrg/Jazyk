@@ -397,6 +397,25 @@ two parts:
   between any two generations stays reachable from the panel (the journal range
   diff).
 
+## Benchmarks
+
+The benchmarks tab grades and compares models
+([benchmark](../benchmark/benchmark.md)):
+
+- The table merges three sources, latest per model and codec: results embedded in the
+  binary (`source: embedded`), the machine-wide history (`~/.jazyk/benchmarks/`), and
+  the project's own `results.yaml`. Columns are the workflow verdicts, the four tier
+  scores, efficiency, tokens, and throughput; rows with a different `caseSetHash` than
+  the running binary's are marked stale.
+- A run form: the endpoint URL (default: the resolved LLM settings), a model picked
+  from the endpoint's `/v1/models` listing or typed free-form, and a run button that
+  starts a benchmark [job](#jobs). Progress streams like any job; the finished grade
+  lands in the table and the history.
+
+API: `GET /api/benchmarks` (the merged table), `GET /api/benchmarks/models?baseUrl=`
+(the endpoint's model listing), `POST /api/benchmarks/run` (`{baseUrl?, model?}`,
+returns the job id).
+
 ## Watch
 
 The GUI always watches the documents (that is what `docs.changed` reports). What a

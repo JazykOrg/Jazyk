@@ -555,3 +555,46 @@ pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<Strin
         Err(_) => err(StatusCode::NOT_FOUND, format!("no requirements document for {}", slug)),
     }
 }
+
+// ---- benchmarks ----
+// Mirrors docs/frontends/gui.md#benchmarks.
+
+pub async fn benchmarks(State(st): State<SharedState>) -> Json<Value> {
+    Json(crate::benchmark::all_results(&st.out))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ModelsQ {
+    #[serde(rename = "baseUrl")]
+    pub base_url: Option<String>,
+}
+
+// The endpoint's own model listing, for the run form's picker. A free-form model name
+// works without this; an unreachable endpoint answers with the error, not a 500.
+pub async fn benchmark_models(State(st): State<SharedState>, Query(p): Query<ModelsQ>) -> Json<Value> {
+    let base = p.base_url.unwrap_or_else(|| st.llm().base_url.clone());
+    let api_key = st.llm().api_key.clone();
+    let url = format!("{}/v1/models", base.trim_end_matches('/').trim_end_matches("/v1"));
+    let listing = tokio::task::spawn_blocking(move || {
+        let mut req = ureq::get(&url);
+        if !api_key.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", api_key));
+        }
+        req.timeout(std::time::Duration::from_secs(5))
+            .call()
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.into_string().map_err(|e| e.to_string())).and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    match listing {
+        Ok(v) => {
+            let models: Vec<String> = v["data"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            Json(serde_json::json!({"baseUrl": base, "models": models}))
+        }
+        Err(e) => Json(serde_json::json!({"baseUrl": base, "models": [], "error": e})),
+    }
+}

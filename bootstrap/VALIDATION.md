@@ -58,6 +58,29 @@ routing conclusion:
   of the streak (the current behavior), the same cases scored 0.17 to 0.67 and the
   turns kept their staged work. Partial credit is real signal, not noise.
 
+## The agent codec: claude-fable-5 over `jazyk mcp benchmark` (2026-08-03)
+
+A blind subagent drove all 16 cases through the benchmark toolset, guided only by
+server prompting. Result: 52/52 checks, every case at 1.0, all four tiers at 1.0,
+verdicts `review` / `capable` / `capable`. Efficiency 0.85, with the losses exactly
+where the docs predict: sequential MCP calls cannot batch, so extraction cases with
+many statements run below par by construction (turn-density 0.35, 17 calls against a
+par of 6).
+
+- The first attempt scored 48/49 with both misses being harness bugs (a retake
+  averaged into its tier, a pending-count underflow), both fixed before the retake.
+  The agent found them by refusing to fabricate around inconsistent tool output,
+  which is the behavior the benchmark exists to measure.
+- The retake's friction log produced three fixes: benchmark cases now carry the case
+  fixture's lint rules in the review pack (they carried the serving project's), every
+  `begin_case` reply has one shape (top-level `instructions` plus `package`), and
+  `benchmark_report` explains the verdict scale so `review` reads as the highest
+  compilation verdict, not a middle one.
+- Routing conclusion: a frontier agent clears every tier the local models fail
+  (generation, code-block extraction under load) at a few dollars of API-equivalent
+  cost per run; gemma-class models stay routable for review and verification at zero
+  cost. The graph gates hold for both.
+
 ## Findings worth keeping
 
 - `gemma4:e4b-mlx`, the model whose truncated JSON broke the old one-shot pipeline,

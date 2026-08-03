@@ -931,6 +931,7 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
         // says so instead of letting it burn the budget.
         // Mirrors docs/compiler/turns.md#repeated-calls.
         let mut repeats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        let mut refusals = 0u32;
         // The round budget scales with extraction density: a one-action-per-reply model
         // needs a round per mutation, so a dense work item gets at least 8 rounds per
         // dirty section. Mirrors docs/compiler/turns.md#budgets.
@@ -1039,7 +1040,13 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                             *c
                         };
                         if seen >= 3 {
-                            errored = true;
+                            // A refusal is not an invalid call: it never feeds the
+                            // abort streak, because aborting discards staged work and a
+                            // stuck model usually holds good extractions from before it
+                            // stuck. Past eight refusals the turn finishes implicitly,
+                            // keeping what it earned.
+                            // Mirrors docs/compiler/turns.md#repeated-calls.
+                            refusals += 1;
                             let e = crate::tools::ToolError::new(
                                 "repeated-call",
                                 format!(
@@ -1053,6 +1060,24 @@ pub fn run_turn(llm: &Llm, snapshot: Store, item: &WorkItem, limits: &Limits, li
                                 message: e.message.clone(),
                             });
                             messages.push(codec.result_msg(&id, &name, &e.to_value()));
+                            if refusals > 8 {
+                                if session.finish_implicit("(implicit: stuck repeating the same call)") {
+                                    trace.event(TraceEvent::TurnDone {
+                                        label: prefix.clone(),
+                                        staged: session.staged.len(),
+                                        rounds,
+                                        mode: "stuck".into(),
+                                        summary: String::new(),
+                                    });
+                                    return TurnOutput { session, rounds, tokens, failed: None };
+                                }
+                                return TurnOutput {
+                                    session,
+                                    rounds,
+                                    tokens,
+                                    failed: Some("stuck repeating the same call with nothing staged".into()),
+                                };
+                            }
                             continue;
                         }
                         let result = match session.dispatch(&name, &args) {

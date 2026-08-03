@@ -137,10 +137,13 @@ spend its budget on it:
 Identity is the tool name plus its arguments verbatim, counted per turn. `done` is
 exempt; repairing a rejected `done` legitimately repeats it.
 
-A refusal counts toward the invalid streak, so a model that keeps looping ends the turn
-after three rounds instead of after the whole round budget, and the work it staged
-before getting stuck still commits. The guard is what keeps one unanswerable question
-from costing a document its later sections.
+A refusal is not an invalid call: the call was well-formed, the model is stuck. It
+never feeds the abort streak, because aborting discards staged work and a stuck model
+usually holds good extractions from before it stuck. Instead, refusals are cheap
+(refused calls never dispatch) and counted: past eight in one turn, the harness
+finishes the turn implicitly, committing the staged work under the same gates the
+budget path uses. A weak model that loops keeps what it earned; the guard only stops
+it paying for the loop.
 
 ## Message loop
 

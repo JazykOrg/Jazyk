@@ -58,6 +58,19 @@ routing conclusion:
   of the streak (the current behavior), the same cases scored 0.17 to 0.67 and the
   turns kept their staged work. Partial credit is real signal, not noise.
 
+## The second local model: qwen3:4b-instruct via Ollama (2026-08-03)
+
+Graded on the same case set: native 0.69 extraction / 0.80 review / 0.25 generation /
+1.00 verification; the text codec collapses (0.23 extraction, rejected-call aborts) so
+qwen routes native, the opposite of gemma. Verification judgment is perfect in both
+directions on both local models, which makes the llm-judge path the cheapest thing to
+route locally. This run also exercised the completion cap: the first attempt hung
+forever on a token-repetition loop (GPU pinned, zero bytes of progress), and with
+`max_tokens` sent and the stream reader bounded, the same codec finishes with honest
+failed cases instead. The curated grades for claude, gemma, and qwen ship embedded in
+`docs/benchmark/known-results.yaml`, so a fresh install compares against them before
+running anything.
+
 ## The agent codec: claude-fable-5 over `jazyk mcp benchmark` (2026-08-03)
 
 A blind subagent drove all 16 cases through the benchmark toolset, guided only by

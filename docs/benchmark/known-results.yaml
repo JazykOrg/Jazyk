@@ -1,4 +1,758 @@
 # Known benchmark results, embedded into the binary at compile time.
 # Curated by hand from machine-wide history entries worth publishing.
-# Shape per entry: {model, baseUrl, gradedAt, caseSetHash, codecs: {native|text: report}}
-results: []
+# Shape per entry: {model, baseUrl, gradedAt, caseSetHash, codecs: {native|text|agent: report}}
+#
+# Current set (graded 2026-08-03, case set f41d8375...):
+# - claude-fable-5 (agent): a coding agent over `jazyk mcp benchmark`; 52/52 checks,
+#   every tier 1.0, verdicts review/capable/capable.
+# - gemma4:e4b-mlx via LocalRouter: text codec routes best; review and verification
+#   capable, generation not.
+# - qwen3:4b-instruct via Ollama: native codec routes best; verification capable,
+#   text codec collapses on big packs.
+results:
+- baseUrl: agent
+  caseSetHash: f41d8375dddd312f
+  codecs:
+    agent:
+      cases:
+        gen-basic:
+          calls: 2
+          checks: 4/4
+          efficiency: 1.0
+          fail: ''
+          name: gen-basic
+          parRounds: 10
+          score: 1.0
+          tier: generation
+        turn-converge:
+          calls: 0
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          name: turn-converge
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-declarative:
+          calls: 11
+          checks: 6/6
+          efficiency: 0.55
+          fail: ''
+          name: turn-declarative
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-density:
+          calls: 17
+          checks: 6/6
+          efficiency: 0.35
+          fail: ''
+          name: turn-density
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-edges:
+          calls: 10
+          checks: 6/6
+          efficiency: 0.6
+          fail: ''
+          name: turn-edges
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-extract:
+          calls: 13
+          checks: 6/6
+          efficiency: 0.46
+          fail: ''
+          name: turn-extract
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-repair:
+          calls: 7
+          checks: 2/2
+          efficiency: 0.86
+          fail: ''
+          name: turn-repair
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-reuse:
+          calls: 6
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          name: turn-reuse
+          parRounds: 6
+          score: 1.0
+          tier: extraction
+        turn-review:
+          calls: 1
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          name: turn-review
+          parRounds: 3
+          score: 1.0
+          tier: review
+        turn-review-clean:
+          calls: 0
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          name: turn-review-clean
+          parRounds: 3
+          score: 1.0
+          tier: review
+        turn-review-duplicate:
+          calls: 1
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          name: turn-review-duplicate
+          parRounds: 3
+          score: 1.0
+          tier: review
+        turn-review-lint:
+          calls: 1
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          name: turn-review-lint
+          parRounds: 3
+          score: 1.0
+          tier: review
+        turn-review-lookalike:
+          calls: 3
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          name: turn-review-lookalike
+          parRounds: 3
+          score: 1.0
+          tier: review
+        turn-steps:
+          calls: 10
+          checks: 5/5
+          efficiency: 0.8
+          fail: ''
+          name: turn-steps
+          parRounds: 8
+          score: 1.0
+          tier: extraction
+        verify-judge-fail:
+          calls: 0
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          name: verify-judge-fail
+          parRounds: 1
+          score: 1.0
+          tier: verification
+        verify-judge-pass:
+          calls: 0
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          name: verify-judge-pass
+          parRounds: 1
+          score: 1.0
+          tier: verification
+      checks: 52/52
+      efficiency: 0.85
+      scores:
+        extraction: 1.0
+        generation: 1.0
+        review: 1.0
+        verification: 1.0
+      throughput: null
+      tokens: null
+      verdicts:
+        compilation: review
+        generation: capable
+        verification: capable
+  gradedAt: 1785770988
+  model: claude-fable-5 (agent)
+- baseUrl: http://127.0.0.1:3625
+  caseSetHash: f41d8375dddd312f
+  codecs:
+    native:
+      cases:
+        gen-basic:
+          checks: 0/4
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive replies without a usable tool call'
+          parRounds: 10
+          rounds: 3
+          score: 0.0
+          tokens: 1865
+        turn-converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 1
+          score: 1.0
+          tokens: 454
+        turn-declarative:
+          checks: 4/6
+          efficiency: 0.25
+          fail: 'coverageSet: docs/ledger.md#/ledger/entries coverage is unprocessed, expected covered'
+          parRounds: 6
+          rounds: 24
+          score: 0.67
+          tokens: 11655
+        turn-density:
+          checks: 1/6
+          efficiency: 0.46
+          fail: 'requirementCount: 0 requirements, min 6'
+          parRounds: 6
+          rounds: 13
+          score: 0.17
+          tokens: 8468
+        turn-edges:
+          checks: 0/6
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 6
+          rounds: 8
+          score: 0.0
+          tokens: 6480
+        turn-extract:
+          checks: 4/6
+          efficiency: 0.35
+          fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:cart'
+          parRounds: 6
+          rounds: 17
+          score: 0.67
+          tokens: 7987
+        turn-repair:
+          checks: 1/2
+          efficiency: 0.5
+          fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:shopping-cart'
+          parRounds: 6
+          rounds: 12
+          score: 0.5
+          tokens: 8625
+        turn-reuse:
+          checks: 2/2
+          efficiency: 0.86
+          fail: ''
+          parRounds: 6
+          rounds: 7
+          score: 1.0
+          tokens: 4291
+        turn-review:
+          checks: 0/1
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive replies without a usable tool call'
+          parRounds: 3
+          rounds: 3
+          score: 0.0
+          tokens: 2033
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 1051
+        turn-review-duplicate:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 665
+        turn-review-lint:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 1811
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 940
+        turn-steps:
+          checks: 5/5
+          efficiency: 1.0
+          fail: ''
+          parRounds: 8
+          rounds: 8
+          score: 1.0
+          tokens: 5599
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 192
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 168
+      checks: 31/52
+      efficiency: 0.8
+      scores:
+        extraction: 0.63
+        generation: 0.0
+        review: 0.8
+        verification: 1.0
+      throughput: 62
+      tokens: 62284
+      verdicts:
+        compilation: not-capable
+        generation: not-capable
+        verification: capable
+    text:
+      cases:
+        gen-basic:
+          checks: 0/4
+          efficiency: 1.0
+          fail: 'generationRecorded: record_generation never landed'
+          parRounds: 10
+          rounds: 3
+          score: 0.0
+          tokens: 1261
+        turn-converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 1
+          score: 1.0
+          tokens: 554
+        turn-declarative:
+          checks: 4/6
+          efficiency: 0.26
+          fail: 'entityExists: no entity named "Entry"'
+          parRounds: 6
+          rounds: 23
+          score: 0.67
+          tokens: 7202
+        turn-density:
+          checks: 5/6
+          efficiency: 0.33
+          fail: 'requirementExists: no requirement matching `addProduct` on ent:inventory-system'
+          parRounds: 6
+          rounds: 18
+          score: 0.83
+          tokens: 5881
+        turn-edges:
+          checks: 6/6
+          efficiency: 0.5
+          fail: ''
+          parRounds: 6
+          rounds: 12
+          score: 1.0
+          tokens: 4470
+        turn-extract:
+          checks: 6/6
+          efficiency: 0.43
+          fail: ''
+          parRounds: 6
+          rounds: 14
+          score: 1.0
+          tokens: 3849
+        turn-repair:
+          checks: 2/2
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 3629
+        turn-reuse:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 2230
+        turn-review:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 1041
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 1397
+        turn-review-duplicate:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 850
+        turn-review-lint:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 1217
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 1303
+        turn-steps:
+          checks: 0/5
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 8
+          rounds: 3
+          score: 0.0
+          tokens: 1369
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 958
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 168
+      checks: 40/52
+      efficiency: 0.82
+      scores:
+        extraction: 0.81
+        generation: 0.0
+        review: 1.0
+        verification: 1.0
+      throughput: 62
+      tokens: 37379
+      verdicts:
+        compilation: not-capable
+        generation: not-capable
+        verification: capable
+  gradedAt: 1785775682
+  model: gemma4:e4b-mlx
+- baseUrl: http://127.0.0.1:11434/v1
+  caseSetHash: f41d8375dddd312f
+  codecs:
+    native:
+      cases:
+        gen-basic:
+          checks: 1/4
+          efficiency: 1.0
+          fail: 'rowPerRequirement: no test row for req:greeter-1'
+          parRounds: 10
+          rounds: 10
+          score: 0.25
+          tokens: 1866
+        turn-converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 392
+        turn-declarative:
+          checks: 6/6
+          efficiency: 0.55
+          fail: ''
+          parRounds: 6
+          rounds: 11
+          score: 1.0
+          tokens: 1787
+        turn-density:
+          checks: 2/6
+          efficiency: 0.25
+          fail: 'requirementCount: 3 requirements, min 6'
+          parRounds: 6
+          rounds: 24
+          score: 0.33
+          tokens: 3447
+        turn-edges:
+          checks: 1/6
+          efficiency: 0.25
+          fail: 'entityExists: no entity named "User Management"'
+          parRounds: 6
+          rounds: 24
+          score: 0.17
+          tokens: 2434
+        turn-extract:
+          checks: 3/6
+          efficiency: 1.0
+          fail: 'entityExists: no entity named "Product"'
+          parRounds: 6
+          rounds: 6
+          score: 0.5
+          tokens: 776
+        turn-repair:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 640
+        turn-reuse:
+          checks: 1/2
+          efficiency: 0.55
+          fail: 'requirementExists: no requirement matching `places an order` on ent:customer'
+          parRounds: 6
+          rounds: 11
+          score: 0.5
+          tokens: 688
+        turn-review:
+          checks: 0/1
+          efficiency: 0.43
+          fail: 'diagnosticExists: no open contradiction diagnostic on ent:abc'
+          parRounds: 3
+          rounds: 7
+          score: 0.0
+          tokens: 540
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 0.38
+          fail: ''
+          parRounds: 3
+          rounds: 8
+          score: 1.0
+          tokens: 425
+        turn-review-duplicate:
+          checks: 3/3
+          efficiency: 0.43
+          fail: ''
+          parRounds: 3
+          rounds: 7
+          score: 1.0
+          tokens: 425
+        turn-review-lint:
+          checks: 2/2
+          efficiency: 0.43
+          fail: ''
+          parRounds: 3
+          rounds: 7
+          score: 1.0
+          tokens: 413
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 0.75
+          fail: ''
+          parRounds: 3
+          rounds: 4
+          score: 1.0
+          tokens: 295
+        turn-steps:
+          checks: 5/5
+          efficiency: 0.57
+          fail: ''
+          parRounds: 8
+          rounds: 14
+          score: 1.0
+          tokens: 1166
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 63
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 76
+      checks: 35/52
+      efficiency: 0.66
+      scores:
+        extraction: 0.69
+        generation: 0.25
+        review: 0.8
+        verification: 1.0
+      throughput: 58
+      tokens: 15433
+      verdicts:
+        compilation: not-capable
+        generation: not-capable
+        verification: capable
+    text:
+      cases:
+        gen-basic:
+          checks: 0/4
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive replies without a usable tool call'
+          parRounds: 10
+          rounds: 6
+          score: 0.0
+          tokens: 12390
+        turn-converge:
+          checks: 3/3
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 306
+        turn-declarative:
+          checks: 1/6
+          efficiency: 0.25
+          fail: 'entityExists: no entity named "Entry"'
+          parRounds: 6
+          rounds: 24
+          score: 0.17
+          tokens: 1781
+        turn-density:
+          checks: 1/6
+          efficiency: 0.25
+          fail: 'requirementCount: 0 requirements, min 6'
+          parRounds: 6
+          rounds: 24
+          score: 0.17
+          tokens: 1765
+        turn-edges:
+          checks: 0/6
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 6
+          rounds: 9
+          score: 0.0
+          tokens: 422
+        turn-extract:
+          checks: 0/6
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 6
+          rounds: 19
+          score: 0.0
+          tokens: 1148
+        turn-repair:
+          checks: 1/2
+          efficiency: 0.67
+          fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:shopping-cart'
+          parRounds: 6
+          rounds: 9
+          score: 0.5
+          tokens: 452
+        turn-reuse:
+          checks: 0/2
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 6
+          rounds: 9
+          score: 0.0
+          tokens: 315
+        turn-review:
+          checks: 1/1
+          efficiency: 0.38
+          fail: ''
+          parRounds: 3
+          rounds: 8
+          score: 1.0
+          tokens: 370
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 0.23
+          fail: ''
+          parRounds: 3
+          rounds: 13
+          score: 1.0
+          tokens: 562
+        turn-review-duplicate:
+          checks: 2/3
+          efficiency: 0.75
+          fail: 'requirementCount: 2 requirements, max 1'
+          parRounds: 3
+          rounds: 4
+          score: 0.67
+          tokens: 114
+        turn-review-lint:
+          checks: 1/2
+          efficiency: 0.23
+          fail: 'diagnosticExists: no open lint diagnostic on any subject'
+          parRounds: 3
+          rounds: 13
+          score: 0.5
+          tokens: 600
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 193
+        turn-steps:
+          checks: 0/5
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive rounds with rejected tool calls'
+          parRounds: 8
+          rounds: 22
+          score: 0.0
+          tokens: 1559
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 63
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 76
+      checks: 16/52
+      efficiency: 0.55
+      scores:
+        extraction: 0.23
+        generation: 0.0
+        review: 0.83
+        verification: 1.0
+      throughput: 59
+      tokens: 22116
+      verdicts:
+        compilation: not-capable
+        generation: not-capable
+        verification: capable
+  gradedAt: 1785776324
+  model: qwen3:4b-instruct

@@ -186,6 +186,43 @@ own tools; jazyk serves no file editing over MCP.
   graph is recorded but leaves the entity pending, so a graph that moved mid-task is
   never masked.
 
+## Binding tools
+
+[Binding](../consumers/bind.md) creates the ledger rows generation and verification
+work from. Same worker model as generation: the agent searches and edits with its own
+tools; jazyk holds the ledger. These tools never mutate the graph.
+
+- `binding_tasks({})`: requirements owing a binding, with a `reason` (`unbound`,
+  `requirement-changed`, `artifact-gone`). Deterministic; no model involved.
+- `begin_binding({requirement})`: the package for one task: the instructions (the
+  [bind contract](../consumers/bind.md#the-bind-task): search before write, both
+  directions get a test, the two test kinds, falsifiability, the naming scheme), the
+  statement, quote, and hash, the context pack, the deliverable directory, the
+  decided [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+  and build when they exist, and the test conventions already recorded in the ledger.
+  Stateless on the server; the lease is the claim.
+- `record_binding({requirement, files, test, verdict, evidence?})`: record the row:
+  the implementing files (an empty list is a finding), the test row
+  (`{kind, label, artifact, name, run, cwd}`), and the first verdict. Rejects a test
+  whose artifact does not exist or does not contain the declared name, the same shape
+  gate `record_generation` applies. The row's
+  [derived status](../consumers/gen.md#status-is-derived-never-stored) classifies the
+  requirement (`verified`, `unimplemented`, `failing`).
+
+## Decompilation tools
+
+[Decompilation](../consumers/decompile.md) produces documents, never graph writes.
+
+- `decompile_tasks({})`: the released scopes with their unclaimed files and inventory
+  summaries.
+- `begin_decompile({scope})`: the package for one draft: the inventory slice, the test
+  files with their assertions, the lint rules, and the
+  [drafting contract](../consumers/decompile.md#draft-tasks).
+- `submit_draft({path, content})`: validate the draft (lint rules, extractable
+  statements, evidence anchors) and write it into the docs tree. Records the draft
+  hash for [ratification](../consumers/decompile.md#ratification) and consumes the
+  scope's release.
+
 ## Verification tools
 
 Verification runs the tests the ledger records and feeds verdicts back. Same worker
@@ -247,10 +284,14 @@ Turns see subsets, not the whole catalog. Every subset carries
   over MCP), `record_generation`, `run_tests`, `done`.
 - `jazyk mcp compile`: the read tools, the [compilation tools](#compilation-tools),
   and the write tools (gated behind an open task), plus `await_changes`.
-- `jazyk mcp generate`: the read tools, the [generation tools](#generation-tools),
-  `run_tests`, plus `await_changes`.
+- `jazyk mcp generate`: the read tools, the [binding tools](#binding-tools), the
+  [generation tools](#generation-tools), `run_tests`, plus `await_changes`. Binding
+  and generation share the serving because they share the worker persona: search and
+  edit the deliverable, record into the ledger.
 - `jazyk mcp verify`: the read tools and the
   [verification tools](#verification-tools), plus `await_changes`.
+- `jazyk mcp decompile`: the read tools and the
+  [decompilation tools](#decompilation-tools), plus `await_changes`.
 - `jazyk mcp graph`: the read tools, plus `await_changes`; `--write` adds the raw
   write tools, each call committing as its own changeset. See
   [MCP](../frontends/mcp.md#toolsets).

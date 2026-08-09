@@ -7,8 +7,10 @@ never the raw source files. The graph, not the prose, is the spec.
 
 The end product is called the deliverable. It is usually code, but the workflow does not
 assume software: a book, a schematic, a course. Whatever the requirements describe,
-generation produces it, and produces runnable tests beside it. Tests are the tie between
-the requirements and the deliverable.
+generation produces it. Tests are the tie between the requirements and the deliverable,
+and they exist before generation runs: [binding](./bind.md) ties each requirement to
+its files and its test first, and generation is the step that makes `unimplemented`
+bindings pass.
 
 ## The deliverable
 
@@ -68,8 +70,11 @@ judgment each task repeats. A per-task decision is where the substitution above 
 in: asked to write "the About slide", a generator writes prose about a slide, because
 nothing in front of it said the deliverable is a file a tool must produce.
 
-So the first generation run for a deliverable decides the medium first, in its own
-step, and records it in [the ledger](#the-ledger):
+So the first task that needs the medium decides it first, in its own step, and records
+it in [the ledger](#the-ledger). Usually that is the first generation run; on a
+deliverable that is bound before anything is generated, the first
+[bind task](./bind.md#the-bind-task) makes the same decision the same way, because a
+test is written in the medium's toolchain:
 
 ```yaml
 medium:
@@ -158,10 +163,11 @@ input is the entity's [context pack](../compiler/context.md#request): its `defin
 its requirements across all documents, and its relationships. Nothing outside the pack
 leaks in, so each task is small, repeatable, and auditable.
 
-One task produces both halves: the entity's part of the deliverable, and the tests for
-each of its requirements. Deriving tests in the same task as the product means the tests
-exercise the interfaces the product actually got, not the interfaces a separate pass
-guessed.
+The task produces the entity's part of the deliverable. The tests already exist:
+[binding](./bind.md) wrote one per requirement before the entity became generation
+work, and the task package carries them. The bound test defines the interface, and the
+product conforms to it. A task that cannot make a bound test pass without changing it
+reports that instead of rewriting the judge; the repair is a re-bind.
 
 ## Order from relationships
 
@@ -271,7 +277,8 @@ subsections stays a choice, not an emergency.
 ## Tests tie requirements to the deliverable
 
 Each [requirement](../compiler/model/requirement.md) derives a test, keyed by the
-requirement id. A failing test names the requirement it verifies, and a changed
+requirement id. The test is written when the requirement is [bound](./bind.md), before
+generation runs. A failing test names the requirement it verifies, and a changed
 requirement invalidates exactly the tests keyed to it.
 
 The [EARS](../compiler/concepts/ears.md) pattern of a requirement suggests the test
@@ -353,8 +360,9 @@ metadata file. Two maps:
 
 - `entities`: generation state. What was generated for each entity, against which facts.
   Drives incremental regeneration.
-- `requirements`: verification state. How each requirement ties to the deliverable and
-  how it is verified.
+- `requirements`: the [bindings](./bind.md). How each requirement ties to the
+  deliverable and how it is verified. Rows are born by `record_binding` and updated by
+  `record_generation` and test runs.
 
 Two more keys sit beside them: `medium`, the deliverable's
 [decided form](#the-medium-is-decided-once-before-anything-is-generated), written by
@@ -425,10 +433,14 @@ the files on disk, recomputed at every read. First match wins:
    `jazyk test` refuses to run the row and points at `jazyk gen`.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
-5. Otherwise the last verdict: `pass` → `verified`, `fail` → `failing`,
-   `none` → `unverified`. A run whose command never executed leaves the verdict at
-   `none` and the reason at `runner-failed`, so a broken machine reads as unverified,
-   not as a failing deliverable (see [runners](#runners)).
+5. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
+   → `unimplemented` (the requirement is [bound](./bind.md) but nothing implements it:
+   generation work, and the bound test is its acceptance gate); `fail` with
+   implementing files → `failing` (the deliverable contradicts the statement: a
+   diagnostic, never automatic regeneration); `none` → `unverified`. A run whose
+   command never executed leaves the verdict at `none` and the reason at
+   `runner-failed`, so a broken machine reads as unverified, not as a failing
+   deliverable (see [runners](#runners)).
 
 Hashes are written at exactly two moments: generation marks a task done (all three), and
 a test run completes (`test` and `files` rebaseline, never `requirement`). Every
@@ -437,12 +449,13 @@ the test kind, the test itself, and the verdict of an `llm` run.
 
 ### The cascade
 
-Rewording a requirement flips its row to `stale-requirement` and moves its entity's
-`factHash`, so `generation_tasks` lists the entity. Generation rewrites the implementing
-files and the test (the verdict resets to `none`). If the product does not yet satisfy
-the new statement, the fresh test fails. Hand edits to the deliverable flip exactly the
-rows whose `files` hash moved to `stale-code`. Reruns update verdicts; when the test
-passes, the requirement is `verified`. Nothing in this loop is remembered by a human.
+Rewording a requirement flips its row to `stale-requirement`. The repair order is
+[bind](./bind.md) first, then generate: the re-bind rewrites the test against the new
+statement and reruns it, and only an `unimplemented` outcome makes the entity
+generation work. Generation then rewrites the implementing files until the bound test
+passes. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
+to `stale-code`. Reruns update verdicts; when the test passes, the requirement is
+`verified`. Nothing in this loop is remembered by a human.
 
 ### Deletion prunes the ledger
 
@@ -594,9 +607,11 @@ stating what the product does.
 
 Coverage is a query over the graph, not over the deliverable:
 
-- requirements with no test row in the ledger,
+- requirements with no [binding](./bind.md); each is actionable work (a
+  `bind-requirement` task), not only a finding,
 - entities with no behavior (no event-driven or state-driven requirement references
   them).
 
 Both findings are ordinary [diagnostics](../compiler/model/diagnostic.md), so they land
-in the same triage queue as everything else.
+in the same triage queue as everything else. The inverse query, deliverable files no
+binding names, is the [unclaimed report](./bind.md#the-unclaimed-report).

@@ -117,7 +117,9 @@ so a released click is what makes it exit.
 for the named stage (both when unnamed) without running anything. The watchers wake,
 whichever worker is attached does the work. This is the scriptable form of the GUI's
 release button. An explicit `jazyk compile` or `jazyk gen` is itself a release for
-its stage: a typed command is an approval.
+its stage: a typed command is an approval. The generate stage covers
+[binding](../consumers/bind.md#when-binding-runs) too; decompilation releases through
+[`jazyk decompile`](#jazyk-decompile), never through `release`.
 
 ### jazyk status
 
@@ -126,7 +128,9 @@ Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layou
 - generation counter,
 - [coverage](../compiler/reconciler.md#coverage) percentage,
 - open diagnostics by severity,
-- parked work.
+- parked work,
+- the [unclaimed report](../consumers/bind.md#the-unclaimed-report): deliverable
+  files no binding names.
 
 ### jazyk context
 
@@ -149,10 +153,12 @@ matches, one `{id, name, definition}` line each.
 
 ### jazyk gen
 
-`jazyk gen [entity...]` runs the built-in [generation](../consumers/gen.md) worker: it
-produces the entity's part of the deliverable and the tests for its requirements in one
-bounded task, writes them into the configured
-[deliverable directory](../compiler/project-settings.md#generation), and records the
+`jazyk gen [entity...]` runs the built-in [generation](../consumers/gen.md) worker.
+It performs owed [bind tasks](../consumers/bind.md) first (search the deliverable,
+find or write the test per requirement, record the row), then generates: each entity's
+part of the deliverable in one bounded task, making its `unimplemented` bound tests
+pass, written into the configured
+[deliverable directory](../compiler/project-settings.md#generation) and recorded as a
 manifest in the [ledger](../consumers/gen.md#the-ledger). With no arguments it covers
 every entity that has at least one requirement, leaf entities first, skipping entities
 whose facts are unchanged (`--force` regenerates everything). Dense entities generate
@@ -173,6 +179,19 @@ command (exit 0 is a pass); `llm` rows run the in-process harness against the cr
 prints the derived status table without running; `--audit` rebuilds the ledger from the
 artifact markers. Exit 0 when every targeted row is `verified`, 1 otherwise.
 
+### jazyk decompile
+
+`jazyk decompile [path...]` runs [decompilation](../consumers/decompile.md): draft
+documents describing what the code under the named scopes does (default: the whole
+[unclaimed report](../consumers/bind.md#the-unclaimed-report)). The command records
+the decompile release for its scopes; with an agent attached and preferred by the
+[dispatch](../compiler/reconciler.md#dispatch) preference, the agent's watcher does
+the drafting, otherwise the built-in worker runs each scope as a turn with read-only
+file tools over the deliverable. Drafts land in the docs tree carrying `unratified`
+diagnostics until edited ([ratification](../consumers/decompile.md#ratification)).
+Decompilation has no auto mode; this command and the GUI's decompile action are the
+only triggers.
+
 ### jazyk docsgen
 
 `jazyk docsgen` renders the per-entity requirements documents into `<out>/docsgen/` on
@@ -189,7 +208,8 @@ demand, without compiling. The same render runs after every committed changeset.
 `jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts the
 [GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
 the language server over WebSocket, then opens the browser. `--no-open` skips opening
-the browser. `--watch` starts in the automatic [watch mode](./gui.md#watch) (default:
+the browser. `--watch` starts in the automatic
+[compile mode](./gui.md#workflow-modes) (default:
 changes queue and compiling is an explicit click). Binds `127.0.0.1` only.
 
 ### jazyk mcp graph

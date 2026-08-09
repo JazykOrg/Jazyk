@@ -13,11 +13,15 @@ separated; each adds its tools to the union:
 - `jazyk mcp compile`: the [compilation lifecycle](../compiler/tools.md#compilation-tools)
   plus the [write tools](../compiler/tools.md#write-tools). The agent performs
   compilation tasks from [the task queue](../compiler/reconciler.md#the-task-queue).
-- `jazyk mcp generate`: the [generation tools](../compiler/tools.md#generation-tools).
-  The agent writes the deliverable with its own editor and shell; jazyk holds the
-  ledger.
+- `jazyk mcp generate`: the [binding tools](../compiler/tools.md#binding-tools) and
+  the [generation tools](../compiler/tools.md#generation-tools). The agent searches
+  and writes the deliverable with its own editor and shell; jazyk holds the ledger.
 - `jazyk mcp verify`: the [verification tools](../compiler/tools.md#verification-tools).
   Small enough to hand a subagent whose only job is judging one row.
+- `jazyk mcp decompile`: the
+  [decompilation tools](../compiler/tools.md#decompilation-tools). The agent reads
+  the code with its own tools and submits prose drafts; jazyk validates and lands
+  them in the docs tree.
 - `jazyk mcp benchmark`: the agent under test performs the
   [benchmark cases](../benchmark/benchmark.md#agent-run-benchmarks) against sandbox
   stores and is graded by the same deterministic checks as an endpoint run. Built to
@@ -41,17 +45,19 @@ what to call next.
 
 The agent-facing loop, common to all three toolsets:
 
-1. Ask for work: `compilation_tasks`, `generation_tasks`, or `verification_tasks`.
-   Zero tasks is an answer, not an error; the compilation list carries the build
-   verdict when the queue is empty.
-2. Begin the first ready task: `begin_compilation`, `begin_generation`,
-   `begin_verification`. The reply is the task package: instructions plus everything
-   the task needs.
-3. Do the work: compilation stages graph writes, generation edits deliverable files
-   with the agent's own tools, verification runs or judges tests.
-4. Finish: `finish_compilation` commits the changeset, `record_generation` records the
-   manifest, `run_tests` and `record_verdict` record verdicts. The reply names the
-   next ready task, so the loop chains without re-listing.
+1. Ask for work: `compilation_tasks`, `binding_tasks`, `generation_tasks`, or
+   `verification_tasks`. Zero tasks is an answer, not an error; the compilation list
+   carries the build verdict when the queue is empty.
+2. Begin the first ready task: `begin_compilation`, `begin_binding`,
+   `begin_generation`, `begin_verification`. The reply is the task package:
+   instructions plus everything the task needs.
+3. Do the work: compilation stages graph writes, binding searches the deliverable and
+   writes the missing test, generation edits deliverable files with the agent's own
+   tools, verification runs or judges tests.
+4. Finish: `finish_compilation` commits the changeset, `record_binding` records the
+   row, `record_generation` records the manifest, `run_tests` and `record_verdict`
+   record verdicts. The reply names the next ready task, so the loop chains without
+   re-listing.
 
 To watch for new work instead of polling, either run
 [`jazyk monitor`](./cli.md#jazyk-monitor) as a background process and act on each
@@ -77,8 +83,8 @@ The serving is a worker among workers, and says so:
 - `initialize` registers the serving in the
   [worker registry](../compiler/reconciler.md#workers-and-leases) under the client's
   name (kind `agent`), heartbeats while the process lives, and deregisters on exit.
-- `begin_compilation` and `begin_generation` take the task's lease; `finish_*` and
-  `abandon_*` release it. A task another worker holds is refused with `claimed`
+- `begin_compilation`, `begin_binding`, and `begin_generation` take the task's
+  lease; `finish_*`, `record_binding`, and `abandon_*` release it. A task another worker holds is refused with `claimed`
   naming the holder; a live internal build refuses all begins with `build-running`.
   Any tool call on the open task refreshes its lease.
 - In `manual` mode a gated task is refused with `awaiting-release`: the reply names
@@ -114,9 +120,10 @@ calls, exactly one at a time:
 
 ## Generation and verification over MCP
 
-Generation is stateless on the server: `begin_generation` returns the package, the
-agent edits files and runs commands with its own tools, `record_generation` records
-the manifest. Jazyk deliberately serves no file-editing tools here; a coding agent
+Binding and generation are stateless on the server: `begin_binding` and
+`begin_generation` return the package, the agent searches, edits files, and runs
+commands with its own tools, `record_binding` records the row and
+`record_generation` the manifest. Jazyk deliberately serves no file-editing tools here; a coding agent
 brings its own, and the in-process worker's file tools
 ([generation turns](../compiler/turns.md#generation-turns)) are not served over MCP.
 
@@ -133,8 +140,13 @@ begin_compilation → instructions + dirty sections + stale anchors + known enti
 (agent stages upsert_requirement / set_coverage ...)
 finish_compilation → {committed: true, next: {kind: review-entity, target: ent:order}}
 ... reviews the same way; last finish → {verdict: converged, generation: [ent:order]}
-begin_generation {entity: ent:order} → package
-(agent edits src/order.rs, tests/order.rs with its own tools)
+binding_tasks → [{requirement: req:order-3, reason: unbound}]
+begin_binding {requirement: req:order-3} → package
+(agent searches src/, finds no implementation, writes tests/order.rs)
+record_binding {requirement: req:order-3, files: [], test: {...}, verdict: fail}
+  → row unimplemented; ent:order is generation work
+begin_generation {entity: ent:order} → package (carries the bound tests)
+(agent edits src/order.rs with its own tools until the bound test passes)
 record_generation {entity: ent:order, factHash, manifest} → ledger updated
 run_tests → build + commands run, verdicts recorded
 ```

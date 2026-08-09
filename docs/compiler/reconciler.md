@@ -138,9 +138,16 @@ Task kinds, in dependency order:
   Ready when no reconcile task is pending.
 - `review-entity`: an entity whose facts changed. Ready when no reconcile or
   pair-review task is pending.
+- `bind-requirement`: a requirement whose [binding](../consumers/bind.md) is absent
+  or invalid (no ledger row, a reworded statement, a gone test artifact). Ready when
+  the compile queue is empty: the statement must be final before a test encodes it.
 - `generate-entity` and `verify-requirement`: [generation](../consumers/gen.md) and
   verification pending, derived from the ledger. Generation is ready when the compile
-  queue is empty; a row's verification is ready when its entity is generated.
+  queue is empty and none of the entity's requirements owes a bind; a row's
+  verification is ready when its entity is generated.
+- `draft-document`: [decompilation](../consumers/decompile.md), derived from the
+  [unclaimed report](../consumers/bind.md#the-unclaimed-report). Always gated until a
+  decompile release names its scope; there is no auto mode.
 
 Everything above is derivable from disk except which reviews are owed: the ingest
 turns that made an entity's facts change may have run in another process. So the
@@ -173,7 +180,8 @@ invents its own policy in process memory and workers fight.
   runtime changes (a GUI toggle, a CLI flag) and survives restarts.
 - `released.compile`: a map of document to the content hash approved for
   reconciliation. `released.generate`: the graph generation number approved for
-  generation.
+  generation and [binding](../consumers/bind.md). `released.decompile`: the list of
+  scopes approved for [decompilation](../consumers/decompile.md#triggering).
 
 In `auto` mode nothing is gated; the behavior is today's. In `manual` mode a change
 still updates the queue (dirty sets are hashing, no model runs), but its tasks carry
@@ -185,6 +193,12 @@ still updates the queue (dirty sets are hashing, no model runs), but its tasks c
 - A `generate-entity` task is gated until `released.generate` equals the graph's
   current generation. A commit moves the generation, so new graph facts gate new
   generation work until the next release.
+- A `bind-requirement` task gates with generation: it writes test files into the
+  deliverable, so the same `released.generate` opens it
+  ([binding](../consumers/bind.md#when-binding-runs)).
+- A `draft-document` task is gated until `released.decompile` names its scope.
+  `jazyk decompile` and the GUI's decompile action record it; a submitted draft
+  covering a scope consumes it ([decompilation](../consumers/decompile.md#triggering)).
 - Review tasks and `verify-requirement` tasks are never gated: reviews are the
   second half of a reconciliation already approved, and verification only exists for
   recorded generation work. The fix-fail-reverify loop stays self-driving.

@@ -160,8 +160,8 @@ Diagnostics:
 ## Jobs
 
 The GUI runs builds and workers itself. `POST /api/jobs` with
-`{kind: compile | gen | verify | audit}` (plus targets and `force` where the kind takes
-them) queues a job and returns its id. `GET /api/jobs` lists jobs,
+`{kind: compile | gen | verify | audit | decompile}` (plus targets and `force` where
+the kind takes them) queues a job and returns its id. `GET /api/jobs` lists jobs,
 `GET /api/jobs/{id}` returns one job with its state, result, and its whole trace: the
 server keeps every event a job emitted, numbered per job, so a reloaded page shows the
 same history the live stream showed. `POST /api/jobs/{id}/cancel` requests
@@ -394,7 +394,7 @@ two parts:
   what the model did, the changesets say what landed.
 - The control line, visible even collapsed: compile now (with the changed-document
   count), generate now (with the pending-entity count), verify, the
-  [watch mode](#watch) select, and the [generation mode](#generation) select. The
+  [compile mode](#workflow-modes) select, and the generation mode select. The
   running job shows its kind and progress here; cancel is one click.
 - The changeset timeline is still addressable per generation, and the release diff
   between any two generations stays reachable from the panel (the journal range
@@ -443,10 +443,18 @@ regardless.
   [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate,
   backoff retries for `incomplete` builds.
 - `gen: manual` (the default): generation runs on click, which likewise records a
-  release.
+  release. The release covers [binding](../consumers/bind.md#when-binding-runs) too:
+  owed bind tasks run before generation tasks.
 - `gen: auto`: a finished compile with a non-empty
   [generation worklist](../consumers/gen.md#incremental-regeneration) queues a `gen`
   job behind it.
+
+Decompilation has no mode: the decompile action is always an explicit click. It
+records a decompile release for its scope and dispatches like compile and generate
+([decompilation](../consumers/decompile.md#triggering)). The
+[unclaimed report](../consumers/bind.md#the-unclaimed-report) beside the action shows
+what territory has no docs; the count shrinks as drafts land and their statements
+bind.
 
 `--watch` starts with `compile: auto`. Automatic modes spend LLM budget, so both are
 opt-in. With both automatic, a document change compiles and regenerates end to end;

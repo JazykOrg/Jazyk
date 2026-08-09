@@ -140,6 +140,7 @@ Settings for the [generation workflow](../consumers/gen.md). All optional.
 [gen]
 deliverable = "../project2"
 worker = "agentic"
+code = ["src/**", "tests/**"]
 ```
 
 - `deliverable`: the directory the end product is generated into, resolved relative to
@@ -153,6 +154,13 @@ worker = "agentic"
 - `worker`: the built-in generation worker. `agentic` (default) runs each entity as a
   [generation turn](./turns.md#generation-turns) with file and command tools;
   `pipeline` keeps the fixed file-reply sequence, for models too weak to drive tools.
+
+- `code`: a glob list (matched like [`docs.glob`](#glob), relative to the
+  deliverable) scoping which deliverable files count as implementation for the
+  [unclaimed report](../consumers/bind.md#the-unclaimed-report) and for
+  [decompilation](../consumers/decompile.md). Default: every file under the
+  deliverable minus the standard exclusions (the out directory, hidden directories,
+  `target`, `node_modules`, and the docs the glob claims as source).
 
 The project file never says what the deliverable is. The medium is a fact the documents
 state, reaching workers through the graph; see

@@ -129,5 +129,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 Consumers work from the graph to do useful work downstream.
 
 - [Generation](./consumers/gen.md)
+- [Binding](./consumers/bind.md)
+- [Decompilation](./consumers/decompile.md)
 - [Project Management](./consumers/pm.md)
 - [Docs Feedback](./consumers/docsgen.md)

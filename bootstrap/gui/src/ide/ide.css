@@ -349,57 +349,334 @@
 
 /* The hover card (the language server's requirement card and entity packs): three
    parts, each a labelled block with its links. Read as a card, not as prose. */
-.monaco-hover {
+.jz-hover {
   max-width: 620px;
-}
-
-.monaco-hover .hover-contents {
   font-size: 12px;
   line-height: 1.5;
+  padding: 6px 10px;
 }
 
-.monaco-hover .hover-contents p {
-  margin: 4px 0;
-}
-
-/* The attribute and class selectors beat monaco's own hover rules for the two
-   properties it also sets: the divider and the link colour. */
-.monaco-hover .hover-contents .rendered-markdown hr {
+.jz-hover hr {
   margin: 7px 0;
   border: 0;
   border-top: 1px solid var(--line);
 }
 
-.monaco-hover .hover-contents ul {
-  margin: 2px 0;
-  padding-left: 2px;
-  list-style: none;
-}
-
-.monaco-hover .hover-contents li {
+.jz-hover .jz-hover-li {
   margin: 1px 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.monaco-hover .hover-contents a[data-href] {
-  color: var(--accent);
-  text-decoration: none;
+.jz-hover .jz-hover-gap {
+  height: 5px;
 }
 
-.monaco-hover .hover-contents a[data-href]:hover {
+.jz-hover a[data-href] {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.jz-hover a[data-href]:hover {
   text-decoration: underline;
 }
 
-.monaco-hover .hover-contents blockquote {
+.jz-hover blockquote {
   margin: 5px 0 2px;
   padding-left: 8px;
   border-left: 2px solid var(--line);
   opacity: 0.75;
 }
 
+.jz-hover code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
 /* Located quote highlight for ?section=&quote= navigation. */
 .quote-hit {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   CodeMirror chrome in the app palette. */
+.cm-editor {
+  height: 100%;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.cm-editor .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.55;
+}
+
+.cm-editor .cm-content {
+  caret-color: var(--ink);
+  padding: 8px 0 40vh;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.cm-editor .cm-cursor {
+  border-left-color: var(--ink);
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.cm-editor .cm-activeLine {
+  background: transparent;
+}
+
+.cm-editor .cm-gutters {
+  background: var(--panel);
+  color: var(--muted);
+  border-right: 1px solid var(--line);
+}
+
+.cm-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 34px;
+  font-size: 11px;
+}
+
+.cm-editor .cm-tooltip {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+}
+
+.cm-editor .cm-tooltip-autocomplete ul li[aria-selected] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink);
+}
+
+/* The three strip gutters: coverage, change marks, build state. Markers fill
+   their line's height so the strips read as continuous bands. */
+.jz-gutter-cov {
+  width: 4px;
+}
+
+.jz-gutter-chg {
+  width: 10px;
+}
+
+.jz-gutter-bld {
+  width: 9px;
+}
+
+.jz-gutter-cov .cm-gutterElement > div,
+.jz-gutter-chg .cm-gutterElement > div,
+.jz-gutter-bld .cm-gutterElement > div {
+  height: 100%;
+  min-height: 1em;
+}
+
+.jz-gutter-bld .cm-gutterElement > div {
+  height: 6px;
+  width: 6px;
+  margin-top: 5px;
+}
+
+/* Requirement lenses above their quotes, and ledger-site lenses in the
+   deliverable viewer. */
+.jz-lens {
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 3px 4px 0;
+  cursor: pointer;
+  line-height: 1.2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.jz-lens:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+   Inline markdown rendering (markdown-live.ts): the document reads like a page,
+   the markup shows only at the cursor (docs/frontends/gui.md#editor). */
+.md-h {
+  font-weight: 650;
+}
+
+.md-h1 {
+  font-size: 1.55em;
+}
+
+.md-h2 {
+  font-size: 1.32em;
+}
+
+.md-h3 {
+  font-size: 1.16em;
+}
+
+.md-h4 {
+  font-size: 1.06em;
+}
+
+.md-h5,
+.md-h6 {
+  font-size: 1em;
+}
+
+.md-em {
+  font-style: italic;
+}
+
+.md-strong {
+  font-weight: 700;
+}
+
+.md-strike {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.md-code {
+  font-size: 0.94em;
+  background: color-mix(in srgb, var(--muted) 13%, transparent);
+  border-radius: 3px;
+  padding: 0.5px 2px;
+}
+
+.md-link {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.md-link:hover {
+  text-decoration: underline;
+}
+
+.md-url,
+.md-mark {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.md-bullet {
+  color: var(--muted);
+  display: inline-block;
+  width: 1ch;
+}
+
+.md-task {
+  color: var(--muted);
+}
+
+.md-task-done {
+  color: var(--accent);
+}
+
+.md-list-num {
+  color: var(--muted);
+}
+
+.md-quote {
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+}
+
+.md-codeblock {
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  font-size: 0.95em;
+}
+
+.md-fence {
+  color: var(--muted);
+}
+
+.md-table {
+  font-size: 0.95em;
+}
+
+.md-hr {
+  display: inline-block;
+  width: 100%;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+/* Syntax highlighting (lezer classHighlighter tokens) in the app palette; the
+   same classes serve markdown fences and the deliverable viewer. */
+.tok-keyword {
+  color: color-mix(in srgb, var(--accent) 75%, var(--ink));
+}
+
+.tok-string,
+.tok-string2 {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+}
+
+.tok-comment,
+.tok-meta {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tok-number,
+.tok-bool,
+.tok-atom {
+  color: color-mix(in srgb, var(--info, var(--accent)) 75%, var(--ink));
+}
+
+.tok-typeName,
+.tok-className,
+.tok-namespace {
+  color: color-mix(in srgb, var(--accent) 55%, var(--ink));
+}
+
+.tok-propertyName,
+.tok-definition {
+  color: var(--ink);
+}
+
+.tok-heading {
+  font-weight: 650;
+}
+
+.tok-link {
+  color: var(--accent);
+}
+
+/* The merge (diff) view: chunk tints readable on both themes. */
+.cm-merge-a .cm-changedLine,
+.cm-deletedChunk {
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.cm-merge-b .cm-changedLine {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.cm-changedText {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.cm-mergeView {
+  height: 100%;
+  background: var(--panel);
+}
+
+.cm-mergeView .cm-mergeViewEditors {
+  height: 100%;
+  background: var(--panel);
+}
+
+.cm-mergeView .cm-mergeViewEditor {
+  background: var(--panel);
 }

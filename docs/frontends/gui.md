@@ -486,6 +486,13 @@ framing). Each connection is its own session with its own open-document overlay.
 the rendered context pack, the requirement card, go to definition, references,
 completion, document links, code lens.
 
+- Markdown renders inline while editing. Headings take their size, emphasis and
+  inline code take their style, links show their text, list bullets and quote bars
+  draw as marks, and fenced code highlights in its own language. The markup syntax
+  (`#`, `**`, backticks, `](url)`) appears only where the selection touches it, so
+  the document reads like a page and edits like text. The text itself stays plain
+  markdown, byte for byte: the docs are compiler input, provenance quotes locate
+  against the exact characters, and nothing is rewritten by rendering.
 - Document URIs are `file://` paths under the project root, as reported by
   `GET /api/project`.
 - When a build commits, the server republishes diagnostics for every open document on

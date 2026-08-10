@@ -5,8 +5,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import * as monaco from 'monaco-editor'
-import '../ide/monaco-env'
+import { EditorState, RangeSet, StateEffect, StateField, type Extension } from '@codemirror/state'
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  GutterMarker,
+  WidgetType,
+  gutter,
+  lineNumbers,
+} from '@codemirror/view'
+import { syntaxHighlighting } from '@codemirror/language'
+import { classHighlighter } from '@lezer/highlight'
+import { languages } from '@codemirror/language-data'
+import { MergeView } from '@codemirror/merge'
 import { get, type DelivOwners } from '../lib/api'
 import { useDelivBaseline, useMatrix } from '../lib/queries'
 import { useInspector } from '../lib/nav'
@@ -32,34 +44,79 @@ export interface FileResp {
   owners: DelivOwners
 }
 
-// Same theme names MonacoHost defines; redefining with identical content is safe,
-// and this covers the viewer being used before the editor ever mounted.
-function applyTheme() {
-  const explicit = document.documentElement.dataset.theme
-  const dark = explicit ? explicit === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim()
-  const name = dark ? 'jazyk-dark' : 'jazyk-light'
-  monaco.editor.defineTheme(name, {
-    base: dark ? 'vs-dark' : 'vs',
-    inherit: true,
-    rules: [],
-    colors: bg ? { 'editor.background': bg } : {},
-  })
-  monaco.editor.setTheme(name)
+// A site lens above its line: the requirement id and its verification status,
+// clickable into the inspector.
+class SiteLens extends WidgetType {
+  constructor(
+    readonly title: string,
+    readonly rid: string,
+    readonly open: (rid: string) => void,
+  ) {
+    super()
+  }
+  override eq(o: SiteLens) {
+    return o.title === this.title && o.rid === this.rid
+  }
+  toDOM() {
+    const d = document.createElement('div')
+    d.className = 'jz-lens'
+    d.textContent = this.title
+    d.onmousedown = (e) => {
+      e.preventDefault()
+      this.open(this.rid)
+    }
+    return d
+  }
+  override ignoreEvent() {
+    return true
+  }
 }
 
-function langFor(path: string): string {
-  const ext = `.${path.split('.').pop() ?? ''}`
-  for (const l of monaco.languages.getLanguages()) if (l.extensions?.includes(ext)) return l.id
-  return 'plaintext'
+class Strip extends GutterMarker {
+  constructor(
+    readonly cls: string,
+    readonly tip: string | null,
+  ) {
+    super()
+  }
+  override eq(o: Strip) {
+    return o.cls === this.cls && o.tip === this.tip
+  }
+  toDOM() {
+    const s = document.createElement('div')
+    s.className = this.cls
+    if (this.tip) s.title = this.tip
+    return s
+  }
 }
 
-// Self-contained read-only monaco viewer; reveal is handed up through a ref.
-// Located sites render twice: a gutter decoration and a clickable code lens (the
-// requirement id and its verification status) that opens the inspector. Models
-// get a deliv:// uri so the global lens provider fires only for this viewer.
-let delivSeq = 0
+const setStrips = StateEffect.define<RangeSet<Strip>>()
+const stripField = StateField.define<RangeSet<Strip>>({
+  create: () => RangeSet.empty,
+  update(value, tr) {
+    value = value.map(tr.changes)
+    for (const e of tr.effects) if (e.is(setStrips)) value = e.value
+    return value
+  },
+})
+const setLenses = StateEffect.define<DecorationSet>()
+const lensField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    value = value.map(tr.changes)
+    for (const e of tr.effects) if (e.is(setLenses)) value = e.value
+    return value
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
 
+// The language by filename, loaded on demand from language-data; plain text until
+// (and unless) it resolves.
+function languageFor(path: string) {
+  return languages.find((l) => l.extensions.some((e) => path.endsWith(`.${e}`)) || l.filename?.test(path))
+}
+
+// Self-contained read-only CodeMirror viewer; reveal is handed up through a ref.
 function ReadOnlyCode({
   path,
   text,
@@ -81,142 +138,123 @@ function ReadOnlyCode({
 }) {
   const divRef = useRef<HTMLDivElement>(null)
   const diffDivRef = useRef<HTMLDivElement>(null)
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
-  const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null)
-  const sitesRef = useRef<Site[]>(sites)
-  sitesRef.current = sites
-  const statusRef = useRef(status)
-  statusRef.current = status
+  const viewRef = useRef<EditorView | null>(null)
+  const mergeRef = useRef<MergeView | null>(null)
   const openRef = useRef(onOpenNode)
   openRef.current = onOpenNode
-  const lensFire = useRef<() => void>(() => {})
 
   useEffect(() => {
-    const editor = monaco.editor.create(divRef.current!, {
-      model: null,
-      readOnly: true,
-      automaticLayout: true,
-      minimap: { enabled: false },
-      fontSize: 13,
-      scrollBeyondLastLine: false,
-    })
-    editorRef.current = editor
-    const lensEmitter = new monaco.Emitter<monaco.languages.CodeLensProvider>()
-    const lensProvider: monaco.languages.CodeLensProvider = {
-      onDidChange: lensEmitter.event,
-      provideCodeLenses: (model) => {
-        if (model.uri.scheme !== 'deliv') return { lenses: [], dispose: () => {} }
-        return {
-          lenses: sitesRef.current
-            .filter((s) => s.line !== null)
-            .map((s) => ({
-              range: new monaco.Range(s.line!, 1, s.line!, 1),
-              command: {
-                id: 'jazyk.deliverable.openNode',
-                title: `${s.requirement} · ${statusRef.current(s.requirement)}`,
-                arguments: [s.requirement],
-              },
-            })),
-          dispose: () => {},
-        }
-      },
-    }
-    lensFire.current = () => lensEmitter.fire(lensProvider)
-    const disposables: monaco.IDisposable[] = [
-      lensEmitter,
-      monaco.languages.registerCodeLensProvider('*', lensProvider),
-      monaco.editor.registerCommand('jazyk.deliverable.openNode', (_accessor, id) => {
-        if (typeof id === 'string') openRef.current(id)
-      }),
-    ]
-    applyTheme()
-    const mql = window.matchMedia('(prefers-color-scheme: dark)')
-    mql.addEventListener('change', applyTheme)
-    const mo = new MutationObserver(applyTheme)
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    const view = new EditorView({ parent: divRef.current! })
+    viewRef.current = view
     revealRef.current = (line) => {
-      const model = editor.getModel()
-      if (!model) return
-      const l = Math.min(Math.max(line, 1), model.getLineCount())
-      editor.revealLineInCenterIfOutsideViewport(l)
-      editor.setPosition({ lineNumber: l, column: 1 })
+      const l = view.state.doc.line(Math.min(Math.max(line, 1), view.state.doc.lines))
+      view.dispatch({
+        selection: { anchor: l.from },
+        effects: EditorView.scrollIntoView(l.from, { y: 'center' }),
+      })
     }
     return () => {
-      mo.disconnect()
-      mql.removeEventListener('change', applyTheme)
       revealRef.current = null
-      lensFire.current = () => {}
-      for (const d of disposables) d.dispose()
-      diffEditorRef.current?.dispose()
-      diffEditorRef.current = null
-      editor.getModel()?.dispose()
-      editor.dispose()
-      editorRef.current = null
+      mergeRef.current?.destroy()
+      mergeRef.current = null
+      view.destroy()
+      viewRef.current = null
     }
   }, [revealRef])
 
+  // Content, language, site lenses, and baseline gutter marks reset together.
   useEffect(() => {
-    const editor = editorRef.current
-    if (!editor) return
-    const old = editor.getModel()
-    const uri = monaco.Uri.parse(`deliv://f/${++delivSeq}/${path}`)
-    const model = monaco.editor.createModel(text, langFor(path), uri)
-    editor.setModel(model)
-    old?.dispose()
-    const decos: monaco.editor.IModelDeltaDecoration[] = sites
-      .filter((s) => s.line !== null)
-      .map((s) => ({
-        range: new monaco.Range(s.line!, 1, s.line!, 1),
-        options: {
-          isWholeLine: true,
-          linesDecorationsClassName:
-            !s.exists || status(s.requirement).startsWith('stale') ? 'dmark-bad' : 'dmark-ok',
-        },
-      }))
-    // Gutter marks against the generation baseline: what the last run changed.
-    if (baseline !== null) {
-      const marks = lineMarks(baseline, text)
-      const lineCount = model.getLineCount()
-      const push = (line: number, cls: string, tip: string) => {
-        const l = Math.min(Math.max(line, 1), lineCount)
-        decos.push({
-          range: new monaco.Range(l, 1, l, 1),
-          options: { linesDecorationsClassName: cls, linesDecorationsTooltip: tip },
+    const view = viewRef.current
+    if (!view) return
+    let cancelled = false
+    const base: Extension[] = [
+      lineNumbers(),
+      EditorView.editable.of(false),
+      EditorState.readOnly.of(true),
+      EditorView.lineWrapping,
+      syntaxHighlighting(classHighlighter),
+      gutter({ class: 'jz-gutter-chg', markers: (v) => v.state.field(stripField) }),
+      stripField,
+      lensField,
+    ]
+    const finish = (exts: Extension[]) => {
+      if (cancelled || viewRef.current !== view) return
+      view.setState(EditorState.create({ doc: text, extensions: exts }))
+      const state = view.state
+      const clamp = (l: number) => Math.min(Math.max(l, 1), state.doc.lines)
+      const lenses = sites
+        .filter((s) => s.line !== null)
+        .map((s) =>
+          Decoration.widget({
+            widget: new SiteLens(
+              `${s.requirement} · ${status(s.requirement)}`,
+              s.requirement,
+              (id) => openRef.current(id),
+            ),
+            side: -1,
+            block: true,
+          }).range(state.doc.line(clamp(s.line!)).from),
+        )
+        .sort((a, b) => a.from - b.from)
+      const strips: { from: number; marker: Strip }[] = []
+      for (const s of sites.filter((s) => s.line !== null)) {
+        const bad = !s.exists || status(s.requirement).startsWith('stale')
+        strips.push({
+          from: state.doc.line(clamp(s.line!)).from,
+          marker: new Strip(bad ? 'dmark-bad' : 'dmark-ok', s.requirement),
         })
       }
-      for (const l of marks.added) push(l, 'gd-add', 'added by the last generation')
-      for (const l of marks.modified) push(l, 'gd-mod', 'changed by the last generation')
-      for (const [l, n] of marks.deletedAbove) push(l, 'gd-del', `${n} line${n > 1 ? 's' : ''} removed here`)
-    }
-    model.deltaDecorations([], decos)
-    lensFire.current()
-  }, [path, text, sites, status, baseline])
-
-  // The diff view: two throwaway read-only models, baseline against current.
-  useEffect(() => {
-    if (!diffMode || baseline === null) return
-    if (!diffEditorRef.current && diffDivRef.current) {
-      diffEditorRef.current = monaco.editor.createDiffEditor(diffDivRef.current, {
-        automaticLayout: true,
-        minimap: { enabled: false },
-        fontSize: 13,
-        scrollBeyondLastLine: false,
-        renderSideBySide: true,
-        readOnly: true,
-        originalEditable: false,
+      if (baseline !== null) {
+        const marks = lineMarks(baseline, text)
+        const push = (l: number, cls: string, tip: string) =>
+          strips.push({ from: state.doc.line(clamp(l)).from, marker: new Strip(cls, tip) })
+        for (const l of marks.added) push(l, 'gd-add', 'added by the last generation')
+        for (const l of marks.modified) push(l, 'gd-mod', 'changed by the last generation')
+        for (const [l, n] of marks.deletedAbove)
+          push(l, 'gd-del', `${n} line${n > 1 ? 's' : ''} removed here`)
+      }
+      view.dispatch({
+        effects: [
+          setLenses.of(Decoration.set(lenses, true)),
+          setStrips.of(
+            RangeSet.of(strips.sort((a, b) => a.from - b.from).map((s) => s.marker.range(s.from))),
+          ),
+        ],
       })
     }
-    const de = diffEditorRef.current
-    if (!de) return
-    de.setModel({
-      original: monaco.editor.createModel(baseline, langFor(path)),
-      modified: monaco.editor.createModel(text, langFor(path)),
+    const desc = languageFor(path)
+    if (desc)
+      desc.load().then(
+        (lang) => finish([...base, lang]),
+        () => finish(base),
+      )
+    else finish(base)
+    return () => {
+      cancelled = true
+    }
+  }, [path, text, sites, status, baseline])
+
+  // The diff view: baseline against current, both read-only.
+  useEffect(() => {
+    const parent = diffDivRef.current
+    mergeRef.current?.destroy()
+    mergeRef.current = null
+    if (!diffMode || baseline === null || !parent) return
+    const ro: Extension[] = [
+      lineNumbers(),
+      EditorView.editable.of(false),
+      EditorState.readOnly.of(true),
+      EditorView.lineWrapping,
+      syntaxHighlighting(classHighlighter),
+    ]
+    mergeRef.current = new MergeView({
+      parent,
+      a: { doc: baseline, extensions: ro },
+      b: { doc: text, extensions: ro },
     })
     return () => {
-      const m = de.getModel()
-      de.setModel(null)
-      m?.original.dispose()
-      m?.modified.dispose()
+      mergeRef.current?.destroy()
+      mergeRef.current = null
     }
   }, [diffMode, baseline, text, path])
 

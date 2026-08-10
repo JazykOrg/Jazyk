@@ -1,5 +1,5 @@
 // Hand-rolled LSP client over one WebSocket: one bare JSON-RPC message per text
-// frame, no Content-Length framing. Deliberately not monaco-languageclient; the
+// frame, no Content-Length framing. Deliberately hand-rolled, no client library; the
 // server speaks a small known subset and the protocol fits in this file.
 
 export interface LspPosition {

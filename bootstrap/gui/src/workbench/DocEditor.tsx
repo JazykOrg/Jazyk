@@ -6,12 +6,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import type * as monaco from 'monaco-editor'
 import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { delivHref, useInspector } from '../lib/nav'
-import MonacoHost, { docUri, type LinkTarget, type MonacoHandle } from '../ide/MonacoHost'
+import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
 import '../ide/ide.css'
@@ -48,13 +47,8 @@ function relTo(dir: string, path: string): string | null {
   return p.startsWith(`${d}/`) ? p.slice(d.length + 1) : null
 }
 
-// Marker severity values (monaco.MarkerSeverity), kept numeric so this file needs
-// no runtime monaco import.
-function sevName(sev: number): string {
-  return sev === 8 ? 'error' : sev === 4 ? 'warning' : sev === 2 ? 'info' : 'hint'
-}
-function sevClass(sev: number): string {
-  return sev === 8 ? 'sev-error' : sev === 4 ? 'sev-warning' : sev === 2 ? 'sev-info' : 'sev-none'
+function sevClass(sev: Marker['severity']): string {
+  return sev === 'error' ? 'sev-error' : sev === 'warning' ? 'sev-warning' : sev === 'info' ? 'sev-info' : 'sev-none'
 }
 
 export default function DocEditor() {
@@ -104,7 +98,7 @@ export default function DocEditor() {
     return () => lsp.dispose()
   }, [lsp])
 
-  const hostRef = useRef<MonacoHandle>(null)
+  const hostRef = useRef<EditorHandle>(null)
   const [loaded, setLoaded] = useState<DocContent | null>(null)
   const loadedRef = useRef(loaded)
   loadedRef.current = loaded
@@ -114,7 +108,7 @@ export default function DocEditor() {
   const dirtyRef = useRef(false)
   const [conflict, setConflict] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
-  const [markers, setMarkers] = useState<monaco.editor.IMarker[]>([])
+  const [markers, setMarkers] = useState<Marker[]>([])
   const savingRef = useRef(false)
   const pendingLine = useRef<{ path: string; line: number } | null>(null)
   const revealedKey = useRef('')
@@ -350,10 +344,7 @@ export default function DocEditor() {
   }, [evaluateHold, progress?.label, progress?.state])
 
   const root = projectQ.data?.root
-  const sortedMarkers = useMemo(
-    () => [...markers].sort((a, b) => a.startLineNumber - b.startLineNumber),
-    [markers],
-  )
+  const sortedMarkers = useMemo(() => [...markers].sort((a, b) => a.line - b.line), [markers])
 
   const baseline = baselineQ.data ? baselineQ.data.text : baselineQ.data === null ? null : undefined
   const hasBaseline = baseline !== null && baseline !== undefined
@@ -399,7 +390,7 @@ export default function DocEditor() {
           <button onClick={() => void overwrite()}>overwrite</button>
         </div>
       )}
-      <MonacoHost
+      <CmHost
         ref={hostRef}
         root={root}
         path={loaded.path}
@@ -422,14 +413,10 @@ export default function DocEditor() {
           <div className="ide-problem-none muted">no problems</div>
         ) : (
           sortedMarkers.map((m, i) => (
-            <div
-              key={i}
-              className="ide-problem"
-              onClick={() => hostRef.current?.revealLine(m.startLineNumber)}
-            >
-              <span className={`mono ${sevClass(m.severity)}`}>{sevName(m.severity)}</span>
+            <div key={i} className="ide-problem" onClick={() => hostRef.current?.revealLine(m.line)}>
+              <span className={`mono ${sevClass(m.severity)}`}>{m.severity}</span>
               <span className="mono muted">
-                {m.startLineNumber}:{m.startColumn}
+                {m.line}:{m.column}
               </span>
               <span className="ide-problem-msg">{m.message}</span>
             </div>

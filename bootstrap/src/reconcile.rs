@@ -486,6 +486,17 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
             ));
         }
     }
+    // Decompiled documents nobody has touched since the machine wrote them: the
+    // statements are provisional until a human edit moves the hash.
+    // Mirrors docs/consumers/decompile.md#ratification.
+    for doc in crate::decompile::unratified(store) {
+        f.push((
+            "unratified".into(),
+            doc.clone(),
+            "info".into(),
+            format!("{} is a decompiled draft nobody has ratified; review it by editing it, even a one-line change clears this", doc),
+        ));
+    }
     // Work parked when the budget ran out.
     for p in parked {
         f.push((

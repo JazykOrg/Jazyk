@@ -386,9 +386,10 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
     crate::control::release(&proj, &out, stage);
     let q = crate::queue::compute(&proj, &out);
     println!(
-        "jazyk: released {} — {} compilation, {} generation task(s) now actionable",
+        "jazyk: released {} — {} compilation, {} binding, {} generation task(s) now actionable",
         stage.unwrap_or("compile and generate"),
         crate::queue::actionable(&q.compile),
+        crate::queue::actionable(&q.bind),
         crate::queue::actionable(&q.generate),
     );
     0
@@ -431,6 +432,7 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     let notice = |last: &mut String| -> bool {
         let q = crate::queue::compute(&proj, &out);
         let has_work = crate::queue::actionable(&q.compile) > 0
+            || crate::queue::actionable(&q.bind) > 0
             || crate::queue::actionable(&q.generate) > 0
             || crate::queue::actionable(&q.verify) > 0;
         if once && !has_work {
@@ -439,6 +441,7 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         let rendered = if json_mode {
             serde_json::json!({
                 "compilation": q.compile,
+                "binding": q.bind,
                 "generation": q.generate,
                 "verification": q.verify,
                 "verdict": q.verdict,
@@ -471,6 +474,29 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                 }
                 if act > 0 {
                     s.push_str("  → call compilation_tasks on the jazyk MCP server to begin\n");
+                }
+            } else if !q.bind.is_empty() {
+                let gated = crate::queue::gated(&q.bind);
+                s.push_str(&format!(
+                    "jazyk: compilation {}; {} binding task(s), {} actionable\n",
+                    q.verdict,
+                    q.bind.len(),
+                    crate::queue::actionable(&q.bind)
+                ));
+                for t in q.bind.iter().filter(|t| t["gated"] != true).take(5) {
+                    s.push_str(&format!(
+                        "  bind {} ({})\n",
+                        t["requirement"].as_str().unwrap_or(""),
+                        t["reason"].as_str().unwrap_or("")
+                    ));
+                }
+                if gated > 0 {
+                    s.push_str(&format!(
+                        "  {} gated, awaiting release (`jazyk release generate` or the GUI)\n",
+                        gated
+                    ));
+                } else {
+                    s.push_str("  → call binding_tasks on the jazyk MCP server to begin\n");
                 }
             } else if !q.generate.is_empty() {
                 let gated = crate::queue::gated(&q.generate);
@@ -705,7 +731,91 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
             println!("  - {} {}", p.task, p.target);
         }
     }
+    // The unclaimed report: deliverable files no binding names, the decompilation
+    // worklist. Mirrors docs/consumers/bind.md#the-unclaimed-report.
+    let gs = crate::gen::GenSettings::resolve(&_proj);
+    let un = crate::bind::unclaimed(&_proj, &store, &gs);
+    if !un.is_empty() {
+        println!("unclaimed:  {} file(s) no binding names (`jazyk decompile` drafts docs for them)", un.len());
+        for f in un.iter().take(8) {
+            println!("  - {}", f);
+        }
+        if un.len() > 8 {
+            println!("  ... and {} more", un.len() - 8);
+        }
+    }
     0
+}
+
+// Decompilation: release the named scopes and draft documents for them, or dispatch
+// to an attached agent. Mirrors docs/frontends/cli.md#jazyk-decompile.
+pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
+    let (proj, llm, out) = resolve(&[], opts);
+    let store = Store::load(&out);
+    let gs = crate::gen::GenSettings::resolve(&proj);
+    let by_scope = crate::decompile::scopes(&proj, &store, &gs);
+    if by_scope.is_empty() {
+        println!("jazyk: nothing unclaimed; every deliverable file is named by a binding");
+        return 0;
+    }
+    let wanted: Vec<String> = if scopes.is_empty() {
+        by_scope.keys().cloned().collect()
+    } else {
+        let mut v = Vec::new();
+        for s in scopes {
+            let s = s.trim_end_matches('/');
+            if !by_scope.contains_key(s) {
+                eprintln!(
+                    "jazyk: no unclaimed files under `{}`; scopes with unclaimed files: {}",
+                    s,
+                    by_scope.keys().cloned().collect::<Vec<_>>().join(", ")
+                );
+                return 2;
+            }
+            v.push(s.to_string());
+        }
+        v
+    };
+    crate::control::release_decompile(&proj, &out, &wanted);
+    // Dispatch: with an agent attached and preferred, the release is the trigger and
+    // the agent's watcher does the drafting. Mirrors docs/compiler/reconciler.md#dispatch.
+    let control = crate::control::Control::load(&proj, &out);
+    let agents: Vec<String> = crate::control::workers(&out)
+        .into_iter()
+        .filter(|w| w.kind == "agent")
+        .map(|w| if w.client.is_empty() { w.id } else { w.client })
+        .collect();
+    if control.worker != "internal" && !agents.is_empty() {
+        println!(
+            "jazyk: released {} scope(s) for decompilation — dispatched to agent(s): {}",
+            wanted.len(),
+            agents.join(", ")
+        );
+        return 0;
+    }
+    if control.worker == "agent" {
+        eprintln!("jazyk: workflow.worker is `agent` but no agent is attached; connect one over `jazyk mcp decompile` or set worker to any");
+        return 1;
+    }
+    let trace = Trace::stderr(TraceLevel::Normal).with_transcript(&out, "decompile");
+    let result = crate::decompile::run_all(&proj, &store, &llm, &gs, &wanted, &trace);
+    match &result {
+        Ok(v) => trace.finish_transcript("done", v),
+        Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),
+    }
+    match result {
+        Ok(sum) => {
+            println!(
+                "jazyk: decompile done — {} drafted, {} failure(s); drafts carry `unratified` until edited, `jazyk compile` extracts them",
+                sum["drafted"], sum["failures"]
+            );
+            if sum["failures"].as_u64().unwrap_or(0) > 0 { 1 } else { 0 }
+        }
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            1
+        }
+    }
 }
 
 pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
@@ -770,6 +880,20 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
         _ => {}
     });
     let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "gen");
+    // Binding first: owed bind tasks classify each requirement before any entity
+    // regenerates, and the bound tests become generation's acceptance gates.
+    // Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
+    match crate::bind::run_all(&store, &llm, &gs, entities, &proj.limits, &proj.linting, &trace) {
+        Ok(b) => {
+            let (bound, bfail) = (b["bound"].as_u64().unwrap_or(0), b["failures"].as_u64().unwrap_or(0));
+            if bound + bfail > 0 {
+                println!("jazyk: bind — {} bound, {} failure(s)", bound, bfail);
+            }
+        }
+        Err(e) => {
+            eprintln!("jazyk: bind: {}", e);
+        }
+    }
     let result = crate::gen::run_all(&store, &llm, &gs, entities, opts.force, &proj.limits, &proj.linting, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),

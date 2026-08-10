@@ -78,9 +78,24 @@ fn instructions_for(modes: &[String], write: bool) -> String {
     }
     if modes.iter().any(|m| m == "generate") {
         s.push_str(
-            "GENERATION LOOP: call generation_tasks; for each entity, begin_generation, write the \
+            "BINDING LOOP (before generation): call binding_tasks; for each requirement, \
+             begin_binding, search the deliverable with YOUR OWN tools for the implementation and an \
+             existing test, write the test only when none exists (never touch implementation files), \
+             run it, then record_binding. The verdict classifies the requirement: verified, \
+             unimplemented (generation work), or failing (a contradiction for the author). \
+             GENERATION LOOP: call generation_tasks; for each entity, begin_generation, write the \
              deliverable files and any build with YOUR OWN file and shell tools (this server serves \
-             none), then record_generation with the manifest, then run_tests. ",
+             none), making the bound tests pass, then record_generation with the manifest, then \
+             run_tests. ",
+        );
+    }
+    if modes.iter().any(|m| m == "decompile") {
+        s.push_str(
+            "DECOMPILE LOOP: call decompile_tasks; for each released scope, begin_decompile, read \
+             the code with YOUR OWN tools (the package carries the inventory and the tests first), \
+             draft one markdown document stating what the code observably does, then submit_draft. \
+             The draft is compiler input; binding self-checks it against the code after the next \
+             compile. ",
         );
     }
     if modes.iter().any(|m| m == "verify") {
@@ -195,16 +210,19 @@ impl McpServer {
         }
         let q = crate::queue::compute(&self.project, &self.out);
         let c = crate::control::Control::load(&self.project, &self.out);
-        let (c_act, g_act, v_act) = (
+        let (c_act, b_act, g_act, v_act) = (
             crate::queue::actionable(&q.compile),
+            crate::queue::actionable(&q.bind),
             crate::queue::actionable(&q.generate),
             crate::queue::actionable(&q.verify),
         );
-        let gated = crate::queue::gated(&q.compile) + crate::queue::gated(&q.generate);
+        let gated =
+            crate::queue::gated(&q.compile) + crate::queue::gated(&q.bind) + crate::queue::gated(&q.generate);
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
             "compilationTasks": q.compile.len(),
+            "bindingTasks": q.bind.len(),
             "generationTasks": q.generate.len(),
             "verificationTasks": q.verify.len(),
             "workflow": {"compile": c.compile, "generate": c.generate},
@@ -213,6 +231,8 @@ impl McpServer {
             "openDiagnostics": q.open_diags,
             "next": if c_act > 0 {
                 "compilation_tasks lists the work"
+            } else if b_act > 0 {
+                "binding_tasks lists the work"
             } else if g_act > 0 {
                 "generation_tasks lists the work"
             } else if v_act > 0 {
@@ -243,6 +263,9 @@ impl McpServer {
                     t
                 }
                 "verify" => toolset("mcp-verify"),
+                // The decompile serving: read tools only from the catalog; its own
+                // lifecycle tools are server-implemented (they need the project).
+                "decompile" => toolset("mcp-read"),
                 _ => toolset(if self.write { "mcp-write" } else { "mcp-read" }),
             };
             for t in set {
@@ -581,7 +604,7 @@ impl McpServer {
         let tmp = std::env::temp_dir().join(format!("jazyk-mcp-bench-{}-{}", std::process::id(), case.name));
         std::fs::remove_dir_all(&tmp).ok();
         let store = crate::benchmark::sandbox(case, &tmp);
-        let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into() };
+        let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into(), code: Vec::new() };
         std::fs::create_dir_all(&gs.deliverable).ok();
         let item = WorkItem {
             task: case.task_type.clone(),
@@ -794,7 +817,7 @@ impl McpServer {
                 // A task-lifecycle serving is a worker among workers: register it and
                 // heartbeat while the process lives. Mirrors
                 // docs/frontends/mcp.md#the-control-plane-over-mcp.
-                if self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify") {
+                if self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify" || m == "decompile") {
                     let client = self.client.lock().unwrap().clone().unwrap_or_else(|| "agent".into());
                     let mut w = self.worker.lock().unwrap();
                     match w.as_mut() {
@@ -869,6 +892,23 @@ impl McpServer {
                         "name": "benchmark_report",
                         "description": "Close the run: tier scores, workflow verdicts, efficiency over the scored cases, appended to the machine-wide history under the given model name (name the agent honestly, e.g. claude-sonnet-4.6 (agent)).",
                         "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                }
+                if self.modes.iter().any(|m| m == "decompile") {
+                    tools.push(json!({
+                        "name": "decompile_tasks",
+                        "description": "Draft tasks derived from the unclaimed report (deliverable files no binding names), grouped by scope, each ready or gated behind a decompile release (`jazyk decompile` or the GUI records one). Next: begin_decompile on a released scope.",
+                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "begin_decompile",
+                        "description": "The draft package for one scope: the inventory slice with file contents (tests first: they are the primary evidence), the lint rules, the suggested path, and the drafting contract. Read the code with your own tools, draft one markdown document stating what it observably does, then submit_draft.",
+                        "inputSchema": {"type": "object", "properties": {"scope": {"type": "string"}}, "required": ["scope"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "submit_draft",
+                        "description": "Validate and land the draft in the docs tree: path is project-relative and must match the docs glob; content is the full markdown (one H1, short declarative sentences, no em dashes, every statement citing its evidence in backticks). Records the draft hash for ratification and consumes the scope's release. The compiler picks the file up like any hand-written document.",
+                        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "scope": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}
                     }));
                 }
                 tools.push(json!({
@@ -948,6 +988,47 @@ impl McpServer {
                     "benchmark_report" if self.modes.iter().any(|m| m == "benchmark") => {
                         return Ok(text_result(self.benchmark_report(params), false))
                     }
+                    "decompile_tasks" if self.modes.iter().any(|m| m == "decompile") => {
+                        let store = Store::load(&self.out);
+                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let control = crate::control::Control::load(&self.project, &self.out);
+                        let tasks = crate::decompile::pending(&self.project, &store, &gs, &control);
+                        let reply = if tasks.is_empty() {
+                            json!({"tasks": [], "note": "no unclaimed files; every deliverable file is named by a binding"})
+                        } else {
+                            json!({"tasks": tasks, "next": "begin_decompile on a released scope; gated scopes await `jazyk decompile` or the GUI"})
+                        };
+                        return Ok(text_result(reply, false));
+                    }
+                    "begin_decompile" if self.modes.iter().any(|m| m == "decompile") => {
+                        let Some(scope) = params["arguments"]["scope"].as_str() else {
+                            return Ok(text_result(json!({"error": {"rule": "missing-argument", "message": "scope is required; decompile_tasks lists the scopes"}}), true));
+                        };
+                        let store = Store::load(&self.out);
+                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let control = crate::control::Control::load(&self.project, &self.out);
+                        let released = control.released.decompile.iter().any(|s| s == scope || s == ".");
+                        if !released {
+                            return Ok(text_result(json!({"error": {"rule": "awaiting-release", "message": format!(
+                                "scope `{}` is not released for decompilation; `jazyk decompile {}` or the GUI's decompile action approves it", scope, scope)}}), true));
+                        }
+                        let reply = match crate::decompile::task(&self.project, &store, &gs, scope) {
+                            Ok(v) => v,
+                            Err(e) => json!({"error": {"rule": "unknown-scope", "message": e}}),
+                        };
+                        let is_err = !reply["error"].is_null();
+                        return Ok(text_result(reply, is_err));
+                    }
+                    "submit_draft" if self.modes.iter().any(|m| m == "decompile") => {
+                        let path = params["arguments"]["path"].as_str().unwrap_or_default();
+                        let content = params["arguments"]["content"].as_str().unwrap_or_default();
+                        let scope = params["arguments"]["scope"].as_str();
+                        let reply = match crate::decompile::submit(&self.project, &self.out, path, content, scope) {
+                            Ok(v) => v,
+                            Err(e) => return Ok(text_result(json!({"error": {"rule": "bad-draft", "message": e}}), true)),
+                        };
+                        return Ok(text_result(reply, false));
+                    }
                     _ => {}
                 }
                 let args = params["arguments"].clone();
@@ -959,6 +1040,7 @@ impl McpServer {
                     !crate::tools::READ_TOOLS.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL;
                 let is_graph_write = is_write
                     && !crate::tools::GEN_TOOLS.contains(&name.as_str())
+                    && !crate::tools::BIND_TOOLS.contains(&name.as_str())
                     && !crate::tools::VERIFY_TOOLS.contains(&name.as_str());
 
                 // An open benchmark case takes every call first: the sandbox is the
@@ -1048,6 +1130,41 @@ impl McpServer {
                 if name == "record_generation" {
                     if let Some(ent) = args["entity"].as_str() {
                         crate::control::release_lease(&self.out, ent);
+                    }
+                }
+                // Binding rides the same control plane: it writes test files into the
+                // deliverable, so the generate release gates it, and the requirement
+                // lease makes the claim exclusive.
+                // Mirrors docs/consumers/bind.md#when-binding-runs.
+                if name == "begin_binding" {
+                    let c = crate::control::Control::load(&self.project, &self.out);
+                    if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "awaiting-release", "message":
+                                "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                            true,
+                        ));
+                    }
+                    if let Some(l) = crate::control::build_lease(&self.out) {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "build-running", "message": format!(
+                                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                            true,
+                        ));
+                    }
+                    if let Some(rid) = args["requirement"].as_str() {
+                        if let Err(holder) = crate::control::claim(&self.out, rid, &self.worker_id()) {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "claimed", "message": format!(
+                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse", rid, holder)}}),
+                                true,
+                            ));
+                        }
+                    }
+                }
+                if name == "record_binding" {
+                    if let Some(rid) = args["requirement"].as_str() {
+                        crate::control::release_lease(&self.out, rid);
                     }
                 }
 

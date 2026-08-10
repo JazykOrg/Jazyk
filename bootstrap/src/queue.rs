@@ -14,6 +14,7 @@ pub struct Queue {
     // review-requirement, then review-entity. The first is ready; the rest name what
     // blocks them.
     pub compile: Vec<Value>,
+    pub bind: Vec<Value>,
     pub generate: Vec<Value>,
     pub verify: Vec<Value>,
     pub verdict: String,
@@ -217,12 +218,35 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     }
 
     let compile_open = !compile.is_empty();
-    let generate: Vec<Value> = crate::gen::pending(&store, &gs)
+    // Binding first: a requirement's statement must be final before a test encodes
+    // it, and generation waits for its entity's bindings.
+    // Mirrors docs/compiler/reconciler.md#the-task-queue.
+    let bind: Vec<Value> = crate::bind::pending(&store, &gs)
         .into_iter()
         .map(|mut p| {
             p["ready"] = json!(!compile_open);
             if compile_open {
-                p["blockedBy"] = json!("compilation first; the graph is not settled");
+                p["blockedBy"] = json!("compilation first; the statement is not settled");
+            }
+            p
+        })
+        .collect();
+    let bind_entities: BTreeSet<String> =
+        bind.iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
+    let bind_reqs: BTreeSet<String> =
+        bind.iter().filter_map(|p| p["requirement"].as_str().map(String::from)).collect();
+    let generate: Vec<Value> = crate::gen::pending(&store, &gs)
+        .into_iter()
+        .map(|mut p| {
+            let ent = p["entity"].as_str().unwrap_or_default().to_string();
+            let blocked = compile_open || bind_entities.contains(&ent);
+            p["ready"] = json!(!blocked);
+            if blocked {
+                p["blockedBy"] = json!(if compile_open {
+                    "compilation first; the graph is not settled"
+                } else {
+                    "binding first; the entity's requirements are not all bound"
+                });
             }
             p
         })
@@ -231,18 +255,22 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         generate.iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
     let verify: Vec<Value> = crate::verify::pending(&store, &gs, Some("stale"), None)
         .into_iter()
+        // Unbound rows are bind work and unimplemented rows are generation work;
+        // neither is a verification task (docs/consumers/bind.md#what-the-verdict-means).
+        .filter(|p| p["status"] != "unimplemented" && p["reason"] != "not-generated")
+        .filter(|p| !bind_reqs.contains(p["requirement"].as_str().unwrap_or_default()))
         .map(|mut p| {
             let ent = p["entity"].as_str().unwrap_or_default().to_string();
-            let blocked = compile_open || gen_entities.contains(&ent);
+            let blocked = compile_open || gen_entities.contains(&ent) || bind_entities.contains(&ent);
             p["ready"] = json!(!blocked);
             if blocked {
-                p["blockedBy"] = json!(if compile_open { "compilation first" } else { "generation first" });
+                p["blockedBy"] = json!(if compile_open { "compilation first" } else { "binding and generation first" });
             }
             p
         })
         .collect();
 
-    let mut q = Queue { compile, generate, verify, verdict, open_diags, dangling_diags };
+    let mut q = Queue { compile, bind, generate, verify, verdict, open_diags, dangling_diags };
 
     // Manual mode gates work behind a release; leases mark claimed tasks. Reviews and
     // verification are never gated. Mirrors docs/compiler/reconciler.md#the-control-plane.
@@ -257,13 +285,19 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         }
     }
     if control.generate == "manual" && control.released.generate != store.status.generation {
-        for t in q.generate.iter_mut() {
+        // Bind tasks write test files into the deliverable, so they gate with
+        // generation (docs/consumers/bind.md#when-binding-runs).
+        for t in q.generate.iter_mut().chain(q.bind.iter_mut()) {
             t["gated"] = json!(true);
         }
     }
     let leases = crate::control::task_leases(out);
-    for t in q.compile.iter_mut().chain(q.generate.iter_mut()) {
-        let target = t["target"].as_str().or_else(|| t["entity"].as_str()).unwrap_or_default();
+    for t in q.compile.iter_mut().chain(q.bind.iter_mut()).chain(q.generate.iter_mut()) {
+        let target = t["target"]
+            .as_str()
+            .or_else(|| t["requirement"].as_str())
+            .or_else(|| t["entity"].as_str())
+            .unwrap_or_default();
         if let Some(l) = leases.get(target) {
             t["claimedBy"] = json!(l.worker);
         }

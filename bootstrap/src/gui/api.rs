@@ -241,19 +241,26 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 pub fn workers_snapshot(st: &SharedState) -> Value {
     let c = st.control();
     let q = crate::queue::compute(&st.proj(), &st.out);
+    let store = crate::store::Store::load(&st.out);
+    let unclaimed = crate::bind::unclaimed(&st.proj(), &store, &st.gs());
     json!({
         "workflow": {"compile": c.compile, "generate": c.generate, "worker": c.worker},
         "workers": crate::control::workers(&st.out),
         "leases": crate::control::leases(&st.out).values().collect::<Vec<_>>(),
         "gated": {
             "compile": crate::queue::gated(&q.compile),
-            "generate": crate::queue::gated(&q.generate),
+            // Bind tasks gate under the generate release beside generation.
+            "generate": crate::queue::gated(&q.generate) + crate::queue::gated(&q.bind),
         },
         "actionable": {
             "compile": crate::queue::actionable(&q.compile),
+            "bind": crate::queue::actionable(&q.bind),
             "generate": crate::queue::actionable(&q.generate),
             "verify": crate::queue::actionable(&q.verify),
         },
+        // The unclaimed report: the decompile worklist.
+        "unclaimed": unclaimed.len(),
+        "decompileReleased": c.released.decompile,
     })
 }
 

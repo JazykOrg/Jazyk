@@ -505,6 +505,21 @@ Rules:
 - Marker lines (`req:<id> hash:<hash8>` in the medium's comment syntax, alone on a line, directly above the implementing site) are stripped by the harness at record time and become anchored traceability sites.
 - A tool error names what was wrong and how to repair the call; fix it and continue."#;
 
+const BIND_SYSTEM: &str = r#"You are the bind turn of jazyk, a natural language compiler. Your job: tie ONE requirement to the deliverable, by calling tools. Binding runs before generation; it observes and judges, it never changes implementation files.
+
+Workflow:
+1. Read the package. list_files and read_text_file show the deliverable.
+2. Search for an implementation of the statement. Record what carries it, or nothing: an empty files list is a finding, not a failure.
+3. Search for an existing test that judges the statement; bind to it when found, never write a duplicate beside it.
+4. When no test exists, write one with write_text_file, using the suggested test name and the recorded test conventions. Implementation found: the test pins the observed behavior. Implementation absent: the test encodes the statement and fails by design; it is the acceptance gate generation must clear.
+5. Run the test with run_command and read its outcome.
+6. Record with record_binding: the files, the test row, the verdict, the evidence. Then call done with a one-line summary. The harness checks the ledger, not your word.
+
+Rules:
+- A test must be falsifiable: its assertion fails when the requirement is violated, and it inspects the artifact, never prose about it. When no falsifiable programmatic assertion exists, the kind is llm and the artifact is a criteria file you write.
+- Never write to implementation files; binding observes, generation changes. Test and criteria files are the only files a bind turn writes.
+- A tool error names what was wrong and how to repair the call; fix it and continue."#;
+
 // ---- initial packs ----
 
 // One task's system prompt and work pack, by task type. The single source both
@@ -521,6 +536,7 @@ pub fn task_prompt(
         "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(store, item, limits.context_budget)),
         "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(store, &item.target)),
         "generate-entity" => (GENERATE_SYSTEM, generate_pack(store, &item.target, gen)),
+        "bind-requirement" => (BIND_SYSTEM, bind_pack(store, &item.target, gen)),
         _ => (REVIEW_SYSTEM, review_pack(store, &item.target, limits.context_budget, lint)),
     }
 }
@@ -556,6 +572,12 @@ fn generate_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> S
         "other entities' files (never write to them; `holds` says what is inside): {}\n",
         pkg["generatedFiles"]
     ));
+    if pkg["boundTests"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        s.push_str(&format!(
+            "bound tests (already written by binding; make the unimplemented ones pass, never rewrite them): {}\n",
+            pkg["boundTests"]
+        ));
+    }
     s.push_str("\n## Requirements (one test row each; testName is the required test name)\n");
     for group in pkg["requirementGroups"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
         for r in group.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
@@ -567,6 +589,38 @@ fn generate_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> S
                 r["quote"].as_str().unwrap_or("")
             ));
         }
+    }
+    s.push_str("\n## Context\n");
+    s.push_str(pkg["context"].as_str().unwrap_or(""));
+    s.push_str("\n## Contract\n");
+    s.push_str(pkg["instructions"].as_str().unwrap_or(""));
+    s.push('\n');
+    s
+}
+
+// The bind turn's pack: the task package rendered for a model. The same fields
+// begin_binding serves over MCP. Mirrors docs/consumers/bind.md#the-bind-task.
+fn bind_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> String {
+    let pkg = match crate::bind::task(store, target, gs) {
+        Ok(p) => p,
+        Err(e) => return format!("# Work item: bind {}\n(package error: {})\n", target, e),
+    };
+    let mut s = format!("# Work item: bind requirement {} ({})\n", target, pkg["reason"].as_str().unwrap_or(""));
+    s.push_str(&format!("deliverable directory: {}\n", pkg["deliverable"].as_str().unwrap_or(".")));
+    s.push_str(&format!("statement: {}\n", pkg["ears"].as_str().unwrap_or("")));
+    s.push_str(&format!("quote: {}\n", pkg["quote"].as_str().unwrap_or("")));
+    s.push_str(&format!("suggested test name: {}\n", pkg["suggestedTestName"].as_str().unwrap_or("")));
+    if !pkg["medium"].is_null() {
+        s.push_str(&format!("medium (already decided; never re-decide): {}\n", pkg["medium"].as_str().unwrap_or("")));
+    }
+    if !pkg["build"].is_null() {
+        s.push_str(&format!("recorded build: {}\n", pkg["build"]));
+    }
+    if pkg["testConventions"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        s.push_str(&format!("recorded test conventions (reuse them): {}\n", pkg["testConventions"]));
+    }
+    if pkg["entityFiles"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        s.push_str(&format!("the entity's recorded files (start the search here): {}\n", pkg["entityFiles"]));
     }
     s.push_str("\n## Context\n");
     s.push_str(pkg["context"].as_str().unwrap_or(""));

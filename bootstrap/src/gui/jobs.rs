@@ -58,6 +58,8 @@ pub enum JobKind {
     Gen { entities: Vec<String>, force: bool },
     Verify { targets: Vec<String>, test_kind: Option<String>, force: bool },
     Audit,
+    // Draft docs for unclaimed code under the named scopes (empty: every scope).
+    Decompile { scopes: Vec<String> },
     // Grade a model: endpoint and model override the resolved settings when given.
     Benchmark { base_url: Option<String>, model: Option<String> },
 }
@@ -69,6 +71,7 @@ impl JobKind {
             JobKind::Gen { .. } => "gen",
             JobKind::Verify { .. } => "verify",
             JobKind::Audit => "audit",
+            JobKind::Decompile { .. } => "decompile",
             JobKind::Benchmark { .. } => "benchmark",
         }
     }
@@ -80,6 +83,7 @@ impl JobKind {
                 json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force })
             }
             JobKind::Audit => json!({ "kind": "audit" }),
+            JobKind::Decompile { scopes } => json!({ "kind": "decompile", "scopes": scopes }),
             JobKind::Benchmark { base_url, model } => {
                 json!({ "kind": "benchmark", "baseUrl": base_url, "model": model })
             }
@@ -341,6 +345,13 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
             let store = crate::store::Store::load(&st.out);
+            // Binding first, same as `jazyk gen`: owed binds classify each requirement
+            // and the bound tests become the acceptance gates.
+            if let Err(e) =
+                crate::bind::run_all(&store, &st.llm(), &st.gs(), entities, &st.proj().limits, &st.proj().linting, trace)
+            {
+                trace.line("bind", &e);
+            }
             crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
         }
         JobKind::Verify { targets, test_kind, force } => {
@@ -350,6 +361,11 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         JobKind::Audit => {
             let store = crate::store::Store::load(&st.out);
             Ok(crate::verify::audit(&store, &st.gs()))
+        }
+        JobKind::Decompile { scopes } => {
+            let store = crate::store::Store::load(&st.out);
+            crate::control::release_decompile(&st.proj(), &st.out, scopes);
+            crate::decompile::run_all(&st.proj(), &store, &st.llm(), &st.gs(), scopes, trace)
         }
         JobKind::Benchmark { base_url, model } => {
             let mut llm = st.llm();
@@ -374,6 +390,7 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
     if let Some(stage) = match body["kind"].as_str() {
         Some("compile") => Some("compile"),
         Some("gen") => Some("generate"),
+        Some("decompile") => Some("decompile"),
         _ => None,
     } {
         let c = st.control();
@@ -384,7 +401,17 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
                 .map(|w| w.client)
                 .collect();
             if !agents.is_empty() {
-                crate::control::release(&st.proj(), &st.out, Some(stage));
+                if stage == "decompile" {
+                    // Every current scope, or the named ones: the release is the trigger.
+                    let mut scopes = str_list(&body["scopes"]);
+                    if scopes.is_empty() {
+                        let store = crate::store::Store::load(&st.out);
+                        scopes = crate::decompile::scopes(&st.proj(), &store, &st.gs()).into_keys().collect();
+                    }
+                    crate::control::release_decompile(&st.proj(), &st.out, &scopes);
+                } else {
+                    crate::control::release(&st.proj(), &st.out, Some(stage));
+                }
                 let snap = super::api::workers_snapshot(&st);
                 st.events.emit("control.changed", snap);
                 return (
@@ -421,7 +448,13 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
             force: body["force"].as_bool().unwrap_or(false),
         },
         Some("audit") => JobKind::Audit,
-        _ => return super::api::err(StatusCode::BAD_REQUEST, "kind must be compile, gen, verify, or audit"),
+        Some("decompile") => JobKind::Decompile { scopes: str_list(&body["scopes"]) },
+        _ => {
+            return super::api::err(
+                StatusCode::BAD_REQUEST,
+                "kind must be compile, gen, verify, audit, or decompile",
+            )
+        }
     };
     let id = st.jobs.submit(&st, kind);
     (StatusCode::ACCEPTED, Json(json!({ "jobId": id }))).into_response()

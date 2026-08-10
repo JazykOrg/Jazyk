@@ -450,6 +450,32 @@ without its hash is stale by definition.
   gpt-5.5 18/19 score predates the case-set hash and does not compare; re-grading
   stronger models is the open next step.
 
+## Binding and decompilation: the adopted-codebase loop (2026-08-10)
+
+Validated on a copy of the f1 fixture with hand-planted code (`src/catalog.sh`
+implemented, discontinuation logic absent), driven over `jazyk mcp generate` and
+`jazyk mcp decompile` by a scripted client, plus one real `gemma4:e4b-mlx` draft:
+
+- The unclaimed report listed exactly the unbound code files and shrank as bindings
+  landed (`jazyk status` carries it; the project file is excluded).
+- `binding_tasks` listed every graph requirement as `unbound`; `begin_binding` was
+  refused with `awaiting-release` under manual mode and served the package (statement,
+  suggested test name, conventions, contract) after `jazyk release generate`.
+- `record_binding` classified both directions correctly: a passing test with
+  implementing files read `verified` ("the deliverable already satisfies the
+  statement"); a failing test with an empty files list read `unimplemented` and named
+  itself the acceptance gate. The row landed in the ledger; `binding_tasks` emptied.
+- `verification_tasks` excludes `unimplemented` rows (they are generation work) and
+  the queue orders bind after compile and generation after bind.
+- `decompile_tasks` gated the `tests` scope until released; `jazyk decompile tests`
+  with live agent registrations dispatched to them, and with none ran the built-in
+  worker: gemma4 drafted `docs/tests.md` with observed/inferred evidence markers on
+  the first attempt, the hash landed in `decompile/drafts.yaml`, and the scope's
+  release was consumed.
+
+Unit coverage: bind pending/record/unclaimed, decompile gating/submit validation
+(docs-glob membership, H1, em-dash rejection), release consumption. 110 tests green.
+
 ## Cost
 
 F2 (11 documents, cold build): ~30 turns, ~220 rounds, ~18k completion tokens, roughly

@@ -1,7 +1,9 @@
 mod benchmark;
+mod bind;
 mod cli;
 mod context;
 mod control;
+mod decompile;
 mod docsgen;
 mod feedback;
 mod gen;
@@ -62,6 +64,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk query <text>             search entities\n");
     s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--force)\n");
     s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
+    s.push_str("  jazyk decompile [path...]      draft docs describing what unclaimed code does\n");
     s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
@@ -174,6 +177,17 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when every targeted row is verified, 1 otherwise",
             COMMON_LLM
         ),
+        "decompile" => format!(
+            "usage: jazyk decompile [path...]\n\n\
+             Draft documents describing what the code under the named scopes does\n\
+             (default: every scope in the unclaimed report). Records the decompile\n\
+             release; with an agent attached and preferred, the agent's watcher does\n\
+             the drafting, otherwise the built-in worker runs. Drafts land in the docs\n\
+             tree carrying an unratified diagnostic until edited; the next compile\n\
+             extracts them and binding self-checks the statements against the code.\n\n\
+             {}",
+            COMMON_LLM
+        ),
         "docsgen" => format!(
             "usage: jazyk docsgen\n\n\
              Render the per-entity requirements documents into <out>/docsgen/ without\n\
@@ -204,9 +218,10 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         "mcp" => format!(
             "usage: jazyk mcp <toolsets>\n\n\
              Serve the tool registry over stdio as an MCP server. <toolsets> is a comma\n\
-             list of: compile (perform compilation tasks), generate (the generation\n\
-             workflow), verify (the verification workflow), graph (read tools; --write\n\
-             adds raw write tools).\n\n\
+             list of: compile (perform compilation tasks), generate (the binding and\n\
+             generation workflows), verify (the verification workflow), decompile\n\
+             (draft docs for unclaimed code), graph (read tools; --write adds raw\n\
+             write tools).\n\n\
              {}",
             COMMON_OUT
         ),
@@ -340,7 +355,7 @@ fn main() {
             Some(arg) => {
                 // The toolsets served, comma separated: compile, generate, verify, graph.
                 let modes: Vec<String> = arg.split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
-                let known = ["compile", "generate", "verify", "benchmark", "graph"];
+                let known = ["compile", "generate", "verify", "decompile", "benchmark", "graph"];
                 if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
                     eprintln!("{}", cmd_usage("mcp").unwrap());
                     2
@@ -362,6 +377,7 @@ fn main() {
         "release" => cli::run_release(&positional, &opts),
         "gen" => cli::run_gen(&opts, &positional),
         "test" => cli::run_test(&opts, &positional),
+        "decompile" => cli::run_decompile(&opts, &positional),
         "codegen" | "testgen" => {
             eprintln!("jazyk: `{}` is deprecated; generation is one workflow now, use `jazyk gen` (and `jazyk test` to verify)", cmd);
             cli::run_gen(&opts, &positional)

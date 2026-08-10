@@ -22,6 +22,9 @@ pub struct GenSettings {
     // the default) or "pipeline" (the fixed file-reply sequence).
     // Mirrors docs/compiler/project-settings.md#generation.
     pub worker: String,
+    // Globs scoping which deliverable files count as implementation for the unclaimed
+    // report and decompilation. Empty: everything minus the standard exclusions.
+    pub code: Vec<String>,
 }
 
 impl GenSettings {
@@ -32,13 +35,17 @@ impl GenSettings {
             // out of the product's way (docs/compiler/project-settings.md#generation).
             None => proj.root.clone(),
         };
-        GenSettings { deliverable, worker: proj.gen_worker.clone().unwrap_or_else(|| "agentic".into()) }
+        GenSettings {
+            deliverable,
+            worker: proj.gen_worker.clone().unwrap_or_else(|| "agentic".into()),
+            code: proj.gen_code.clone(),
+        }
     }
 
     // Placeholder for sessions with no project (benchmark cases). Gen tools are absent
     // from those toolsets, so the path is never read.
     pub fn from_out(out: &Path) -> GenSettings {
-        GenSettings { deliverable: out.join("gen").join("deliverable"), worker: "agentic".into() }
+        GenSettings { deliverable: out.join("gen").join("deliverable"), worker: "agentic".into(), code: Vec::new() }
     }
 }
 
@@ -538,7 +545,9 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
     }
 }
 
-// Entities whose facts differ from the ledger, or whose recorded files are missing.
+// Entities that are generation work: facts moved, recorded files missing, or a bound
+// requirement is unimplemented (binding classified it as new functionality and its
+// test is the acceptance gate). Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = Vec::new();
@@ -549,13 +558,28 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         }
         let slug = slug_of(id);
         let hash = fact_hash(store, id);
+        let unimplemented: Vec<&String> = rids
+            .iter()
+            .filter(|rid| {
+                ledger
+                    .requirements
+                    .get(*rid)
+                    .map(|row| crate::verify::status_of(store, rid, row, gs).0 == "unimplemented")
+                    .unwrap_or(false)
+            })
+            .collect();
         let current = ledger.entities.get(&slug).map(|e| {
             e.fact_hash == hash && !e.files.is_empty() && e.files.iter().all(|f| gs.deliverable.join(f).exists())
         });
-        if current == Some(true) {
+        if current == Some(true) && unimplemented.is_empty() {
             continue;
         }
-        let (reason, changed) = change_diff(&ledger, &slug, &rids);
+        let (reason, changed) = if current == Some(true) {
+            ("unimplemented-bindings".to_string(), json!(unimplemented))
+        } else {
+            let (r, c) = change_diff(&ledger, &slug, &rids);
+            (r, json!(c))
+        };
         out.push(json!({
             "entity": id,
             "reason": reason,
@@ -740,6 +764,24 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
             "form": m.form, "produced": m.produced, "toolchain": m.toolchain, "artifact": m.artifact,
         })),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd, "produces": b.produces})),
+        // The tests binding already wrote: they define the interface, and the product
+        // conforms to them. A task that cannot make one pass without changing it
+        // reports that; the repair is a re-bind
+        // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
+        "boundTests": rids
+            .iter()
+            .filter_map(|rid| {
+                ledger.requirements.get(rid).map(|row| {
+                    let (status, _) = crate::verify::status_of(store, rid, row, gs);
+                    json!({
+                        "requirement": rid,
+                        "status": status,
+                        "test": {"kind": row.test.kind, "artifact": row.test.artifact,
+                                 "name": row.test.name, "run": row.test.run, "cwd": row.test.cwd},
+                    })
+                })
+            })
+            .collect::<Vec<Value>>(),
     }))
 }
 
@@ -973,7 +1015,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into() };
+        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into(), code: Vec::new() };
         (s, gs)
     }
 

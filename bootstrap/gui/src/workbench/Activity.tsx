@@ -571,8 +571,10 @@ function WorkersStrip() {
   const agents = w.workers.filter((x) => x.kind === 'agent')
   const gatedC = w.gated?.compile ?? 0
   const gatedG = w.gated?.generate ?? 0
+  const unclaimed = w.unclaimed ?? 0
   const held = w.leases.filter((l) => l.task !== 'build')
-  if (agents.length === 0 && gatedC === 0 && gatedG === 0 && held.length === 0) return null
+  if (agents.length === 0 && gatedC === 0 && gatedG === 0 && held.length === 0 && unclaimed === 0)
+    return null
   return (
     <span className="muted" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
       {agents.map((a) => (
@@ -591,10 +593,18 @@ function WorkersStrip() {
       )}
       {gatedG > 0 && (
         <button
-          title="approve the pending graph changes for generation"
+          title="approve the pending graph changes for binding and generation"
           onClick={() => post('/api/release', { stage: 'generate' })}
         >
           release gen {gatedG}
+        </button>
+      )}
+      {unclaimed > 0 && (
+        <button
+          title={`${unclaimed} deliverable file(s) no binding names; draft docs describing what they do`}
+          onClick={() => post('/api/jobs', { kind: 'decompile' })}
+        >
+          decompile {unclaimed} unclaimed
         </button>
       )}
     </span>

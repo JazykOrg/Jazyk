@@ -42,7 +42,9 @@ export type WorkersSnapshot = {
   workers: { id: string; kind: string; client: string; pid: number; heartbeat_at: number; task: string }[]
   leases: { task: string; worker: string; expires_at: number }[]
   gated: { compile: number; generate: number }
-  actionable: { compile: number; generate: number; verify: number }
+  actionable: { compile: number; bind?: number; generate: number; verify: number }
+  unclaimed?: number
+  decompileReleased?: string[]
 }
 
 export const useWorkers = () =>

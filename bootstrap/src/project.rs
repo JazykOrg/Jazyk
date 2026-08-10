@@ -75,6 +75,11 @@ pub struct Project {
     // fact the documents state.
     pub gen_deliverable: Option<String>,
     pub gen_worker: Option<String>,
+    // [gen] code: globs scoping which deliverable files count as implementation for
+    // the unclaimed report and decompilation. Empty means every file under the
+    // deliverable minus the standard exclusions.
+    // Mirrors docs/compiler/project-settings.md#generation.
+    pub gen_code: Vec<String>,
     pub workflow: Workflow,
     pub llm: LlmSettings,
     pub linting: Linting,
@@ -91,6 +96,7 @@ impl Default for Project {
             out: PathBuf::from("./jazyk-out"),
             gen_deliverable: None,
             gen_worker: None,
+            gen_code: Vec::new(),
             workflow: Workflow::default(),
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
@@ -271,6 +277,9 @@ impl Project {
         }
         if let Some(v) = t.string("gen.worker") {
             p.gen_worker = Some(v);
+        }
+        if let Some(v) = t.array("gen.code") {
+            p.gen_code = v;
         }
         if let Some(v) = t.string("workflow.compile") {
             p.workflow.compile = v;

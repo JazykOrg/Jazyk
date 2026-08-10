@@ -37,8 +37,11 @@ pub struct Control {
 pub struct Released {
     // Document -> content hash approved for reconciliation.
     pub compile: BTreeMap<String, String>,
-    // Graph generation approved for generation work.
+    // Graph generation approved for generation and binding work.
     pub generate: u64,
+    // Scopes approved for decompilation. A submitted draft covering a scope consumes
+    // it; there is no auto mode. Mirrors docs/consumers/decompile.md#triggering.
+    pub decompile: Vec<String>,
 }
 
 impl Control {
@@ -86,6 +89,25 @@ pub fn release(proj: &Project, out: &Path, stage: Option<&str>) {
     if stage.is_none() || stage == Some("generate") {
         c.released.generate = crate::store::Store::load(out).status.generation;
     }
+    c.save(out);
+}
+
+// Approve decompilation scopes. Scopes accumulate until a submitted draft consumes
+// them. Mirrors docs/consumers/decompile.md#triggering.
+pub fn release_decompile(proj: &Project, out: &Path, scopes: &[String]) {
+    let mut c = Control::load(proj, out);
+    for s in scopes {
+        if !c.released.decompile.contains(s) {
+            c.released.decompile.push(s.clone());
+        }
+    }
+    c.save(out);
+}
+
+// A submitted draft covering a scope consumes its release.
+pub fn consume_decompile(proj: &Project, out: &Path, scope: &str) {
+    let mut c = Control::load(proj, out);
+    c.released.decompile.retain(|s| s != scope);
     c.save(out);
 }
 

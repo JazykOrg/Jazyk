@@ -221,6 +221,37 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "binding_tasks",
+            description: "Requirements owing a binding, with a reason (unbound, requirement-changed, artifact-gone). A binding ties one requirement to the deliverable: the implementing files (possibly none), the test that judges it, and the verdict. Deterministic; no model involved. Next: begin_binding on one requirement.",
+            parameters: obj(json!({}), &[]),
+        },
+        ToolDef {
+            name: "begin_binding",
+            description: "The bind package for one requirement: instructions (the bind contract), statement, quote, factHash, context pack, the deliverable directory, the suggested test name, the decided medium and build when they exist, and the recorded test conventions. Search the deliverable with your own tools: find the implementing files (or none), find or write the test, run it, then record_binding.",
+            parameters: obj(json!({"requirement": {"type": "string"}}), &["requirement"]),
+        },
+        ToolDef {
+            name: "record_binding",
+            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement); test is {kind: programmatic|llm, label, artifact, name, run, cwd?}; verdict is the test's outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the test is its acceptance gate), failing (fail with files: the deliverable contradicts the statement, a diagnostic for the author). Never rewrite implementation files during binding.",
+            parameters: obj(
+                json!({
+                    "requirement": {"type": "string"},
+                    "files": {"type": "array", "items": {"type": "string"}},
+                    "test": {"type": "object", "properties": {
+                        "kind": {"type": "string", "enum": ["programmatic", "llm"]},
+                        "label": {"type": "string"},
+                        "artifact": {"type": "string"},
+                        "name": {"type": "string"},
+                        "run": {"type": "string"},
+                        "cwd": {"type": "string"}
+                    }},
+                    "verdict": {"type": "string", "enum": ["pass", "fail"]},
+                    "evidence": {"type": "string"}
+                }),
+                &["requirement", "files", "test", "verdict"],
+            ),
+        },
+        ToolDef {
             name: "verification_tasks",
             description: "Ledger rows needing action, with derived status (missing, stale-requirement, stale-test, stale-code, failing, unverified) and reason. Deterministic; no model involved. Next: run_tests for programmatic rows, begin_verification for llm rows.",
             parameters: obj(json!({"filter": {"type": "string", "enum": ["stale", "failing", "all"]}, "entity": {"type": "string"}}), &[]),
@@ -285,6 +316,7 @@ pub fn catalog() -> Vec<ToolDef> {
 
 pub const READ_TOOLS: [&str; 6] = ["context", "expand", "search", "read_section", "get_entity", "diagnostics"];
 pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
+pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
 pub const VERIFY_TOOLS: [&str; 4] = ["verification_tasks", "begin_verification", "run_tests", "record_verdict"];
 // In-process only: a generation turn's file and command tools, never served over MCP.
 pub const FILE_TOOLS: [&str; 4] = ["read_text_file", "write_text_file", "list_files", "run_command"];
@@ -317,9 +349,18 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             v.extend(["begin_generation", "record_generation", "run_tests", "done"]);
             v
         }
+        // The in-process bind worker: search the deliverable, find or write the test,
+        // record the row. Mirrors docs/consumers/bind.md#the-bind-task.
+        "bind-requirement" => {
+            let mut v = READ_TOOLS.to_vec();
+            v.extend(FILE_TOOLS);
+            v.extend(["record_binding", "done"]);
+            v
+        }
         // MCP servings. Mirrors docs/compiler/tools.md#task-toolsets.
         "mcp-generate" => {
             let mut v = READ_TOOLS.to_vec();
+            v.extend(BIND_TOOLS);
             v.extend(GEN_TOOLS);
             v.push("run_tests");
             v
@@ -1564,6 +1605,34 @@ impl ToolSession {
                 }
                 crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &args["manifest"], &gs)
                     .map_err(|e| ToolError::new("bad-manifest", e))
+            }
+            "binding_tasks" => {
+                let gs = self.gen_settings();
+                let tasks = crate::bind::pending(&self.snapshot, &gs);
+                if tasks.is_empty() {
+                    return Ok(json!({"tasks": [], "note": "every requirement is bound; generation_tasks lists what binding left unimplemented"}));
+                }
+                Ok(json!({"tasks": tasks, "next": "begin_binding on one requirement"}))
+            }
+            "begin_binding" => {
+                let rid = Self::str_arg(args, "requirement")?;
+                let gs = self.gen_settings();
+                crate::bind::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
+            }
+            "record_binding" => {
+                let rid = Self::str_arg(args, "requirement")?;
+                let verdict = Self::str_arg(args, "verdict")?;
+                let gs = self.gen_settings();
+                let files = Self::str_list(args, "files");
+                let evidence = Self::opt_str(args, "evidence");
+                if !args["test"].is_object() {
+                    return Err(ToolError::new(
+                        "bad-argument",
+                        "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into(),
+                    ));
+                }
+                crate::bind::record(&self.snapshot, &rid, &files, &args["test"], &verdict, evidence.as_deref(), &gs)
+                    .map_err(|e| ToolError::new("bad-binding", e))
             }
             "verification_tasks" => {
                 let gs = self.gen_settings();

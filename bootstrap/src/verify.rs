@@ -30,6 +30,10 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     }
     match row.verdict.as_str() {
         "pass" => ("verified".into(), "passed".into()),
+        // A failing test with nothing implementing it is not a defect, it is a bound
+        // spec awaiting generation; with implementing files it is a contradiction
+        // between deliverable and statement (docs/consumers/bind.md#what-the-verdict-means).
+        "fail" if row.files.is_empty() => ("unimplemented".into(), "unimplemented".into()),
         "fail" => ("failing".into(), "failed".into()),
         // A command ran and left a code, yet no verdict was recorded: the runner
         // failed and the requirement was never exercised
@@ -61,8 +65,10 @@ pub fn pending(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Op
         let actionable = match filter.unwrap_or("stale") {
             "all" => true,
             "failing" => status == "failing",
-            // Default: everything that needs a hand, excluding verified.
-            _ => status != "verified",
+            // Default: everything that needs a verifier's hand. Verified rows are
+            // done; unimplemented rows are generation work, their bound test is the
+            // acceptance gate (docs/consumers/bind.md#what-the-verdict-means).
+            _ => status != "verified" && status != "unimplemented",
         };
         if !actionable {
             continue;
@@ -580,7 +586,7 @@ mod tests {
                 updated: None,
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into() };
+        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into(), code: Vec::new() };
         std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
         std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");

@@ -644,7 +644,7 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
             let case_start = std::time::Instant::now();
             let case_tokens_before = llm::tokens_spent();
             // The generation turn writes into a temp deliverable beside the sandbox.
-            let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into() };
+            let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into(), code: Vec::new() };
             std::fs::create_dir_all(&gs.deliverable).ok();
             let mut fail: Option<String> = None;
             let mut aborted = false;

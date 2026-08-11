@@ -511,12 +511,15 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
 
   const buildExtensions = (uri: string): Extension[] => {
     const completionSource = async (ctx: CompletionContext): Promise<CompletionResult | null> => {
-      const before = ctx.matchBefore(/[`[][^\s`\]]*$/)
-      if (!before && !ctx.explicit) return null
+      // Triggered inside a backtick or link opener; the trigger character itself
+      // stays, only the partial word after it is matched and replaced.
+      const trigger = ctx.matchBefore(/[`[][^\s`\]]*$/)
+      const word = ctx.matchBefore(/[\w-]+$/)
+      if (!trigger && !ctx.explicit) return null
       try {
         const items = await propsRef.current.lsp.completion(uri, posToLsp(ctx.state, ctx.pos))
         if (items.length === 0) return null
-        let from = before ? before.from : ctx.pos
+        let from = trigger ? trigger.from + 1 : word ? word.from : ctx.pos
         const first = items.find((it) => it.textEdit)
         if (first?.textEdit) from = lspRange(ctx.state, first.textEdit.range).from
         return {

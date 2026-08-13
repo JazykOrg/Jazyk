@@ -47,7 +47,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "search",
-            description: "Look up entities by name or alias before creating one. Deterministic: exact match, then substring, then token overlap. Returns up to 8 results.",
+            description: "Look up entities by name or alias before creating one. Returns up to 8 possible matches; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
             parameters: obj(json!({"query": {"type": "string"}}), &["query"]),
         },
         ToolDef {
@@ -161,7 +161,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "set_coverage",
-            description: "Mark a section covered (its content is reflected in the graph) or non-normative (it states no requirements). State non-normative requires the note saying why.",
+            description: "Mark a section covered (its content is reflected in the graph) or non-normative (it states no requirements). Setting state to non-normative requires a note saying why.",
             parameters: obj(
                 json!({
                     "section": {"type": "string"},
@@ -1084,7 +1084,7 @@ impl ToolSession {
                         return Err(ToolError::new(
                             "near-duplicate",
                             format!(
-                                "`{}` is a name variant of existing `{}` ({}); reuse that id and add your wording with update_entity add_aliases. If it truly is a different concept, repeat the call with a `note` saying how they differ",
+                                "`{}` looks like a name variant of existing `{}` ({}); if it is the same concept, reuse that id and add your wording with update_entity add_aliases. A field, part, state, or child concept of it IS a different concept: repeat the call with a `note` naming that relation",
                                 name_arg, eid, ename
                             ),
                         ));

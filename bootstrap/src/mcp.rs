@@ -528,7 +528,8 @@ impl McpServer {
                 "instructions": instructions_field,
                 "package": pack,
                 "writeTools": write_tools,
-                "note": "`done` finishes the task here (finish_compilation is the same call); the read tools and report_feedback are always in scope",
+                "readTools": ["context", "expand", "search", "read_section", "get_entity", "diagnostics"],
+                "finishTool": "done",
                 "next": "stage findings with the write tools, then done with a one-line summary",
             })
         };
@@ -990,9 +991,9 @@ impl McpServer {
                         "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then finish_compilation. One task open at a time.",
                         "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}}, "additionalProperties": false}
                     }));
-                    if self.bridge.ephemeral {
-                        // The instructions say `done`; a bridge serving lists it by
-                        // that name so the model never translates.
+                    {
+                        // The instructions say `done`; every compile serving lists it
+                        // by that name so the model never translates.
                         tools.push(json!({
                             "name": "done",
                             "description": "Finish the open task: run the done gates (every dirty section marked, every stale anchor resolved) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again.",

@@ -344,28 +344,32 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         JobKind::Gen { entities, force } => {
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
+            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
+            runner.set_build_token(Some(format!("internal-{}", std::process::id())));
             let store = crate::store::Store::load(&st.out);
             // Binding first, same as `jazyk gen`: owed binds classify each requirement
             // and the bound tests become the acceptance gates.
             if let Err(e) =
-                crate::bind::run_all(&store, &st.llm(), &st.gs(), entities, &st.proj().limits, &st.proj().linting, trace)
+                crate::bind::run_all(&store, &runner, &st.gs(), entities, &st.proj().limits, &st.proj().linting, trace)
             {
                 trace.line("bind", &e);
             }
-            crate::gen::run_all(&store, &st.llm(), &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
+            crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
         }
         JobKind::Verify { targets, test_kind, force } => {
+            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             let store = crate::store::Store::load(&st.out);
-            crate::verify::run_all(&store, &st.llm(), &st.gs(), targets, test_kind.as_deref(), *force, trace)
+            crate::verify::run_all(&store, &runner, &st.gs(), targets, test_kind.as_deref(), *force, trace)
         }
         JobKind::Audit => {
             let store = crate::store::Store::load(&st.out);
             Ok(crate::verify::audit(&store, &st.gs()))
         }
         JobKind::Decompile { scopes } => {
+            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             let store = crate::store::Store::load(&st.out);
             crate::control::release_decompile(&st.proj(), &st.out, scopes);
-            crate::decompile::run_all(&st.proj(), &store, &st.llm(), &st.gs(), scopes, trace)
+            crate::decompile::run_all(&st.proj(), &store, &runner, &st.gs(), scopes, trace)
         }
         JobKind::Benchmark { base_url, model } => {
             let mut llm = st.llm();

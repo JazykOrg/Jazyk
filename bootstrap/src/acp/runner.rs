@@ -1,0 +1,340 @@
+// The turn runner: executes one work item as an ACP worker session against the
+// configured agent. Jazyk stays the client and sole initiator; the session gets one
+// injected `jazyk mcp` serving scoped to the task, the prompt is fixed and
+// agent-neutral, and success is read from the store, never from the agent's word.
+// Mirrors docs/frontends/acp.md#worker-sessions.
+use super::config::{self, ResolvedAgent, EMBEDDED};
+use super::host::{AcpHost, McpSpec};
+use super::translate::UpdateTranslator;
+use crate::llm::Llm;
+use crate::model::WorkItem;
+use crate::project::Project;
+use crate::turn::{Trace, TraceEvent};
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+pub struct TurnReport {
+    pub applied: usize,
+    // Entity ids the item's commits touched, requirement ids they changed: what the
+    // reconciler schedules reviews from, derived from the journal entries the item
+    // landed.
+    pub touched: BTreeSet<String>,
+    pub changed: BTreeSet<String>,
+    pub rounds: u32,
+    pub tokens: u64,
+    pub failed: Option<String>,
+}
+
+pub struct AcpRunner {
+    // The agent spawns on the first session, so a run with no work never pays for
+    // one (a no-op rebuild stays free).
+    host: Mutex<Option<AcpHost>>,
+    agent: ResolvedAgent,
+    extra_env: Vec<(String, String)>,
+    project: Project,
+    out: PathBuf,
+    // The build's worker id when this runner is part of one internal build; its
+    // servings skip the build-lease refusal and the release gate for their targets.
+    build_token: Mutex<Option<String>>,
+}
+
+impl AcpRunner {
+    // Resolve the agent (config ladder; JAZYK_ACP_AGENT carries the --agent flag).
+    // The embedded profile gets the resolved LLM settings as environment. The agent
+    // process itself spawns lazily on the first session.
+    pub fn start(project: &Project, llm: &Llm, out: &Path) -> Result<AcpRunner, String> {
+        let agent = config::resolve_acp(
+            None,
+            &project.acp,
+            &crate::project::load_global_acp(),
+            |name| std::env::var(name).ok(),
+        )?;
+        let extra_env = if agent.name == EMBEDDED {
+            let mut v = vec![
+                ("JAZYK_LLM_BASE_URL".to_string(), llm.base_url.clone()),
+                ("JAZYK_MODEL".to_string(), llm.model.clone()),
+            ];
+            if !llm.api_key.is_empty() {
+                v.push(("JAZYK_API_KEY".to_string(), llm.api_key.clone()));
+            }
+            if let Some(t) = llm.temperature {
+                v.push(("JAZYK_TEMPERATURE".to_string(), t.to_string()));
+            }
+            v
+        } else {
+            Vec::new()
+        };
+        Ok(AcpRunner {
+            host: Mutex::new(None),
+            agent,
+            extra_env,
+            project: project.clone(),
+            out: out.to_path_buf(),
+            build_token: Mutex::new(None),
+        })
+    }
+
+    pub fn agent(&self) -> &ResolvedAgent {
+        &self.agent
+    }
+
+    // One session, spawning the agent on first use. The lock guards the spawn, not
+    // the session: concurrent items share the one host.
+    fn session(&self, mcp: Vec<McpSpec>) -> Result<super::host::SessionHandle, String> {
+        let mut h = self.host.lock().unwrap();
+        if h.is_none() {
+            *h = Some(AcpHost::start(
+                self.agent.clone(),
+                self.project.root.clone(),
+                self.extra_env.clone(),
+            )?);
+        }
+        h.as_ref().unwrap().new_session(&self.project.root, mcp)
+    }
+
+    // Mark this runner as part of a running internal build: its servings carry the
+    // build's token. Cleared when the guard drops.
+    pub fn set_build_token(&self, token: Option<String>) {
+        *self.build_token.lock().unwrap() = token;
+    }
+
+    // The serving injected into one work item's session.
+    fn mcp_spec(&self, item: &WorkItem) -> McpSpec {
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "jazyk".to_string());
+        let modes = match item.task.as_str() {
+            "bind-requirement" | "generate-entity" => "generate",
+            _ => "compile",
+        };
+        let mut args = vec![
+            "mcp".to_string(),
+            modes.to_string(),
+            "--ephemeral".to_string(),
+            "--out".to_string(),
+            self.out.to_string_lossy().into_owned(),
+        ];
+        if modes == "compile" {
+            args.push("--only".to_string());
+            args.push(item.target.clone());
+        }
+        if let Some(t) = self.build_token.lock().unwrap().as_ref() {
+            args.push("--build-token".to_string());
+            args.push(t.clone());
+        }
+        if modes == "generate" && self.agent.serve_files {
+            args.push("--serve-files".to_string());
+        }
+        McpSpec { name: "jazyk".to_string(), command: exe, args, env: Vec::new() }
+    }
+
+    // The fixed, agent-neutral prompt. The task's real contract rides in the
+    // `begin_*` reply; this only points the agent at it.
+    fn prompt_for(item: &WorkItem) -> String {
+        match item.task.as_str() {
+            "bind-requirement" => format!(
+                "You are performing one jazyk binding task through the connected `jazyk` MCP server. \
+                 Call `begin_binding` with {{\"requirement\": \"{}\"}}. Follow the returned package exactly: \
+                 search the deliverable for the implementation and an existing test, write the missing test \
+                 (never an implementation file), run it, then `record_binding` with the verdict and evidence. \
+                 Do exactly this one requirement, then stop.",
+                item.target
+            ),
+            "generate-entity" => format!(
+                "You are performing one jazyk generation task through the connected `jazyk` MCP server. \
+                 Call `begin_generation` with {{\"entity\": \"{}\"}}. Follow the returned package exactly: \
+                 write the entity's part of the deliverable and its tests, make the bound tests pass, then \
+                 `record_generation` with the manifest, then `run_tests`. \
+                 Do exactly this one entity, then stop.",
+                item.target
+            ),
+            _ => format!(
+                "You are performing one jazyk compilation task through the connected `jazyk` MCP server. \
+                 Call `begin_compilation` with {{\"task\": \"{}\"}}. The reply carries the task's instructions \
+                 and work package; follow them exactly, staging findings with the write tools it names. \
+                 Finish with `finish_compilation` and a one-line summary; if the finish is rejected, repair \
+                 exactly what the error names and finish again. \
+                 Do exactly this one task, never begin any other, then stop.",
+                item.target
+            ),
+        }
+    }
+
+    // Run one work item as one session. The commit happens inside the injected
+    // serving; the report is derived from the journal and the queue afterwards.
+    pub fn run_item(&self, item: &WorkItem, trace: &Trace) -> TurnReport {
+        let label = format!("{} {}", item.task, item.target);
+        trace.event(TraceEvent::TurnStart {
+            label: label.clone(),
+            task: item.task.clone(),
+            target: item.target.clone(),
+            doc: (item.task == "reconcile-doc").then(|| item.target.clone()),
+            sections: item.dirty_sections.clone(),
+            dirty: item.dirty_sections.len(),
+            stale: item.stale_anchors.len(),
+        });
+        let gen_before = crate::store::read_generation(&self.out);
+        let session = match self.session(vec![self.mcp_spec(item)]) {
+            Ok(s) => s,
+            Err(e) => {
+                return TurnReport {
+                    applied: 0,
+                    touched: BTreeSet::new(),
+                    changed: BTreeSet::new(),
+                    rounds: 0,
+                    tokens: 0,
+                    failed: Some(format!("session: {}", e)),
+                }
+            }
+        };
+        let translator = Arc::new(Mutex::new(UpdateTranslator::new(&label)));
+        let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cb_translator = translator.clone();
+        let cb_trace = trace.clone();
+        let cb_calls = calls.clone();
+        let outcome = session.prompt(
+            &Self::prompt_for(item),
+            Arc::new(move |u| {
+                if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
+                    cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                cb_translator.lock().unwrap().on_update(u, &cb_trace);
+            }),
+        );
+        session.close();
+        let mut t = translator.lock().unwrap();
+        t.finish(trace);
+        let tokens = t.tokens;
+        drop(t);
+        crate::llm::add_tokens(tokens);
+        let rounds = calls.load(std::sync::atomic::Ordering::Relaxed);
+
+        let stop = match outcome {
+            Ok(o) => o,
+            Err(e) => {
+                return TurnReport {
+                    applied: 0,
+                    touched: BTreeSet::new(),
+                    changed: BTreeSet::new(),
+                    rounds,
+                    tokens,
+                    failed: Some(e),
+                }
+            }
+        };
+
+        let gen_after = crate::store::read_generation(&self.out);
+        let (applied, touched, changed) = journal_diff(&self.out, gen_before, gen_after, item);
+
+        // Success is the store's word: a compilation item must have left the queue,
+        // a bind or generation item is judged by its caller against the ledger.
+        let failed = match item.task.as_str() {
+            "bind-requirement" | "generate-entity" => None,
+            _ => {
+                let q = crate::queue::compute(&self.project, &self.out);
+                let still_listed = q.compile.iter().any(|e| e["target"] == item.target.as_str());
+                if still_listed {
+                    Some(format!(
+                        "the task did not land (session stopped: {}{})",
+                        stop.stop,
+                        if stop.idled { ", idle watchdog fired" } else { "" }
+                    ))
+                } else {
+                    None
+                }
+            }
+        };
+        if failed.is_none() && !matches!(item.task.as_str(), "bind-requirement" | "generate-entity") {
+            trace.event(TraceEvent::TurnDone {
+                label,
+                staged: applied,
+                rounds,
+                mode: "done".into(),
+                summary: String::new(),
+            });
+        }
+        TurnReport { applied, touched, changed, rounds, tokens, failed }
+    }
+
+    // One-shot prose completion through a bare session (no tools): the ACP form of
+    // the old `llm.chat`, for the medium decision, llm-row judgment, and drafting.
+    pub fn ask(&self, system: &str, user: &str, label: &str, _step: &str) -> Result<String, String> {
+        let session = self.session(Vec::new()).map_err(|e| format!("session: {}", e))?;
+        let text: Arc<Mutex<String>> = Default::default();
+        let sink = text.clone();
+        let prompt = format!("{}\n\n{}", system, user);
+        let outcome = session.prompt(
+            &prompt,
+            Arc::new(move |u| {
+                if let agent_client_protocol::schema::v1::SessionUpdate::AgentMessageChunk(c) = u {
+                    if let agent_client_protocol::schema::v1::ContentBlock::Text(t) = &c.content {
+                        sink.lock().unwrap().push_str(&t.text);
+                    }
+                }
+            }),
+        );
+        session.close();
+        let outcome = outcome?;
+        let text = text.lock().unwrap().clone();
+        if text.trim().is_empty() {
+            return Err(format!("empty reply (session stopped: {}) for {}", outcome.stop, label));
+        }
+        Ok(text)
+    }
+}
+
+// Attribute the journal entries between two generations to the work item, and pull
+// the scheduling sets out of their mutations. The exact semantics live in the store's
+// commit; this reads what it wrote. Mirrors docs/frontends/acp.md#worker-sessions.
+fn journal_diff(
+    out: &Path,
+    from: u64,
+    to: u64,
+    item: &WorkItem,
+) -> (usize, BTreeSet<String>, BTreeSet<String>) {
+    let mut applied = 0usize;
+    let mut touched = BTreeSet::new();
+    let mut changed = BTreeSet::new();
+    for g in (from + 1)..=to {
+        let path = out.join("journal").join(format!("g{}.yaml", g));
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(entry) = serde_norway::from_str::<crate::model::JournalEntry>(&text) else { continue };
+        if entry.work_item.task != item.task || entry.work_item.target != item.target {
+            continue;
+        }
+        applied += entry.mutations.len();
+        for m in &entry.mutations {
+            let Some(o) = m.as_object() else { continue };
+            for (kind, body) in o {
+                let id = |v: &Value| v.as_str().map(|s| s.to_string());
+                match kind.as_str() {
+                    "CreateEntity" | "UpdateEntity" => {
+                        touched.extend(id(&body["id"]));
+                    }
+                    "MergeEntities" => {
+                        touched.extend(id(&body["keep"]));
+                    }
+                    "CreateRequirement" => {
+                        changed.extend(id(&body["id"]));
+                        if let Some(ents) = body["requirement"]["entities"].as_array() {
+                            touched.extend(ents.iter().filter_map(|e| e.as_str().map(|s| s.to_string())));
+                        }
+                    }
+                    "UpdateRequirement" => {
+                        if !body["ears"].is_null() {
+                            changed.extend(id(&body["id"]));
+                        }
+                        if let Some(ents) = body["entities"].as_array() {
+                            touched.extend(ents.iter().filter_map(|e| e.as_str().map(|s| s.to_string())));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    (applied, touched, changed)
+}

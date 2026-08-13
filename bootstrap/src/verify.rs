@@ -778,7 +778,7 @@ pub fn select_rows(
 // Mirrors docs/consumers/gen.md#runners.
 pub fn run_all(
     store: &Store,
-    llm: &crate::llm::Llm,
+    runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     targets: &[String],
     kind: Option<&str>,
@@ -787,7 +787,7 @@ pub fn run_all(
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
     // Every prompt this run sends reports under the requirement it is judging.
-    let llm = &llm.with_trace(trace);
+
     let selected = select_rows(store, gs, targets, kind, force);
     if !targets.is_empty() && selected.is_empty() {
         return Err("no ledger rows match the given target(s); run `jazyk gen` first or check the ids".into());
@@ -836,7 +836,7 @@ pub fn run_all(
                         task_pkg["context"].as_str().unwrap_or_default(),
                         evidence_input
                     );
-                    match llm.chat(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge") {
+                    match runner.ask(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge") {
                         Ok(reply) => {
                             let up = reply.to_uppercase();
                             match (up.find("PASS"), up.find("FAIL")) {

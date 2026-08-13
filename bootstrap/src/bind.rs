@@ -283,14 +283,13 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
 // with the current statement hash. Mirrors docs/consumers/bind.md#when-binding-runs.
 pub fn run_all(
     store: &Store,
-    llm: &crate::llm::Llm,
+    runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     targets: &[String],
-    limits: &crate::project::Limits,
-    lint: &crate::project::Linting,
+    _limits: &crate::project::Limits,
+    _lint: &crate::project::Linting,
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
-    let llm = &llm.with_trace(trace);
     let owed: Vec<Value> = pending(store, gs)
         .into_iter()
         .filter(|t| {
@@ -310,7 +309,7 @@ pub fn run_all(
     {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() {
-            let medium = crate::gen::decide_medium(store, llm)?;
+            let medium = crate::gen::decide_medium(store, runner)?;
             trace.line("bind medium", &medium.line());
             ledger.medium = Some(medium);
             ledger.save(&store.out);
@@ -330,7 +329,7 @@ pub fn run_all(
             dirty_sections: Vec::new(),
             stale_anchors: Vec::new(),
         };
-        let out = crate::turn::run_turn(llm, store.clone(), &item, limits, lint, gs, trace);
+        let out = runner.run_item(&item, trace);
         if let Some(e) = out.failed {
             trace.line("bind", &format!("{} failed: {}", rid, e));
             failures += 1;

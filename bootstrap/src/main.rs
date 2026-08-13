@@ -345,6 +345,12 @@ fn main() {
         i += 1;
     }
 
+    // The --agent flag rides the environment so every resolver on the ladder sees it
+    // (docs/compiler/project-settings.md#acp).
+    if let Some(a) = &opts.agent {
+        std::env::set_var("JAZYK_ACP_AGENT", a);
+    }
+
     if want_help {
         let key = match cmd.as_str() {
             "codegen" | "testgen" => "gen",

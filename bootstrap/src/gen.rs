@@ -425,7 +425,7 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
 // answer is recorded in the ledger and stated as a fact to every later task, so no
 // per-entity task has to work it out again.
 // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
-pub fn decide_medium(store: &Store, llm: &crate::llm::Llm) -> Result<Medium, String> {
+pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> Result<Medium, String> {
     // Every statement in the graph, capped: the medium is stated somewhere in the
     // documents, and which statement says it is exactly what the model must find.
     let mut statements: Vec<String> = store
@@ -464,7 +464,7 @@ pub fn decide_medium(store: &Store, llm: &crate::llm::Llm) -> Result<Medium, Str
         } else {
             format!("{}\n\nYour previous answer was rejected: {}. Reply with the JSON object only.", user, last)
         };
-        let reply = llm.chat(system, &ask, "gen medium", if attempt == 0 { "decide" } else { "decide retry" })?;
+        let reply = runner.ask(system, &ask, "gen medium", if attempt == 0 { "decide" } else { "decide retry" })?;
         let raw = crate::llm::extract_json_object(&reply).unwrap_or(reply);
         let v: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
@@ -1340,17 +1340,15 @@ mod tests {
 // unless forced. Returns {regenerated, skipped, failures}.
 pub fn run_all(
     store: &Store,
-    llm: &crate::llm::Llm,
+    runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     entities: &[String],
     force: bool,
-    limits: &crate::project::Limits,
-    lint: &crate::project::Linting,
+    _limits: &crate::project::Limits,
+    _lint: &crate::project::Linting,
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
-    // Every prompt this run sends reports under the entity it is generating.
-    let llm = &llm.with_trace(trace);
     let mut targets: Vec<String> = if entities.is_empty() {
         store
             .graph
@@ -1381,7 +1379,7 @@ pub fn run_all(
     {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() || ledger.entities.is_empty() {
-            let medium = decide_medium(store, llm)?;
+            let medium = decide_medium(store, runner)?;
             trace.line("gen medium", &medium.line());
             ledger.medium = Some(medium);
             ledger.save(&store.out);
@@ -1435,9 +1433,9 @@ pub fn run_all(
             }
         };
         let result = if gs.worker == "pipeline" {
-            gen_one(store, llm, gs, id, &task)
+            gen_one(store, runner, gs, id, &task)
         } else {
-            gen_turn(store, llm, gs, id, limits, lint, trace)
+            gen_turn(store, runner, gs, id, trace)
         };
         match result {
             Ok(files) => {
@@ -1482,11 +1480,9 @@ pub fn run_all(
 // Mirrors docs/compiler/turns.md#generation-turns.
 fn gen_turn(
     store: &Store,
-    llm: &crate::llm::Llm,
+    runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     id: &str,
-    limits: &crate::project::Limits,
-    lint: &crate::project::Linting,
     trace: &crate::turn::Trace,
 ) -> Result<usize, String> {
     let item = crate::model::WorkItem {
@@ -1495,8 +1491,8 @@ fn gen_turn(
         dirty_sections: Vec::new(),
         stale_anchors: Vec::new(),
     };
-    let out = crate::turn::run_turn(llm, store.clone(), &item, limits, lint, gs, trace);
-    if let Some(e) = out.failed {
+    let report = runner.run_item(&item, trace);
+    if let Some(e) = report.failed {
         return Err(e);
     }
     let ledger = Ledger::load(&store.out);
@@ -1623,7 +1619,7 @@ fn medium_directive(medium: &Option<Medium>) -> String {
     }
 }
 
-pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
+pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
     let mut baselined: std::collections::HashSet<String> = Default::default();
     let instructions = task["instructions"].as_str().unwrap_or_default();
     // The deliverable's medium is decided before any task runs; this task states it
@@ -1713,8 +1709,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 header, k + 1, parts, req_lines.join("\n"), product_rel, crate::llm::truncate(&code, 20_000)
             )
         };
-        let reply = llm
-            .chat(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
+        let reply = runner
+            .ask(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
             // Shape gets one corrective round here too: the product step is where a
@@ -1727,8 +1723,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                         "{}\nYour reply was not in the required shape ({}). This step takes no JSON. Reply exactly like this, the FILE line first and the file after it:\n\nFILE: path/of/your/choice.ext\n<the content>\n",
                         user, e
                     );
-                    let again = llm
-                        .chat(instructions, &retry, &format!("gen {}", id), "product format retry")
+                    let again = runner
+                        .ask(instructions, &retry, &format!("gen {}", id), "product format retry")
                         .map_err(|e| format!("product format retry: {}", e))?;
                     parse_file_replies(&again)?
                 }
@@ -1756,8 +1752,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                     "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
                     user, path, owner
                 );
-                let reply2 = llm
-                    .chat(instructions, &retry, &format!("gen {}", id), "product retry")
+                let reply2 = runner
+                    .ask(instructions, &retry, &format!("gen {}", id), "product retry")
                     .map_err(|e| format!("product retry: {}", e))?;
                 let (p, b) = parse_file_reply(&reply2).map(|(p, b)| (p, b))?;
                 if let Some(o) = owner_of(&p) {
@@ -1801,8 +1797,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         req_lines.join("\n"),
         crate::llm::truncate(&code, 16_000)
     );
-    let tests_reply = llm
-        .chat(instructions, &tests_user, &format!("gen {}", id), "tests")
+    let tests_reply = runner
+        .ask(instructions, &tests_user, &format!("gen {}", id), "tests")
         .map_err(|e| format!("tests file: {}", e))?;
     let mut files = vec![product_rel.clone()];
     // Files the manifest declares as the deliverable's, filled in once it is parsed
@@ -1838,8 +1834,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                     "{}\nYour reply was not in the required shape ({}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:\n\nFILE: tests/test_example.py\nimport unittest\n\nclass TestExample(unittest.TestCase):\n    def test_name_from_the_list(self):\n        ...\n\nOr reply with exactly NONE when no requirement here can be tested programmatically.",
                     tests_user, e
                 );
-                let again = llm
-                    .chat(instructions, &retry, &format!("gen {}", id), "tests format retry")
+                let again = runner
+                    .ask(instructions, &retry, &format!("gen {}", id), "tests format retry")
                     .map_err(|e| format!("tests format retry: {}", e))?;
                 if again.trim() == "NONE" {
                     None
@@ -1854,8 +1850,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
                 tests_user, path, owner
             );
-            let reply2 = llm
-                .chat(instructions, &retry, &format!("gen {}", id), "tests retry")
+            let reply2 = runner
+                .ask(instructions, &retry, &format!("gen {}", id), "tests retry")
                 .map_err(|e| format!("tests retry: {}", e))?;
             let (p, b) = parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
             if let Some(o) = owner_of(&p) {
@@ -1934,8 +1930,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
         tests_rel,
         crate::llm::truncate(&tests_code, 12_000)
     );
-    let manifest_reply = llm
-        .chat(instructions, &manifest_user, &format!("gen {}", id), "manifest")
+    let manifest_reply = runner
+        .ask(instructions, &manifest_user, &format!("gen {}", id), "manifest")
         .map_err(|e| format!("manifest: {}", e))?;
     let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
         let text = strip_fences(reply);
@@ -1952,8 +1948,8 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
                 "{}\nYour reply was not valid JSON ({}). Reply again with the same object, valid JSON this time, nothing else: no prose, no trailing commas, every string quoted.",
                 manifest_user, e
             );
-            let again = llm
-                .chat(instructions, &retry, &format!("gen {}", id), "manifest format retry")
+            let again = runner
+                .ask(instructions, &retry, &format!("gen {}", id), "manifest format retry")
                 .map_err(|e| format!("manifest format retry: {}", e))?;
             parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
         }
@@ -2080,7 +2076,7 @@ pub fn gen_one(store: &Store, llm: &crate::llm::Llm, gs: &GenSettings, id: &str,
             serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
             mismatches.join("\n")
         );
-        if let Ok(reply2) = llm.chat(instructions, &retry, &format!("gen {}", id), "manifest retry") {
+        if let Ok(reply2) = runner.ask(instructions, &retry, &format!("gen {}", id), "manifest retry") {
             if let Ok(mut v) = parse_manifest(&reply2) {
                 // Merge over the first answer: a retry that forgot a field keeps it.
                 for key in ["supportFiles", "build"] {

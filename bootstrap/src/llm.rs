@@ -44,6 +44,12 @@ pub fn tokens_spent() -> u64 {
     SPENT_TOKENS.load(Ordering::Relaxed)
 }
 
+// Tokens an ACP agent reported for work it ran on jazyk's behalf, folded into the
+// same meter status.yaml reads.
+pub fn add_tokens(n: u64) {
+    SPENT_TOKENS.fetch_add(n, Ordering::Relaxed);
+}
+
 // Verbose request logging, enabled by the CLI or the JAZYK_VERBOSE env var.
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static VERBOSE_INIT: AtomicBool = AtomicBool::new(false);

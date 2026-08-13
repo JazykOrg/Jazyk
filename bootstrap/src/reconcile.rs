@@ -7,7 +7,7 @@ use crate::model::*;
 use crate::parallel;
 use crate::project::Project;
 use crate::store::{DirtyDoc, Store};
-use crate::turn::{run_turn, Trace, TurnOutput};
+use crate::turn::Trace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
@@ -91,16 +91,16 @@ pub fn schedule_levels(dirty: &[DirtyDoc], links: &BTreeMap<String, Vec<String>>
     levels
 }
 
-// Run one wave of work items in parallel, committing each turn's changeset as it finishes
-// so later siblings see earlier commits. A failed item is retried once with fresh context,
-// then parked.
+// Run one wave of work items in parallel, each as one ACP worker session. The
+// injected serving commits each turn's changeset as it finishes, so later siblings
+// see earlier commits; the shared store reloads from disk when the wave ends. A
+// failed item is retried once with a fresh session, then parked.
 fn run_wave(
     store: &Mutex<Store>,
-    llm: &Llm,
+    runner: &crate::acp::runner::AcpRunner,
     items: &[WorkItem],
-    limits: &crate::project::Limits,
-    lint: &crate::project::Linting,
-    gs: &crate::gen::GenSettings,
+    parsed: &BTreeMap<String, (String, BTreeMap<String, crate::model::Section>)>,
+    out: &Path,
     trace: &Trace,
 ) -> (usize, BTreeSet<String>, BTreeSet<String>, Vec<WorkItem>) {
     // What is queued, before any turn starts: the frontends mark these targets as
@@ -124,27 +124,15 @@ fn run_wave(
             return;
         }
         for attempt in 0..2 {
-            let snapshot = store.lock().unwrap().clone();
-            let out: TurnOutput = run_turn(llm, snapshot, item, limits, lint, gs, trace);
-            match out.failed {
+            let report = runner.run_item(item, trace);
+            match report.failed {
                 None => {
-                    if out.session.staged.is_empty() {
+                    if report.applied == 0 {
                         trace.line(&format!("{} {}", item.task, item.target), "no mutations staged");
-                        return;
-                    }
-                    let mut s = store.lock().unwrap();
-                    let report = s.apply(out.session.staged, item, out.rounds, out.tokens);
-                    for sk in &report.skipped {
-                        trace.line(&format!("{} {}", item.task, item.target), &format!("skipped at commit: {}", sk));
-                    }
-                    // Requirements documents render after every committed changeset, so
-                    // readers and editor links stay fresh during the build.
-                    if report.applied > 0 {
-                        crate::docsgen::write_all(&s, gs);
                     }
                     *applied.lock().unwrap() += report.applied;
-                    touched.lock().unwrap().extend(report.touched_entities);
-                    changed.lock().unwrap().extend(report.changed_requirements);
+                    touched.lock().unwrap().extend(report.touched);
+                    changed.lock().unwrap().extend(report.changed);
                     return;
                 }
                 Some(e) => {
@@ -158,6 +146,13 @@ fn run_wave(
         }
         parked.lock().unwrap().push(item.clone());
     });
+    // The wave's commits live on disk; the in-memory store the scheduling reads
+    // catches up here, section trees synced the same way the build started.
+    {
+        let mut s = store.lock().unwrap();
+        *s = Store::load(out);
+        s.sync_docs(parsed);
+    }
     (
         applied.into_inner().unwrap(),
         touched.into_inner().unwrap(),
@@ -510,28 +505,38 @@ fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, St
 }
 
 pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    let refused = |e: String| {
+        trace.line("reconcile", &format!("build refused: {}", e));
+        BuildReport {
+            verdict: "incomplete".into(),
+            dirty_docs: 0,
+            turns: 0,
+            applied: 0,
+            parked: 0,
+            errors: 1,
+            warnings: 0,
+            coverage_pct: 0,
+        }
+    };
     // The control plane's build contract: one coarse lease for the run, refused while
     // an agent is mid-task, and the run itself is an approval in manual mode.
     // Mirrors docs/compiler/reconciler.md#the-control-plane.
     let _build = match crate::control::begin_internal_build(proj, out, "compile") {
         Ok(g) => g,
-        Err(e) => {
-            trace.line("reconcile", &format!("build refused: {}", e));
-            return BuildReport {
-                verdict: "incomplete".into(),
-                dirty_docs: 0,
-                turns: 0,
-                applied: 0,
-                parked: 0,
-                errors: 1,
-                warnings: 0,
-                coverage_pct: 0,
-            };
-        }
+        Err(e) => return refused(e),
     };
+    // Every turn runs as an ACP worker session against the configured agent; the
+    // agent process lives for the run. Mirrors docs/frontends/acp.md#worker-sessions.
+    let runner = match crate::acp::runner::AcpRunner::start(proj, llm, out) {
+        Ok(r) => r,
+        Err(e) => return refused(e),
+    };
+    runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+    trace.line("reconcile", &format!("agent: {}", runner.agent().name));
     WAVE.store(0, std::sync::atomic::Ordering::Relaxed);
     let store = Mutex::new(Store::load(out));
     let gs = crate::gen::GenSettings::resolve(proj);
+    let _ = &gs;
     let (parsed, links) = parse_all(proj);
     // Resume parked work from the previous build first.
     let previously_parked: Vec<WorkItem> = store.lock().unwrap().status.parked.clone();
@@ -590,7 +595,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             continue;
         }
         turns += level_items.len() as u32;
-        let (applied, touched, changed, parked) = run_wave(&store, llm, &level_items, &proj.limits, &proj.linting, &gs, trace);
+        let (applied, touched, changed, parked) = run_wave(&store, &runner, &level_items, &parsed, out, trace);
         applied_total += applied;
         touched_all.extend(touched);
         changed_all.extend(changed);
@@ -670,7 +675,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         } else {
             trace.line("reconcile", &format!("fix-up pass: {} document(s) with uncovered sections or stale anchors", fixup.len()));
             turns += fixup.len() as u32;
-            let (applied, touched, changed, parked) = run_wave(&store, llm, &fixup, &proj.limits, &proj.linting, &gs, trace);
+            let (applied, touched, changed, parked) = run_wave(&store, &runner, &fixup, &parsed, out, trace);
             applied_total += applied;
             touched_all.extend(touched);
             changed_all.extend(changed);
@@ -722,21 +727,11 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         } else {
             trace.line("reconcile", &format!("pair review: {} changed requirement(s)", pair_items.len()));
             turns += pair_items.len() as u32;
-            let (applied, touched, _changed, parked) = run_wave(&store, llm, &pair_items, &proj.limits, &proj.linting, &gs, trace);
+            let (applied, touched, _changed, parked) = run_wave(&store, &runner, &pair_items, &parsed, out, trace);
             applied_total += applied;
             touched_all.extend(touched);
-            // A completed pair review pays its pending debt (and its mirror's: a pair
-            // judged once is judged); a parked one keeps it.
-            {
-                let parked_t: BTreeSet<&String> = parked.iter().map(|p| &p.target).collect();
-                let mut s = store.lock().unwrap();
-                for item in &pair_items {
-                    if !parked_t.contains(&item.target) {
-                        s.complete_review("review-requirement", &item.target);
-                        s.complete_pair_mirrors(&item.target);
-                    }
-                }
-            }
+            // The serving completes each pair review (and its mirror) at finish;
+            // a parked one keeps its pending debt.
             parked_all.extend(parked);
             let mut s = store.lock().unwrap();
             s.gc();
@@ -802,11 +797,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     dirty_sections: vec![],
                     stale_anchors: vec![],
                 };
-                let (a, _t, _c, p) = run_wave(&store, llm, std::slice::from_ref(&item), &proj.limits, &proj.linting, &gs, trace);
+                let (a, _t, _c, p) = run_wave(&store, &runner, std::slice::from_ref(&item), &parsed, out, trace);
                 *applied.lock().unwrap() += a;
-                if p.is_empty() {
-                    store.lock().unwrap().complete_review("review-entity", id);
-                }
+                // The serving completes the review at finish; a parked one stays owed.
                 parked.lock().unwrap().extend(p);
             }
         });

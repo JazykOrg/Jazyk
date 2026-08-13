@@ -331,6 +331,11 @@ pub(crate) fn resolve_llm(
     Llm { base_url, model, api_key, temperature, trace: None }
 }
 
+// Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.
+fn runner_for(proj: &Project, llm: &Llm, out: &std::path::Path) -> Result<crate::acp::runner::AcpRunner, String> {
+    crate::acp::runner::AcpRunner::start(proj, llm, out)
+}
+
 fn trace_for(opts: &Options) -> Trace {
     Trace::stderr(if opts.quiet {
         TraceLevel::Quiet
@@ -812,7 +817,14 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
         return 1;
     }
     let trace = Trace::stderr(TraceLevel::Normal).with_transcript(&out, "decompile");
-    let result = crate::decompile::run_all(&proj, &store, &llm, &gs, &wanted, &trace);
+    let runner = match runner_for(&proj, &llm, &out) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            return 2;
+        }
+    };
+    let result = crate::decompile::run_all(&proj, &store, &runner, &gs, &wanted, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),
@@ -881,6 +893,14 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             return 1;
         }
     };
+    let runner = match runner_for(&proj, &llm, &out) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            return 2;
+        }
+    };
+    runner.set_build_token(Some(format!("internal-{}", std::process::id())));
     let store = Store::load(&out);
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
@@ -897,7 +917,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     // Binding first: owed bind tasks classify each requirement before any entity
     // regenerates, and the bound tests become generation's acceptance gates.
     // Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
-    match crate::bind::run_all(&store, &llm, &gs, entities, &proj.limits, &proj.linting, &trace) {
+    match crate::bind::run_all(&store, &runner, &gs, entities, &proj.limits, &proj.linting, &trace) {
         Ok(b) => {
             let (bound, bfail) = (b["bound"].as_u64().unwrap_or(0), b["failures"].as_u64().unwrap_or(0));
             if bound + bfail > 0 {
@@ -908,7 +928,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             eprintln!("jazyk: bind: {}", e);
         }
     }
-    let result = crate::gen::run_all(&store, &llm, &gs, entities, opts.force, &proj.limits, &proj.linting, &trace);
+    let result = crate::gen::run_all(&store, &runner, &gs, entities, opts.force, &proj.limits, &proj.linting, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),
@@ -984,7 +1004,14 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
         _ => {}
     });
     let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "verify");
-    let result = crate::verify::run_all(&store, &llm, &gs, targets, opts.kind.as_deref(), opts.force, &trace);
+    let runner = match runner_for(&proj, &llm, &out) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            return 2;
+        }
+    };
+    let result = crate::verify::run_all(&store, &runner, &gs, targets, opts.kind.as_deref(), opts.force, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),

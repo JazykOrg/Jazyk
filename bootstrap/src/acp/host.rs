@@ -60,6 +60,7 @@ enum Cmd {
     },
     Close {
         session: String,
+        reply: std::sync::mpsc::Sender<()>,
     },
     Shutdown,
 }
@@ -70,7 +71,9 @@ enum SessCmd {
         on_update: OnUpdate,
         reply: std::sync::mpsc::Sender<Result<PromptOutcome, String>>,
     },
-    Close,
+    Close {
+        reply: std::sync::mpsc::Sender<()>,
+    },
 }
 
 pub struct AcpHost {
@@ -174,8 +177,17 @@ impl SessionHandle {
         let _ = self.cmd_tx.unbounded_send(Cmd::Cancel { session: self.id.clone() });
     }
 
+    // Close the session and block until the agent has torn it down (or answered that
+    // it cannot). An ephemeral serving's implicit finish lands before this returns.
     pub fn close(&self) {
-        let _ = self.cmd_tx.unbounded_send(Cmd::Close { session: self.id.clone() });
+        let (reply, rx) = std::sync::mpsc::channel();
+        if self
+            .cmd_tx
+            .unbounded_send(Cmd::Close { session: self.id.clone(), reply })
+            .is_ok()
+        {
+            let _ = rx.recv();
+        }
     }
 }
 
@@ -262,9 +274,16 @@ async fn main_loop(
                 }
                 let _ = cx.send_notification(CancelNotification::new(session.clone()));
             }
-            Cmd::Close { session } => {
-                if let Some(entry) = sessions.remove(&session) {
-                    let _ = entry.tx.unbounded_send(SessCmd::Close);
+            Cmd::Close { session, reply } => {
+                match sessions.remove(&session) {
+                    Some(entry) => {
+                        if entry.tx.unbounded_send(SessCmd::Close { reply: reply.clone() }).is_err() {
+                            let _ = reply.send(());
+                        }
+                    }
+                    None => {
+                        let _ = reply.send(());
+                    }
                 }
             }
             Cmd::Shutdown => break,
@@ -285,7 +304,18 @@ async fn session_task(
     let idle = super::config::idle_timeout();
     while let Some(cmd) = rx.next().await {
         match cmd {
-            SessCmd::Close => break,
+            SessCmd::Close { reply } => {
+                // session/close is capability-gated; an agent without it answers
+                // method-not-found, and dropping our handle is all there is to do.
+                let sid = session.session_id().clone();
+                let _ = session
+                    .connection()
+                    .send_request(agent_client_protocol::schema::v1::CloseSessionRequest::new(sid))
+                    .block_task()
+                    .await;
+                let _ = reply.send(());
+                break;
+            }
             SessCmd::Prompt { text, on_update, reply } => {
                 if let Err(e) = session.send_prompt(text) {
                     let _ = reply.send(Err(err_s(e)));

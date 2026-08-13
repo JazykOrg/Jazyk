@@ -249,7 +249,9 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
     std::fs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
     if let Some(l) = read_lease(&path) {
-        if l.expires_at > now() {
+        // Re-entrant for the same worker: a retry after its own failed attempt
+        // refreshes the claim instead of waiting out its own lease.
+        if l.expires_at > now() && l.worker != worker {
             return Err(l.worker);
         }
         std::fs::remove_file(&path).ok();

@@ -205,12 +205,12 @@ pub fn submit(proj: &Project, out: &Path, path: &str, content: &str, scope: Opti
 pub fn run_all(
     proj: &Project,
     store: &Store,
-    llm: &crate::llm::Llm,
+    runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     scopes_wanted: &[String],
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
-    let llm = &llm.with_trace(trace);
+
     let control = crate::control::Control::load(proj, &store.out);
     let all = pending(proj, store, gs, &control);
     let targets: Vec<String> = all
@@ -251,7 +251,7 @@ pub fn run_all(
             } else {
                 format!("{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.", user, last_err)
             };
-            let reply = match llm.chat(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }) {
+            let reply = match runner.ask(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }) {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = e;

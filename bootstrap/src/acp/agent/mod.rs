@@ -7,10 +7,11 @@ pub mod agent_loop;
 pub mod mcp_client;
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, InitializeRequest,
-    InitializeResponse, McpServer, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, UsageUpdate,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
+    ContentBlock, ContentChunk, InitializeRequest, InitializeResponse, McpServer,
+    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
+    SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, UsageUpdate,
 };
 use agent_client_protocol::{Agent, Role, Stdio};
 
@@ -58,6 +59,7 @@ pub fn run() -> i32 {
     let init_sessions = sessions.clone();
     let new_sessions = sessions.clone();
     let prompt_sessions = sessions.clone();
+    let close_sessions = sessions.clone();
     let cancel_sessions = sessions;
 
     let result = futures::executor::block_on(
@@ -68,8 +70,16 @@ pub fn run() -> i32 {
                 async move |req: InitializeRequest, responder, _cx| {
                     let _ = &init_sessions;
                     responder.respond(
-                        InitializeResponse::new(req.protocol_version)
-                            .agent_capabilities(AgentCapabilities::new()),
+                        InitializeResponse::new(req.protocol_version).agent_capabilities(
+                            // session/close matters: closing a session tears its MCP
+                            // servers down, and an ephemeral jazyk serving runs its
+                            // implicit finish on that EOF.
+                            AgentCapabilities::new().session_capabilities(
+                                SessionCapabilities::new().close(
+                                    agent_client_protocol::schema::v1::SessionCloseCapabilities::new(),
+                                ),
+                            ),
+                        ),
                     )
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -215,6 +225,27 @@ pub fn run() -> i32 {
                         };
                     });
                     Ok(())
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |req: CloseSessionRequest, responder, _cx| {
+                    let entry = close_sessions.lock().unwrap().remove(req.session_id.0.as_ref());
+                    match entry {
+                        Some(e) => {
+                            e.cancelled.store(true, Ordering::Relaxed);
+                            // Dropping the state closes each MCP server's stdin and
+                            // waits for it to exit, so an ephemeral jazyk serving has
+                            // run its implicit finish before this response goes out.
+                            // The wait blocks, so it runs off the dispatch task.
+                            std::thread::spawn(move || {
+                                drop(e);
+                                let _ = responder.respond(CloseSessionResponse::new());
+                            });
+                            Ok(())
+                        }
+                        None => responder.respond(CloseSessionResponse::new()),
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )

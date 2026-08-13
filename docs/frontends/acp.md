@@ -51,6 +51,10 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage.
 - `session/cancel` stops the loop at the next round.
+- `session/close` (advertised in its capabilities) tears the session down: each MCP
+  server's input closes and the agent waits for it to exit before answering. An
+  ephemeral jazyk serving runs its implicit finish on that end of input, so closing
+  a worker session is what lands a turn whose agent forgot the finishing call.
 
 The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
 calls for one step batched into a single reply) and `text` (tools described in the
@@ -98,10 +102,15 @@ The automated path. For each work item the runner:
    become model text, `tool_call` and `tool_call_update` become tool rows, usage
    updates accumulate into the token count. The trace, the transcript, and the GUI
    panels do not care which agent ran the turn.
-4. Reads success from the store, never from the agent's word: the commit happened
+4. Closes the session and waits for the teardown, so an agent that ended its turn
+   with staged work but no finishing call still lands it: the serving's implicit
+   finish runs on the teardown, under the same gates the budget path uses.
+5. Reads success from the store, never from the agent's word: the commit happened
    inside the MCP serving under its own gates, so the runner attributes the journal
-   entries between the session's start and end generations to the work item. A turn
-   whose task did not land is a failed turn, whatever the agent said.
+   entries between the session's start and end generations to the work item, and a
+   compilation item must have left the queue. A turn whose task did not land is a
+   failed turn, whatever the agent said. A retry is a fresh session; its claim on the
+   same task is re-entrant, so its own earlier attempt never blocks it.
 
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
 default 600 seconds). Cancellation follows the protocol: pending permission requests

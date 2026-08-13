@@ -649,11 +649,22 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
             let mut fail: Option<String> = None;
             let mut aborted = false;
             let (rounds, staged) = if case.task_type == "verify-requirement" {
-                // The llm-judge path: no turn, one judgment over a planted row.
+                // The llm-judge path: no turn, one judgment over a planted row. The
+                // judgment runs through a throwaway runner against the sandbox.
                 match seed_verification(case, &store, &gs) {
                     Ok(()) => {
-                        if let Err(e) = crate::verify::run_all(&store, llm, &gs, std::slice::from_ref(&case.target), None, true, &trace) {
-                            fail = Some(format!("judge run failed: {}", e));
+                        let sandbox_proj = crate::project::Project {
+                            root: tmp.clone(),
+                            out: store.out.clone(),
+                            ..Default::default()
+                        };
+                        match crate::acp::runner::AcpRunner::start(&sandbox_proj, llm, &store.out) {
+                            Ok(runner) => {
+                                if let Err(e) = crate::verify::run_all(&store, &runner, &gs, std::slice::from_ref(&case.target), None, true, &trace) {
+                                    fail = Some(format!("judge run failed: {}", e));
+                                }
+                            }
+                            Err(e) => fail = Some(format!("judge runner failed: {}", e)),
                         }
                     }
                     Err(e) => fail = Some(format!("fixture: {}", e)),

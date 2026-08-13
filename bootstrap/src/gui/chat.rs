@@ -82,14 +82,14 @@ impl ChatManager {
             .ok()
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .unwrap_or_else(|| "jazyk".to_string());
-        // The chat serving: graph reads today; the dual-write chat toolset joins it
+        // The chat serving: reads, lifecycles, and the dual-write chat tools
         // (docs/frontends/mcp.md#toolsets). Scoped to this session.
         let spec = McpSpec {
             name: "jazyk".to_string(),
             command: exe,
             args: vec![
                 "mcp".to_string(),
-                "graph".to_string(),
+                "chat".to_string(),
                 "--ephemeral".to_string(),
                 "--out".to_string(),
                 st.out.to_string_lossy().into_owned(),

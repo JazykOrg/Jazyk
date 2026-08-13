@@ -54,6 +54,20 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+    // A dual-write prose edit: one text run replaced in one section, never staged
+    // alone (docs/compiler/graph.md#mutations). The op carries the whole new document
+    // text so the commit can absorb the hashes without reading the file; the caller
+    // performed (or delegated) the file write before applying.
+    EditDocProse {
+        doc: String,
+        section: String,
+        #[serde(rename = "oldText")]
+        old_text: String,
+        #[serde(rename = "newText")]
+        new_text: String,
+        // The full document text after the edit, for hash absorption and audit.
+        text: String,
+    },
 }
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
@@ -595,6 +609,17 @@ impl Store {
     // Apply a staged changeset atomically: reconcile creates by natural key against nodes
     // committed concurrently, apply ops in order, recompute derived relationships, journal,
     // bump the generation, write shards.
+    // Absorb a dual-write prose edit: replace the document's stored section tree and
+    // content hash with the post-edit text, keeping coverage marks for sections whose
+    // references survive. Mirrors docs/compiler/graph.md#mutations.
+    pub fn absorb_doc_edit(&mut self, doc: &str, text: &str) {
+        let sections = crate::md::parse_sections(text);
+        let rec = self.docs.entry(doc.to_string()).or_default();
+        rec.content_hash = crate::model::hash_hex(text);
+        rec.coverage.retain(|r, _| sections.contains_key(r));
+        rec.sections = sections;
+    }
+
     pub fn apply(&mut self, ops: Vec<Op>, work_item: &WorkItem, rounds: u32, tokens: u64) -> CommitReport {
         let _flock = FileLock::acquire(&self.out);
         let build = format!("g{}", self.status.generation + 1);
@@ -976,6 +1001,14 @@ impl Store {
                         }
                         None => skipped.push(format!("triage_diagnostic: unknown id {}", rid)),
                     }
+                }
+                Op::EditDocProse { doc, section, old_text, new_text, text } => {
+                    // The graph mutation paired with this edit lands in the same
+                    // changeset; absorbing the new hashes here is its reconciliation,
+                    // so the edit does not dirty the document it just reconciled.
+                    // Mirrors docs/compiler/graph.md#mutations.
+                    self.absorb_doc_edit(&doc, &text);
+                    applied.push(Op::EditDocProse { doc, section, old_text, new_text, text });
                 }
                 Op::SetCoverage { doc, section, state, note } => {
                     match self.docs.get_mut(&doc) {

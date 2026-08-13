@@ -392,7 +392,7 @@ fn main() {
             Some(arg) => {
                 // The toolsets served, comma separated: compile, generate, verify, graph.
                 let modes: Vec<String> = arg.split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
-                let known = ["compile", "generate", "verify", "decompile", "benchmark", "graph"];
+                let known = ["compile", "generate", "verify", "decompile", "benchmark", "graph", "chat"];
                 if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
                     eprintln!("{}", cmd_usage("mcp").unwrap());
                     2
@@ -448,6 +448,12 @@ fn main() {
         // The embedded ACP agent, spawned by the host when the `embedded` profile is
         // selected. Not meant to be run by hand. Mirrors docs/frontends/cli.md#jazyk-agent.
         "agent" => acp::agent::run(),
+        // The IDE-facing proxy, and its registry installer.
+        // Mirrors docs/frontends/cli.md#jazyk-acp.
+        "acp" => match positional.first().map(|s| s.as_str()) {
+            Some("install") => cli::run_acp_install(positional.get(1).map(|s| s.as_str()).or(opts.mcp.as_deref())),
+            _ => acp::proxy::run(&opts),
+        },
         _ => usage(),
     };
     std::process::exit(code);

@@ -4,5 +4,6 @@ pub mod agent;
 pub mod config;
 pub mod host;
 pub mod policy;
+pub mod proxy;
 pub mod runner;
 pub mod translate;

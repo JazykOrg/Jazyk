@@ -85,11 +85,7 @@ pub fn run_init(opts: &Options) -> i32 {
         eprintln!("jazyk: jazyk.toml already exists in {}; leaving it unchanged", cwd.display());
     } else {
         let previous = project::find_root(&cwd);
-        let content = "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
-                       [docs]\nglob = [\"docs/**/*.md\"]\n\n\
-                       [roots]\nfiles = [\"docs/README.md\"]\n\n\
-                       [gen]\ndeliverable = \"deliverable\"\n";
-        if let Err(e) = std::fs::write(&path, content) {
+        if let Err(e) = std::fs::write(&path, INIT_TOML) {
             eprintln!("jazyk: cannot write {}: {}", path.display(), e);
             return 1;
         }
@@ -123,10 +119,16 @@ pub fn run_init(opts: &Options) -> i32 {
     }
 }
 
+// The starter jazyk.toml `jazyk init` (and the init_project chat tool) writes.
+pub(crate) const INIT_TOML: &str = "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
+[docs]\nglob = [\"docs/**/*.md\"]\n\n\
+[roots]\nfiles = [\"docs/README.md\"]\n\n\
+[gen]\ndeliverable = \"deliverable\"\n";
+
 // Scaffold the layout the fresh jazyk.toml names: docs/ with a placeholder root
 // document, and the deliverable directory. Existing directories and files stay
 // untouched.
-fn init_scaffold(cwd: &std::path::Path) -> Result<(), String> {
+pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<(), String> {
     for dir in ["docs", "deliverable"] {
         let path = cwd.join(dir);
         if !path.exists() {
@@ -329,6 +331,70 @@ pub(crate) fn resolve_llm(
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
     Llm { base_url, model, api_key, temperature, trace: None }
+}
+
+// Register the Jazyk entry in an editor's global agent registry. Neither editor
+// supports per-project registration; the proxy resolves the project from the
+// session's cwd instead. Mirrors docs/frontends/acp.md#registration.
+pub fn run_acp_install(ide: Option<&str>) -> i32 {
+    let Some(ide) = ide else {
+        eprintln!("usage: jazyk acp install --ide <jetbrains|zed> (or: jazyk acp install jetbrains)");
+        return 2;
+    };
+    let home = std::env::var("HOME").unwrap_or_default();
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "jazyk".to_string());
+    let path = match ide {
+        "jetbrains" => PathBuf::from(&home).join(".jetbrains/acp.json"),
+        "zed" => PathBuf::from(&home).join(".config/zed/settings.json"),
+        other => {
+            eprintln!("jazyk: unknown IDE `{}`; one of jetbrains, zed", other);
+            return 2;
+        }
+    };
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
+    let mut root: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => {
+            // Zed settings may carry comments; never risk clobbering a hand-kept file.
+            eprintln!(
+                "jazyk: {} is not plain JSON (comments?); add this entry by hand:\n  \"agent_servers\": {{ \"Jazyk\": {{ \"command\": \"{}\", \"args\": [\"acp\"] }} }}",
+                path.display(),
+                exe
+            );
+            return 1;
+        }
+    };
+    let Some(obj) = root.as_object_mut() else {
+        eprintln!("jazyk: {} does not hold a JSON object", path.display());
+        return 1;
+    };
+    let servers = obj.entry("agent_servers").or_insert_with(|| serde_json::json!({}));
+    let Some(servers) = servers.as_object_mut() else {
+        eprintln!("jazyk: agent_servers in {} is not an object", path.display());
+        return 1;
+    };
+    let entry = serde_json::json!({"command": exe, "args": ["acp"]});
+    if servers.get("Jazyk") == Some(&entry) {
+        println!("jazyk: {} already registers Jazyk", path.display());
+        return 0;
+    }
+    servers.insert("Jazyk".to_string(), entry);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    match std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default() + "\n") {
+        Ok(()) => {
+            println!("jazyk: registered Jazyk in {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk: cannot write {}: {}", path.display(), e);
+            1
+        }
+    }
 }
 
 // Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.

@@ -139,6 +139,17 @@ fn instructions_for(modes: &[String], write: bool) -> String {
              check grades the gaming, not the skill. ",
         );
     }
+    if modes.iter().any(|m| m == "chat") {
+        s.push_str(
+            "CHAT SERVING: you are in a conversation about this project. Read the graph with the \
+             read tools. A requirement lives in the prose: change one with revise_requirement (new \
+             prose, optional new ears), add one with add_requirement, remove one with \
+             retract_requirement; each moves the document and the graph in one atomic commit. \
+             init_project scaffolds a project; update_project_settings edits jazyk.toml keys. The \
+             compilation, binding, generation, and verification lifecycles are available for \
+             explicit requests. ",
+        );
+    }
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
@@ -304,6 +315,16 @@ impl McpServer {
                     t
                 }
                 "verify" => toolset("mcp-verify"),
+                // The chat serving: reads, every lifecycle, and the server-implemented
+                // chat tools; no raw write tools (docs/frontends/mcp.md#toolsets).
+                "chat" => {
+                    let mut t = toolset("mcp-read");
+                    t.extend(LIFECYCLE);
+                    t.extend(crate::tools::GEN_TOOLS);
+                    t.extend(crate::tools::BIND_TOOLS);
+                    t.extend(crate::tools::VERIFY_TOOLS);
+                    t
+                }
                 // The decompile serving: read tools only from the catalog; its own
                 // lifecycle tools are server-implemented (they need the project).
                 "decompile" => toolset("mcp-read"),
@@ -1002,6 +1023,33 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "scope": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}
                     }));
                 }
+                if self.modes.iter().any(|m| m == "chat") {
+                    tools.push(json!({
+                        "name": "revise_requirement",
+                        "description": "Change one requirement: the new prose replaces the old verbatim quote in its source document, and the graph node updates in the same atomic commit. Optional ears carries the new EARS rephrasing (defaults to keeping the old one).",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "newText": {"type": "string", "description": "the new prose sentence, written into the document"}, "ears": {"type": "string"}}, "required": ["id", "newText"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "add_requirement",
+                        "description": "Add one requirement: the prose sentence is inserted into the named section (after afterQuote when given, else at the section's end) and the requirement lands in the same atomic commit.",
+                        "inputSchema": {"type": "object", "properties": {"doc": {"type": "string"}, "section": {"type": "string"}, "text": {"type": "string", "description": "the prose sentence inserted into the document"}, "ears": {"type": "string"}, "entities": {"type": "array", "items": {"type": "string"}}, "afterQuote": {"type": "string"}}, "required": ["doc", "section", "text", "ears", "entities"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "retract_requirement",
+                        "description": "Remove one requirement: its sentence leaves the prose and the node leaves the graph, one atomic commit.",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id", "reason"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "init_project",
+                        "description": "Scaffold a jazyk project here: jazyk.toml, docs/ with a placeholder root document, and deliverable/. Refused when jazyk.toml already exists.",
+                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "update_project_settings",
+                        "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile, workflow.generate, workflow.worker, acp.agent, gen.deliverable, gen.worker, llm.model, llm.base_url.",
+                        "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
+                    }));
+                }
                 tools.push(json!({
                     "name": "await_changes",
                     "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work.",
@@ -1109,6 +1157,31 @@ impl McpServer {
                         };
                         let is_err = !reply["error"].is_null();
                         return Ok(text_result(reply, is_err));
+                    }
+                    "revise_requirement" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.revise_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "add_requirement" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.add_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "retract_requirement" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.retract_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "init_project" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.init_project();
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "update_project_settings" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.update_project_settings(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
                     }
                     "submit_draft" if self.modes.iter().any(|m| m == "decompile") => {
                         let path = params["arguments"]["path"].as_str().unwrap_or_default();
@@ -1306,6 +1379,312 @@ impl McpServer {
                 }
             }
         }
+    }
+}
+
+// ---- the chat tools: dual writes and project setup ----
+// A requirement lives in the prose; a chat edit moves the document and the graph in
+// one atomic commit. Mirrors docs/compiler/tools.md#chat-tools and
+// docs/frontends/acp.md#dual-write-tools.
+impl McpServer {
+    // Write a document (or jazyk.toml) edit: through the delegating sink when the
+    // spawning proxy listens, straight to disk otherwise.
+    // Mirrors docs/frontends/acp.md#doc-edit-delegation.
+    fn write_edit(&self, rel: &str, old_text: &str, new_text: &str, full: &str) -> Result<(), String> {
+        let path = self.project.root.join(rel);
+        if let Some(sink) = &self.bridge.edit_sink {
+            if sink_write(sink, &path, old_text, new_text, full).is_ok() {
+                return Ok(());
+            }
+            // Nothing listening: fall through to the direct write.
+        }
+        std::fs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
+    }
+
+    // The shared tail of every dual write: run the graph mutation through a real
+    // ToolSession against a snapshot that already absorbed the prose edit (so the
+    // usual gates validate the new quote), write the file, commit both together.
+    fn dual_commit(
+        &self,
+        doc: &str,
+        section: &str,
+        old_text: &str,
+        new_text: &str,
+        full: &str,
+        old_full: &str,
+        graph_call: (&str, Value),
+        target: &str,
+    ) -> Value {
+        let mut snapshot = Store::load(&self.out);
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        snapshot.sync_docs(&parsed);
+        snapshot.absorb_doc_edit(doc, full);
+        let scope = WorkScope {
+            task: "mcp-write".into(),
+            doc: None,
+            target: target.to_string(),
+            target_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+        };
+        let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
+        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.caller = self.caller("chat", target);
+        let (name, args) = graph_call;
+        if let Err(e) = session.dispatch(name, &args) {
+            return e.to_value();
+        }
+        if let Err(e) = self.write_edit(doc, old_text, new_text, full) {
+            return json!({"error": {"rule": "write-failed", "message": e}});
+        }
+        let mut ops = vec![crate::store::Op::EditDocProse {
+            doc: doc.to_string(),
+            section: section.to_string(),
+            old_text: old_text.to_string(),
+            new_text: new_text.to_string(),
+            text: full.to_string(),
+        }];
+        ops.extend(std::mem::take(&mut session.staged));
+        let mut s = Store::load(&self.out);
+        s.sync_docs(&parsed);
+        s.absorb_doc_edit(doc, full);
+        let item = WorkItem { task: "chat".into(), target: target.to_string(), dirty_sections: vec![], stale_anchors: vec![] };
+        let report = s.apply(ops, &item, 1, 0);
+        if !report.skipped.is_empty() {
+            // The graph side skipped: put the prose back so neither moved.
+            let _ = self.write_edit(doc, new_text, old_text, old_full);
+            return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
+        }
+        json!({"committed": true, "applied": report.applied, "doc": doc,
+               "note": "the prose and the graph moved together; no recompile is owed for this edit"})
+    }
+
+    fn revise_requirement(&self, args: &Value) -> Value {
+        let rid = args["id"].as_str().unwrap_or_default();
+        let new_text = args["newText"].as_str().unwrap_or_default().trim();
+        if new_text.is_empty() {
+            return json!({"error": {"rule": "missing-argument", "message": "newText is required: the prose sentence that replaces the old quote"}});
+        }
+        let store = Store::load(&self.out);
+        let rid = store.resolve_id(rid).to_string();
+        let Some(r) = store.graph.requirements.get(&rid) else {
+            return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
+        };
+        let (doc, section, old_quote) = (r.source.doc.clone(), r.source.section.clone(), r.source.quote.clone());
+        let ears = args["ears"].as_str().unwrap_or(&r.ears).to_string();
+        let path = self.project.root.join(&doc);
+        let old_full = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
+        };
+        let Some((b, e)) = crate::md::locate_bytes(&old_full, &old_quote) else {
+            return json!({"error": {"rule": "stale-anchor", "message": format!(
+                "the requirement's quote no longer locates in {}; compile first, then revise", doc)}});
+        };
+        let full = format!("{}{}{}", &old_full[..b], new_text, &old_full[e..]);
+        self.dual_commit(
+            &doc,
+            &section,
+            &old_quote,
+            new_text,
+            &full,
+            &old_full,
+            ("update_requirement", json!({"id": rid, "ears": ears, "section": format!("{}#{}", doc, section), "quote": new_text})),
+            &rid,
+        )
+    }
+
+    fn add_requirement(&self, args: &Value) -> Value {
+        let doc = args["doc"].as_str().unwrap_or_default().to_string();
+        let section = args["section"].as_str().unwrap_or_default().trim_start_matches(&format!("{}#", doc)).to_string();
+        let text = args["text"].as_str().unwrap_or_default().trim().to_string();
+        let ears = args["ears"].as_str().unwrap_or_default();
+        if doc.is_empty() || section.is_empty() || text.is_empty() || ears.is_empty() {
+            return json!({"error": {"rule": "missing-argument", "message": "doc, section, text, ears, and entities are required"}});
+        }
+        let store = Store::load(&self.out);
+        let Some(sec_raw) = store.docs.get(&doc).and_then(|d| d.sections.get(&section)).map(|x| x.raw.clone()) else {
+            return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; compile first", doc, section)}});
+        };
+        let path = self.project.root.join(&doc);
+        let old_full = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
+        };
+        // The insertion point: after the located quote, or at the section's end.
+        let at = match args["afterQuote"].as_str() {
+            Some(q) => match crate::md::locate_bytes(&old_full, q) {
+                Some((_, e)) => e,
+                None => return json!({"error": {"rule": "stale-anchor", "message": "afterQuote does not locate in the document"}}),
+            },
+            None => {
+                let Some((b, _)) = crate::md::locate_bytes(&old_full, sec_raw.trim()) else {
+                    return json!({"error": {"rule": "stale-anchor", "message": format!(
+                        "section `{}` drifted from the document on disk; compile first", section)}});
+                };
+                b + sec_raw.trim().len()
+            }
+        };
+        let full = format!("{}\n\n{}{}", &old_full[..at].trim_end_matches(['\n']), text, &old_full[at..]);
+        let entities: Vec<String> = args["entities"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        self.dual_commit(
+            &doc,
+            &section,
+            "",
+            &text,
+            &full,
+            &old_full,
+            ("upsert_requirement", json!({"ears": ears, "entities": entities, "section": format!("{}#{}", doc, section), "quote": text})),
+            &doc,
+        )
+    }
+
+    fn retract_requirement(&self, args: &Value) -> Value {
+        let rid = args["id"].as_str().unwrap_or_default();
+        let reason = args["reason"].as_str().unwrap_or_default();
+        let store = Store::load(&self.out);
+        let rid = store.resolve_id(rid).to_string();
+        let Some(r) = store.graph.requirements.get(&rid) else {
+            return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
+        };
+        let (doc, section, old_quote) = (r.source.doc.clone(), r.source.section.clone(), r.source.quote.clone());
+        let path = self.project.root.join(&doc);
+        let old_full = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
+        };
+        let Some((b, e)) = crate::md::locate_bytes(&old_full, &old_quote) else {
+            return json!({"error": {"rule": "stale-anchor", "message": format!(
+                "the requirement's quote no longer locates in {}; compile first", doc)}});
+        };
+        // Take the sentence out; a bullet line loses its marker and trailing newline too.
+        let mut start = b;
+        let line_start = old_full[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let lead = &old_full[line_start..b];
+        if lead.trim_start().starts_with("- ") || lead.trim().is_empty() {
+            start = line_start;
+        }
+        let mut end = e;
+        if old_full[e..].starts_with('\n') && start == line_start {
+            end = e + 1;
+        }
+        let full = format!("{}{}", &old_full[..start], &old_full[end..]);
+        self.dual_commit(
+            &doc,
+            &section,
+            &old_quote,
+            "",
+            &full,
+            &old_full,
+            ("delete_requirement", json!({"id": rid, "reason": reason})),
+            &rid,
+        )
+    }
+
+    fn init_project(&self) -> Value {
+        let root = &self.project.root;
+        if root.join("jazyk.toml").exists() {
+            return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
+        }
+        if let Err(e) = std::fs::write(root.join("jazyk.toml"), crate::cli::INIT_TOML) {
+            return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
+        }
+        if let Err(e) = crate::cli::init_scaffold(root) {
+            return json!({"error": {"rule": "write-failed", "message": e}});
+        }
+        json!({"initialized": root.display().to_string(), "next": "edit docs/README.md, then compile"})
+    }
+
+    fn update_project_settings(&self, args: &Value) -> Value {
+        const KEYS: [&str; 8] = [
+            "workflow.compile", "workflow.generate", "workflow.worker", "acp.agent",
+            "gen.deliverable", "gen.worker", "llm.model", "llm.base_url",
+        ];
+        let Some(settings) = args["settings"].as_object() else {
+            return json!({"error": {"rule": "missing-argument", "message": "settings is required: a map of key to value"}});
+        };
+        let path = self.project.root.join("jazyk.toml");
+        let old_full = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut full = old_full.clone();
+        for (key, value) in settings {
+            if !KEYS.contains(&key.as_str()) {
+                return json!({"error": {"rule": "unsupported-key", "message": format!(
+                    "`{}` is not editable here; supported: {}", key, KEYS.join(", "))}});
+            }
+            let Some(value) = value.as_str() else {
+                return json!({"error": {"rule": "bad-value", "message": format!("`{}` takes a string value", key)}});
+            };
+            let (section, k) = key.split_once('.').unwrap();
+            full = toml_set(&full, section, k, value);
+        }
+        if let Err(e) = self.write_edit("jazyk.toml", &old_full, &full, &full) {
+            return json!({"error": {"rule": "write-failed", "message": e}});
+        }
+        json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
+               "note": "jazyk.toml edited in place; a running GUI reloads it live"})
+    }
+}
+
+// Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
+// the section or the key when missing, touching nothing else.
+fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
+    let header = format!("[{}]", section);
+    let rendered = format!("{} = \"{}\"", key, value.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let mut in_section = false;
+    let mut section_start: Option<usize> = None;
+    for i in 0..lines.len() {
+        let t = lines[i].trim();
+        if t.starts_with('[') {
+            in_section = t == header;
+            if in_section {
+                section_start = Some(i);
+            }
+            continue;
+        }
+        if in_section {
+            if let Some((k, _)) = t.split_once('=') {
+                if k.trim() == key {
+                    lines[i] = rendered;
+                    return lines.join("\n") + "\n";
+                }
+            }
+        }
+    }
+    match section_start {
+        Some(i) => {
+            lines.insert(i + 1, rendered);
+        }
+        None => {
+            if !lines.is_empty() && !lines.last().unwrap().is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.push(rendered);
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+// One edit over the delegation socket: a JSON line out, an acknowledgement line back.
+// Mirrors docs/frontends/acp.md#doc-edit-delegation.
+fn sink_write(sink: &str, path: &std::path::Path, old_text: &str, new_text: &str, full: &str) -> Result<(), String> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(sink).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .map_err(|e| e.to_string())?;
+    let line = json!({"path": path.display().to_string(), "oldText": old_text, "newText": new_text, "content": full});
+    writeln!(stream, "{}", line).map_err(|e| e.to_string())?;
+    let mut reply = String::new();
+    BufReader::new(stream).read_line(&mut reply).map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(reply.trim()).map_err(|e| e.to_string())?;
+    if v["ok"].as_bool().unwrap_or(false) {
+        Ok(())
+    } else {
+        Err(v["error"].as_str().unwrap_or("sink refused the edit").to_string())
     }
 }
 

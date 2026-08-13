@@ -8,6 +8,18 @@ use std::collections::{BTreeMap, HashMap};
 // substring first; a quote wrapped across source lines locates whitespace-insensitively,
 // the same doctrine the store applies to quote containment. Character offsets are never
 // stored.
+// The byte range of the located needle: what a prose edit splices against.
+pub fn locate_bytes(text: &str, needle: &str) -> Option<(usize, usize)> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return None;
+    }
+    match text.find(needle) {
+        Some(b) => Some((b, b + needle.len())),
+        None => locate_tokens(text, needle),
+    }
+}
+
 pub fn locate(text: &str, needle: &str) -> Option<(usize, usize, usize, usize)> {
     let needle = needle.trim();
     if needle.is_empty() {

@@ -70,7 +70,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_entity",
-            description: "Create a domain-concept entity, or update it if the name already exists. Entities are concepts, never file paths, CLI flags, or markdown terms. mention cites the section and the verbatim quote that talks about it. Omit scope unless the documents explicitly name a bounded context; an invented scope splits one concept into two.",
+            description: "Create a domain concept, or update it if the name already exists. mention cites the section and the verbatim quote that talks about it. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context.",
             parameters: obj(
                 json!({
                     "name": {"type": "string"},
@@ -115,7 +115,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "entities": {"type": "array", "items": {"type": "string"}},
                     "section": {"type": "string"},
                     "quote": {"type": "string"},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string"}}, "required": ["a", "b"]}}
+                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string", "enum": ["generalization", "realization", "composition", "aggregation", "association", "dependency", "reference"]}}, "required": ["a", "b"]}}
                 }),
                 &["ears", "entities", "section", "quote"],
             ),
@@ -128,7 +128,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "id": {"type": "string"},
                     "ears": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string"}}, "required": ["a", "b"]}},
+                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string", "enum": ["generalization", "realization", "composition", "aggregation", "association", "dependency", "reference"]}}, "required": ["a", "b"]}},
                     "section": {"type": "string"},
                     "quote": {"type": "string"}
                 }),
@@ -142,11 +142,11 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. rule is one of: contradiction, duplicate-entity, duplicate-requirement, missing-link, ambiguity, lint (a project lint rule violation). severity: error, warning, info, or none. Severity error only when two statements cannot both hold.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations.",
             parameters: obj(
                 json!({
-                    "rule": {"type": "string"},
-                    "severity": {"type": "string", "enum": ["error", "warning", "info", "none"]},
+                    "rule": {"type": "string", "enum": ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"]},
+                    "severity": {"type": "string", "enum": ["error", "warning", "info"]},
                     "subjects": {"type": "array", "items": {"type": "string"}},
                     "message": {"type": "string"},
                     "reasoning": {"type": "string"}
@@ -161,7 +161,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "set_coverage",
-            description: "Mark a section covered (its content is reflected in the graph) or non-normative (it states no requirements; a note is required saying why).",
+            description: "Mark a section covered (its content is reflected in the graph) or non-normative (it states no requirements). State non-normative requires the note saying why.",
             parameters: obj(
                 json!({
                     "section": {"type": "string"},

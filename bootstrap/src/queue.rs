@@ -49,7 +49,26 @@ impl Queue {
             }
             return v;
         }
-        json!({"tasks": self.compile, "next": "begin_compilation claims the first ready task"})
+        // Sections render as full references, the same shape read_section takes.
+        let tasks: Vec<Value> = self
+            .compile
+            .iter()
+            .map(|t| {
+                let mut t = t.clone();
+                if let (Some(doc), Some(secs)) = (
+                    t["target"].as_str().map(|s| s.to_string()),
+                    t["dirtySections"].as_array().cloned(),
+                ) {
+                    t["dirtySections"] = json!(secs
+                        .iter()
+                        .filter_map(|s| s.as_str())
+                        .map(|s| format!("{}#{}", doc, s))
+                        .collect::<Vec<_>>());
+                }
+                t
+            })
+            .collect();
+        json!({"tasks": tasks, "next": "begin_compilation claims the first ready task"})
     }
 
     // The work item behind a queue entry, by target; None when it is not in the queue.
@@ -275,12 +294,16 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     // Manual mode gates work behind a release; leases mark claimed tasks. Reviews and
     // verification are never gated. Mirrors docs/compiler/reconciler.md#the-control-plane.
     let control = crate::control::Control::load(proj, out);
+    // A gated task is not ready, and blockedBy names the one release phrase used
+    // everywhere: the flags never contradict each other.
     if control.compile == "manual" {
         for t in q.compile.iter_mut().filter(|t| t["kind"] == "reconcile-document") {
             let doc = t["target"].as_str().unwrap_or_default();
             let current = store.docs.get(doc).map(|r| r.content_hash.as_str()).unwrap_or_default();
             if control.released.compile.get(doc).map(String::as_str) != Some(current) {
                 t["gated"] = json!(true);
+                t["ready"] = json!(false);
+                t["blockedBy"] = json!("awaiting release: `jazyk release compile` (or the GUI) approves it");
             }
         }
     }
@@ -289,6 +312,8 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         // generation (docs/consumers/bind.md#when-binding-runs).
         for t in q.generate.iter_mut().chain(q.bind.iter_mut()) {
             t["gated"] = json!(true);
+            t["ready"] = json!(false);
+            t["blockedBy"] = json!("awaiting release: `jazyk release generate` (or the GUI) approves it");
         }
     }
     let leases = crate::control::task_leases(out);
@@ -300,6 +325,8 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             .unwrap_or_default();
         if let Some(l) = leases.get(target) {
             t["claimedBy"] = json!(l.worker);
+            t["ready"] = json!(false);
+            t["blockedBy"] = json!(format!("claimed by worker `{}`", l.worker));
         }
     }
     q

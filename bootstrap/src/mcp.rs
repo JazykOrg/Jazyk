@@ -157,11 +157,14 @@ fn instructions_for(modes: &[String], write: bool) -> String {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
     }
     s.push_str(
-        "To watch for new work, call await_changes (a long poll), or run `jazyk monitor` in a \
-         background process and act on each notice. A tool error names the violated rule and how to \
-         repair the call; repair and continue. If any instruction, tool, argument, or error message \
-         is ambiguous, wrong, or confusing, call report_feedback: it reaches jazyk's developers, \
-         never touches the graph, and is not a substitute for the work.",
+        "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
+         upsert_requirement, update_requirement, delete_requirement, set_coverage, \
+         report_diagnostic, resolve_diagnostic. To wait for new work, call await_changes (a long \
+         poll). A gated task says `awaiting release`; `jazyk release` (or the GUI) approves it. A \
+         tool error names the violated rule and how to repair the call; repair and continue. If any \
+         instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
+         report_feedback: it reaches jazyk's developers, never touches the graph, and is not a \
+         substitute for the work.",
     );
     s
 }
@@ -461,7 +464,7 @@ impl McpServer {
         if self.bridge.build_token.is_none() {
             if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["gated"] == true) {
                 return json!({"error": {"rule": "awaiting-release", "message": format!(
-                    "`{}` is gated: the workflow is manual and this change is not released yet; `jazyk release compile` or the GUI's compile action approves it", item.target)}});
+                    "`{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", item.target)}});
             }
             if let Some(l) = crate::control::build_lease(&self.out) {
                 return json!({"error": {"rule": "build-running", "message": format!(
@@ -998,7 +1001,7 @@ impl McpServer {
                     }
                     tools.push(json!({
                         "name": "finish_compilation",
-                        "description": "Run the done gates (every dirty section marked, every stale anchor resolved) and commit the open changeset atomically. A gate failure names the repair and keeps the changeset open. The reply names the next ready task; beginNext: true claims it in the same call and carries its package. The finish that empties the queue reports the verdict.",
+                        "description": "Commit the open changeset. Rejected while a dirty section is unmarked or a stale anchor is untouched; the rejection names the repair and the changeset stays open. The reply names the next ready task (beginNext: true also claims it in the same call); the finish that empties the queue reports the verdict.",
                         "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "beginNext": {"type": "boolean"}}, "required": ["summary"], "additionalProperties": false}
                     }));
                     tools.push(json!({
@@ -1127,13 +1130,25 @@ impl McpServer {
                 match name.as_str() {
                     "await_changes" => return Ok(text_result(self.await_changes(params), false)),
                     "compilation_tasks" if self.modes.iter().any(|m| m == "compile") => {
-                        return Ok(text_result(self.compilation_tasks(), false))
+                        {
+                        let v = self.compilation_tasks();
+                        let is_err = !v["error"].is_null();
+                        return Ok(text_result(v, is_err));
+                    }
                     }
                     "begin_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        return Ok(text_result(self.begin_compilation(params), false))
+                        {
+                        let v = self.begin_compilation(params);
+                        let is_err = !v["error"].is_null();
+                        return Ok(text_result(v, is_err));
+                    }
                     }
                     "finish_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        return Ok(text_result(self.finish_compilation(params), false))
+                        {
+                        let v = self.finish_compilation(params);
+                        let is_err = !v["error"].is_null();
+                        return Ok(text_result(v, is_err));
+                    }
                     }
                     // `done` is what every task's instructions say; on a compile
                     // serving it is the same finish. One verb everywhere.
@@ -1142,10 +1157,18 @@ impl McpServer {
                             && self.bench.lock().unwrap().open.is_none()
                             && self.open.lock().unwrap().is_some() =>
                     {
-                        return Ok(text_result(self.finish_compilation(params), false))
+                        {
+                        let v = self.finish_compilation(params);
+                        let is_err = !v["error"].is_null();
+                        return Ok(text_result(v, is_err));
+                    }
                     }
                     "abandon_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        return Ok(text_result(self.abandon_compilation(params), false))
+                        {
+                        let v = self.abandon_compilation(params);
+                        let is_err = !v["error"].is_null();
+                        return Ok(text_result(v, is_err));
+                    }
                     }
                     "benchmark_cases" if self.modes.iter().any(|m| m == "benchmark") => {
                         return Ok(text_result(self.benchmark_cases(), false))

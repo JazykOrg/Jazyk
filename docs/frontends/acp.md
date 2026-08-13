@@ -49,7 +49,9 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   send the messages and the MCP tools, dispatch the calls the model makes, append the
   results, repeat until the model stops calling tools. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
-  usage.
+  usage. A prose reply in a turn that already made tool calls gets one nudge before
+  the turn ends: weak models forget they are mid-task more often than they finish
+  silently, and a purely conversational answer still ends the turn immediately.
 - `session/cancel` stops the loop at the next round.
 - `session/close` (advertised in its capabilities) tears the session down: each MCP
   server's input closes and the agent waits for it to exit before answering. An

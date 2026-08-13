@@ -836,7 +836,7 @@ pub fn run_all(
                         task_pkg["context"].as_str().unwrap_or_default(),
                         evidence_input
                     );
-                    match runner.ask(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge") {
+                    match runner.ask_traced(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge", Some(trace)) {
                         Ok(reply) => {
                             let up = reply.to_uppercase();
                             match (up.find("PASS"), up.find("FAIL")) {

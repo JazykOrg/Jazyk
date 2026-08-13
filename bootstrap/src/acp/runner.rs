@@ -263,7 +263,23 @@ impl AcpRunner {
 
     // One-shot prose completion through a bare session (no tools): the ACP form of
     // the old `llm.chat`, for the medium decision, llm-row judgment, and drafting.
-    pub fn ask(&self, system: &str, user: &str, label: &str, _step: &str) -> Result<String, String> {
+    pub fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
+        self.ask_traced(system, user, label, step, None)
+    }
+
+    // The traced form: the prompt size goes out as a note, the reply as model text,
+    // so a transcript shows the one-shot beside the turns.
+    pub fn ask_traced(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+        trace: Option<&Trace>,
+    ) -> Result<String, String> {
+        if let Some(t) = trace {
+            t.line(label, &format!("→ ask {} ({} chars)", step, system.len() + user.len()));
+        }
         let session = self.session(Vec::new()).map_err(|e| format!("session: {}", e))?;
         let text: Arc<Mutex<String>> = Default::default();
         let sink = text.clone();
@@ -286,6 +302,12 @@ impl AcpRunner {
         let text = text.lock().unwrap().clone();
         if text.trim().is_empty() {
             return Err(format!("empty reply (session stopped: {}) for {}", outcome.stop, label));
+        }
+        if let Some(t) = trace {
+            t.event(crate::turn::TraceEvent::ModelText {
+                label: label.to_string(),
+                text: crate::llm::truncate(&text, 2_000),
+            });
         }
         Ok(text)
     }

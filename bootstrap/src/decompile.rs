@@ -251,7 +251,7 @@ pub fn run_all(
             } else {
                 format!("{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.", user, last_err)
             };
-            let reply = match runner.ask(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }) {
+            let reply = match runner.ask_traced(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }, Some(trace)) {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = e;

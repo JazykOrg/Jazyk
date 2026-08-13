@@ -33,6 +33,7 @@ pub struct Options {
     // ACP: the agent profile (--agent), and the flags of bridge-spawned MCP servings
     // (docs/frontends/mcp.md#mcp-into-acp-sessions).
     pub agent: Option<String>,
+    pub acp_ide: Option<String>,
     pub ephemeral: bool,
     pub only: Option<String>,
     pub build_token: Option<String>,
@@ -65,6 +66,7 @@ impl Default for Options {
             json: false,
             once: false,
             agent: None,
+            acp_ide: None,
             ephemeral: false,
             only: None,
             build_token: None,
@@ -111,6 +113,11 @@ pub fn run_init(opts: &Options) -> i32 {
             eprintln!("jazyk: {}", e);
             return 1;
         }
+    }
+    // ACP registration is global per editor; the proxy resolves the project from the
+    // session's cwd. Mirrors docs/frontends/cli.md#jazyk-init.
+    if init_acp(opts.acp_ide.as_deref()) {
+        wrote_something = true;
     }
     if wrote_something {
         0
@@ -331,6 +338,35 @@ pub(crate) fn resolve_llm(
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
     Llm { base_url, model, api_key, temperature, trace: None }
+}
+
+// Offer ACP registration during init: `--acp` skips the prompt, a non-interactive
+// stdin skips the step. Mirrors docs/frontends/cli.md#jazyk-init.
+fn init_acp(flag: Option<&str>) -> bool {
+    use std::io::IsTerminal;
+    let choice = match flag {
+        Some("none") => return false,
+        Some(ide) => ide.to_string(),
+        None => {
+            if !std::io::stdin().is_terminal() {
+                println!("jazyk: skipping ACP setup (no interactive stdin); rerun with --acp jetbrains|zed");
+                return false;
+            }
+            println!("\nRegister Jazyk as an ACP agent in an editor? The proxy activates only inside jazyk projects.");
+            println!("  1) none\n  2) JetBrains   (~/.jetbrains/acp.json)\n  3) Zed         (~/.config/zed/settings.json)");
+            print!("choose [1-3] (default 1): ");
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok();
+            match line.trim() {
+                "2" => "jetbrains".to_string(),
+                "3" => "zed".to_string(),
+                _ => return false,
+            }
+        }
+    };
+    run_acp_install(Some(&choice)) == 0
 }
 
 // Register the Jazyk entry in an editor's global agent registry. Neither editor

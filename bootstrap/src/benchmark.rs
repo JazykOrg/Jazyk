@@ -667,7 +667,11 @@ fn run_case_turn(
         match stop {
             Stop::Error(e) => Some(e),
             _ => {
-                if s.finish_implicit("(implicit: the turn ended without done)") {
+                // Graph turns land staged work or fail; generation and binding land
+                // in the ledger and the deliverable, so their checks are the judge.
+                if s.finish_implicit("(implicit: the turn ended without done)")
+                    || matches!(item.task.as_str(), "generate-entity" | "bind-requirement")
+                {
                     None
                 } else {
                     Some("the turn ended without done and nothing valid was staged".to_string())

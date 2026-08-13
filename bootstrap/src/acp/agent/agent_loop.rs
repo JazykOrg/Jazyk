@@ -184,6 +184,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     // a looping model should stop paying for the question.
     let mut repeats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
     let mut refusals = 0u32;
+    let mut called_any = false;
+    let mut nudged = false;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
             return Stop::Cancelled;
@@ -233,8 +235,17 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             }
         }
 
-        // No tool calls: the model is answering, and that ends the turn.
+        // No tool calls: the model is answering, and that ends the turn. A model
+        // that already worked this turn gets one nudge first: weak models forget
+        // they are mid-task more often than they finish silently, and a pure
+        // conversational answer (no calls at all) still ends immediately.
         if !actions.iter().any(|x| matches!(x, Action::Call { .. })) {
+            if called_any && !nudged {
+                nudged = true;
+                a.history.push(json!({"role": "user", "content":
+                    "If the task is not finished, continue with tool calls. If it is finished, reply with a one-line summary and nothing else."}));
+                continue;
+            }
             for action in actions {
                 if let Action::Text(t) = action {
                     if !t.trim().is_empty() {
@@ -258,6 +269,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     if (a.cancelled)() {
                         return Stop::Cancelled;
                     }
+                    called_any = true;
                     call_n += 1;
                     let call_id = id.clone().unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, call_n));
                     (a.emit)(AgentEvent::ToolCallStart { id: call_id.clone(), name: name.clone(), args: args.clone() });

@@ -72,7 +72,12 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_init = state.clone();
     let st_new = state.clone();
     let st_prompt = state.clone();
+    let st_list = state.clone();
+    let st_load = state.clone();
     let st_cancel = state.clone();
+    if state.project.is_some() {
+        watch_runs(&state);
+    }
 
     let result = futures::executor::block_on(
         Agent
@@ -84,7 +89,22 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     *st_init.client_fs_write.lock().unwrap() =
                         req.client_capabilities.fs.write_text_file;
                     let down = ensure_down(&st_init, &cx, config.clone())?;
+                    let mirror = st_init.project.is_some();
                     down.send_request(req).on_receiving_result(async move |result| {
+                        // Inside a project the proxy answers session/list and
+                        // session/load itself, mirroring recorded runs; advertise it
+                        // whatever the downstream agent supports.
+                        // Mirrors docs/frontends/acp.md#mirroring-into-ides.
+                        let result = result.map(|mut r| {
+                            if mirror {
+                                r.agent_capabilities.load_session = true;
+                                r.agent_capabilities.session_capabilities = r
+                                    .agent_capabilities
+                                    .session_capabilities
+                                    .list(agent_client_protocol::schema::v1::SessionListCapabilities::new());
+                            }
+                            r
+                        });
                         responder.respond_with_result(result)
                     })
                 },
@@ -190,6 +210,47 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         }
                     }
                     let down = st_prompt.down.get().cloned().ok_or_else(not_initialized)?;
+                    down.send_request(req).on_receiving_result(async move |result| {
+                        responder.respond_with_result(result)
+                    })
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |_req: agent_client_protocol::schema::v1::ListSessionsRequest,
+                            responder,
+                            _cx| {
+                    let sessions = st_list
+                        .project
+                        .as_ref()
+                        .map(|p| mirrored_sessions(&p.root, &st_list.out))
+                        .unwrap_or_default();
+                    responder.respond(
+                        agent_client_protocol::schema::v1::ListSessionsResponse::new(sessions),
+                    )
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |req: agent_client_protocol::schema::v1::LoadSessionRequest,
+                            responder,
+                            cx: ConnectionTo<Client>| {
+                    let sid = req.session_id.to_string();
+                    if let Some(stem) = sid.strip_prefix("jazyk-run-") {
+                        // Replay the recorded run as session updates, then answer:
+                        // the protocol's own attach-to-history flow.
+                        // Mirrors docs/frontends/acp.md#mirroring-into-ides.
+                        for update in replay_transcript(&st_load.out, stem) {
+                            let _ = cx.send_notification(SessionNotification::new(
+                                sid_of(&sid),
+                                update,
+                            ));
+                        }
+                        return responder.respond(
+                            agent_client_protocol::schema::v1::LoadSessionResponse::new(),
+                        );
+                    }
+                    let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
                     })
@@ -418,4 +479,108 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
         }
     });
     crate::turn::Trace::to_sink(crate::turn::TraceLevel::Normal, sink, Default::default())
+}
+
+// Recorded runs as read-only sessions: one per transcript under <out>/trace, newest
+// first. Mirrors docs/frontends/acp.md#mirroring-into-ides.
+fn mirrored_sessions(
+    root: &std::path::Path,
+    out: &std::path::Path,
+) -> Vec<agent_client_protocol::schema::v1::SessionInfo> {
+    use agent_client_protocol::schema::v1::SessionInfo;
+    let mut entries: Vec<(String, String, String)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(out.join("trace")) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let Some(stem) = name.strip_suffix(".jsonl") else { continue };
+            let Ok(file) = std::fs::File::open(e.path()) else { continue };
+            let mut first = String::new();
+            use std::io::BufRead;
+            if std::io::BufReader::new(file).read_line(&mut first).is_err() {
+                continue;
+            }
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(first.trim()) else { continue };
+            let kind = meta["meta"]["kind"]["kind"].as_str().unwrap_or("run").to_string();
+            let started = meta["meta"]["startedAt"].as_str().unwrap_or_default().to_string();
+            entries.push((stem.to_string(), kind, started));
+        }
+    }
+    entries.sort_by(|a, b| b.2.cmp(&a.2));
+    entries.truncate(20);
+    entries
+        .into_iter()
+        .map(|(stem, kind, started)| {
+            SessionInfo::new(sid_of(&format!("jazyk-run-{}", stem)), root)
+                .title(format!("{} {}", kind, started))
+        })
+        .collect()
+}
+
+// One transcript replayed as session updates, capped to the recent tail.
+fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
+    use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus};
+    let path = out.join("trace").join(format!("{}.jsonl", stem));
+    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let mut updates: Vec<SessionUpdate> = Vec::new();
+    let chunk = |t: String| SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(t)));
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let ev = &v["event"];
+        let n = v["n"].as_u64().unwrap_or(0);
+        let label = ev["label"].as_str().unwrap_or("");
+        match ev["kind"].as_str().unwrap_or("") {
+            "turnStart" => updates.push(chunk(format!("▶ {}\n", label))),
+            "modelText" => updates.push(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                ContentBlock::from(format!("{}\n", ev["text"].as_str().unwrap_or(""))),
+            ))),
+            "toolCall" => updates.push(SessionUpdate::ToolCall(
+                ToolCall::new(
+                    format!("replay-{}", n),
+                    format!("{} → {} {}", label, ev["name"].as_str().unwrap_or(""), ev["summary"].as_str().unwrap_or("")),
+                )
+                .status(ToolCallStatus::Completed),
+            )),
+            "toolError" => updates.push(SessionUpdate::ToolCall(
+                ToolCall::new(
+                    format!("replay-{}", n),
+                    format!("{} ✗ {}: {}", label, ev["rule"].as_str().unwrap_or(""), ev["message"].as_str().unwrap_or("")),
+                )
+                .status(ToolCallStatus::Failed),
+            )),
+            "turnDone" => updates.push(chunk(format!("✓ {}\n", label))),
+            "turnFailed" => updates.push(chunk(format!("✗ {}: {}\n", label, ev["error"].as_str().unwrap_or("")))),
+            _ => {}
+        }
+    }
+    if updates.len() > 400 {
+        let cut = updates.len() - 400;
+        updates.drain(..cut);
+    }
+    updates
+}
+
+// Nudge capable clients when the run list changes. The notification is
+// underscore-namespaced, so a client that does not know it ignores it, per the
+// protocol's extensibility rules. Mirrors docs/frontends/acp.md#mirroring-into-ides.
+fn watch_runs(state: &Arc<ProxyState>) {
+    let st = state.clone();
+    std::thread::spawn(move || {
+        let dir = st.out.join("trace");
+        let mut last: usize = std::fs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let now = std::fs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
+            if now != last {
+                last = now;
+                if let Some(up) = st.up.get() {
+                    if let Ok(msg) = agent_client_protocol::UntypedMessage::new(
+                        "_jazyk/session_list_changed",
+                        &json!({}),
+                    ) {
+                        let _ = up.send_notification(msg);
+                    }
+                }
+            }
+        }
+    });
 }

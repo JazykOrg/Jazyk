@@ -314,6 +314,10 @@ fn main() {
                 i += 1;
                 opts.agent = args.get(i).cloned();
             }
+            "--acp" => {
+                i += 1;
+                opts.acp_ide = args.get(i).cloned();
+            }
             "--only" => {
                 i += 1;
                 opts.only = args.get(i).cloned();

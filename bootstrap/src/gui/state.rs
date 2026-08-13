@@ -27,6 +27,8 @@ pub struct AppState {
     // Last emitted pending.changed payload, to emit only on movement.
     pub last_pending: std::sync::Mutex<serde_json::Value>,
     pub jobs: super::jobs::JobManager,
+    // The chat pane's sessions and their shared agent host (docs/frontends/gui.md#chat).
+    pub chat: super::chat::ChatManager,
     // Watch-mode retry backoff in seconds (30 doubling to 300, reset on success).
     pub backoff: std::sync::atomic::AtomicU64,
 }

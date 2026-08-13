@@ -102,6 +102,23 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable', 'benchmarks'])
         qc.invalidateQueries({ queryKey: [key] })
       break
+    // The chat pane (docs/frontends/gui.md#chat).
+    case 'chat.sessions':
+      app.setChatSessions((ev.sessions as never[]) ?? [])
+      break
+    case 'chat.update':
+      app.pushChatUpdate(ev.sessionId as string, {
+        n: (ev.n as number) ?? 0,
+        update: (ev.update as Record<string, unknown>) ?? {},
+      })
+      break
+    case 'chat.permission': {
+      // The sessions snapshot follows on its own event; selecting the asking
+      // session puts the buttons in front of the user.
+      app.selectChat(ev.sessionId as string)
+      app.setChatOpen(true)
+      break
+    }
     // Settings changed the project itself; anything derived may differ.
     case 'settings.changed':
       qc.invalidateQueries()
@@ -178,6 +195,10 @@ export function startEventStream(qc: QueryClient) {
       })
       .catch(() => {})
   void seed()
+  // The chat pane's session list survives a reload the same way jobs do.
+  get<{ sessions: never[] }>(`/api/chat/sessions`)
+    .then((r) => app.setChatSessions(r.sessions ?? []))
+    .catch(() => {})
   get<{ mode: 'off' | 'queue' | 'watch'; gen?: 'manual' | 'auto' }>(`/api/watch`)
     .then((r) => {
       app.setWatchMode(r.mode)

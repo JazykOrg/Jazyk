@@ -91,7 +91,7 @@ impl AcpRunner {
                 self.extra_env.clone(),
             )?);
         }
-        h.as_ref().unwrap().new_session(&self.project.root, mcp)
+        h.as_ref().unwrap().new_session(&self.project.root, mcp, super::policy::PermissionPolicy::Auto)
     }
 
     // Mark this runner as part of a running internal build: its servings carry the
@@ -197,11 +197,13 @@ impl AcpRunner {
         let cb_calls = calls.clone();
         let outcome = session.prompt(
             &Self::prompt_for(item),
-            Arc::new(move |u| {
-                if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
-                    cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Arc::new(move |ev| {
+                if let super::host::HostEvent::Update(u) = ev {
+                    if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
+                        cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    cb_translator.lock().unwrap().on_update(u, &cb_trace);
                 }
-                cb_translator.lock().unwrap().on_update(u, &cb_trace);
             }),
         );
         session.close();
@@ -268,8 +270,11 @@ impl AcpRunner {
         let prompt = format!("{}\n\n{}", system, user);
         let outcome = session.prompt(
             &prompt,
-            Arc::new(move |u| {
-                if let agent_client_protocol::schema::v1::SessionUpdate::AgentMessageChunk(c) = u {
+            Arc::new(move |ev| {
+                if let super::host::HostEvent::Update(
+                    agent_client_protocol::schema::v1::SessionUpdate::AgentMessageChunk(c),
+                ) = ev
+                {
                     if let agent_client_protocol::schema::v1::ContentBlock::Text(t) = &c.content {
                         sink.lock().unwrap().push_str(&t.text);
                     }

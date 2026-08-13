@@ -32,8 +32,14 @@ pub struct McpSpec {
     pub env: Vec<(String, String)>,
 }
 
-// What a prompt reports while it runs and when it ends.
-pub type OnUpdate = Arc<dyn Fn(&SessionUpdate) + Send + Sync>;
+// What a prompt reports while it runs: session updates, and (for Forward-policy
+// sessions) permission requests awaiting an answer.
+pub enum HostEvent<'a> {
+    Update(&'a SessionUpdate),
+    Permission { id: String, request: &'a RequestPermissionRequest },
+}
+
+pub type OnUpdate = Arc<dyn Fn(&HostEvent) + Send + Sync>;
 
 #[derive(Clone, Debug)]
 pub struct PromptOutcome {
@@ -47,7 +53,13 @@ enum Cmd {
     Open {
         cwd: PathBuf,
         mcp: Vec<McpSpec>,
+        policy: PermissionPolicy,
         reply: std::sync::mpsc::Sender<Result<String, String>>,
+    },
+    Answer {
+        session: String,
+        id: String,
+        option: Option<String>,
     },
     Prompt {
         session: String,
@@ -70,6 +82,10 @@ enum SessCmd {
         text: String,
         on_update: OnUpdate,
         reply: std::sync::mpsc::Sender<Result<PromptOutcome, String>>,
+    },
+    Answer {
+        id: String,
+        option: Option<String>,
     },
     Close {
         reply: std::sync::mpsc::Sender<()>,
@@ -134,10 +150,15 @@ impl AcpHost {
         }
     }
 
-    pub fn new_session(&self, cwd: &std::path::Path, mcp: Vec<McpSpec>) -> Result<SessionHandle, String> {
+    pub fn new_session(
+        &self,
+        cwd: &std::path::Path,
+        mcp: Vec<McpSpec>,
+        policy: PermissionPolicy,
+    ) -> Result<SessionHandle, String> {
         let (reply, rx) = std::sync::mpsc::channel();
         self.cmd_tx
-            .unbounded_send(Cmd::Open { cwd: cwd.to_path_buf(), mcp, reply })
+            .unbounded_send(Cmd::Open { cwd: cwd.to_path_buf(), mcp, policy, reply })
             .map_err(|_| "acp host is gone".to_string())?;
         let id = rx.recv().map_err(|_| "acp host dropped the session request".to_string())??;
         Ok(SessionHandle { id, cmd_tx: self.cmd_tx.clone() })
@@ -175,6 +196,15 @@ impl SessionHandle {
 
     pub fn cancel(&self) {
         let _ = self.cmd_tx.unbounded_send(Cmd::Cancel { session: self.id.clone() });
+    }
+
+    // Answer a forwarded permission request. `None` cancels it.
+    pub fn answer_permission(&self, id: &str, option: Option<String>) {
+        let _ = self.cmd_tx.unbounded_send(Cmd::Answer {
+            session: self.id.clone(),
+            id: id.to_string(),
+            option,
+        });
     }
 
     // Close the session and block until the agent has torn it down (or answered that
@@ -227,7 +257,7 @@ async fn main_loop(
     let mut sessions: HashMap<String, SessionEntry> = HashMap::new();
     while let Some(cmd) = cmd_rx.next().await {
         match cmd {
-            Cmd::Open { cwd, mcp, reply } => {
+            Cmd::Open { cwd, mcp, policy, reply } => {
                 let servers: Vec<McpServer> = mcp
                     .into_iter()
                     .map(|s| {
@@ -249,7 +279,7 @@ async fn main_loop(
                         let cancelled = Arc::new(AtomicBool::new(false));
                         sessions.insert(id.clone(), SessionEntry { tx, cancelled: cancelled.clone() });
                         let task_root = root.clone();
-                        let _ = cx.spawn(session_task(active, rx, cancelled, task_root));
+                        let _ = cx.spawn(session_task(active, rx, cancelled, task_root, policy));
                         let _ = reply.send(Ok(id));
                     }
                     Err(e) => {
@@ -268,6 +298,11 @@ async fn main_loop(
                     let _ = reply.send(Err(format!("unknown session {}", session)));
                 }
             },
+            Cmd::Answer { session, id, option } => {
+                if let Some(entry) = sessions.get(&session) {
+                    let _ = entry.tx.unbounded_send(SessCmd::Answer { id, option });
+                }
+            }
             Cmd::Cancel { session } => {
                 if let Some(entry) = sessions.get(&session) {
                     entry.cancelled.store(true, Ordering::Relaxed);
@@ -294,15 +329,34 @@ async fn main_loop(
 
 // One session's owner: services prompts sequentially, answers the agent's callback
 // requests (permissions by policy, file system against the project tree), and applies
-// the idle watchdog. Mirrors docs/frontends/acp.md#worker-sessions.
+// the idle watchdog. Commands arriving mid-turn are handled in place (permission
+// answers) or queued behind the turn (prompts, close).
+// Mirrors docs/frontends/acp.md#worker-sessions and #permissions.
 async fn session_task(
     mut session: ActiveSession<'static, Agent>,
     mut rx: UnboundedReceiver<SessCmd>,
     cancelled: Arc<AtomicBool>,
     root: PathBuf,
+    policy: PermissionPolicy,
 ) -> Result<(), agent_client_protocol::Error> {
+    use agent_client_protocol::schema::v1::{
+        RequestPermissionOutcome, SelectedPermissionOutcome,
+    };
     let idle = super::config::idle_timeout();
-    while let Some(cmd) = rx.next().await {
+    // Forwarded permission requests awaiting the user, keyed by the ask id the
+    // HostEvent carried. The Mutex satisfies the Send bound on spawned futures; the
+    // task itself never contends on it.
+    let pending: std::sync::Mutex<
+        HashMap<String, agent_client_protocol::Responder<RequestPermissionResponse>>,
+    > = std::sync::Mutex::new(HashMap::new());
+    let ask_seq = std::sync::atomic::AtomicU64::new(0);
+    let mut queued: std::collections::VecDeque<SessCmd> = Default::default();
+    loop {
+        let cmd = match queued.pop_front() {
+            Some(c) => Some(c),
+            None => rx.next().await,
+        };
+        let Some(cmd) = cmd else { break };
         match cmd {
             SessCmd::Close { reply } => {
                 // session/close is capability-gated; an agent without it answers
@@ -316,16 +370,27 @@ async fn session_task(
                 let _ = reply.send(());
                 break;
             }
+            // No turn in flight: nothing to answer.
+            SessCmd::Answer { .. } => {}
             SessCmd::Prompt { text, on_update, reply } => {
                 if let Err(e) = session.send_prompt(text) {
                     let _ = reply.send(Err(err_s(e)));
                     continue;
                 }
                 let mut idled = false;
+                enum Ev {
+                    Msg(Result<SessionMessage, agent_client_protocol::Error>),
+                    Cmd(Option<SessCmd>),
+                    Tick,
+                }
                 let outcome = loop {
-                    let msg = futures::select! {
-                        m = session.read_update().fuse() => m,
-                        _ = FutureExt::fuse(async_io::Timer::after(idle)) => {
+                    let ev = futures::select! {
+                        m = session.read_update().fuse() => Ev::Msg(m),
+                        c = rx.next() => Ev::Cmd(c),
+                        _ = FutureExt::fuse(async_io::Timer::after(idle)) => Ev::Tick,
+                    };
+                    match ev {
+                        Ev::Tick => {
                             if idled {
                                 // Cancelled already and still silent: the agent is gone.
                                 break Err("agent unresponsive after cancel".to_string());
@@ -336,25 +401,50 @@ async fn session_task(
                             let _ = session
                                 .connection()
                                 .send_notification(CancelNotification::new(sid));
-                            continue;
                         }
-                    };
-                    let msg = match msg {
-                        Ok(m) => m,
-                        Err(e) => break Err(err_s(e)),
-                    };
-                    match msg {
-                        SessionMessage::StopReason(stop) => {
+                        Ev::Cmd(None) => break Err("acp host is gone".to_string()),
+                        Ev::Cmd(Some(SessCmd::Answer { id, option })) => {
+                            if let Some(r) = pending.lock().unwrap().remove(&id) {
+                                let outcome = match option {
+                                    Some(oid) => RequestPermissionOutcome::Selected(
+                                        SelectedPermissionOutcome::new(oid),
+                                    ),
+                                    None => RequestPermissionOutcome::Cancelled,
+                                };
+                                let _ = r.respond(RequestPermissionResponse::new(outcome));
+                            }
+                        }
+                        // Prompts and closes queue behind the running turn.
+                        Ev::Cmd(Some(other)) => queued.push_back(other),
+                        Ev::Msg(Err(e)) => break Err(err_s(e)),
+                        Ev::Msg(Ok(SessionMessage::StopReason(stop))) => {
+                            // The turn is over: unanswered forwarded requests cancel,
+                            // per the protocol.
+                            for (_, r) in pending.lock().unwrap().drain() {
+                                let _ = r.respond(RequestPermissionResponse::new(
+                                    RequestPermissionOutcome::Cancelled,
+                                ));
+                            }
                             let stop = serde_json::to_value(&stop)
                                 .ok()
-                                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                                .and_then(|v| v.as_str().map(|x| x.to_string()))
                                 .unwrap_or_else(|| format!("{:?}", stop));
                             break Ok(PromptOutcome { stop, idled });
                         }
-                        SessionMessage::SessionMessage(dispatch) => {
-                            handle_dispatch(dispatch, &on_update, &cancelled, &root).await?;
+                        Ev::Msg(Ok(SessionMessage::SessionMessage(dispatch))) => {
+                            handle_dispatch(HandleArgs {
+                                dispatch,
+                                on_update: &on_update,
+                                cancelled: &cancelled,
+                                root: &root,
+                                policy,
+                                pending: &pending,
+                                ask_seq: &ask_seq,
+                                session_id: &session.session_id().to_string(),
+                            })
+                            .await?;
                         }
-                        _ => {}
+                        Ev::Msg(Ok(_)) => {}
                     }
                 };
                 let _ = reply.send(outcome);
@@ -364,29 +454,51 @@ async fn session_task(
     Ok(())
 }
 
-async fn handle_dispatch(
+struct HandleArgs<'a> {
     dispatch: Dispatch,
-    on_update: &OnUpdate,
-    cancelled: &Arc<AtomicBool>,
-    root: &std::path::Path,
-) -> Result<(), agent_client_protocol::Error> {
-    let on_update = on_update.clone();
-    let was_cancelled = cancelled.load(Ordering::Relaxed);
-    MatchDispatch::new(dispatch)
+    on_update: &'a OnUpdate,
+    cancelled: &'a Arc<AtomicBool>,
+    root: &'a std::path::Path,
+    policy: PermissionPolicy,
+    pending: &'a std::sync::Mutex<
+        HashMap<String, agent_client_protocol::Responder<RequestPermissionResponse>>,
+    >,
+    ask_seq: &'a std::sync::atomic::AtomicU64,
+    session_id: &'a str,
+}
+
+async fn handle_dispatch(a: HandleArgs<'_>) -> Result<(), agent_client_protocol::Error> {
+    let on_update = a.on_update.clone();
+    let was_cancelled = a.cancelled.load(Ordering::Relaxed);
+    let root = a.root;
+    MatchDispatch::new(a.dispatch)
         .if_notification(async |n: SessionNotification| {
-            on_update(&n.update);
+            on_update(&HostEvent::Update(&n.update));
             Ok(())
         })
         .await
         .if_request(async |req: RequestPermissionRequest, responder| {
             // A cancelled turn answers every pending permission request `cancelled`,
-            // per the protocol; otherwise the policy decides.
-            let outcome = if was_cancelled {
-                agent_client_protocol::schema::v1::RequestPermissionOutcome::Cancelled
-            } else {
-                policy::answer(PermissionPolicy::Auto, &req)
-            };
-            responder.respond(RequestPermissionResponse::new(outcome))
+            // per the protocol; otherwise the policy decides: automated sessions by
+            // rule, chat sessions by forwarding to the user.
+            if was_cancelled {
+                return responder.respond(RequestPermissionResponse::new(
+                    agent_client_protocol::schema::v1::RequestPermissionOutcome::Cancelled,
+                ));
+            }
+            match a.policy {
+                PermissionPolicy::Auto => {
+                    let outcome = policy::answer(a.policy, &req);
+                    responder.respond(RequestPermissionResponse::new(outcome))
+                }
+                PermissionPolicy::Forward => {
+                    let n = a.ask_seq.fetch_add(1, Ordering::Relaxed) + 1;
+                    let id = format!("ask-{}-{}", a.session_id, n);
+                    (a.on_update)(&HostEvent::Permission { id: id.clone(), request: &req });
+                    a.pending.lock().unwrap().insert(id, responder);
+                    Ok(())
+                }
+            }
         })
         .await
         .if_request(async |req: ReadTextFileRequest, responder| {
@@ -556,14 +668,16 @@ mod tests {
             ("JAZYK_CODEC".to_string(), "native".to_string()),
         ];
         let host = AcpHost::start(agent, dir.clone(), extra_env).expect("host start");
-        let session = host.new_session(&dir, Vec::new()).expect("session");
+        let session = host
+            .new_session(&dir, Vec::new(), PermissionPolicy::Auto)
+            .expect("session");
         let got: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
         let sink = got.clone();
         let outcome = session
             .prompt(
                 "say hi",
-                Arc::new(move |u: &SessionUpdate| {
-                    if let SessionUpdate::AgentMessageChunk(c) = u {
+                Arc::new(move |ev: &HostEvent| {
+                    if let HostEvent::Update(SessionUpdate::AgentMessageChunk(c)) = ev {
                         if let ContentBlock::Text(t) = &c.content {
                             sink.lock().unwrap().push(t.text.clone());
                         }

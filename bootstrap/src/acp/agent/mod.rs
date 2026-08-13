@@ -13,7 +13,7 @@ use agent_client_protocol::schema::v1::{
     SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, UsageUpdate,
 };
-use agent_client_protocol::{Agent, Role, Stdio};
+use agent_client_protocol::{Agent, Stdio};
 
 use agent_loop::{AgentEvent, LoopArgs, Stop};
 use mcp_client::{GenericTool, McpServerConn};

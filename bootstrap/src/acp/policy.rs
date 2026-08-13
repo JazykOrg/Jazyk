@@ -11,11 +11,15 @@ pub enum PermissionPolicy {
     // Automated work: allow the agent to proceed. The real safety boundary is the
     // tool serving (validation gates, path sandboxes, leases), not the prompt.
     Auto,
+    // Chat sessions: the request surfaces to the user as a HostEvent and the host
+    // waits for an answer. Unanswered requests cancel with the turn.
+    Forward,
 }
 
 pub fn answer(policy: PermissionPolicy, req: &RequestPermissionRequest) -> RequestPermissionOutcome {
     match policy {
-        PermissionPolicy::Auto => {
+        // Forward never reaches here; the host stashes the responder instead.
+        PermissionPolicy::Forward | PermissionPolicy::Auto => {
             let allow = req
                 .options
                 .iter()

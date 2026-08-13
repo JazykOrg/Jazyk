@@ -22,7 +22,7 @@ const WIRE_STRING_CAP: usize = 2_000;
 
 // One event as it goes to the browser: same shape, long strings cut to a preview
 // with their byte count and an `elided` flag beside them.
-fn elide(v: &Value) -> Value {
+pub(crate) fn elide(v: &Value) -> Value {
     match v {
         Value::String(s) if s.len() > WIRE_STRING_CAP => {
             json!(format!("{}… [{} chars total]", crate::llm::truncate(s, WIRE_STRING_CAP), s.len()))

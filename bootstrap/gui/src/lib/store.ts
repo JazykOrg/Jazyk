@@ -36,6 +36,22 @@ export interface TurnProgress {
 // How long a finished turn stays visible before it fades.
 export const LINGER_MS = 6000
 
+// One chat session as the server reports it (docs/frontends/gui.md#chat).
+export interface ChatSessionInfo {
+  id: string
+  title: string
+  state: string
+  updates: number
+  pending: { id: string; request?: unknown }[]
+}
+
+export interface ChatUpdateRow {
+  n: number
+  update: Record<string, unknown>
+}
+
+const CHAT_RING = 2000
+
 interface AppStore {
   connected: boolean
   // A request answered 401: the token is missing or stale (server restart).
@@ -63,6 +79,18 @@ interface AppStore {
   turnsSettle: () => void
   // Drop what has lingered long enough. Held entries stay.
   turnsSweep: () => void
+  // The chat pane (docs/frontends/gui.md#chat).
+  chatOpen: boolean
+  chatFollow: boolean
+  chatSelected: string | null
+  chatSessions: Record<string, ChatSessionInfo>
+  chatUpdates: Record<string, ChatUpdateRow[]>
+  setChatOpen: (v: boolean) => void
+  setChatFollow: (v: boolean) => void
+  selectChat: (id: string | null) => void
+  setChatSessions: (list: ChatSessionInfo[]) => void
+  pushChatUpdate: (sessionId: string, row: ChatUpdateRow) => void
+  seedChatUpdates: (sessionId: string, rows: ChatUpdateRow[]) => void
   setConnected: (v: boolean) => void
   setAuthRequired: (v: boolean) => void
   bumpTokenEpoch: () => void
@@ -89,6 +117,29 @@ export const useApp = create<AppStore>((set) => ({
   lastCommit: null,
   activityOpen: localStorage.getItem('jazyk-activity') === 'open',
   editorDirty: false,
+  chatOpen: localStorage.getItem('jazyk-chat') === 'open',
+  chatFollow: false,
+  chatSelected: null,
+  chatSessions: {},
+  chatUpdates: {},
+  setChatOpen: (v) => {
+    localStorage.setItem('jazyk-chat', v ? 'open' : 'closed')
+    set({ chatOpen: v })
+  },
+  setChatFollow: (v) => set({ chatFollow: v }),
+  selectChat: (id) => set({ chatSelected: id }),
+  setChatSessions: (list) =>
+    set(() => ({ chatSessions: Object.fromEntries(list.map((s) => [s.id, s])) })),
+  pushChatUpdate: (sessionId, row) =>
+    set((s) => {
+      const ring = s.chatUpdates[sessionId] ?? []
+      // Replays after a reconnect re-send rows the ring already holds.
+      if (ring.length > 0 && row.n <= ring[ring.length - 1].n) return s
+      const next = [...ring.slice(Math.max(0, ring.length - CHAT_RING + 1)), row]
+      return { chatUpdates: { ...s.chatUpdates, [sessionId]: next } }
+    }),
+  seedChatUpdates: (sessionId, rows) =>
+    set((s) => ({ chatUpdates: { ...s.chatUpdates, [sessionId]: rows.slice(-CHAT_RING) } })),
   setConnected: (v) => set({ connected: v }),
   setAuthRequired: (v) => set((s) => (s.authRequired === v ? s : { authRequired: v })),
   bumpTokenEpoch: () => set((s) => ({ tokenEpoch: s.tokenEpoch + 1 })),

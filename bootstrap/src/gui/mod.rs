@@ -2,6 +2,7 @@
 // stream, and the language server over WebSocket. Mirrors docs/frontends/gui.md.
 mod api;
 mod assets;
+mod chat;
 mod deliverable;
 mod diff;
 mod docs;
@@ -127,6 +128,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         events: events::EventHub::new(),
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
         jobs: jobs::JobManager::new(),
+        chat: chat::ChatManager::default(),
         backoff: std::sync::atomic::AtomicU64::new(30),
     });
     // --watch is a mode change, recorded where every worker reads it.

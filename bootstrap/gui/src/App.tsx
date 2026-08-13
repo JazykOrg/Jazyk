@@ -16,6 +16,7 @@ import DelivFile from './workbench/DelivFile'
 import MapCenter from './workbench/MapCenter'
 import Inspector from './workbench/Inspector'
 import Activity from './workbench/Activity'
+import ChatPane from './chat/ChatPane'
 import FilesHome from './workbench/FilesHome'
 import Work from './routes/Work'
 import GenTask from './routes/GenTask'
@@ -175,6 +176,7 @@ export default function App() {
           </div>
           <Activity />
         </div>
+        <ChatPane />
       </div>
       <StatusBar />
       <CommandPalette />

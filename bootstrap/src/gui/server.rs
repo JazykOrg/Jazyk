@@ -1,6 +1,6 @@
 // Router assembly, session-token check, bind with port fallback, graceful shutdown.
 use super::state::SharedState;
-use super::{api, assets, deliverable, diff, docs, events, jobs, lsp_ws};
+use super::{api, assets, chat, deliverable, diff, docs, events, jobs, lsp_ws};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -65,6 +65,11 @@ pub fn router(st: SharedState) -> Router {
         .route("/verify/pending", get(api::verify_pending))
         .route("/verify/matrix", get(api::verify_matrix))
         .route("/docsgen/{slug}", get(api::docsgen))
+        .route("/chat/sessions", get(chat::list_sessions).post(chat::post_session))
+        .route("/chat/sessions/{id}", get(chat::get_session))
+        .route("/chat/sessions/{id}/prompt", post(chat::post_prompt))
+        .route("/chat/sessions/{id}/cancel", post(chat::cancel))
+        .route("/chat/permissions", post(chat::answer_permission))
         .route("/jobs", get(jobs::list_jobs).post(jobs::post_job))
         .route("/jobs/{id}", get(jobs::get_job))
         .route("/jobs/{id}/cancel", post(jobs::cancel_job))

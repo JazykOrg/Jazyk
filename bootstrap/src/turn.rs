@@ -720,16 +720,34 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
         Err(e) => s.push_str(&format!("(context error: {})\n", e)),
     }
     // Lookalike candidates: token-overlap hits on the entity's name, excluding itself.
+    // Partitioned so a child concept never reads as a merge suggestion: a candidate
+    // whose name extends this one (or vice versa) with extra words is usually a
+    // field, part, or role, not an alias.
     if let Some(e) = store.graph.entities.get(entity_id) {
+        let tokens = |n: &str| -> std::collections::BTreeSet<String> {
+            n.to_lowercase().split_whitespace().map(|t| t.to_string()).collect()
+        };
+        let mine = tokens(&e.name);
         let hits = store.search(&e.name);
-        let others: Vec<String> = hits
-            .iter()
-            .filter(|(id, _, _)| id != entity_id)
-            .map(|(id, name, def)| format!("- {} ({}): {}", id, name, crate::llm::truncate(def, 160)))
-            .collect();
-        if !others.is_empty() {
-            s.push_str("\n## Lookalike candidates (merge only if truly the same concept)\n");
-            s.push_str(&others.join("\n"));
+        let (mut aliases, mut related): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for (id, name, def) in hits.iter().filter(|(id, _, _)| id != entity_id) {
+            let theirs = tokens(name);
+            let line = format!("- {} ({}): {}", id, name, crate::llm::truncate(def, 160));
+            let extension = (theirs.is_superset(&mine) || mine.is_superset(&theirs)) && theirs != mine;
+            if extension {
+                related.push(line);
+            } else {
+                aliases.push(line);
+            }
+        }
+        if !aliases.is_empty() {
+            s.push_str("\n## Likely aliases (merge when truly the same concept)\n");
+            s.push_str(&aliases.join("\n"));
+            s.push('\n');
+        }
+        if !related.is_empty() {
+            s.push_str("\n## Related but separate candidates (a field, part, or child concept; merge only with explicit evidence they are one concept)\n");
+            s.push_str(&related.join("\n"));
             s.push('\n');
         }
         // Missing-reference candidates: requirements whose statement names this entity

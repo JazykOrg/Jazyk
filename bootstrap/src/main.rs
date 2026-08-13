@@ -331,6 +331,7 @@ fn main() {
                 opts.edit_sink = args.get(i).cloned();
             }
             "--ephemeral" => opts.ephemeral = true,
+            "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,
             "--no-open" => opts.no_open = true,
             "--watch" => opts.watch = true,
@@ -411,6 +412,7 @@ fn main() {
                         build_token: opts.build_token.clone(),
                         serve_files: opts.serve_files,
                         edit_sink: opts.edit_sink.clone(),
+                        packaged: opts.packaged,
                     };
                     mcp::McpServer::with_bridge(proj, out, modes, opts.write, bridge).run();
                     0

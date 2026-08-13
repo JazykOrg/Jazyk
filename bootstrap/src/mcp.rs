@@ -54,6 +54,9 @@ pub struct BridgeFlags {
     pub serve_files: bool,
     // Delegate document and settings writes to the spawning process (the IDE proxy).
     pub edit_sink: Option<String>,
+    // The bridge already sent the task's instructions and package as the session
+    // prompt; begin_compilation answers with a short ack instead of repeating them.
+    pub packaged: bool,
 }
 
 #[derive(Default)]
@@ -502,20 +505,29 @@ impl McpServer {
             .into_iter()
             .filter(|t| !crate::tools::READ_TOOLS.contains(t) && *t != "done" && *t != crate::tools::FEEDBACK_TOOL)
             .collect();
-        let instructions_field = if elide_kind == Some(item.task.as_str()) {
-            json!("(same contract as the task you just finished; unchanged)")
+        let reply = if self.bridge.packaged {
+            // The bridge already delivered the contract as the session prompt.
+            json!({
+                "task": {"kind": item.task, "target": item.target},
+                "note": "changeset open; stage findings with the write tools, then finish with done",
+            })
         } else {
-            json!(instructions)
+            let instructions_field = if elide_kind == Some(item.task.as_str()) {
+                json!("(same contract as the task you just finished; unchanged)")
+            } else {
+                json!(instructions)
+            };
+            json!({
+                "task": {"kind": item.task, "target": item.target,
+                         "dirtySections": item.dirty_sections, "staleAnchors": item.stale_anchors},
+                "instructions": instructions_field,
+                "package": pack,
+                "writeTools": write_tools,
+                "note": "`done` finishes the task here (finish_compilation is the same call); the read tools and report_feedback are always in scope",
+                "next": "stage findings with the write tools, then done with a one-line summary",
+            })
         };
-        let reply = json!({
-            "task": {"kind": item.task, "target": item.target,
-                     "dirtySections": item.dirty_sections, "staleAnchors": item.stale_anchors},
-            "instructions": instructions_field,
-            "package": pack,
-            "writeTools": write_tools,
-            "note": "where the instructions say `done`, use finish_compilation; writeTools are the write tools in scope for this task; the read tools and report_feedback are always in scope",
-            "next": "stage findings with the write tools, then finish_compilation with a one-line summary",
-        });
+        let _ = (&instructions, &pack, &write_tools);
         *self.open.lock().unwrap() = Some(OpenTask { item, session, rounds: 0 });
         reply
     }
@@ -973,6 +985,15 @@ impl McpServer {
                         "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then finish_compilation. One task open at a time.",
                         "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}}, "additionalProperties": false}
                     }));
+                    if self.bridge.ephemeral {
+                        // The instructions say `done`; a bridge serving lists it by
+                        // that name so the model never translates.
+                        tools.push(json!({
+                            "name": "done",
+                            "description": "Finish the open task: run the done gates (every dirty section marked, every stale anchor resolved) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again.",
+                            "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": false}
+                        }));
+                    }
                     tools.push(json!({
                         "name": "finish_compilation",
                         "description": "Run the done gates (every dirty section marked, every stale anchor resolved) and commit the open changeset atomically. A gate failure names the repair and keeps the changeset open. The reply names the next ready task; beginNext: true claims it in the same call and carries its package. The finish that empties the queue reports the verdict.",
@@ -1110,6 +1131,15 @@ impl McpServer {
                         return Ok(text_result(self.begin_compilation(params), false))
                     }
                     "finish_compilation" if self.modes.iter().any(|m| m == "compile") => {
+                        return Ok(text_result(self.finish_compilation(params), false))
+                    }
+                    // `done` is what every task's instructions say; on a compile
+                    // serving it is the same finish. One verb everywhere.
+                    "done"
+                        if self.modes.iter().any(|m| m == "compile")
+                            && self.bench.lock().unwrap().open.is_none()
+                            && self.open.lock().unwrap().is_some() =>
+                    {
                         return Ok(text_result(self.finish_compilation(params), false))
                     }
                     "abandon_compilation" if self.modes.iter().any(|m| m == "compile") => {

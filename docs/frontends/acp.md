@@ -93,12 +93,12 @@ The automated path. For each work item the runner:
 
 1. Creates a session whose `mcpServers` list one entry: `jazyk mcp` with the task's
    toolsets and flags (see [MCP into sessions](./mcp.md#mcp-into-acp-sessions)).
-2. Prompts with a fixed, agent-neutral instruction: begin the named task with the
-   lifecycle tool, follow the returned package, finish with the finishing tool,
-   repair what a rejection names. The task's real prompt (the
-   [context pack](../compiler/context.md) and the task contract) rides inside the
-   `begin_*` reply, the same package every consumer gets. One prompt source, no
-   duplication.
+2. Prompts with the task's contract itself: for compilation tasks the instructions
+   and the [context pack](../compiler/context.md) travel as the session prompt (a
+   prompt is what a model reads best), and the serving's `begin_compilation` answers
+   with a short ack (`--packaged`). Binding and generation packages still ride the
+   `begin_*` reply. The prompt source is `task_prompt` either way; only the channel
+   differs.
 3. Consumes the update stream and translates it into
    [trace events](../compiler/turns.md#trace-events): message and thought chunks
    become model text, `tool_call` and `tool_call_update` become tool rows, usage

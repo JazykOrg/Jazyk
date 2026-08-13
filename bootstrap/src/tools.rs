@@ -37,20 +37,13 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "context",
-            description: "Load a bounded context pack around a target: an entity id (ent:...), a requirement id (req:...), or a section reference (doc.md#/ref). Returns the pack plus expansion handles for what the budget cut off.",
-            parameters: obj(
-                json!({
-                    "target": {"type": "string"},
-                    "focus": {"type": "object", "properties": {"parents": {"type": "integer"}, "mentions": {"type": "integer"}, "requirements": {"type": "integer"}}},
-                    "budget": {"type": "integer"}
-                }),
-                &["target"],
-            ),
+            description: "Load a bounded context pack around a target: an entity id (ent:...), a requirement id (req:...), or a section reference (doc.md#/ref). Returns the pack plus expansion handles for what was cut off.",
+            parameters: obj(json!({"target": {"type": "string"}}), &["target"]),
         },
         ToolDef {
             name: "expand",
             description: "Load the frontier behind an expansion handle returned by a previous context call.",
-            parameters: obj(json!({"handle": {"type": "string"}, "budget": {"type": "integer"}}), &["handle"]),
+            parameters: obj(json!({"handle": {"type": "string"}}), &["handle"]),
         },
         ToolDef {
             name: "search",
@@ -115,7 +108,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one EARS requirement (a single testable statement using 'shall'). The store mints the id; calls are idempotent by the statement's natural key: a match returns the existing id with updated true and refreshes it in place. entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. edges optionally tie two of the entities with a relationship type, one of: generalization, realization, composition, aggregation, association, dependency, reference.",
+            description: "Record one EARS requirement (a single testable statement using 'shall'). entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. Safe to retry: re-recording the same statement updates it in place. edges optionally tie two of the entities with a relationship type, one of: generalization, realization, composition, aggregation, association, dependency, reference.",
             parameters: obj(
                 json!({
                     "ears": {"type": "string"},

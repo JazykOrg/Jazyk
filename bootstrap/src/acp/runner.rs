@@ -120,6 +120,8 @@ impl AcpRunner {
         if modes == "compile" {
             args.push("--only".to_string());
             args.push(item.target.clone());
+            // The contract travels as the session prompt; begin answers with an ack.
+            args.push("--packaged".to_string());
         }
         if let Some(t) = self.build_token.lock().unwrap().as_ref() {
             args.push("--build-token".to_string());
@@ -131,9 +133,26 @@ impl AcpRunner {
         McpSpec { name: "jazyk".to_string(), command: exe, args, env: Vec::new() }
     }
 
-    // The fixed, agent-neutral prompt. The task's real contract rides in the
-    // `begin_*` reply; this only points the agent at it.
-    fn prompt_for(item: &WorkItem) -> String {
+    // The prompt for one work item. Compilation tasks carry their full contract (the
+    // task instructions and the work package) directly: a prompt is what a model
+    // reads best, and the serving's begin call answers with a short ack instead of
+    // repeating it. Binding and generation packages still ride the begin reply.
+    // Mirrors docs/frontends/acp.md#worker-sessions.
+    fn prompt_for(&self, item: &WorkItem) -> String {
+        if !matches!(item.task.as_str(), "bind-requirement" | "generate-entity") {
+            let mut store = crate::store::Store::load(&self.out);
+            let (parsed, _) = crate::reconcile::parse_all(&self.project);
+            store.sync_docs(&parsed);
+            let gs = crate::gen::GenSettings::resolve(&self.project);
+            let (system, pack) =
+                crate::turn::task_prompt(&store, item, &self.project.limits, &self.project.linting, &gs);
+            return format!(
+                "{}\n\n{}\n\nPROTOCOL: the `jazyk` tools carry this task. First call `begin_compilation` with {{\"task\": \"{}\"}} to open the changeset (its reply only confirms). Stage findings with the write tools. Finish with `done` and a one-line summary; if `done` is rejected, repair exactly what the error names and call it again. Do exactly this one task, then stop.",
+                crate::turn::with_feedback_note(system),
+                pack,
+                item.target
+            );
+        }
         match item.task.as_str() {
             "bind-requirement" => format!(
                 "You are performing one jazyk binding task through the connected `jazyk` MCP server. \
@@ -151,15 +170,7 @@ impl AcpRunner {
                  Do exactly this one entity, then stop.",
                 item.target
             ),
-            _ => format!(
-                "You are performing one jazyk compilation task through the connected `jazyk` MCP server. \
-                 Call `begin_compilation` with {{\"task\": \"{}\"}}. The reply carries the task's instructions \
-                 and work package; follow them exactly, staging findings with the write tools it names. \
-                 Finish with `finish_compilation` and a one-line summary; if the finish is rejected, repair \
-                 exactly what the error names and finish again. \
-                 Do exactly this one task, never begin any other, then stop.",
-                item.target
-            ),
+            _ => unreachable!("compilation prompts are packaged above"),
         }
     }
 
@@ -196,7 +207,7 @@ impl AcpRunner {
         let cb_trace = trace.clone();
         let cb_calls = calls.clone();
         let outcome = session.prompt(
-            &Self::prompt_for(item),
+            &self.prompt_for(item),
             Arc::new(move |ev| {
                 if let super::host::HostEvent::Update(u) = ev {
                     if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {

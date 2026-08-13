@@ -296,7 +296,7 @@ const FEEDBACK_NOTE: &str = "If anything here is ambiguous, wrong, or confusing 
 
 // The note rides directly under the role line: the first paragraph says what the turn
 // is, the second how to report that the rest of the prompt failed it.
-fn with_feedback_note(system: &str) -> String {
+pub(crate) fn with_feedback_note(system: &str) -> String {
     match system.split_once("\n\n") {
         Some((role, rest)) => format!("{}\n\n{}\n\n{}", role, FEEDBACK_NOTE, rest),
         None => format!("{}\n\n{}", system, FEEDBACK_NOTE),

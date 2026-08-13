@@ -43,6 +43,10 @@ separated; each adds its tools to the union:
 Every serving includes the [read tools](../compiler/tools.md#read-tools),
 [`report_feedback`](../compiler/tools.md#feedback-tool), and `await_changes` (below).
 
+On a compile serving, `done` is accepted as the finishing call (the same commit as
+`finish_compilation`), and a bridge serving lists it under that name: the task
+instructions say `done`, so the model never translates a verb.
+
 ## MCP into ACP sessions
 
 When jazyk creates an [ACP session](./acp.md#worker-sessions), it injects one MCP
@@ -60,6 +64,9 @@ this spawning path and are not for standalone servings:
 - `--build-token <id>`: the serving is part of the running internal build. The
   build-lease refusal and the release gate do not apply to its target; without this,
   a build's own sessions would deadlock against the build's own lease.
+- `--packaged`: the bridge already delivered the task's instructions and package as
+  the session prompt; `begin_compilation` answers with a short ack instead of
+  repeating them.
 - `--serve-files`: adds the file and command tools
   ([generation turns](../compiler/turns.md#generation-turns)) for agents whose
   profile sets [`serve_files`](../compiler/project-settings.md#acp). Agents with

@@ -39,6 +39,7 @@ pub struct Options {
     pub build_token: Option<String>,
     pub serve_files: bool,
     pub edit_sink: Option<String>,
+    pub packaged: bool,
 }
 
 impl Default for Options {
@@ -72,6 +73,7 @@ impl Default for Options {
             build_token: None,
             serve_files: false,
             edit_sink: None,
+            packaged: false,
         }
     }
 }

@@ -96,8 +96,8 @@ fn instructions_for(modes: &[String], write: bool) -> String {
         s.push_str(
             "COMPILATION LOOP: call compilation_tasks; while a task is ready, begin_compilation, \
              follow the instructions in the returned package, stage findings with the write tools, \
-             then finish_compilation. Its reply names the next ready task; repeat until the queue \
-             is empty and the verdict is converged. ",
+             then call done. Its reply names the next ready task; repeat until the queue is empty \
+             and the verdict is converged. ",
         );
     }
     if modes.iter().any(|m| m == "generate") {

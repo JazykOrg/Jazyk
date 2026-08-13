@@ -12,6 +12,10 @@ const FLUSH_AT: usize = 2_000;
 
 pub struct UpdateTranslator {
     label: String,
+    // The turn's document, when the label names one: reconcile turns emit Section
+    // events so the editor bands follow the work (docs/compiler/turns.md#trace-events).
+    doc: Option<String>,
+    at_section: Option<String>,
     thought: String,
     message: String,
     // Tool call titles by id, so an update row can name what finished.
@@ -22,8 +26,13 @@ pub struct UpdateTranslator {
 
 impl UpdateTranslator {
     pub fn new(label: &str) -> UpdateTranslator {
+        let doc = label
+            .strip_prefix("reconcile-doc ")
+            .map(|d| d.to_string());
         UpdateTranslator {
             label: label.to_string(),
+            doc,
+            at_section: None,
             thought: String::new(),
             message: String::new(),
             calls: HashMap::new(),
@@ -72,6 +81,20 @@ impl UpdateTranslator {
                     summary: crate::turn::condense(&args, 160),
                     full: crate::turn::full_payload(&args),
                 });
+                // An accepted call that names a section says where the turn is.
+                if let Some(doc) = self.doc.clone() {
+                    if let Some(sec) = named_section(&args, &doc) {
+                        if self.at_section.as_deref() != Some(sec.as_str()) {
+                            self.at_section = Some(sec.clone());
+                            trace.event(TraceEvent::Section {
+                                label: self.label.clone(),
+                                doc,
+                                section: sec,
+                                tool: call.title.clone(),
+                            });
+                        }
+                    }
+                }
             }
             SessionUpdate::ToolCallUpdate(u) => {
                 self.flush_into(trace);
@@ -129,6 +152,16 @@ impl UpdateTranslator {
     // The end of the turn: whatever is buffered lands.
     pub fn finish(&mut self, trace: &Trace) {
         self.flush_into(trace);
+    }
+}
+
+// The section a tool call names, when it belongs to this turn's document (moved from
+// the retired turn loop).
+fn named_section(args: &serde_json::Value, doc: &str) -> Option<String> {
+    let raw = args["section"].as_str().or_else(|| args["mention"]["section"].as_str())?;
+    match crate::model::split_section_ref(raw) {
+        Some((d, sec)) => (d == doc).then_some(sec),
+        None => raw.starts_with('/').then(|| raw.to_string()),
     }
 }
 

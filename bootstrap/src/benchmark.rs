@@ -8,7 +8,7 @@ use crate::llm::{self, Llm};
 use crate::model::*;
 use crate::project::{Limits, Linting};
 use crate::store::Store;
-use crate::turn::{run_turn, Trace, TraceLevel};
+use crate::turn::{Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -587,6 +587,97 @@ pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSetting
     Ok(())
 }
 
+
+// One case as a turn on the generic loop: the same codecs the embedded agent runs,
+// dispatching into a ToolSession over the sandbox. What run_turn used to be, scoped
+// to grading. Mirrors docs/benchmark/benchmark.md#runs.
+fn run_case_turn(
+    llm: &Llm,
+    snapshot: Store,
+    item: &crate::model::WorkItem,
+    limits: &Limits,
+    lint: &crate::project::Linting,
+    gs: &crate::gen::GenSettings,
+) -> (Vec<crate::store::Op>, u32, Option<String>) {
+    use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
+    use crate::acp::agent::mcp_client::GenericTool;
+    use crate::tools::{catalog, toolset, ToolSession, WorkScope};
+    let scope = match item.task.as_str() {
+        "reconcile-doc" => WorkScope {
+            task: item.task.clone(),
+            doc: Some(item.target.clone()),
+            target: item.target.clone(),
+            target_sections: item.dirty_sections.clone(),
+            stale_anchors: item.stale_anchors.clone(),
+        },
+        _ => WorkScope {
+            task: item.task.clone(),
+            doc: None,
+            target: item.target.clone(),
+            target_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+        },
+    };
+    let (system, pack) = crate::turn::task_prompt(&snapshot, item, limits, lint, gs);
+    let names = toolset(&item.task);
+    let tools: Vec<GenericTool> = catalog()
+        .iter()
+        .filter(|t| names.contains(&t.name))
+        .map(|t| GenericTool {
+            name: t.name.to_string(),
+            description: t.description.to_string(),
+            parameters: t.parameters.clone(),
+        })
+        .collect();
+    let session = std::cell::RefCell::new({
+        let mut s = ToolSession::new(snapshot, scope, limits.turn_mutations, limits.context_budget);
+        s.gen = gs.clone();
+        s.caller = crate::feedback::Caller { source: "benchmark".into(), target: item.target.clone(), ..Default::default() };
+        s
+    });
+    let mut history = vec![serde_json::json!({"role": "user", "content": format!("{}\n\n{}", system, pack)})];
+    let rounds = std::cell::Cell::new(0u32);
+    let mut dispatch = |name: &str, args: &serde_json::Value| -> Result<String, String> {
+        match session.borrow_mut().dispatch(name, args) {
+            Ok(v) => Ok(v.to_string()),
+            Err(e) => Err(e.to_value().to_string()),
+        }
+    };
+    let mut emit = |ev: AgentEvent| {
+        if let AgentEvent::Usage { .. } = ev {
+            rounds.set(rounds.get() + 1);
+        }
+    };
+    let round_budget = limits.turn_rounds.max(item.dirty_sections.len() as u32 * 8);
+    let stop = agent_loop::run_loop(LoopArgs {
+        llm,
+        history: &mut history,
+        tools: &tools,
+        dispatch: &mut dispatch,
+        emit: &mut emit,
+        // `done` ends the turn: the cancel check is how the loop learns it.
+        cancelled: &|| session.borrow().done.is_some(),
+        max_rounds: round_budget,
+        label: format!("bench {}", item.target),
+    });
+    let mut s = session.into_inner();
+    let failed = if s.done.is_some() {
+        None
+    } else {
+        match stop {
+            Stop::Error(e) => Some(e),
+            _ => {
+                if s.finish_implicit("(implicit: the turn ended without done)") {
+                    None
+                } else {
+                    Some("the turn ended without done and nothing valid was staged".to_string())
+                }
+            }
+        }
+    };
+    (std::mem::take(&mut s.staged), rounds.get(), failed)
+}
+
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
     run_traced(llm, out, &Trace::stderr(TraceLevel::Quiet))
 }
@@ -671,12 +762,13 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
                 }
                 (1u32, 0usize)
             } else {
-                let out = run_turn(llm, store.clone(), &item, &limits, &case.lint, &gs, &trace);
-                let staged = out.session.staged.len();
+                let (staged_ops, rounds_n, failed) =
+                    run_case_turn(llm, store.clone(), &item, &limits, &case.lint, &gs);
+                let staged = staged_ops.len();
                 // An aborted turn fails the case with the abort reason. Its checks are
                 // skipped and count as failed: an untouched fixture satisfying a check
                 // is not evidence. Mirrors docs/benchmark/benchmark.md#runs.
-                if let Some(why) = &out.failed {
+                if let Some(why) = &failed {
                     fail = Some(format!("turn aborted: {}", why));
                     aborted = true;
                     if first_abort.is_none() {
@@ -688,10 +780,10 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
                         fail = Some("endpoint or model rejected native tool calls".into());
                     }
                     if staged > 0 {
-                        store.apply(out.session.staged, &item, out.rounds, 0);
+                        store.apply(staged_ops, &item, rounds_n, 0);
                     }
                 }
-                (out.rounds, staged)
+                (rounds_n, staged)
             };
             let case_tokens = llm::tokens_spent() - case_tokens_before;
             any_completion |= case_tokens > 0;

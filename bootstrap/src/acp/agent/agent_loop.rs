@@ -295,3 +295,50 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     }
     Stop::MaxRounds
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_codec_parses_single_action() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "I will search first.\n{\"tool\": \"search\", \"args\": {\"query\": \"cart\"}}"});
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::Call { name, args, .. } => {
+                assert_eq!(name, "search");
+                assert_eq!(args["query"], "cart");
+            }
+            _ => panic!("expected a call"),
+        }
+    }
+
+    #[test]
+    fn text_codec_prose_is_text() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "The document describes a shop."});
+        assert!(matches!(c.parse(&msg)[0], Action::Text(_)));
+    }
+
+    #[test]
+    fn native_codec_parses_tool_calls() {
+        let c = NativeCodec;
+        let msg = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "c1", "function": {"name": "done", "arguments": "{\"summary\": \"ok\"}"}}]
+        });
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::Call { id, name, args } => {
+                assert_eq!(id.as_deref(), Some("c1"));
+                assert_eq!(name, "done");
+                assert_eq!(args["summary"], "ok");
+            }
+            _ => panic!("expected a call"),
+        }
+    }
+}

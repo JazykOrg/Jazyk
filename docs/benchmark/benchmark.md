@@ -11,11 +11,13 @@ same configuration a build would use. See [CLI](../frontends/cli.md).
 
 ## Runs
 
-- Under the `embedded` profile, every case runs under both codecs: `native` first,
-  then `text` (the embedded agent's two ways of speaking to an endpoint, see
-  [the embedded agent](../frontends/acp.md#the-embedded-agent)). A model can be
-  capable under one and not the other. An external agent profile has no codec axis;
-  its cases run once and the results carry a single column for it.
+- `jazyk benchmark` grades the `embedded` profile: every case runs under both
+  codecs, `native` first, then `text` (the embedded agent's two ways of speaking to
+  an endpoint, see [the embedded agent](../frontends/acp.md#the-embedded-agent)),
+  on the same generic loop the agent runs. A model can be capable under one codec
+  and not the other. An external agent has no codec axis; it is graded through the
+  [agent-run serving](#agent-run-benchmarks) (`jazyk mcp benchmark`), one column per
+  agent.
 - A case run is one real [turn](../compiler/turns.md#anatomy) in a sandbox store: same
   tool registry, same [validation gates](../compiler/graph.md#validation-gates), same
   budgets. Only the store and the fixture differ from a build.

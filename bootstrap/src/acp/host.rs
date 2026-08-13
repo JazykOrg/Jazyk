@@ -95,6 +95,7 @@ enum SessCmd {
 pub struct AcpHost {
     cmd_tx: UnboundedSender<Cmd>,
     thread: Option<std::thread::JoinHandle<()>>,
+    #[allow(dead_code)]
     pub agent: ResolvedAgent,
 }
 

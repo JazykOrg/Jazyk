@@ -27,6 +27,7 @@ struct SessionState {
     tools: Vec<GenericTool>,
     // The running conversation, kept across prompts so a chat session has memory.
     history: Vec<Value>,
+    #[allow(dead_code)]
     cwd: std::path::PathBuf,
 }
 

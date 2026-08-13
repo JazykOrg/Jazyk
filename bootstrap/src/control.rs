@@ -14,7 +14,7 @@ fn now() -> u64 {
 // A worker file older than this (seconds since its heartbeat) is stale and swept.
 const WORKER_STALE_SECS: u64 = 90;
 // A lease lives this long unless refreshed by activity on the open task.
-const LEASE_TTL_SECS: u64 = 120;
+pub const LEASE_TTL_SECS: u64 = 120;
 // The internal loop's coarse claim: one lease for a whole run.
 pub const BUILD_LEASE: &str = "build";
 

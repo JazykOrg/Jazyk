@@ -465,7 +465,9 @@ impl McpServer {
             }
             if let Some(l) = crate::control::build_lease(&self.out) {
                 return json!({"error": {"rule": "build-running", "message": format!(
-                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}});
+                    "an internal build is running (lease `{}`, heartbeated every 30s, expires {}s after the last heartbeat). \
+                     await_changes returns when it clears. If you were spawned BY that build, its serving carries --build-token and never sees this error; \
+                     seeing it means this serving is a bystander and the queue is not yours yet", l.worker, crate::control::LEASE_TTL_SECS)}});
             }
         }
         if let Err(holder) = crate::control::claim(&self.out, &item.target, &self.worker_id()) {
@@ -1309,7 +1311,7 @@ impl McpServer {
                         if let Some(l) = crate::control::build_lease(&self.out) {
                             return Ok(text_result(
                                 json!({"error": {"rule": "build-running", "message": format!(
-                                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                                    "an internal build is running (lease `{}`, expires {}s after its last 30s heartbeat); await_changes returns when it clears", l.worker, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }
@@ -1346,7 +1348,7 @@ impl McpServer {
                         if let Some(l) = crate::control::build_lease(&self.out) {
                             return Ok(text_result(
                                 json!({"error": {"rule": "build-running", "message": format!(
-                                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                                    "an internal build is running (lease `{}`, expires {}s after its last 30s heartbeat); await_changes returns when it clears", l.worker, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }

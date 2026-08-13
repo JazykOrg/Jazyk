@@ -20,6 +20,80 @@ pub struct Linting {
     pub errors: Vec<String>,
 }
 
+// One [acp.agents.<name>] profile: how to launch a downstream ACP agent.
+// Mirrors docs/compiler/project-settings.md#acp.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct AcpAgentProfile {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    // Serve file and command tools into this agent's sessions (agents with no editor
+    // of their own; the embedded agent sets it).
+    pub serve_files: bool,
+}
+
+// The [acp] table: which agent performs AI work. `embedded` is built in and needs no
+// profile. Mirrors docs/compiler/project-settings.md#acp.
+#[derive(Clone, Default)]
+pub struct AcpSettings {
+    pub agent: Option<String>,
+    pub agents: BTreeMap<String, AcpAgentProfile>,
+}
+
+// Parse the [acp] table out of a jazyk.toml (or the global config).
+fn parse_acp(t: &Toml) -> AcpSettings {
+    let mut s = AcpSettings { agent: t.string("acp.agent"), agents: BTreeMap::new() };
+    // Profile names are whatever appears as [acp.agents.<name>]; enumerate the keys.
+    let mut names: Vec<String> = Vec::new();
+    for key in t.strings.keys().chain(t.arrays.keys()) {
+        if let Some(rest) = key.strip_prefix("acp.agents.") {
+            if let Some((name, _)) = rest.split_once('.') {
+                if !names.iter().any(|n| n == name) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    for name in names {
+        let p = format!("acp.agents.{}", name);
+        let env_prefix = format!("{}.env.", p);
+        let mut env: Vec<(String, String)> = t
+            .strings
+            .iter()
+            .filter_map(|(k, v)| k.strip_prefix(&env_prefix).map(|name| (name.to_string(), v.clone())))
+            .collect();
+        env.sort();
+        s.agents.insert(
+            name,
+            AcpAgentProfile {
+                command: t.string(&format!("{}.command", p)).unwrap_or_default(),
+                args: t.array(&format!("{}.args", p)).unwrap_or_default(),
+                env,
+                serve_files: t.string(&format!("{}.serve_files", p)).map(|v| v == "true").unwrap_or(false),
+            },
+        );
+    }
+    s
+}
+
+// Read the global [acp] config if present (same file as the global LLM config).
+pub fn load_global_acp() -> AcpSettings {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return AcpSettings::default(),
+    };
+    let candidates = [
+        PathBuf::from(&home).join(".jazyk").join("config.toml"),
+        PathBuf::from(&home).join(".jazyk.toml"),
+    ];
+    for c in candidates {
+        if let Ok(text) = std::fs::read_to_string(&c) {
+            return parse_acp(&Toml::parse(&text));
+        }
+    }
+    AcpSettings::default()
+}
+
 // Turn and build budgets, the [limits] table. Defaults per docs/compiler/project-settings.md.
 #[derive(Clone)]
 pub struct Limits {
@@ -82,6 +156,7 @@ pub struct Project {
     pub gen_code: Vec<String>,
     pub workflow: Workflow,
     pub llm: LlmSettings,
+    pub acp: AcpSettings,
     pub linting: Linting,
     pub limits: Limits,
     // When set (ad-hoc `jazyk compile <paths>` with no jazyk.toml), these files are used
@@ -101,6 +176,7 @@ impl Default for Project {
             docs_glob: vec!["docs/**/*.md".to_string()],
             roots: vec![],
             llm: LlmSettings::default(),
+            acp: AcpSettings::default(),
             linting: Linting::default(),
             limits: Limits::default(),
             explicit_files: None,
@@ -295,6 +371,7 @@ impl Project {
         p.llm.api_key = t.string("llm.api_key");
         p.llm.api_key_env = t.string("llm.api_key_env");
         p.llm.temperature = t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok());
+        p.acp = parse_acp(&t);
         if let Some(v) = t.array("docs.linting.rules.warnings") {
             p.linting.warnings = v;
         }
@@ -644,11 +721,17 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
     let path = root.join("jazyk.toml");
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let t = Toml::parse(&text);
+    // [acp] keys are known but not form-edited: the writer carries them over verbatim,
+    // like the redirect and the api key.
     let unknown: Vec<String> = t
         .strings
         .keys()
-        .filter(|k| !KNOWN_STRINGS.contains(&k.as_str()))
-        .chain(t.arrays.keys().filter(|k| !KNOWN_ARRAYS.contains(&k.as_str())))
+        .filter(|k| !KNOWN_STRINGS.contains(&k.as_str()) && !k.starts_with("acp."))
+        .chain(
+            t.arrays
+                .keys()
+                .filter(|k| !KNOWN_ARRAYS.contains(&k.as_str()) && !k.starts_with("acp.")),
+        )
         .cloned()
         .collect();
     let d = Limits::default();
@@ -723,6 +806,43 @@ pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, Str
     let mut out = String::new();
     if let Some(r) = old.string("redirect") {
         out.push_str(&format!("redirect = {}\n\n", toml_str(&r)));
+    }
+    // Carry the [acp] tables over untouched: the form does not edit them, and a save
+    // must never drop the agent configuration.
+    {
+        let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+        let mut line_for = |key: &str, rendered: String| {
+            let (section, k) = key.rsplit_once('.').unwrap_or(("", key));
+            match sections.iter_mut().find(|(s, _)| s == section) {
+                Some((_, lines)) => lines.push(format!("{} = {}", k, rendered)),
+                None => sections.push((section.to_string(), vec![format!("{} = {}", k, rendered)])),
+            }
+        };
+        for (k, v) in &old.strings {
+            if k.starts_with("acp.") {
+                // Booleans and numbers stay unquoted; strings are quoted.
+                let rendered = if v == "true" || v == "false" || v.parse::<f64>().is_ok() {
+                    v.clone()
+                } else {
+                    toml_str(v)
+                };
+                line_for(k, rendered);
+            }
+        }
+        for (k, v) in &old.arrays {
+            if k.starts_with("acp.") {
+                line_for(k, toml_list(v));
+            }
+        }
+        for (section, lines) in sections {
+            if section == "acp" || section.is_empty() {
+                out.push_str("[acp]\n");
+            } else {
+                out.push_str(&format!("[{}]\n", section));
+            }
+            out.push_str(&lines.join("\n"));
+            out.push_str("\n\n");
+        }
     }
     let glob = list(&s["docsGlob"]).unwrap_or_default();
     if !glob.is_empty() {

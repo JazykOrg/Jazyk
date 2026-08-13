@@ -33,6 +33,27 @@ pub struct McpServer {
     // The serving's registration in the worker registry, heartbeated while the
     // process lives. Mirrors docs/compiler/reconciler.md#workers-and-leases.
     worker: std::sync::Arc<std::sync::Mutex<Option<crate::control::WorkerHandle>>>,
+    // Bridge-spawned serving flags: this serving belongs to one ACP session.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    bridge: BridgeFlags,
+}
+
+// Flags of a serving injected into an ACP session by the bridge. Not for standalone
+// servings. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+#[derive(Default, Clone)]
+pub struct BridgeFlags {
+    // The serving belongs to one session: no worker registration, and end of input
+    // with an open task runs the implicit finish.
+    pub ephemeral: bool,
+    // begin_compilation accepts only this target (parallel-wave safety).
+    pub only: Option<String>,
+    // The serving is part of the running internal build: the build-lease refusal and
+    // the release gate do not apply to its target, and leases claim under this id.
+    pub build_token: Option<String>,
+    // Serve the file and command tools, for agents with no editor of their own.
+    pub serve_files: bool,
+    // Delegate document and settings writes to the spawning process (the IDE proxy).
+    pub edit_sink: Option<String>,
 }
 
 #[derive(Default)]
@@ -133,6 +154,16 @@ fn instructions_for(modes: &[String], write: bool) -> String {
 
 impl McpServer {
     pub fn new(project: crate::project::Project, out: PathBuf, modes: Vec<String>, write: bool) -> McpServer {
+        Self::with_bridge(project, out, modes, write, BridgeFlags::default())
+    }
+
+    pub fn with_bridge(
+        project: crate::project::Project,
+        out: PathBuf,
+        modes: Vec<String>,
+        write: bool,
+        bridge: BridgeFlags,
+    ) -> McpServer {
         let out_for_trace = out.clone();
         McpServer {
             mutation_limit: project.limits.turn_mutations,
@@ -146,6 +177,7 @@ impl McpServer {
             bench: std::sync::Mutex::new(BenchRun::default()),
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
             trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
+            bridge,
         }
     }
 
@@ -254,7 +286,16 @@ impl McpServer {
                     t.extend(LIFECYCLE);
                     t
                 }
-                "generate" => toolset("mcp-generate"),
+                "generate" => {
+                    let mut t = toolset("mcp-generate");
+                    // Agents with no editor of their own get the sandboxed file and
+                    // command tools (the embedded agent's profile sets serve_files).
+                    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+                    if self.bridge.serve_files {
+                        t.extend(crate::tools::FILE_TOOLS);
+                    }
+                    t
+                }
                 "benchmark" => {
                     let mut t = toolset("mcp-compile");
                     t.extend(crate::tools::GEN_TOOLS);
@@ -303,6 +344,9 @@ impl McpServer {
             writeln!(out, "{}", resp).ok();
             out.flush().ok();
         }
+        if self.bridge.ephemeral {
+            self.eof_finish();
+        }
         self.trace.finish_transcript("done", &json!({"modes": self.modes}));
     }
 
@@ -318,9 +362,13 @@ impl McpServer {
 
     // ---- the compilation lifecycle ----
 
-    // The serving's identity in leases: its registration id, or a pid-scoped
-    // fallback when the client never sent initialize.
+    // The serving's identity in leases: the running build's token when this serving
+    // is part of one, its registration id otherwise, or a pid-scoped fallback when
+    // the client never sent initialize.
     fn worker_id(&self) -> String {
+        if let Some(t) = &self.bridge.build_token {
+            return t.clone();
+        }
         self.worker
             .lock()
             .unwrap()
@@ -373,16 +421,28 @@ impl McpServer {
             }});
             return v;
         };
+        // A bridge serving scoped to one target refuses everything else, so a
+        // confused agent cannot grab a sibling wave's work.
+        if let Some(only) = &self.bridge.only {
+            if item.target != *only {
+                return json!({"error": {"rule": "wrong-target", "message": format!(
+                    "this serving is scoped to `{}`; `{}` belongs to another session", only, item.target)}});
+            }
+        }
         // The control plane's claims, in order: a gated task awaits its release, a
         // running internal build owns the queue, a leased task belongs to its holder.
+        // A serving carrying the build's own token skips the first two: the build
+        // already released this work and holds the coarse lease itself.
         // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
-        if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["gated"] == true) {
-            return json!({"error": {"rule": "awaiting-release", "message": format!(
-                "`{}` is gated: the workflow is manual and this change is not released yet; `jazyk release compile` or the GUI's compile action approves it", item.target)}});
-        }
-        if let Some(l) = crate::control::build_lease(&self.out) {
-            return json!({"error": {"rule": "build-running", "message": format!(
-                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}});
+        if self.bridge.build_token.is_none() {
+            if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["gated"] == true) {
+                return json!({"error": {"rule": "awaiting-release", "message": format!(
+                    "`{}` is gated: the workflow is manual and this change is not released yet; `jazyk release compile` or the GUI's compile action approves it", item.target)}});
+            }
+            if let Some(l) = crate::control::build_lease(&self.out) {
+                return json!({"error": {"rule": "build-running", "message": format!(
+                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}});
+            }
         }
         if let Err(holder) = crate::control::claim(&self.out, &item.target, &self.worker_id()) {
             return json!({"error": {"rule": "claimed", "message": format!(
@@ -452,33 +512,7 @@ impl McpServer {
             *open = Some(o); // the changeset stays open; repair and finish again
             return v;
         }
-        crate::control::release_lease(&self.out, &o.item.target);
-        if let Some(h) = self.worker.lock().unwrap().as_mut() {
-            h.refresh(Some(""));
-        }
-        let staged = std::mem::take(&mut o.session.staged);
-        let mut s = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        s.sync_docs(&parsed);
-        let mut reply = json!({"committed": true, "applied": 0});
-        if !staged.is_empty() {
-            let report = s.apply(staged, &o.item, o.rounds, 0);
-            reply["applied"] = json!(report.applied);
-            if !report.skipped.is_empty() {
-                reply["skipped"] = json!(report.skipped);
-            }
-        }
-        if o.item.task.starts_with("review-") {
-            s.complete_review(&o.item.task, &o.item.target);
-            if o.item.task == "review-requirement" {
-                s.complete_pair_mirrors(&o.item.target);
-            }
-        }
-        // A resumed parked item is no longer parked.
-        if s.status.parked.iter().any(|p| p.target == o.item.target && p.task == o.item.task) {
-            s.status.parked.retain(|p| !(p.target == o.item.target && p.task == o.item.task));
-            s.save_status();
-        }
+        let mut reply = self.commit_open(&mut o);
         drop(open);
         // The consumer that empties the queue runs the deterministic tail.
         let q = crate::queue::compute(&self.project, &self.out);
@@ -522,6 +556,60 @@ impl McpServer {
         }
         reply["next"] = json!(q.compilation_answer());
         reply
+    }
+
+    // Land a task whose done gates passed: release the lease, apply the staged work,
+    // complete reviews, un-park. Shared by finish_compilation and the ephemeral
+    // end-of-input finish.
+    fn commit_open(&self, o: &mut OpenTask) -> Value {
+        crate::control::release_lease(&self.out, &o.item.target);
+        if let Some(h) = self.worker.lock().unwrap().as_mut() {
+            h.refresh(Some(""));
+        }
+        let staged = std::mem::take(&mut o.session.staged);
+        let mut s = Store::load(&self.out);
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        s.sync_docs(&parsed);
+        let mut reply = json!({"committed": true, "applied": 0});
+        if !staged.is_empty() {
+            let report = s.apply(staged, &o.item, o.rounds, 0);
+            reply["applied"] = json!(report.applied);
+            if !report.skipped.is_empty() {
+                reply["skipped"] = json!(report.skipped);
+            }
+        }
+        if o.item.task.starts_with("review-") {
+            s.complete_review(&o.item.task, &o.item.target);
+            if o.item.task == "review-requirement" {
+                s.complete_pair_mirrors(&o.item.target);
+            }
+        }
+        // A resumed parked item is no longer parked.
+        if s.status.parked.iter().any(|p| p.target == o.item.target && p.task == o.item.task) {
+            s.status.parked.retain(|p| !(p.target == o.item.target && p.task == o.item.task));
+            s.save_status();
+        }
+        reply
+    }
+
+    // End of input with an open task: the agent's session ended without the finishing
+    // call. Valid staged work still lands, under the same gates the budget path uses.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    fn eof_finish(&self) {
+        let mut open = self.open.lock().unwrap();
+        let Some(mut o) = open.take() else { return };
+        if o.session.finish_implicit("(implicit: the agent session ended)") {
+            let reply = self.commit_open(&mut o);
+            self.trace.event(crate::turn::TraceEvent::TurnDone {
+                label: format!("{} {}", o.item.task, o.item.target),
+                staged: reply["applied"].as_u64().unwrap_or(0) as usize,
+                rounds: o.rounds,
+                mode: "implicit".into(),
+                summary: String::new(),
+            });
+        } else {
+            crate::control::release_lease(&self.out, &o.item.target);
+        }
     }
 
     fn abandon_compilation(&self, params: &Value) -> Value {
@@ -815,9 +903,12 @@ impl McpServer {
                     *self.client.lock().unwrap() = Some(name.to_string());
                 }
                 // A task-lifecycle serving is a worker among workers: register it and
-                // heartbeat while the process lives. Mirrors
+                // heartbeat while the process lives. An ephemeral serving is part of a
+                // run that already answers for itself, so it never registers. Mirrors
                 // docs/frontends/mcp.md#the-control-plane-over-mcp.
-                if self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify" || m == "decompile") {
+                if !self.bridge.ephemeral
+                    && self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify" || m == "decompile")
+                {
                     let client = self.client.lock().unwrap().clone().unwrap_or_else(|| "agent".into());
                     let mut w = self.worker.lock().unwrap();
                     match w.as_mut() {
@@ -1041,7 +1132,8 @@ impl McpServer {
                 let is_graph_write = is_write
                     && !crate::tools::GEN_TOOLS.contains(&name.as_str())
                     && !crate::tools::BIND_TOOLS.contains(&name.as_str())
-                    && !crate::tools::VERIFY_TOOLS.contains(&name.as_str());
+                    && !crate::tools::VERIFY_TOOLS.contains(&name.as_str())
+                    && !crate::tools::FILE_TOOLS.contains(&name.as_str());
 
                 // An open benchmark case takes every call first: the sandbox is the
                 // world under test. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
@@ -1103,19 +1195,21 @@ impl McpServer {
                 // lease, record frees it. Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
                 if name == "begin_generation" {
                     let c = crate::control::Control::load(&self.project, &self.out);
-                    if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
-                        return Ok(text_result(
-                            json!({"error": {"rule": "awaiting-release", "message":
-                                "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
-                            true,
-                        ));
-                    }
-                    if let Some(l) = crate::control::build_lease(&self.out) {
-                        return Ok(text_result(
-                            json!({"error": {"rule": "build-running", "message": format!(
-                                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
-                            true,
-                        ));
+                    if self.bridge.build_token.is_none() {
+                        if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "awaiting-release", "message":
+                                    "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                                true,
+                            ));
+                        }
+                        if let Some(l) = crate::control::build_lease(&self.out) {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "build-running", "message": format!(
+                                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                                true,
+                            ));
+                        }
                     }
                     if let Some(ent) = args["entity"].as_str() {
                         if let Err(holder) = crate::control::claim(&self.out, ent, &self.worker_id()) {
@@ -1138,19 +1232,21 @@ impl McpServer {
                 // Mirrors docs/consumers/bind.md#when-binding-runs.
                 if name == "begin_binding" {
                     let c = crate::control::Control::load(&self.project, &self.out);
-                    if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
-                        return Ok(text_result(
-                            json!({"error": {"rule": "awaiting-release", "message":
-                                "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
-                            true,
-                        ));
-                    }
-                    if let Some(l) = crate::control::build_lease(&self.out) {
-                        return Ok(text_result(
-                            json!({"error": {"rule": "build-running", "message": format!(
-                                "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
-                            true,
-                        ));
+                    if self.bridge.build_token.is_none() {
+                        if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "awaiting-release", "message":
+                                    "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                                true,
+                            ));
+                        }
+                        if let Some(l) = crate::control::build_lease(&self.out) {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "build-running", "message": format!(
+                                    "an internal build is running (lease `{}`); wait for it to finish", l.worker)}}),
+                                true,
+                            ));
+                        }
                     }
                     if let Some(rid) = args["requirement"].as_str() {
                         if let Err(holder) = crate::control::claim(&self.out, rid, &self.worker_id()) {

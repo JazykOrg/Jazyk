@@ -1,3 +1,4 @@
+mod acp;
 mod benchmark;
 mod bind;
 mod cli;
@@ -70,8 +71,9 @@ fn top_usage() -> String {
     s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
     s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n  jazyk release [compile|generate]  approve pending changes in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
-    s.push_str("  jazyk benchmark                grade the configured model under both codecs\n");
-    s.push_str("\noptions: --llm-base-url URL  --model M  --api-key K  --out DIR\n");
+    s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
+    s.push_str("  jazyk benchmark                grade the configured agent and model\n");
+    s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
     s.push_str("         --verbose, -v   full context packs and payloads in the trace\n");
     s.push_str("         --quiet, -q     only the final summary\n");
     s.push_str("         --focus k=n,…   context hop quotas (parents, mentions, requirements)\n");
@@ -222,9 +224,20 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              generation workflows), verify (the verification workflow), decompile\n\
              (draft docs for unclaimed code), graph (read tools; --write adds raw\n\
              write tools).\n\n\
+             Bridge flags (set by the ACP bridge when it injects a serving into a\n\
+             session; not for standalone servings):\n  \
+             --ephemeral          the serving belongs to one session\n  \
+             --only TARGET        begin_compilation accepts only this target\n  \
+             --build-token ID     part of the running internal build\n  \
+             --serve-files        add the sandboxed file and command tools\n\n\
              {}",
             COMMON_OUT
         ),
+        "agent" => "usage: jazyk agent\n\n\
+             The embedded ACP agent over stdio: a generic agent over the configured\n\
+             LLM endpoint with no jazyk knowledge. The bridge spawns it when the\n\
+             `embedded` profile is selected. Not meant to be run by hand."
+            .to_string(),
         "lsp" => format!(
             "usage: jazyk lsp\n\n\
              Language server over stdio. Read-only: serves the last committed graph, and\n\
@@ -297,6 +310,24 @@ fn main() {
                 i += 1;
                 opts.mcp = args.get(i).cloned();
             }
+            "--agent" => {
+                i += 1;
+                opts.agent = args.get(i).cloned();
+            }
+            "--only" => {
+                i += 1;
+                opts.only = args.get(i).cloned();
+            }
+            "--build-token" => {
+                i += 1;
+                opts.build_token = args.get(i).cloned();
+            }
+            "--edit-sink" => {
+                i += 1;
+                opts.edit_sink = args.get(i).cloned();
+            }
+            "--ephemeral" => opts.ephemeral = true,
+            "--serve-files" => opts.serve_files = true,
             "--no-open" => opts.no_open = true,
             "--watch" => opts.watch = true,
             "--no-token" => opts.no_token = true,
@@ -364,7 +395,14 @@ fn main() {
                     2
                 } else {
                     let (proj, _llm, out) = cli::resolve(&[], &opts);
-                    mcp::McpServer::new(proj, out, modes, opts.write).run();
+                    let bridge = mcp::BridgeFlags {
+                        ephemeral: opts.ephemeral,
+                        only: opts.only.clone(),
+                        build_token: opts.build_token.clone(),
+                        serve_files: opts.serve_files,
+                        edit_sink: opts.edit_sink.clone(),
+                    };
+                    mcp::McpServer::with_bridge(proj, out, modes, opts.write, bridge).run();
                     0
                 }
             }
@@ -401,6 +439,9 @@ fn main() {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
             benchmark::run(&llm, &out)
         }
+        // The embedded ACP agent, spawned by the host when the `embedded` profile is
+        // selected. Not meant to be run by hand. Mirrors docs/frontends/cli.md#jazyk-agent.
+        "agent" => acp::agent::run(),
         _ => usage(),
     };
     std::process::exit(code);

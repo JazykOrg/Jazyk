@@ -15,6 +15,11 @@ serde_norway = "0.9"
 ureq = "2"
 notify = "6"
 regex = "1.12.4"
+# ACP bridge (docs/frontends/acp.md): the official protocol SDK. Executor-agnostic
+# (futures + async-io), driven by a block_on on a dedicated thread; no tokio outside gui/.
+agent-client-protocol = "2.0.0"
+futures = "0.3"
+async-io = "2"
 # GUI server (async runtime is scoped inside src/gui/; the rest of the binary stays sync).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
 axum = { version = "0.8", features = ["ws"] }

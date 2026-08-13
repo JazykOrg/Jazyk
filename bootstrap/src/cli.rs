@@ -30,6 +30,14 @@ pub struct Options {
     pub mcp: Option<String>,
     pub json: bool,
     pub once: bool,
+    // ACP: the agent profile (--agent), and the flags of bridge-spawned MCP servings
+    // (docs/frontends/mcp.md#mcp-into-acp-sessions).
+    pub agent: Option<String>,
+    pub ephemeral: bool,
+    pub only: Option<String>,
+    pub build_token: Option<String>,
+    pub serve_files: bool,
+    pub edit_sink: Option<String>,
 }
 
 impl Default for Options {
@@ -56,6 +64,12 @@ impl Default for Options {
             mcp: None,
             json: false,
             once: false,
+            agent: None,
+            ephemeral: false,
+            only: None,
+            build_token: None,
+            serve_files: false,
+            edit_sink: None,
         }
     }
 }

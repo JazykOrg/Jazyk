@@ -5,6 +5,10 @@ MCP server: line-delimited JSON-RPC per the Model Context Protocol. It dispatche
 same tool implementations the compiler's own [turns](../compiler/turns.md) use. There is
 one registry, not a second API beside it.
 
+The serving has two audiences: an agent that connects on its own (the standalone
+loops below), and an [ACP session](./acp.md) that gets the serving injected per
+session ([MCP into ACP sessions](#mcp-into-acp-sessions)). Same tools, same gates.
+
 ## Toolsets
 
 The argument names what the serving is for. One serving can carry several, comma
@@ -30,9 +34,39 @@ separated; each adds its tools to the union:
 - `jazyk mcp graph`: the read tools only, for retrieval consumers. `--write` adds the
   raw write tools without the task lifecycle, for debugging and manual graph surgery;
   each write commits as its own changeset.
+- `jazyk mcp chat`: the serving for [chat sessions](./acp.md#chat-sessions): read
+  tools, the task lifecycle, the
+  [dual-write requirement tools](./acp.md#dual-write-tools), and the
+  [project tools](./acp.md#project-tools). No raw write tools: a chat edit moves the
+  prose and the graph together or not at all.
 
 Every serving includes the [read tools](../compiler/tools.md#read-tools),
 [`report_feedback`](../compiler/tools.md#feedback-tool), and `await_changes` (below).
+
+## MCP into ACP sessions
+
+When jazyk creates an [ACP session](./acp.md#worker-sessions), it injects one MCP
+server into it: `jazyk mcp` with the task's toolsets and flags. The flags exist for
+this spawning path and are not for standalone servings:
+
+- `--ephemeral`: the serving belongs to one session. It does not register in the
+  [worker registry](../compiler/reconciler.md#workers-and-leases) (the session is not
+  a peer worker, it is part of a run that already holds its lease), and end of input
+  with an open task runs the implicit finish: staged work commits under the same
+  gates the [budget path](../compiler/turns.md#budgets) uses, so an agent that dies
+  mid-task still lands its valid extractions.
+- `--only <target>`: `begin_compilation` accepts only the named target. Parallel
+  worker sessions each get their own serving, and none can grab a sibling's work.
+- `--build-token <id>`: the serving is part of the running internal build. The
+  build-lease refusal and the release gate do not apply to its target; without this,
+  a build's own sessions would deadlock against the build's own lease.
+- `--serve-files`: adds the file and command tools
+  ([generation turns](../compiler/turns.md#generation-turns)) for agents whose
+  profile sets [`serve_files`](../compiler/project-settings.md#acp). Agents with
+  their own editor never get them.
+- `--edit-sink <path>`: delegate document and settings writes to the spawning
+  process ([doc edit delegation](./acp.md#doc-edit-delegation)). Absent, or with
+  nothing listening, writes land on disk directly.
 
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the

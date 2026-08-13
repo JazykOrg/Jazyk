@@ -65,7 +65,8 @@ graph TD;
   Parser["Parser"];
   Reconciler["Reconciler"];
   Turns["Turns"];
-  LLM(["LLM"]);
+  ACP["ACP bridge"];
+  Agent(["ACP agent<br/>(external or embedded)"]);
   Store[("Graph store<br/>(semantic graph)")];
   Context["Context engine"];
 
@@ -86,7 +87,8 @@ graph TD;
   Docs --> Parser;
   Parser --> Reconciler;
   Reconciler <--> Turns;
-  Turns <--> LLM;
+  Turns <--> ACP;
+  ACP <--> Agent;
   Turns -- "tools" --> Store;
   Store <--> Context;
   Context --> CLI;
@@ -109,8 +111,8 @@ open-endedness, and contradictions as diagnostics along the way.
 
 ## Benchmark
 
-The benchmark grades whether a given model is capable of powering compilation, under both
-[codecs](./compiler/turns.md#codecs).
+The benchmark grades whether a given [agent](./frontends/acp.md#agents) and model are
+capable of powering compilation.
 
 [See more](./benchmark/benchmark.md)
 
@@ -119,6 +121,7 @@ The benchmark grades whether a given model is capable of powering compilation, u
 Frontends embed the compiler and expose the graph to different consumers.
 
 - [CLI](./frontends/cli.md)
+- [ACP Bridge](./frontends/acp.md)
 - [MCP Server](./frontends/mcp.md)
 - [Language Server](./frontends/lsp.md)
 - [Viewer](./frontends/viewer.md)

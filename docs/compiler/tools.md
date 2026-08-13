@@ -98,6 +98,32 @@ clever ones.
 There is no write tool for relationships. Edges exist only as a
 [derived product of requirements](./graph.md#derived-data).
 
+## Chat tools
+
+The [chat serving](../frontends/mcp.md#toolsets) carries tools built for a
+conversation about the project. They are not in any turn's toolset.
+
+Dual-write tools (see [ACP](../frontends/acp.md#dual-write-tools)): a requirement
+lives in the prose, so a chat edit moves the prose and the graph together:
+
+- `revise_requirement({id, new_text, ears?})`: locate the requirement's verbatim
+  quote in its source section, stage an `edit_doc_prose` replacing it with
+  `new_text`, and stage the requirement update (`quote: new_text`, plus `ears` when
+  given) in the same changeset. Commits atomically; the document's stored hashes
+  absorb the edit ([mutations](./graph.md#mutations)). A quote that no longer
+  locates is rejected with the section's current text as repair guidance.
+- `add_requirement({doc, section, after_quote?, text, ears, entities})`: insert
+  `text` into the section (after the located `after_quote`, or at the section's
+  end) and stage the requirement sourced from it.
+- `retract_requirement({id, reason})`: remove the requirement's sentence from the
+  prose and delete the requirement, one changeset.
+
+Project tools (see [ACP](../frontends/acp.md#project-tools)):
+
+- `init_project({dir?})`: scaffold `jazyk.toml` and the starter layout.
+- `update_project_settings({...})`: typed edits to `jazyk.toml`, rendered as minimal
+  edits.
+
 ## Feedback tool
 
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
@@ -279,9 +305,10 @@ Turns see subsets, not the whole catalog. Every subset carries
   `update_entity`, `merge_entities`, `update_requirement` (a review adds missing
   `edges` when requirements tie entities structurally), `delete_requirement`,
   `report_diagnostic`, `resolve_diagnostic`, `done`.
-- `generate-entity` (the in-process generation worker): the read tools, the
-  [file and command tools](./turns.md#generation-turns) (in-process only, never served
-  over MCP), `record_generation`, `run_tests`, `done`.
+- `generate-entity`: the read tools, `record_generation`, `run_tests`, `done`. The
+  [file and command tools](./turns.md#generation-turns) join only when the agent's
+  profile sets [`serve_files`](./project-settings.md#acp); coding agents bring
+  their own.
 - `jazyk mcp compile`: the read tools, the [compilation tools](#compilation-tools),
   and the write tools (gated behind an open task), plus `await_changes`.
 - `jazyk mcp generate`: the read tools, the [binding tools](#binding-tools), the
@@ -295,5 +322,8 @@ Turns see subsets, not the whole catalog. Every subset carries
 - `jazyk mcp graph`: the read tools, plus `await_changes`; `--write` adds the raw
   write tools, each call committing as its own changeset. See
   [MCP](../frontends/mcp.md#toolsets).
+- `jazyk mcp chat`: the read tools, the compilation, binding, generation, and
+  verification lifecycles, the [chat tools](#chat-tools), plus `await_changes`. No
+  raw write tools.
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).

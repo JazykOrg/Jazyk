@@ -60,8 +60,11 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
 ## Rebuilds and refresh
 
 The server does not compile, and no editor integration starts a build; compiles run
-only when the owner runs `jazyk compile` or `jazyk watch`. Refresh is event-driven the
-LSP way: file watching belongs to the client, so the editor watches the store's
+through the [ACP bridge](./acp.md) when the owner triggers them (`jazyk compile`,
+`jazyk watch`, the GUI, or `/compile` in an IDE chat). What the LSP knows about
+pending work reaches the IDE's chat surface through the
+[proxy](./acp.md#lsp-and-the-proxy), not through the LSP itself. Refresh is
+event-driven the LSP way: file watching belongs to the client, so the editor watches the store's
 `status.yaml` with its native file events and notifies the server
 (`workspace/didChangeWatchedFiles`); on any notification the server compares the
 generation counter, reloads, and republishes every open document (see

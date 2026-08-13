@@ -99,7 +99,7 @@ temperature = 0
   same fields as a non-streaming reply. Some providers reject reasoning fields echoed
   back in the message history; on such a rejection the client strips them from outgoing
   messages for the rest of the run. The turn transcript and trace keep the text (see
-  [message loop](./turns.md#message-loop)).
+  [the embedded agent](../frontends/acp.md#the-embedded-agent)).
 - `model`: the model id.
 - `api_key_env`: the environment variable holding the API key. A literal `api_key` may be
   given instead. Prefer `api_key_env` in tracked files.
@@ -118,6 +118,46 @@ field, highest priority first:
 3. Project `[llm]` in `jazyk.toml`.
 4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
 5. Built-in default.
+
+These settings feed the [embedded agent](../frontends/acp.md#the-embedded-agent).
+An external [ACP agent](../frontends/acp.md#agents) brings its own model and ignores
+them.
+
+## ACP
+
+The downstream [ACP agent](../frontends/acp.md#agents) that performs AI work. All
+optional; the default agent is `embedded`.
+
+```toml
+[acp]
+agent = "opencode"
+
+[acp.agents.opencode]
+command = "opencode"
+args = ["acp"]
+env = { }
+serve_files = false
+
+[acp.agents.codex]
+command = "codex-acp"
+```
+
+- `agent`: the name of the profile to use. `embedded` is built in: it runs
+  `jazyk agent` with `serve_files = true` and needs no profile.
+- `[acp.agents.<name>]`: one profile per agent. `command` and `args` launch it;
+  `env` adds environment variables; `serve_files` (default `false`) makes jazyk
+  serve file and command tools into the agent's sessions, for agents that bring no
+  editor of their own.
+
+Like the LLM settings, agent profiles describe the machine as much as the project:
+the same `[acp]` table in the global config is the machine default, and values
+resolve per field, highest priority first:
+
+1. CLI flag: `--agent`.
+2. Environment variable: `JAZYK_ACP_AGENT` (a profile name).
+3. Project `[acp]` in `jazyk.toml`.
+4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
+5. Built-in default: `embedded`.
 
 ## Roots
 
@@ -247,3 +287,5 @@ Run-level knobs are environment variables only, since they tune one run, not the
   keep arriving.
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
   [trace events](./turns.md#trace-events) including full context packs and raw payloads.
+- `JAZYK_ACP_IDLE_TIMEOUT`: seconds a [worker session](../frontends/acp.md#worker-sessions)
+  may go without an update before jazyk cancels its turn (default 600).

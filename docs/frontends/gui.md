@@ -209,6 +209,8 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
 
 - `job.queued`, `job.started`, `job.trace`, `job.finished`: the job lifecycle.
   `job.trace` wraps one structured trace event.
+- `chat.update`, `chat.permission`, `chat.sessions`: the [chat pane](#chat). One
+  session update, one pending permission request, or a session list change.
 - `store.lock`: the store lock appeared or disappeared. A build is starting or ending,
   in this process or any other.
 - `store.generation`: the generation counter moved. Carries the new journal entries, so
@@ -227,7 +229,7 @@ and the GUI renders it live without owning the job.
 
 ## Layout
 
-One workbench page. Navigation swaps panes, never the page. Five regions:
+One workbench page. Navigation swaps panes, never the page. Six regions:
 
 - The rail: a narrow icon strip on the far left: `files`, `graph`, `work`,
   `feedback`, `settings`. A rail item picks what the sidebar shows; it never
@@ -236,9 +238,12 @@ One workbench page. Navigation swaps panes, never the page. Five regions:
   the center.
 - The center: the open item. The document editor, the deliverable viewer, the map,
   the work views, the settings form.
-- The inspector: the detail pane on the right. Selecting a node anywhere (a code
+- The inspector: the detail pane beside the center. Selecting a node anywhere (a code
   lens, a map node, a list row, an id chip) shows its detail here, beside the
   center, never replacing it. Closable; the center keeps its state under it.
+- The chat pane: the persistent pane on the far right, collapsible to a strip. The
+  conversation surface: chat sessions with the agent and follow views of automated
+  work. See [chat](#chat).
 - The activity panel: the bottom strip, always present. Collapsed it is one line:
   the run controls and the live build state. Expanded it is the run history and the
   selected run's transcript. See [activity](#activity).
@@ -362,6 +367,47 @@ The detail pane for one node, opened from anywhere, layered over nothing:
 - Every node id anywhere in the app opens the inspector. The center never changes
   under it; the click-through from a requirement to its implementation is: open the
   inspector, then open a site.
+
+### Chat
+
+The chat pane is the GUI's [ACP client](./acp.md) surface. One session list, two
+session kinds:
+
+- Chat sessions: a conversation with the configured agent, created in the pane. The
+  session gets the [`chat` serving](./mcp.md#toolsets), so the agent can read the
+  graph, revise requirements through the
+  [dual-write tools](./acp.md#dual-write-tools), run the task lifecycle, and edit
+  project settings. Prompting streams the agent's thoughts, messages, and tool calls
+  into the transcript as they happen.
+- Follow sessions: every automated job turn ([jobs](#jobs)) registers as a read-only
+  session, so watching a build is opening its session. The transcript is the same
+  rendering as a chat session: the agent's messages, its tool calls, their results.
+
+The pane's behaviors:
+
+- [Slash commands](./acp.md#chat-sessions): `/compile`, `/generate`, `/verify`,
+  `/status`, `/release`, completed in the prompt box from the advertised list. A
+  command runs the real job and streams its progress into the same session.
+- The [build plan](./acp.md#plans) renders as a live checklist: one entry per work
+  item, flipping as the build advances.
+- Follow mode: a toggle that pins the transcript to the newest update and moves the
+  editor along with the work. A tool call carrying a location opens the document or
+  deliverable file in the center at that line, so the center shows what the agent is
+  touching while the pane shows what it is doing. Pair programming, with the agent
+  driving.
+- Permission requests from chat sessions surface inline as option buttons
+  ([permissions](./acp.md#permissions)). An unanswered request cancels with the
+  turn. Worker sessions never ask; their policy answers.
+- Transcripts persist under `<out>/trace/` like job traces, so a reloaded page
+  restores the session list and history.
+
+API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
+them, `GET /api/chat/sessions/{id}` returns one with its transcript,
+`POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
+event stream), `POST /api/chat/sessions/{id}/cancel` cancels the open turn, and
+`POST /api/chat/permissions/{id}` answers a pending permission request. Updates
+travel as `chat.update` events, elided like `job.trace`; permission requests as
+`chat.permission`; session list changes as `chat.sessions`.
 
 ### Activity
 

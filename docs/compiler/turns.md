@@ -1,8 +1,10 @@
 # Turns
 
-A turn is one focused LLM session with tools. It is the only place the model touches the
-compilation process. The [reconciler](./reconciler.md) decides what turns to run; the turn
-harness runs one.
+A turn is one focused agent session with tools. It is the only place a model touches the
+compilation process. The [reconciler](./reconciler.md) decides what turns to run; a turn
+executes as an [ACP worker session](../frontends/acp.md#worker-sessions) against the
+configured [agent](../frontends/acp.md#agents). Jazyk owns the work item, the tools, the
+gates, and the commit; the agent owns the model and the loop that drives it.
 
 ## Anatomy
 
@@ -71,18 +73,22 @@ Extraction order inside `reconcile-doc` is deliberate: requirements first, entit
 as requirements need them. An entity that no statement needs is noise. See
 [entity](./model/entity.md#what-is-an-entity).
 
-A turn's consumer is interchangeable: the same work item, pack, and toolset serve the
-in-process loop and an external agent over
-[MCP](../frontends/mcp.md#compilation-over-mcp). The pack is the prompt in both cases;
-the system-prompt text rides in the MCP package as `instructions`.
+A turn's consumer is interchangeable: the same work item, pack, and toolset serve an
+[ACP worker session](../frontends/acp.md#worker-sessions) and an external agent that
+connects over [MCP](../frontends/mcp.md#compilation-over-mcp) on its own. The pack is
+the prompt in both cases; the task contract rides in the `begin_*` package as
+`instructions`, so the prompt has one source whoever consumes it.
 
 ## Generation turns
 
 The `generate-entity` turn replaces the fixed file-reply pipeline: the model works the
 task with tools instead of answering a fixed sequence of prompts. Its toolset adds
-file and command tools, sandboxed to the deliverable directory and served in-process
-only (an external agent brings its own editor; see
-[MCP](../frontends/mcp.md#generation-and-verification-over-mcp)):
+file and command tools, sandboxed to the deliverable directory. They are served into
+the session only when the agent's profile sets
+[`serve_files`](./project-settings.md#acp): a coding agent brings its own editor and
+shell (see [MCP](../frontends/mcp.md#generation-and-verification-over-mcp)); the
+[embedded agent](../frontends/acp.md#the-embedded-agent) has none, so jazyk serves
+these:
 
 - `read_text_file({path, line?, limit?})`: one file's content, path relative to the
   deliverable.
@@ -97,7 +103,10 @@ only (an external agent brings its own editor; see
   [generation toolset](./tools.md#generation-tools) serves over MCP.
 
 The names and shapes track the Agent Client Protocol's file-system and terminal
-methods, so a future ACP serving is a transport change, not a redesign.
+methods. That protocol removes those methods in its next version in favor of
+client-provided tools, which is exactly this serving: the tools ride the injected
+MCP server like every other jazyk tool
+([MCP into sessions](../frontends/mcp.md#mcp-into-acp-sessions)).
 
 The finish contract: `record_generation` records the manifest, then `done` ends the
 turn. A turn that ends without recording fails the task; the harness checks the
@@ -135,68 +144,53 @@ to, so by the time the part's turn runs, the parent's requirement exists.
 ## Repeated calls
 
 The same call with the same arguments has the same answer. A model that re-asks a
-question it already asked is stuck, and the harness says so rather than letting the turn
-spend its budget on it:
+question it already asked is stuck, and the tool serving says so rather than letting
+the turn spend its budget on it:
 
 - The second identical call answers as usual, with a `repeat` field on the result saying
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
   act on the answer already given, or finish with `done`.
 
-Identity is the tool name plus its arguments verbatim, counted per turn. `done` is
-exempt; repairing a rejected `done` legitimately repeats it.
+Identity is the tool name plus its arguments verbatim, counted per open task. `done` is
+exempt; repairing a rejected `done` legitimately repeats it. The contract lives in the
+serving, not in any agent, so every agent gets the same guard.
 
 A refusal is not an invalid call: the call was well-formed, the model is stuck. It
 never feeds the abort streak, because aborting discards staged work and a stuck model
 usually holds good extractions from before it stuck. Instead, refusals are cheap
-(refused calls never dispatch) and counted: past eight in one turn, the harness
+(refused calls never dispatch) and counted: past eight in one task, the serving
 finishes the turn implicitly, committing the staged work under the same gates the
 budget path uses. A weak model that loops keeps what it earned; the guard only stops
 it paying for the loop.
 
-## Message loop
+## Execution
 
-- The system message states the task, the graph invariants, and the finish contract: the
-  turn ends by calling `done`.
-- Directly under the role line, high in every turn's system message, sits the feedback
-  contract: an instruction, a tool, an argument, or an error message that is ambiguous,
-  wrong, or confusing goes to [`report_feedback`](./tools.md#feedback-tool), and the
-  turn then continues with its best judgment. The note is one paragraph, shared by
-  every task type, and says what feedback is not: a problem in the documents is a
-  diagnostic, not feedback.
-- The first user message is the rendered context pack.
-- Each model reply is either tool calls or text. Read tools answer immediately. Write
-  tools stage mutations. Results go back as tool results.
-- The transcript is append-only.
-- A reasoning model's reasoning rides on the assistant message: a `reasoning_content`
-  or `reasoning` field, or inline `<think>` text in the content. The harness appends
-  the message unchanged, so later rounds see the reasoning behind earlier calls. A
-  streamed response accumulates its reasoning deltas into the same field before the
-  message is appended, so streaming and non-streaming replies carry the same fields.
-  Some providers reject reasoning fields echoed back in the request; the client then
-  strips them from outgoing messages for the rest of the run (see
-  [LLM settings](./project-settings.md#llm)), and the transcript and trace
-  keep the text.
+A turn runs as one [ACP worker session](../frontends/acp.md#worker-sessions):
 
-## Codecs
+- The session's tools are one injected MCP serving, scoped to the task
+  ([MCP into sessions](../frontends/mcp.md#mcp-into-acp-sessions)).
+- The prompt jazyk sends is fixed and agent-neutral: begin the named task, follow the
+  returned package, finish, repair what a rejection names. The task's own contract
+  (the `instructions`) and the rendered [context pack](./context.md) ride in the
+  `begin_*` reply.
+- The instructions state the task, the graph invariants, and the finish contract: the
+  turn ends by calling `done` (over MCP, `finish_compilation` and its siblings, the
+  same gate).
+- High in every task's instructions sits the feedback contract: an instruction, a
+  tool, an argument, or an error message that is ambiguous, wrong, or confusing goes
+  to [`report_feedback`](./tools.md#feedback-tool), and the turn then continues with
+  its best judgment. The note is one paragraph, shared by every task type, and says
+  what feedback is not: a problem in the documents is a diagnostic, not feedback.
+- Read tools answer immediately. Write tools stage mutations. How the agent drives
+  its model between calls is the agent's business.
 
-The loop speaks to the model through a codec. Two codecs exist:
-
-- `native`: OpenAI-style `tools` and `tool_calls`. Used when the endpoint and model
-  support it. The codec asks the model to batch one section's calls (searches, upserts,
-  the coverage mark) into a single reply.
-- `text`: tools are described in the system prompt. The model answers with exactly one
-  JSON action object per reply, e.g. `{"tool": "upsert_entity", "args": {...}}`. Results
-  come back as a plain message. One action per reply is deliberate: small models cannot
-  reliably emit several.
-
-Pacing guidance is the codec's to give, not the shared system prompt's: the two codecs
-contradict each other on batching, so the instruction ships in the codec's own
-system-prompt section.
-
-The harness probes on the first round. If the endpoint rejects the `tools` parameter or
-the model answers prose without tool calls, the run downgrades to `text` and stays there.
-The [benchmark](../benchmark/benchmark.md) grades a model under both codecs.
+The message loop, the tool codecs (`native` and `text`), the first-round probe, and
+the endpoint fallbacks belong to the
+[embedded agent](../frontends/acp.md#the-embedded-agent): they are how a generic loop
+speaks to a raw endpoint, not part of turn semantics. An external agent brings its
+own loop. The [benchmark](../benchmark/benchmark.md) grades an agent profile by
+running turns through it.
 
 ## Staged mutations
 
@@ -209,8 +203,11 @@ Read tools show the snapshot the turn began with, not the staged mutations. Whil
 mutations are staged, every read reply carries a note saying so, so a turn that reads
 back a node it just staged a delete for does not conclude the delete was lost.
 
-Three consecutive invalid rounds abort the turn. The work item is retried once with fresh
-context, then parked with an `incomplete-build` diagnostic.
+A turn that fails (the agent's session ends without landing its task, or is cancelled
+by the idle timeout) is retried once with a fresh session, then parked with an
+`incomplete-build` diagnostic. The [embedded agent](../frontends/acp.md#the-embedded-agent)
+additionally aborts its own loop after three consecutive invalid rounds, so a stuck
+weak model fails fast instead of spending the budget.
 
 ## Commit
 
@@ -226,20 +223,20 @@ unmarked sections stay unprocessed for the next build.
 
 ## Budgets
 
-- Rounds per turn: default 24, raised for dense work items: a turn gets at least 8
-  rounds per dirty section. A dense document stages one mutation per round under a
-  model that calls one tool at a time, so the budget scales with extraction density, not
-  caution. A model may batch several tool calls in one reply; each reply is one round.
-- Staged mutations per turn: default 64.
+- Staged mutations per turn: default 64. Enforced by the tool serving.
 - Context budget: per model profile, e.g. 24k characters for a 4B class model.
+- Rounds per turn: default 24, raised for dense work items: a turn gets at least 8
+  rounds per dirty section. This bounds the embedded agent's loop; an external agent
+  bounds its own, and the
+  [idle timeout](../frontends/acp.md#worker-sessions) bounds them all.
 - Per build: a hard turn cap, so a stuck build stops instead of looping. See
   [convergence](./reconciler.md#convergence).
 
-A model that stops replying with tool calls while mutations are staged is treated as
-having called `done`: the same commit gates run, and a clean batch commits. Weak models
-forget the finish contract more often than they stage bad work; discarding a valid
-changeset over a missing `done` would punish the wrong thing. A turn with nothing staged
-parks as usual.
+An agent whose session ends with mutations staged and no `done` is treated as having
+called it: the serving runs the same commit gates, and a clean batch commits. Weak
+models forget the finish contract more often than they stage bad work; discarding a
+valid changeset over a missing `done` would punish the wrong thing. A turn with
+nothing staged parks as usual.
 
 The same reasoning bounds what one bad claim can sink. When the implicit `done` is
 rejected over a dishonest `covered` claim, the harness drops the offending coverage
@@ -253,10 +250,9 @@ one. The next build lists the anchor again.
 
 ## Trace events
 
-The harness emits a structured event per round: the tool call with condensed arguments,
-the condensed result, and any reasoning text the model produced. Reasoning carried in a
-`reasoning_content` or `reasoning` field is emitted as model text, the same as reasoning
-prose in the content. The `compile` command
+The runner translates a session's update stream into structured events: the tool call
+with condensed arguments, the condensed result, and any message or thought text the
+agent produced, emitted as model text. The `compile` command
 renders these live, and the [GUI](../frontends/gui.md) streams them to the browser. The
 [generation](../consumers/gen.md) and verification workers emit their own kinds per
 entity and per ledger row. The committed changeset with the same information persists
@@ -279,13 +275,16 @@ The event kinds:
   section (`set_coverage`, `upsert_requirement`, an entity mention, `read_section`)
   that differs from the last one, so the sequence of these events is the turn's path
   through the document. Carries `doc`, `section`, and the `tool` that named it.
-- `llmRequest`, `llmResponse`, `llmRetry`: one model call. The request carries the
-  whole outgoing message list (system prompt, context pack, and the conversation so
-  far) plus the tool names offered; the response carries the raw assistant message,
-  the elapsed milliseconds, and the completion tokens; a retry carries the attempt,
-  the error, and how long the harness waits before trying again. Sticky fallbacks
-  (codec downgrade, streaming, dropped `temperature`) are notes on the same label, so
-  a run's whole conversation with the endpoint is in one place.
+- `llmRequest`, `llmResponse`, `llmRetry`: one model call, recorded by the
+  [embedded agent's](../frontends/acp.md#the-embedded-agent) endpoint client. The
+  request carries the whole outgoing message list (system prompt, context pack, and
+  the conversation so far) plus the tool names offered; the response carries the raw
+  assistant message, the elapsed milliseconds, and the completion tokens; a retry
+  carries the attempt, the error, and how long the client waits before trying again.
+  Sticky fallbacks (codec downgrade, streaming, dropped `temperature`) are notes on
+  the same label, so a run's whole conversation with the endpoint is in one place. A
+  session against an external agent carries none of these: that agent's model
+  traffic lives in its own logs.
 - `note`: a plain line. Verbose notes carry the full context pack and raw payloads.
 - `waveStart`: the reconciler is about to run a wave. Carries the wave number, the
   `task` its items share (`reconcile-doc`, `review-entity`, `review-requirement`),

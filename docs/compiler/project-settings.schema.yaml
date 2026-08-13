@@ -92,6 +92,48 @@ properties:
         type: number
         description: Sampling temperature
         default: 0
+  acp:
+    type: object
+    description: >-
+      Downstream ACP agent selection. Resolved per field: CLI flag, then environment
+      variable, then this table, then global config, then the built-in default
+    properties:
+      agent:
+        type: string
+        description: >-
+          Name of the agent profile to use. 'embedded' is built in and runs
+          'jazyk agent'
+        default: embedded
+      agents:
+        type: object
+        description: Agent profiles, keyed by profile name
+        additionalProperties:
+          type: object
+          description: One agent profile
+          required:
+            - command
+          properties:
+            command:
+              type: string
+              description: Executable that starts the agent
+            args:
+              type: array
+              description: Arguments passed to the command
+              items:
+                type: string
+            env:
+              type: object
+              description: Extra environment variables for the agent process
+              additionalProperties:
+                type: string
+            serve_files:
+              type: boolean
+              description: >-
+                Serve file and command tools into the agent's sessions, for agents
+                that bring no editor of their own
+              default: false
+          additionalProperties: false
+    additionalProperties: false
   roots:
     type: object
     description: Root documents. They seed reconciler scheduling and anchor reachability checks

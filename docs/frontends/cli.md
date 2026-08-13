@@ -27,6 +27,11 @@ build, inspects the [graph store](../compiler/graph.md), and hosts the other fro
   never overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
   (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
   non-interactive stdin skips it too, so scripts never hang.
+- Offers [ACP registration](./acp.md#registration) the same way: a numbered choice of
+  `none`, JetBrains, or Zed, running
+  [`jazyk acp install`](#jazyk-acp) for the chosen editor. `--acp IDE`
+  (`jetbrains`, `zed`, `none`) skips the prompt, and a non-interactive stdin skips
+  it too.
 
 The server entry is read-only; add `--write` to its `args` to hand the agent the
 [write tools](../compiler/tools.md#write-tools). Exit `0` when something was set up,
@@ -35,7 +40,9 @@ The server entry is read-only; add `--write` to its `args` to hand the agent the
 ### jazyk compile
 
 `jazyk compile [path...]` runs the [reconciler](../compiler/reconciler.md) to a
-[fixed point](../compiler/reconciler.md#convergence).
+[fixed point](../compiler/reconciler.md#convergence). Turns run as
+[ACP worker sessions](./acp.md#worker-sessions) against the configured
+[agent](../compiler/project-settings.md#acp); the agent process lives for the run.
 
 Live trace:
 
@@ -217,6 +224,25 @@ changes queue and compiling is an explicit click). Binds `127.0.0.1` only.
 Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds the
 [write tools](../compiler/tools.md#write-tools).
 
+### jazyk acp
+
+`jazyk acp` starts the [IDE-facing ACP proxy](./acp.md#the-ide-proxy) on stdio. An
+IDE spawns it as its "Jazyk" agent; it drives the configured downstream agent and
+adds jazyk in between: tool injection, doc edit delegation, slash commands, build
+status. Outside a jazyk project it is a transparent passthrough. Not meant to be run
+by hand.
+
+`jazyk acp install --ide <jetbrains|zed>` merges the Jazyk entry into the named
+editor's global agent registry (see [registration](./acp.md#registration)). Exit `0`
+when the entry was written or already current, `1` when nothing could be written.
+
+### jazyk agent
+
+`jazyk agent` starts the [embedded ACP agent](./acp.md#the-embedded-agent) on stdio:
+a generic agent over the configured [LLM endpoint](../compiler/project-settings.md#llm)
+with no jazyk knowledge. Jazyk spawns it when the `embedded` profile is selected. Not
+meant to be run by hand.
+
 ### jazyk lsp
 
 `jazyk lsp` starts the [language server](./lsp.md) on stdio. Read-only: it serves the last
@@ -224,14 +250,16 @@ committed graph, and a `compile` or `watch` rebuild refreshes it.
 
 ### jazyk benchmark
 
-Grade whether the configured model is good enough to compile Jazyk. See
-[benchmark](../benchmark/benchmark.md). Results land in `<out>/benchmark/results.yaml`.
+Grade whether the configured [agent](../compiler/project-settings.md#acp) and model
+are good enough to compile Jazyk. See [benchmark](../benchmark/benchmark.md). Results
+land in `<out>/benchmark/results.yaml`.
 
 ## Common options
 
-- `--llm-base-url URL`: the LLM endpoint.
-- `--model M`: the model to use.
-- `--api-key K`: sent as a bearer token.
+- `--agent NAME`: the [ACP agent profile](../compiler/project-settings.md#acp) to use.
+- `--llm-base-url URL`: the LLM endpoint (used by the embedded agent).
+- `--model M`: the model to use (used by the embedded agent).
+- `--api-key K`: sent as a bearer token (used by the embedded agent).
 - `--out DIR`: the out directory (default `jazyk-out/`).
 
 ## Help

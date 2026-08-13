@@ -42,6 +42,7 @@ A mutation is one operation on the graph. The full set:
 - `upsert_requirement`, `update_requirement`, `delete_requirement`
 - `report_diagnostic`, `resolve_diagnostic`
 - `set_coverage`
+- `edit_doc_prose`
 
 Mutations are exposed to the model as [write tools](./tools.md#write-tools). Their semantics:
 
@@ -55,6 +56,15 @@ Mutations are exposed to the model as [write tools](./tools.md#write-tools). The
 - `merge_entities` keeps one entity, absorbs the other, rewires all requirement references,
   unions aliases and mentions, and writes a redirect from the absorbed id to the survivor.
   Downstream consumers holding the old id follow the redirect.
+- `edit_doc_prose` replaces one text run in one document section. It is never staged
+  alone: the [dual-write tools](../frontends/acp.md#dual-write-tools) pair it with the
+  requirement mutation it carries, so the prose and the graph move in one changeset.
+  At apply time the old text must still be present, or the pair skips with a report:
+  a document edited underneath loses the edit, never its consistency. The applied
+  edit re-parses the document and absorbs the new content hash and section hashes
+  into the same commit, so the edit does not dirty the document it just reconciled.
+  Any other anchor in the section whose quote no longer locates goes stale the normal
+  way; the safety net is ordinary dirty-section work.
 
 ## Changesets
 

@@ -1,18 +1,21 @@
 # Benchmark
 
-The [turn harness](../compiler/turns.md) is model-agnostic: any endpoint that speaks one
-of its [codecs](../compiler/turns.md#codecs) can drive compilation turns. The benchmark
-decides whether a specific model is capable of doing so. A weak model does not fail
-loudly, it fills the graph with junk. The benchmark catches that before a build does.
+[Turns](../compiler/turns.md) are agent-agnostic: any
+[ACP agent](../frontends/acp.md#agents) can drive them. The benchmark decides whether
+a specific configuration (an agent profile, and for the embedded agent a model and
+endpoint) is capable of doing so. A weak model does not fail loudly, it fills the
+graph with junk. The benchmark catches that before a build does.
 
-`jazyk benchmark` runs every [case](./cases.md) against the configured model and
-endpoint, the same configuration a build would use. See [CLI](../frontends/cli.md).
+`jazyk benchmark` runs every [case](./cases.md) against the configured agent, the
+same configuration a build would use. See [CLI](../frontends/cli.md).
 
 ## Runs
 
-- Every case runs under both codecs: `native` first, then `text`. See
-  [codecs](../compiler/turns.md#codecs). A model can be capable under one and not the
-  other.
+- Under the `embedded` profile, every case runs under both codecs: `native` first,
+  then `text` (the embedded agent's two ways of speaking to an endpoint, see
+  [the embedded agent](../frontends/acp.md#the-embedded-agent)). A model can be
+  capable under one and not the other. An external agent profile has no codec axis;
+  its cases run once and the results carry a single column for it.
 - A case run is one real [turn](../compiler/turns.md#anatomy) in a sandbox store: same
   tool registry, same [validation gates](../compiler/graph.md#validation-gates), same
   budgets. Only the store and the fixture differ from a build.
@@ -64,7 +67,8 @@ rerun before concluding. The scorecard keeps history for exactly this comparison
 
 ## Results file
 
-Every run writes `<out>/benchmark/results.yaml`, one entry per model:
+Every run writes `<out>/benchmark/results.yaml`, one entry per graded configuration
+(agent profile, plus the model under the `embedded` profile):
 
 - the workflow verdicts, tier scores, efficiency, throughput, and each case's score,
   rounds, tokens, and first failing check, per codec,

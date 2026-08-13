@@ -31,11 +31,16 @@ The model owns everything that requires judgment:
 
 ## Components
 
-- The [tool registry](./tools.md), also served as an MCP server (`jazyk mcp graph`).
-  Read tools are the public query surface. Write tools mutate the graph and are used by
-  compilation turns, or by an external agent given `--write`.
-- The [turn harness](./turns.md): one focused LLM session wired to the registry, staging
-  mutations, committing atomically.
+- The [tool registry](./tools.md), served as an MCP server (`jazyk mcp`). Read tools
+  are the public query surface. Write tools mutate the graph and are used by
+  compilation turns, or by an external agent given `--write`. The same serving is
+  injected into every [ACP session](../frontends/acp.md), so the tools have one
+  implementation whoever calls them.
+- The [ACP bridge](../frontends/acp.md): the single AI path. Jazyk is the ACP client
+  of one configured agent (an external coding agent, or the generic
+  [embedded agent](../frontends/acp.md#the-embedded-agent)); every
+  [turn](./turns.md) runs as a session against it, with the jazyk tools injected
+  over MCP.
 - The [reconciler](./reconciler.md): computes what is stale, schedules turns level by
   level with bounded parallelism, and decides when the build has converged.
 

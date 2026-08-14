@@ -100,6 +100,32 @@ impl AcpRunner {
         *self.build_token.lock().unwrap() = token;
     }
 
+    // One focused answer session: the chat serving injected, the handling contract
+    // as the prompt. Used when a non-edit answer arrives from a frontend with no
+    // live session. Mirrors docs/frontends/acp.md#answer-sessions.
+    pub fn run_answer(&self, prompt: &str, _label: &str) -> Result<(), String> {
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "jazyk".to_string());
+        let spec = McpSpec {
+            name: "jazyk".to_string(),
+            command: exe,
+            args: vec![
+                "mcp".to_string(),
+                "chat".to_string(),
+                "--ephemeral".to_string(),
+                "--out".to_string(),
+                self.out.to_string_lossy().into_owned(),
+            ],
+            env: Vec::new(),
+        };
+        let session = self.session(vec![spec])?;
+        let outcome = session.prompt(prompt, Arc::new(|_| {}));
+        session.close();
+        outcome.map(|_| ())
+    }
+
     // The serving injected into one work item's session.
     fn mcp_spec(&self, item: &WorkItem) -> McpSpec {
         let exe = std::env::current_exe()

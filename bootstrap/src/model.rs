@@ -107,10 +107,57 @@ pub struct Diagnostic {
     pub lifecycle: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triage: Option<String>,
+    // A question attached to the finding, with suggested resolutions. Optional;
+    // most diagnostics carry none. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<DiagnosticPrompt>,
+    // The human response. Like triage: set by frontends, never by the compiler,
+    // and it survives rebuilds. Mirrors docs/compiler/model/diagnostic.md#answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<DiagnosticAnswer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DiagnosticPrompt {
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<PromptOption>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub freeform: bool,
+}
+
+// One choice: a label plus exactly one of `edit` (deterministic to apply) or
+// `answer` (a prefilled reply the model handles).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PromptOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<SuggestedEdit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+}
+
+// The same shape the dual-write tools use (Op::EditDocProse), so applying one is
+// the existing absorb path.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SuggestedEdit {
+    pub doc: String,
+    pub section: String,
+    pub old_text: String,
+    pub new_text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DiagnosticAnswer {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<usize>,
+    pub text: String,
+    // applied | handling | handled | failed
+    pub status: String,
 }
 
 // One section of a parsed document. `raw` is verbatim; `hash` is the content hash of raw.

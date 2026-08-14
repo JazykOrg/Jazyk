@@ -47,6 +47,16 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         triage: Option<String>,
     },
+    // Maintain the question on a finding; None removes it. Never touches a
+    // human-set answer. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    UpdateDiagnosticPrompt {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<crate::model::DiagnosticPrompt>,
+    },
+    // The human response to a prompt. Frontends stage it; the compiler never does.
+    // Mirrors docs/compiler/model/diagnostic.md#answers.
+    AnswerDiagnostic { id: String, answer: crate::model::DiagnosticAnswer },
     SetCoverage {
         doc: String,
         section: String,
@@ -962,6 +972,13 @@ impl Store {
                             if diagnostic.reasoning.is_some() {
                                 d.reasoning = diagnostic.reasoning;
                             }
+                            // A human answer is final: the finding is never re-asked,
+                            // so a re-report keeps the answered prompt as the record
+                            // of what was asked. Unanswered, a fresh prompt replaces
+                            // the question; a promptless re-report keeps the old one.
+                            if d.answer.is_none() && diagnostic.prompt.is_some() {
+                                d.prompt = diagnostic.prompt;
+                            }
                             d.updated = Some(build.clone());
                             // Journal the update as what it is: the merged diagnostic,
                             // not an entity op carrying a diagnostic id.
@@ -985,6 +1002,13 @@ impl Store {
                     match self.graph.diagnostics.get_mut(&rid) {
                         Some(d) => {
                             d.lifecycle = "resolved".to_string();
+                            // Resolving while an answer is being handled is the
+                            // handling turn finishing its work.
+                            if let Some(a) = d.answer.as_mut() {
+                                if a.status == "handling" {
+                                    a.status = "handled".to_string();
+                                }
+                            }
                             d.updated = Some(build.clone());
                             applied.push(Op::ResolveDiagnostic { id: rid, reason });
                         }
@@ -1000,6 +1024,28 @@ impl Store {
                             applied.push(Op::TriageDiagnostic { id: rid, triage });
                         }
                         None => skipped.push(format!("triage_diagnostic: unknown id {}", rid)),
+                    }
+                }
+                Op::UpdateDiagnosticPrompt { id, prompt } => {
+                    let rid = resolve(&remap, self, &id);
+                    match self.graph.diagnostics.get_mut(&rid) {
+                        Some(d) => {
+                            d.prompt = prompt.clone();
+                            d.updated = Some(build.clone());
+                            applied.push(Op::UpdateDiagnosticPrompt { id: rid, prompt });
+                        }
+                        None => skipped.push(format!("update_diagnostic: unknown id {}", rid)),
+                    }
+                }
+                Op::AnswerDiagnostic { id, answer } => {
+                    let rid = resolve(&remap, self, &id);
+                    match self.graph.diagnostics.get_mut(&rid) {
+                        Some(d) => {
+                            d.answer = Some(answer.clone());
+                            d.updated = Some(build.clone());
+                            applied.push(Op::AnswerDiagnostic { id: rid, answer });
+                        }
+                        None => skipped.push(format!("answer_diagnostic: unknown id {}", rid)),
                     }
                 }
                 Op::EditDocProse { doc, section, old_text, new_text, text } => {
@@ -1381,6 +1427,8 @@ impl Store {
                             reasoning: None,
                             lifecycle: "open".to_string(),
                             triage: None,
+                            prompt: None,
+                            answer: None,
                             created: Some(build.clone()),
                             updated: Some(build.clone()),
                         },
@@ -1760,12 +1808,48 @@ mod tests {
         let mut s = Store { out: tmp(), ..Default::default() };
         let d = |subjects: Vec<String>| Diagnostic {
             rule: "contradiction".into(), severity: "warning".into(), subjects, message: "conflict".into(),
-            reasoning: None, lifecycle: "open".into(), triage: None, created: None, updated: None,
+            reasoning: None, lifecycle: "open".into(), triage: None, prompt: None, answer: None,
+            created: None, updated: None,
         };
         s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:a".into(), "req:b".into()]) }], &wi(), 1, 1);
         // The same pair reported from the other endpoint updates the finding in place.
         s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:b".into(), "req:a".into()]) }], &wi(), 1, 1);
         assert_eq!(s.graph.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn answered_prompt_is_never_reasked_and_resolve_marks_handled() {
+        use crate::model::{DiagnosticAnswer, DiagnosticPrompt};
+        let mut s = Store { out: tmp(), ..Default::default() };
+        let prompt = |q: &str| DiagnosticPrompt { question: q.into(), options: Vec::new(), freeform: true };
+        let with_prompt = |q: Option<&str>| Diagnostic {
+            rule: "contradiction".into(), severity: "warning".into(),
+            subjects: vec!["req:a".into(), "req:b".into()], message: "conflict".into(),
+            reasoning: None, lifecycle: "open".into(), triage: None,
+            prompt: q.map(prompt), answer: None, created: None, updated: None,
+        };
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("which?")) }], &wi(), 1, 0);
+        let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        // A promptless re-report keeps the question; a fresh one replaces it.
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(None) }], &wi(), 1, 0);
+        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "which?");
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("sharper?")) }], &wi(), 1, 0);
+        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "sharper?");
+        // Once answered, a re-report never re-asks.
+        s.apply(
+            vec![Op::AnswerDiagnostic {
+                id: id.clone(),
+                answer: DiagnosticAnswer { choice: None, text: "both".into(), status: "handling".into() },
+            }],
+            &wi(), 0, 0,
+        );
+        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("again?")) }], &wi(), 1, 0);
+        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "sharper?");
+        // Resolving while handling is the handling turn finishing.
+        s.apply(vec![Op::ResolveDiagnostic { id: id.clone(), reason: "settled".into() }], &wi(), 0, 0);
+        let d = &s.graph.diagnostics[&id];
+        assert_eq!(d.lifecycle, "resolved");
+        assert_eq!(d.answer.as_ref().unwrap().status, "handled");
     }
 
     fn diag(rule: &str, subjects: Vec<&str>) -> Diagnostic {
@@ -1777,6 +1861,8 @@ mod tests {
             reasoning: None,
             lifecycle: "open".into(),
             triage: None,
+            prompt: None,
+            answer: None,
             created: None,
             updated: None,
         }

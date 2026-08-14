@@ -142,16 +142,25 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt optionally attaches a question for the document owner: up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string", "enum": ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"]},
                     "severity": {"type": "string", "enum": ["error", "warning", "info"]},
                     "subjects": {"type": "array", "items": {"type": "string"}},
                     "message": {"type": "string"},
-                    "reasoning": {"type": "string"}
+                    "reasoning": {"type": "string"},
+                    "prompt": prompt_schema()
                 }),
                 &["rule", "severity", "subjects", "message"],
+            ),
+        },
+        ToolDef {
+            name: "update_diagnostic",
+            description: "Replace the question attached to an open diagnostic (null prompt removes it). The finding itself is edited by re-reporting it; this tool only maintains the prompt. Never touches a human answer or triage.",
+            parameters: obj(
+                json!({"id": {"type": "string"}, "prompt": prompt_schema()}),
+                &["id"],
             ),
         },
         ToolDef {
@@ -328,11 +337,11 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         ],
         "review-requirement" => vec![
             "context", "expand", "search", "get_entity", "read_section", "diagnostics", "update_requirement",
-            "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
+            "delete_requirement", "report_diagnostic", "update_diagnostic", "resolve_diagnostic", "done",
         ],
         "review-entity" => vec![
             "context", "expand", "search", "get_entity", "diagnostics", "update_entity", "merge_entities",
-            "update_requirement", "delete_requirement", "report_diagnostic", "resolve_diagnostic", "done",
+            "update_requirement", "delete_requirement", "report_diagnostic", "update_diagnostic", "resolve_diagnostic", "done",
         ],
         // The in-process generation worker: the read tools, the file and command
         // tools, and the generation lifecycle. Mirrors docs/compiler/turns.md#generation-turns.
@@ -367,7 +376,7 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         "mcp-compile" => vec![
             "context", "expand", "search", "read_section", "get_entity", "diagnostics", "upsert_entity",
             "update_entity", "delete_entity", "merge_entities", "upsert_requirement", "update_requirement",
-            "delete_requirement", "set_coverage", "report_diagnostic", "resolve_diagnostic",
+            "delete_requirement", "set_coverage", "report_diagnostic", "update_diagnostic", "resolve_diagnostic",
         ],
         "mcp-write" => catalog()
             .iter()
@@ -396,6 +405,27 @@ fn bundled_tech_list(ears: &str) -> Option<String> {
         }
     }
     None
+}
+
+// The JSON schema of a diagnostic prompt argument, shared by report_diagnostic and
+// update_diagnostic. Mirrors docs/compiler/model/diagnostic.md#prompts.
+pub(crate) fn prompt_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+            "options": {"type": "array", "maxItems": 4, "items": {"type": "object", "properties": {
+                "label": {"type": "string"},
+                "edit": {"type": "object", "properties": {
+                    "doc": {"type": "string"}, "section": {"type": "string"},
+                    "old_text": {"type": "string"}, "new_text": {"type": "string"}},
+                    "required": ["doc", "section", "old_text", "new_text"]},
+                "answer": {"type": "string"}
+            }, "required": ["label"]}},
+            "freeform": {"type": "boolean"}
+        },
+        "required": ["question"]
+    })
 }
 
 // The lenient EARS shape gate, shared by upsert_requirement and update_requirement so a
@@ -913,6 +943,70 @@ impl ToolSession {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
             .unwrap_or_default()
+    }
+
+    // Parse and gate a diagnostic prompt argument: at most 4 options, label
+    // required, exactly one of edit or answer per option, and an edit's old_text
+    // must locate in its section. Mirrors docs/compiler/model/diagnostic.md#prompts.
+    fn parse_prompt(&self, v: &Value) -> Result<Option<crate::model::DiagnosticPrompt>, ToolError> {
+        use crate::model::{DiagnosticPrompt, PromptOption, SuggestedEdit};
+        if v.is_null() {
+            return Ok(None);
+        }
+        let Some(question) = v["question"].as_str().filter(|s| !s.trim().is_empty()) else {
+            return Err(ToolError::new("bad-prompt", "prompt.question is required: one sentence addressed to a person".into()));
+        };
+        let mut options = Vec::new();
+        if let Some(arr) = v["options"].as_array() {
+            if arr.len() > 4 {
+                return Err(ToolError::new("bad-prompt", "a prompt carries at most 4 options".into()));
+            }
+            for (i, o) in arr.iter().enumerate() {
+                let Some(label) = o["label"].as_str().filter(|s| !s.trim().is_empty()) else {
+                    return Err(ToolError::new("bad-prompt", format!("option {} needs a label", i)));
+                };
+                let has_edit = !o["edit"].is_null();
+                let answer = o["answer"].as_str().filter(|s| !s.trim().is_empty());
+                if has_edit == answer.is_some() {
+                    return Err(ToolError::new(
+                        "bad-prompt",
+                        format!("option {} needs exactly one of edit or answer", i),
+                    ));
+                }
+                let edit = if has_edit {
+                    let e = &o["edit"];
+                    let get = |k: &str| -> Result<String, ToolError> {
+                        e[k].as_str()
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|s| s.to_string())
+                            .ok_or_else(|| ToolError::new("bad-prompt", format!("option {}: edit.{} is required", i, k)))
+                    };
+                    let (doc, section) = (get("doc")?, get("section")?);
+                    let (old_text, new_text) = (get("old_text")?, get("new_text")?);
+                    let Some(rec) = self.snapshot.docs.get(&doc) else {
+                        return Err(ToolError::new("bad-prompt", format!("option {}: unknown document `{}`", i, doc)));
+                    };
+                    let Some(sec) = rec.sections.get(&section) else {
+                        return Err(ToolError::new("bad-prompt", format!("option {}: unknown section `{}#{}`", i, doc, section)));
+                    };
+                    if crate::md::locate_bytes(&sec.raw, &old_text).is_none() {
+                        return Err(ToolError::new(
+                            "bad-prompt",
+                            format!("option {}: old_text does not locate in {}#{}; copy it verbatim from the section", i, doc, section),
+                        ));
+                    }
+                    Some(SuggestedEdit { doc, section, old_text, new_text })
+                } else {
+                    None
+                };
+                options.push(PromptOption { label: label.to_string(), edit, answer: answer.map(|s| s.to_string()) });
+            }
+        }
+        Ok(Some(DiagnosticPrompt {
+            question: question.to_string(),
+            options,
+            freeform: v["freeform"].as_bool().unwrap_or(false),
+        }))
     }
 
     pub fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
@@ -1482,6 +1576,7 @@ impl ToolSession {
                     }
                 }
                 let message = Self::str_arg(args, "message")?;
+                let prompt = self.parse_prompt(&args["prompt"])?;
                 self.stage(Op::ReportDiagnostic {
                     id: String::new(),
                     diagnostic: Diagnostic {
@@ -1492,11 +1587,22 @@ impl ToolSession {
                         reasoning: Self::opt_str(args, "reasoning"),
                         lifecycle: "open".to_string(),
                         triage: None,
+                        prompt,
+                        answer: None,
                         created: None,
                         updated: None,
                     },
                 })?;
                 Ok(json!({"reported": true}))
+            }
+            "update_diagnostic" => {
+                let id = Self::str_arg(args, "id")?;
+                if !self.snapshot.graph.diagnostics.contains_key(&id) {
+                    return Err(ToolError::new("unknown-id", format!("unknown diagnostic id `{}`", id)));
+                }
+                let prompt = self.parse_prompt(&args["prompt"])?;
+                self.stage(Op::UpdateDiagnosticPrompt { id, prompt })?;
+                Ok(json!({"updated": true}))
             }
             "resolve_diagnostic" => {
                 let id = Self::str_arg(args, "id")?;

@@ -1065,6 +1065,16 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id", "reason"], "additionalProperties": false}
                     }));
                     tools.push(json!({
+                        "name": "answer_diagnostic",
+                        "description": "Record a human answer to a diagnostic's prompt, relayed from conversation. Pass option (index) for a chosen option or text for a freeform reply. An edit option applies as a dual write and resolves the finding before this returns; any other answer is recorded and the reply hands the handling contract back to you: act on it with the tools, then resolve_diagnostic.",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "option": {"type": "integer", "minimum": 0}, "text": {"type": "string"}}, "required": ["id"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "update_diagnostic",
+                        "description": "Replace the question attached to an open diagnostic (null prompt removes it). Never touches a human answer or triage.",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "prompt": crate::tools::prompt_schema()}, "required": ["id"], "additionalProperties": false}
+                    }));
+                    tools.push(json!({
                         "name": "init_project",
                         "description": "Scaffold a jazyk project here: jazyk.toml, docs/ with a placeholder root document, and deliverable/. Refused when jazyk.toml already exists.",
                         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
@@ -1228,6 +1238,16 @@ impl McpServer {
                     }
                     "retract_requirement" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.retract_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "answer_diagnostic" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.answer_diagnostic(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "update_diagnostic" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.update_diagnostic_chat(&params["arguments"]);
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
@@ -1514,6 +1534,64 @@ impl McpServer {
         }
         json!({"committed": true, "applied": report.applied, "doc": doc,
                "note": "the prose and the graph moved together; no recompile is owed for this edit"})
+    }
+
+    // Record a human answer relayed from conversation. An edit option is applied by
+    // the answer engine (through this serving's edit sink when the proxy listens);
+    // any other answer is recorded and the handling contract returns to the calling
+    // agent. Mirrors docs/frontends/acp.md#questions-in-chat.
+    fn answer_diagnostic(&self, args: &Value) -> Value {
+        let id = args["id"].as_str().unwrap_or_default().to_string();
+        let reply = if let Some(i) = args["option"].as_u64() {
+            crate::answer::Reply::Choice(i as usize)
+        } else if let Some(t) = args["text"].as_str() {
+            crate::answer::Reply::Text(t.to_string())
+        } else {
+            return json!({"error": {"rule": "missing-argument", "message": "pass option (an index into the prompt's options) or text (a freeform reply)"}});
+        };
+        let write = |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
+        match crate::answer::answer(&self.project, &self.out, &id, reply, Some(&write)) {
+            Ok(mut v) => {
+                if v["status"] == "handling" {
+                    if let Ok(p) = crate::answer::handling_prompt(&self.out, &id) {
+                        v["next"] = json!(p);
+                    }
+                }
+                v
+            }
+            Err(e) => json!({"error": {"rule": "answer-failed", "message": e}}),
+        }
+    }
+
+    // Maintain the question on a finding, through a ToolSession so the same gates
+    // validate the prompt, committed as its own changeset.
+    fn update_diagnostic_chat(&self, args: &Value) -> Value {
+        let target = args["id"].as_str().unwrap_or_default().to_string();
+        let mut snapshot = Store::load(&self.out);
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        snapshot.sync_docs(&parsed);
+        let scope = WorkScope {
+            task: "mcp-write".into(),
+            doc: None,
+            target: target.clone(),
+            target_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+        };
+        let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
+        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.caller = self.caller("chat", &target);
+        if let Err(e) = session.dispatch("update_diagnostic", args) {
+            return e.to_value();
+        }
+        let ops = std::mem::take(&mut session.staged);
+        let mut s = Store::load(&self.out);
+        s.sync_docs(&parsed);
+        let item = crate::model::WorkItem { task: "chat".into(), target, dirty_sections: vec![], stale_anchors: vec![] };
+        let report = s.apply(ops, &item, 1, 0);
+        if !report.skipped.is_empty() {
+            return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
+        }
+        json!({"updated": true})
     }
 
     fn revise_requirement(&self, args: &Value) -> Value {

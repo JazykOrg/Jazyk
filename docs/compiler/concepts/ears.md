@@ -179,10 +179,11 @@ three actor entities). An item naming an operation does not: `addProduct` states
 the inventory system does, a requirement only, never an entity. A named stored field
 stays requirement detail until statements are about the field itself. A sub-system
 list ("the sub-systems are: User Management, Inventory Management") ties each listed
-sub-system to its parent; the requirement declares that pair in `edges`. An item that
-is a link still counts: under "The sub-systems are:", the item
-"[User Management](./user.md)" states that the parent includes the User Management
-sub-system. The link is navigation; the item's text is a fact.
+sub-system to its parent, and the lead-in's subject is that parent: an entity too,
+minted if absent, with each item's requirement referencing both and declaring the
+pair in `edges`. An item that is a link still counts: under "The sub-systems are:",
+the item "[User Management](./user.md)" states that the parent includes the User
+Management sub-system. The link is navigation; the item's text is a fact.
 
 ## Code blocks state obligations
 

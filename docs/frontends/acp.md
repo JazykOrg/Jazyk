@@ -99,15 +99,21 @@ The automated path. For each work item the runner:
    with a short ack (`--packaged`). Binding and generation packages still ride the
    `begin_*` reply. The prompt source is `task_prompt` either way; only the channel
    differs.
-3. Consumes the update stream and translates it into
+3. Reminds once when the turn ends in prose: an agent that answers without tool
+   calls ends its turn by design, so when the turn ends, the task has not committed,
+   and the watchdog did not fire, the runner sends one follow-up prompt in the same
+   session ("the task is not finished; continue with tool calls, finish with
+   `done`"). The agent stays generic; the client owns the reminder. One reminder per
+   item; a second prose ending is a failed turn.
+4. Consumes the update stream and translates it into
    [trace events](../compiler/turns.md#trace-events): message and thought chunks
    become model text, `tool_call` and `tool_call_update` become tool rows, usage
    updates accumulate into the token count. The trace, the transcript, and the GUI
    panels do not care which agent ran the turn.
-4. Closes the session and waits for the teardown, so an agent that ended its turn
+5. Closes the session and waits for the teardown, so an agent that ended its turn
    with staged work but no finishing call still lands it: the serving's implicit
    finish runs on the teardown, under the same gates the budget path uses.
-5. Reads success from the store, never from the agent's word: the commit happened
+6. Reads success from the store, never from the agent's word: the commit happened
    inside the MCP serving under its own gates, so the runner attributes the journal
    entries between the session's start and end generations to the work item, and a
    compilation item must have left the queue. A turn whose task did not land is a

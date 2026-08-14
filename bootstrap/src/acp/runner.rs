@@ -206,17 +206,36 @@ impl AcpRunner {
         let cb_translator = translator.clone();
         let cb_trace = trace.clone();
         let cb_calls = calls.clone();
-        let outcome = session.prompt(
-            &self.prompt_for(item),
-            Arc::new(move |ev| {
-                if let super::host::HostEvent::Update(u) = ev {
-                    if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
-                        cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    cb_translator.lock().unwrap().on_update(u, &cb_trace);
+        let on_update: super::host::OnUpdate = Arc::new(move |ev| {
+            if let super::host::HostEvent::Update(u) = ev {
+                if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
+                    cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-            }),
-        );
+                cb_translator.lock().unwrap().on_update(u, &cb_trace);
+            }
+        });
+        let mut outcome = session.prompt(&self.prompt_for(item), on_update.clone());
+        // One reminder when the turn ended in prose with the task uncommitted: the
+        // generic agent ends its turn on a plain answer by design, so the client
+        // owns the "you are mid-task" reminder. A second prose ending fails the
+        // turn through the queue check below. Mirrors
+        // docs/frontends/acp.md#worker-sessions.
+        if !matches!(item.task.as_str(), "bind-requirement" | "generate-entity") {
+            if let Ok(o) = &outcome {
+                if o.stop == "end_turn" && !o.idled {
+                    let q = crate::queue::compute(&self.project, &self.out);
+                    if q.compile.iter().any(|e| e["target"] == item.target.as_str()) {
+                        outcome = session.prompt(
+                            &format!(
+                                "The task is not finished: `{} {}` has not committed. Continue with the tool calls the instructions name, then finish with done.",
+                                item.task, item.target
+                            ),
+                            on_update,
+                        );
+                    }
+                }
+            }
+        }
         session.close();
         let mut t = translator.lock().unwrap();
         t.finish(trace);

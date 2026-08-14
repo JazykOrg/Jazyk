@@ -140,6 +140,64 @@ pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>
     }
 }
 
+// The standing questions: open, unsuppressed, prompted, unanswered diagnostics.
+// Mirrors docs/frontends/gui.md#questions.
+pub async fn questions(State(st): State<SharedState>) -> Response {
+    let out = st.out.clone();
+    let v = tokio::task::spawn_blocking(move || {
+        let store = Store::load(&out);
+        let mut items: Vec<Value> = Vec::new();
+        for (id, d) in &store.graph.diagnostics {
+            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+                continue;
+            }
+            if d.prompt.is_none() {
+                continue;
+            }
+            items.push(json!({
+                "id": id, "rule": d.rule, "severity": d.severity, "message": d.message,
+                "subjects": d.subjects, "prompt": d.prompt, "answer": d.answer,
+            }));
+        }
+        json!({ "questions": items })
+    })
+    .await
+    .expect("questions task panicked");
+    Json(v).into_response()
+}
+
+// A human answer to a prompted diagnostic: {option} or {text}. Edit options apply
+// and resolve synchronously; anything else records handling and a background
+// answer session acts on it. Mirrors docs/compiler/model/diagnostic.md#answers.
+pub async fn answer_question(
+    State(st): State<SharedState>,
+    UrlPath(id): UrlPath<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let reply = if let Some(i) = body["option"].as_u64() {
+        crate::answer::Reply::Choice(i as usize)
+    } else if let Some(t) = body["text"].as_str() {
+        crate::answer::Reply::Text(t.to_string())
+    } else {
+        return err(StatusCode::BAD_REQUEST, "pass option (an index) or text (a freeform reply)");
+    };
+    let out = st.out.clone();
+    let project = st.proj.read().unwrap().clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let v = crate::answer::answer(&project, &out, &id, reply, None)?;
+        if v["status"] == "handling" {
+            crate::answer::spawn_handler(project, out, id);
+        }
+        Ok::<Value, String>(v)
+    })
+    .await
+    .expect("answer task panicked");
+    match result {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
 // The human triage decision on a diagnostic, committed through the store as a
 // journaled changeset. The compiler never overwrites human triage.
 pub async fn triage(

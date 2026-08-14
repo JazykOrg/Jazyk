@@ -442,6 +442,79 @@ button.btn-on {
   padding: 6px 8px;
   border-bottom: 1px solid var(--line);
 }
+/* Standing questions on open findings. Mirrors docs/frontends/gui.md#questions. */
+.chat-questions {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  max-height: 40%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-q-head {
+  color: var(--muted);
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+}
+.chat-q {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.chat-q-msg {
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-q-q {
+  font-size: 13px;
+}
+.chat-q-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chat-q-opts button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 8px;
+}
+.chat-q-opts button.edit {
+  border-color: var(--accent);
+}
+.chat-q-opts button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chat-q-free {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.chat-q.handling {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-q.handling .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .chat-sess {
   background: none;
   border: 1px solid var(--line);

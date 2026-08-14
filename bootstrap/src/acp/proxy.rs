@@ -159,6 +159,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                                 ("verify", "run verification over the ledger"),
                                 ("status", "summarize the last build"),
                                 ("release", "approve pending changes in manual mode"),
+                                ("questions", "list the standing questions on open findings"),
                             ]
                             .into_iter()
                             .map(|(n, d)| AvailableCommand::new(n, d))
@@ -169,6 +170,17 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                                     AvailableCommandsUpdate::new(commands),
                                 ),
                             ));
+                            // Opening a project with standing questions re-surfaces
+                            // them without any request.
+                            // Mirrors docs/frontends/acp.md#questions-in-chat.
+                            if let Some(q) = crate::answer::questions_summary(&st.out) {
+                                let _ = up.send_notification(SessionNotification::new(
+                                    sid_of(&sid),
+                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                        ContentBlock::from(q),
+                                    )),
+                                ));
+                            }
                         }
                         Ok(())
                     })
@@ -191,7 +203,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             .collect::<Vec<_>>()
                             .join("\n");
                         let cmd = text.trim().split_whitespace().next().unwrap_or("");
-                        if ["/compile", "/generate", "/verify", "/status", "/release"].contains(&cmd) {
+                        if ["/compile", "/generate", "/verify", "/status", "/release", "/questions"].contains(&cmd) {
                             let st = st_prompt.clone();
                             let sid = req.session_id.to_string();
                             let up = cx.clone();
@@ -401,6 +413,9 @@ fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: 
         ));
     };
     match cmd {
+        "/questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
+            "no standing questions; every open finding is either unprompted or already answered".into()
+        }),
         "/status" => {
             let s = crate::store::Store::load(&st.out);
             format!(

@@ -175,6 +175,46 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     Ok(s)
 }
 
+// The standing questions: open, unsuppressed, prompted, unanswered findings,
+// rendered once for chat surfaces (the session-start summary and /questions).
+// Mirrors docs/frontends/acp.md#questions-in-chat.
+pub fn questions_summary(out: &Path) -> Option<String> {
+    let store = Store::load(out);
+    let mut lines: Vec<String> = Vec::new();
+    for (id, d) in &store.graph.diagnostics {
+        if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+            continue;
+        }
+        let Some(p) = &d.prompt else { continue };
+        if d.answer.as_ref().map(|a| a.status != "failed").unwrap_or(false) {
+            continue;
+        }
+        let mut s = format!("- {} ({}, {}): {}\n  Q: {}", id, d.rule, d.severity, d.message, p.question);
+        for (i, o) in p.options.iter().enumerate() {
+            s.push_str(&format!(
+                "\n  {}. {}{}",
+                i + 1,
+                o.label,
+                if o.edit.is_some() { " (suggested edit)" } else { "" }
+            ));
+        }
+        if p.freeform {
+            s.push_str("\n  (a freeform reply is accepted)");
+        }
+        lines.push(s);
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let total = lines.len();
+    lines.truncate(10);
+    Some(format!(
+        "{} standing question(s) on this project:\n{}\n\nAnswer in chat and the agent records it, or use the editor's quick fixes on the finding.",
+        total,
+        lines.join("\n")
+    ))
+}
+
 // Frontends with no live session (LSP, GUI) hand a `handling` answer to one focused
 // background session; `answer.status` moves to handled or failed when it lands, so
 // every frontend shows the same progress from the store.

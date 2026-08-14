@@ -316,12 +316,13 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
 // The advertised commands and their implementations. Commands run the same paths the
 // buttons do; the reply names what happened, and the pane follows the job's own
 // stream. Mirrors docs/frontends/acp.md#slash-commands.
-pub const COMMANDS: [(&str, &str); 5] = [
+pub const COMMANDS: [(&str, &str); 6] = [
     ("/compile", "reconcile the graph with the documents"),
     ("/generate", "bind and generate the deliverable"),
     ("/verify", "run verification over the ledger"),
     ("/status", "summarize the last build"),
     ("/release", "approve pending changes in manual mode"),
+    ("/questions", "list the standing questions on open findings"),
 ];
 
 async fn run_command(st: &SharedState, text: &str) -> Option<String> {
@@ -347,6 +348,10 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
             );
             Some(format!("verification queued (job {})", id))
         }
+        "/questions" => Some(
+            crate::answer::questions_summary(&st.out)
+                .unwrap_or_else(|| "no standing questions; every open finding is either unprompted or already answered".to_string()),
+        ),
         "/status" => {
             let s = crate::store::Store::load(&st.out);
             Some(format!(

@@ -159,6 +159,97 @@ export default function ChatPane() {
   return <OpenPane close={() => setOpen(false)} />
 }
 
+// ---- standing questions: prompted diagnostics awaiting a human answer ----
+// Mirrors docs/frontends/gui.md#questions.
+
+interface Question {
+  id: string
+  rule: string
+  severity: string
+  message: string
+  prompt: {
+    question: string
+    options?: { label: string; edit?: unknown; answer?: string }[]
+    freeform?: boolean
+  }
+  answer?: { status: string; text: string } | null
+}
+
+function Questions() {
+  const lastCommit = useApp((a) => a.lastCommit)
+  const [qs, setQs] = useState<Question[]>([])
+  const [text, setText] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const refresh = async () => {
+    try {
+      const r = await get<{ questions: Question[] }>(`/api/questions`)
+      setQs(r.questions)
+    } catch {
+      /* the panel is best-effort; the next commit refreshes it */
+    }
+  }
+  useEffect(() => {
+    void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastCommit?.generation])
+  const respond = async (id: string, body: Record<string, unknown>) => {
+    setBusy(id)
+    try {
+      await post(`/api/questions/${encodeURIComponent(id)}/answer`, body)
+    } finally {
+      setBusy(null)
+      void refresh()
+    }
+  }
+  const open = qs.filter((q) => !q.answer || q.answer.status === 'failed')
+  const handling = qs.filter((q) => q.answer?.status === 'handling')
+  if (open.length === 0 && handling.length === 0) return null
+  return (
+    <div className="chat-questions">
+      <div className="chat-q-head">questions ({open.length})</div>
+      {open.map((q) => (
+        <div key={q.id} className="chat-q">
+          <div className="chat-q-msg">
+            {q.rule}: {q.message}
+          </div>
+          <div className="chat-q-q">{q.prompt.question}</div>
+          <div className="chat-q-opts">
+            {(q.prompt.options ?? []).map((o, i) => (
+              <button
+                key={i}
+                disabled={busy === q.id}
+                className={o.edit ? 'edit' : ''}
+                title={o.edit ? 'suggested edit: applies to the document and resolves' : 'handled by the agent'}
+                onClick={() => void respond(q.id, { option: i })}
+              >
+                {o.edit ? '✎ ' : ''}
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {q.prompt.freeform && (
+            <input
+              className="chat-q-free"
+              disabled={busy === q.id}
+              value={text[q.id] ?? ''}
+              placeholder="answer in your own words, enter to send"
+              onChange={(e) => setText({ ...text, [q.id]: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (text[q.id] ?? '').trim()) void respond(q.id, { text: text[q.id].trim() })
+              }}
+            />
+          )}
+        </div>
+      ))}
+      {handling.map((q) => (
+        <div key={q.id} className="chat-q handling">
+          <span className="dot running" /> handling: {q.prompt.question}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function OpenPane({ close }: { close: () => void }) {
   const sessions = useApp((a) => a.chatSessions)
   const jobs = useApp((a) => a.jobs)
@@ -194,6 +285,7 @@ function OpenPane({ close }: { close: () => void }) {
           ›
         </button>
       </div>
+      <Questions />
       <div className="chat-sessions">
         {followIds.map((id) => (
           <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)}>

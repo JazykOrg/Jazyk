@@ -56,6 +56,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/benchmarks/models", get(api::benchmark_models))
         .route("/diff", get(diff::diff))
         .route("/diagnostics/{id}/triage", post(api::triage))
+        .route("/questions", get(api::questions))
+        .route("/questions/{id}/answer", post(api::answer_question))
         .route("/docs", get(api::docs))
         .route("/docs/content", get(api::doc_content).put(docs::doc_write).delete(docs::doc_delete))
         .route("/docs/baseline", get(api::doc_baseline))

@@ -1085,11 +1085,16 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
                     }));
                 }
-                tools.push(json!({
-                    "name": "await_changes",
-                    "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work.",
-                    "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
-                }));
+                // An ephemeral serving exists for one task; a long poll there is a
+                // stall wearing a tool's name, so it is not offered.
+                // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+                if !self.bridge.ephemeral {
+                    tools.push(json!({
+                        "name": "await_changes",
+                        "description": "Long poll: returns when the graph moves, a documentation file changes, or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
+                        "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
+                    }));
+                }
                 Ok(json!({"tools": tools}))
             }
             "tools/call" => {
@@ -1141,7 +1146,19 @@ impl McpServer {
             {
                 let name = name.to_string();
                 match name.as_str() {
-                    "await_changes" => return Ok(text_result(self.await_changes(params), false)),
+                    "await_changes" => {
+                        // Waiting makes no sense mid-task, and on an ephemeral
+                        // serving there is no between-task to wait for.
+                        if self.bridge.ephemeral {
+                            return Ok(text_result(json!({"error": {"rule": "not-served",
+                                "message": "this serving exists for one task; there is nothing to await. Finish the open task with done."}}), true));
+                        }
+                        if self.open.lock().unwrap().is_some() {
+                            return Ok(text_result(json!({"error": {"rule": "task-open",
+                                "message": "a task is open; awaiting changes now is a stall. Finish it with done (or abandon_compilation), then await."}}), true));
+                        }
+                        return Ok(text_result(self.await_changes(params), false));
+                    }
                     "compilation_tasks" if self.modes.iter().any(|m| m == "compile") => {
                         {
                         let v = self.compilation_tasks();

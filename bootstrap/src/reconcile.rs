@@ -1018,7 +1018,7 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
 
 #[cfg(test)]
 mod tests {
-    use super::{checks, looks_normative};
+    use super::{checks, drift_checks, looks_normative, pinned_literals};
     use crate::model::{hash_hex, DocRecord, Requirement, SourceRef};
     use crate::project::Project;
     use crate::store::Store;
@@ -1029,6 +1029,77 @@ mod tests {
             doc.to_string(),
             DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
         );
+    }
+
+    // Pinned literals: code-span tokens that read as values, not words.
+    #[test]
+    fn pinned_literals_picks_values_and_skips_words() {
+        let lits = pinned_literals(
+            "The gateway shall log to `/var/log/gw.log` using model `us.claude-4` while the `username` field stays unique and `--verbose` widens it.",
+        );
+        assert!(lits.contains(&"/var/log/gw.log".to_string()), "{:?}", lits);
+        assert!(lits.contains(&"us.claude-4".to_string()), "{:?}", lits);
+        assert!(lits.contains(&"--verbose".to_string()), "{:?}", lits);
+        assert!(!lits.iter().any(|l| l == "username"), "a plain word is not pinned: {:?}", lits);
+    }
+
+    // The drift check: a pinned literal none of the bound files mention becomes a
+    // prompted warning; a mentioned one stays silent.
+    // Mirrors docs/compiler/reconciler.md#waves.
+    #[test]
+    fn drift_check_flags_missing_literals_with_a_question() {
+        use crate::gen::{Ledger, ReqRow, RowHashes, TestRef};
+        let _ = Ledger::path; // path is the save location; save() writes it
+        let dir = std::env::temp_dir().join(format!("jazyk-drift-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("product")).unwrap();
+        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"./product\"\n").unwrap();
+        std::fs::write(dir.join("product/gw.rs"), "fn log() { /* writes to /tmp/other.log */ }\n").unwrap();
+        let proj = Project::load(&dir);
+        let mut store = Store { out: proj.out.clone(), ..Default::default() };
+        store.graph.requirements.insert(
+            "req:gw-1".into(),
+            req("The gateway shall log to `/var/log/gw.log`.", "ent:gw", "docs/gw.md", "/gw", "logs"),
+        );
+        store.graph.requirements.insert(
+            "req:gw-2".into(),
+            req("The gateway shall keep `/tmp/other.log` rotating.", "ent:gw", "docs/gw.md", "/gw", "rotates"),
+        );
+        let row = |_: ()| ReqRow {
+            entity: "ent:gw".into(),
+            files: vec!["gw.rs".into()],
+            sites: Vec::new(),
+            test: TestRef {
+                kind: "programmatic".into(),
+                label: "unit".into(),
+                artifact: "gw.rs".into(),
+                name: "t".into(),
+                run: "true".into(),
+                cwd: ".".into(),
+            },
+            hashes: RowHashes::default(),
+            verdict: "none".into(),
+            last_run: None,
+            exit_code: None,
+            evidence: None,
+        };
+        let mut ledger = Ledger::default();
+        ledger.requirements.insert("req:gw-1".into(), row(()));
+        ledger.requirements.insert("req:gw-2".into(), row(()));
+        std::fs::create_dir_all(&proj.out).unwrap();
+        ledger.save(&proj.out);
+
+        let f = drift_checks(&store, &proj);
+        assert_eq!(f.len(), 1, "only the missing literal fires: {:?}", f.iter().map(|x| &x.1).collect::<Vec<_>>());
+        let (rule, subject, sev, msg, prompt) = &f[0];
+        assert_eq!(rule, "pinned-fact-drift");
+        assert_eq!(subject, "req:gw-1");
+        assert_eq!(sev, "warning");
+        assert!(msg.contains("/var/log/gw.log"), "{}", msg);
+        let p = prompt.as_ref().expect("the finding carries its question");
+        assert_eq!(p.options.len(), 2);
+        assert!(p.freeform);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn req(ears: &str, entity: &str, doc: &str, section: &str, quote: &str) -> Requirement {

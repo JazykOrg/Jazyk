@@ -72,18 +72,36 @@ pub fn answer(
             let path = project.root.join(&e.doc);
             let old_full =
                 std::fs::read_to_string(&path).map_err(|err| format!("read {}: {}", path.display(), err))?;
-            let Some((b, end)) = crate::md::locate_bytes(&old_full, &e.old_text) else {
-                return Err(format!(
-                    "the suggested edit is stale: its old text no longer locates in {}; update_diagnostic can re-author it",
-                    e.doc
-                ));
+            let (parsed, _) = crate::reconcile::parse_all(project);
+            // The search is scoped to the option's own section, where the gate
+            // validated it: the same phrase elsewhere in the document must not
+            // catch the edit. A section the tree no longer holds falls back to the
+            // whole document, the honest last resort before declaring it stale.
+            let stale = || {
+                format!(
+                    "the suggested edit is stale: its old text no longer locates in {}#{}; update_diagnostic can re-author it",
+                    e.doc, e.section
+                )
+            };
+            let window = parsed
+                .get(&e.doc)
+                .and_then(|(_, secs)| secs.get(&e.section))
+                .and_then(|sec| old_full.find(&sec.raw).map(|off| (off, off + sec.raw.len())));
+            let (b, end) = match window {
+                Some((wb, we)) => match crate::md::locate_bytes(&old_full[wb..we], &e.old_text) {
+                    Some((sb, se)) => (wb + sb, wb + se),
+                    None => return Err(stale()),
+                },
+                None => match crate::md::locate_bytes(&old_full, &e.old_text) {
+                    Some(x) => x,
+                    None => return Err(stale()),
+                },
             };
             let full = format!("{}{}{}", &old_full[..b], e.new_text, &old_full[end..]);
             match write {
                 Some(w) => w(&e.doc, &e.old_text, &e.new_text, &full)?,
                 None => std::fs::write(&path, &full).map_err(|err| format!("write {}: {}", path.display(), err))?,
             }
-            let (parsed, _) = crate::reconcile::parse_all(project);
             let mut s = Store::load(out);
             s.sync_docs(&parsed);
             s.absorb_doc_edit(&e.doc, &full);
@@ -336,6 +354,78 @@ mod tests {
         assert_eq!(s.docs["docs/pay.md"].content_hash, on_disk.0, "no recompile owed");
         // A second answer is refused: the decision is final.
         assert!(answer(&project, &out, &id, Reply::Text("again".into()), None).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The same phrase in an earlier section must not catch the edit: the search is
+    // scoped to the option's own section.
+    #[test]
+    fn edit_answer_lands_in_its_own_section() {
+        let dir = std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        std::fs::write(
+            dir.join("docs/pay.md"),
+            "# Pay\n\n## Invoices\n\nAn Invoice is due within 30 days.\n\n## Refunds\n\nA Refund is issued within 30 days.\n",
+        )
+        .unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let refunds = s.docs["docs/pay.md"]
+            .sections
+            .iter()
+            .find(|(_, sec)| sec.title.contains("Refunds"))
+            .map(|(r, _)| r.clone())
+            .unwrap();
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: Diagnostic {
+                    rule: "ambiguity".into(),
+                    severity: "warning".into(),
+                    subjects: vec![format!("docs/pay.md#{}", refunds)],
+                    message: "refund bound unclear".into(),
+                    reasoning: None,
+                    lifecycle: "open".into(),
+                    triage: None,
+                    prompt: Some(DiagnosticPrompt {
+                        question: "which refund bound?".into(),
+                        options: vec![PromptOption {
+                            label: "14 days".into(),
+                            edit: Some(SuggestedEdit {
+                                doc: "docs/pay.md".into(),
+                                section: refunds.clone(),
+                                old_text: "within 30 days".into(),
+                                new_text: "within 14 days".into(),
+                            }),
+                            answer: None,
+                        }],
+                        freeform: false,
+                    }),
+                    answer: None,
+                    created: None,
+                    updated: None,
+                },
+            }],
+            &work_item("test"),
+            0,
+            0,
+        );
+        let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        drop(s);
+
+        answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
+        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        assert!(
+            text.contains("An Invoice is due within 30 days."),
+            "the earlier section is untouched: {}",
+            text
+        );
+        assert!(text.contains("A Refund is issued within 14 days."), "the edit landed in Refunds: {}", text);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

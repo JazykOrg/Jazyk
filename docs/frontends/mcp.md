@@ -60,7 +60,9 @@ this spawning path and are not for standalone servings:
   a peer worker, it is part of a run that already holds its lease), and end of input
   with an open task runs the implicit finish: staged work commits under the same
   gates the [budget path](../compiler/turns.md#budgets) uses, so an agent that dies
-  mid-task still lands its valid extractions.
+  mid-task still lands its valid extractions. It does not serve `await_changes`:
+  the session exists for one task, and a long poll is a stall wearing a tool's name
+  (a weak model was observed idling a build on it instead of calling `done`).
 - `--only <target>`: `begin_compilation` accepts only the named target. Parallel
   worker sessions each get their own serving, and none can grab a sibling's work.
 - `--build-token <id>`: the serving is part of the running internal build. The

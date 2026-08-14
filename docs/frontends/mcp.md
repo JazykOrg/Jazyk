@@ -36,7 +36,9 @@ separated; each adds its tools to the union:
   each write commits as its own changeset.
 - `jazyk mcp chat`: the serving for [chat sessions](./acp.md#chat-sessions): read
   tools, the task lifecycle, the
-  [dual-write requirement tools](./acp.md#dual-write-tools), and the
+  [dual-write requirement tools](./acp.md#dual-write-tools),
+  `update_diagnostic` and `answer_diagnostic`
+  ([questions in chat](./acp.md#questions-in-chat)), and the
   [project tools](./acp.md#project-tools). No raw write tools: a chat edit moves the
   prose and the graph together or not at all.
 

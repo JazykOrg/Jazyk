@@ -73,12 +73,25 @@ clever ones.
   `quote` names the requirement's existing anchor and says to drop the two fields when
   only `entities` or `edges` were meant to change.
 - `delete_requirement({id, reason})`.
-- `report_diagnostic({rule, severity, subjects, message, reasoning})`. `rule` is one of
+- `report_diagnostic({rule, severity, subjects, message, reasoning, prompt?})`. `rule` is one of
   the review rules: `contradiction`, `duplicate-entity`, `duplicate-requirement`,
   `missing-link`, `ambiguity`, or `lint` for violations of the project's own
   [lint rules](./project-settings.md). Free-form rule names are rejected, so
-  findings stay comparable across builds.
+  findings stay comparable across builds. `prompt` optionally attaches a question
+  with suggested resolutions ([prompts](./model/diagnostic.md#prompts)); its gates:
+  at most 4 options, each with a `label` and exactly one of `edit` or `answer`, and
+  an `edit`'s `old_text` must locate in its section.
+- `update_diagnostic({id, prompt})`: replace the prompt on an open diagnostic (pass
+  `null` to remove it). The finding itself is edited through `report_diagnostic`'s
+  natural-key upsert; this tool only maintains the question. Never touches a
+  human-set `answer` or `triage`.
 - `resolve_diagnostic({id, reason})`.
+- `answer_diagnostic({id, option?, text?})` (`chat` toolset only): record a human
+  answer the agent relays from conversation. An `edit` option applies as a dual
+  write and resolves the finding before the tool returns; an `answer` option or
+  `text` records the reply and the tool's response carries the handling contract
+  back to the calling agent. See
+  [questions in chat](../frontends/acp.md#questions-in-chat).
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
   `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
   counts as absent. `non-normative` is rejected for a section that already yielded a

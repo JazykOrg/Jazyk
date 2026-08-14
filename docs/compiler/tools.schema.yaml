@@ -258,6 +258,37 @@ definitions:
         type: string
       reasoning:
         type: string
+      prompt:
+        $ref: 'graph.json#/definitions/diagnosticPrompt'
+    additionalProperties: false
+  updateDiagnostic:
+    description: Request payload of update_diagnostic
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      prompt:
+        oneOf:
+          - $ref: 'graph.json#/definitions/diagnosticPrompt'
+          - type: 'null'
+    additionalProperties: false
+  answerDiagnostic:
+    description: Request payload of answer_diagnostic (chat toolset)
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      option:
+        description: Option index chosen
+        type: integer
+        minimum: 0
+      text:
+        description: Freeform reply
+        type: string
     additionalProperties: false
   resolveDiagnostic:
     description: Request payload of resolve_diagnostic

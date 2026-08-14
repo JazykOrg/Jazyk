@@ -4,6 +4,10 @@
 
 The server is thin and read-only. It reads the [graph store](../compiler/graph.md) and maps
 graph nodes to editor positions. It runs no analysis of its own and never calls the LLM.
+The one write path is explicit and human-initiated: answering a
+[diagnostic prompt](../compiler/model/diagnostic.md#prompts) through a
+[code action](#capabilities), which applies a suggested edit deterministically or
+hands the reply to an [answer session](./acp.md#answer-sessions).
 
 ## Capabilities
 
@@ -40,6 +44,21 @@ graph nodes to editor positions. It runs no analysis of its own and never calls 
   - Without a ledger row the card is the requirement part alone, and the code and test
     parts read as not generated. Nothing is invented: the card shows what the ledger
     records, never a guess at which file implements what.
+- Code actions: a published diagnostic that carries a
+  [prompt](../compiler/model/diagnostic.md#prompts) offers its options as code
+  actions on the anchored range, so the question sits inline in the file where the
+  finding is. An `edit` option is a quick fix ("Apply: `<label>`"); an `answer`
+  option is "Answer: `<label>`". Both run `jazyk.answerDiagnostic` on the server:
+  - An `edit` option applies as a [dual write](./acp.md#dual-write-tools) on disk and
+    resolves the diagnostic immediately; the republish removes it from the editor.
+    Editors reload externally changed files as they do for any tool.
+  - An `answer` option records the reply and hands it to an
+    [answer session](./acp.md#answer-sessions); the diagnostic republishes as
+    resolved when the handling turn lands.
+  - Freeform replies need a text input, which base LSP does not define; clients with
+    an input surface (the [GUI](./gui.md#questions), the VS Code extension's
+    `Jazyk: answer` command) send `jazyk.answerDiagnostic` with `text` instead of an
+    option index. Base clients still get every option.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
 - Code lens: every requirement sourced in the open document shows one lens above its

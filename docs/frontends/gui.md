@@ -398,6 +398,24 @@ The pane's behaviors:
 - Permission requests from chat sessions surface inline as option buttons
   ([permissions](./acp.md#permissions)). An unanswered request cancels with the
   turn. Worker sessions never ask; their policy answers.
+
+### Questions
+
+Open diagnostics carrying a [prompt](../compiler/model/diagnostic.md#prompts) render
+in two places:
+
+- A questions list in the chat pane, above the session list while any are open: the
+  question, one button per option, and a text box when the prompt accepts freeform.
+  Answering posts to the same engine every frontend uses: an `edit` option applies
+  and the finding disappears with the next event; other answers show
+  `answer.status` as the [answer session](./acp.md#answer-sessions) handles them.
+- Inline in the [editor](#editor): the GUI's editor rides the same
+  [LSP](./lsp.md#capabilities) the IDEs use, so a prompted diagnostic's options
+  appear as quick fixes on the anchored quote, plus the freeform input the GUI can
+  offer where base LSP clients cannot.
+
+Opening a project with standing errors and warnings re-surfaces them here without
+any action: the list reads from the graph, and the graph kept them.
 - Transcripts persist under `<out>/trace/` like job traces, so a reloaded page
   restores the session list and history.
 

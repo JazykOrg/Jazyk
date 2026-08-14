@@ -158,10 +158,42 @@ Setup and configuration are chat tools too, routed through the same edit delegat
   lint rules, the `[acp]` profile), rendered as minimal edits, never a whole-file
   rewrite.
 
+### Questions in chat
+
+Open diagnostics that carry a [prompt](../compiler/model/diagnostic.md#prompts) are
+the project's standing questions, and a chat session is where they get asked:
+
+- On session start, when open prompted diagnostics exist, jazyk sends one summary
+  message into the session (count and the top questions with their options), so
+  opening a project with existing errors and warnings re-surfaces them without any
+  request. `/questions` lists them again at any time.
+- A person answers in plain chat ("apply the first option on diag:contradiction-2",
+  or a freeform reply). The session's agent records it with `answer_diagnostic`:
+  - an `edit` option applies deterministically inside the serving (dual write,
+    diagnostic resolved) before the tool returns; no model judgment touches it.
+  - an `answer` option or freeform text is recorded on the node, and the tool's
+    reply hands the handling contract to the same agent: act on the reply with the
+    session's tools, then `resolve_diagnostic` (or `update_diagnostic` to refine the
+    question and leave it open).
+- The agent can also author and edit questions: `report_diagnostic` accepts a
+  `prompt`, and `update_diagnostic` replaces one on an existing finding. A question
+  the agent sharpens in chat is the same question the LSP shows inline in the file.
+
+### Answer sessions
+
+Answers arriving outside a chat session (an LSP code action, the GUI panel) still
+need a model when they are not suggested edits. Jazyk spawns one focused session for
+the answer, the same shape as a worker session: the `chat` serving injected, the
+prompt carrying the diagnostic, its subjects' packs, the question, and the human's
+reply, with the contract to act on the reply and then resolve or re-prompt the
+diagnostic. The `answer.status` on the node moves `handling` on spawn and `handled`
+or `failed` when the session lands, so every frontend shows the same progress from
+the store.
+
 ### Slash commands
 
 Chat sessions advertise commands through `available_commands_update`: `/compile`,
-`/generate`, `/verify`, `/status`, `/release`. ACP has no invoke method for commands;
+`/generate`, `/verify`, `/status`, `/release`, `/questions`. ACP has no invoke method for commands;
 they arrive as prompt text. Jazyk matches the prefix before the prompt reaches the
 agent: a matched command runs the real work (the same path as the CLI command of that
 name) and streams its progress into the open turn, then ends the turn. Unmatched

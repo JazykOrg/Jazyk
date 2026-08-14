@@ -220,12 +220,80 @@ definitions:
           - suppressed
           - wontfix
           - null
+      prompt:
+        $ref: '#/definitions/diagnosticPrompt'
+      answer:
+        description: Human response to the prompt. Set by frontends, never the compiler
+        type: object
+        required:
+          - text
+          - status
+        properties:
+          choice:
+            description: Option index answered, absent for a freeform reply
+            type: integer
+            minimum: 0
+          text:
+            type: string
+          status:
+            type: string
+            enum:
+              - applied
+              - handling
+              - handled
+              - failed
+        additionalProperties: false
       created:
         type: string
         description: Build marker set by the store on commit
       updated:
         type: string
         description: Build marker set by the store on commit
+  diagnosticPrompt:
+    description: A question or proposal attached to a diagnostic
+    type: object
+    required:
+      - question
+    properties:
+      question:
+        type: string
+      options:
+        type: array
+        maxItems: 4
+        items:
+          type: object
+          required:
+            - label
+          properties:
+            label:
+              type: string
+            edit:
+              description: A suggested edit; applying it is deterministic
+              type: object
+              required:
+                - doc
+                - section
+                - old_text
+                - new_text
+              properties:
+                doc:
+                  type: string
+                section:
+                  type: string
+                old_text:
+                  type: string
+                new_text:
+                  type: string
+              additionalProperties: false
+            answer:
+              description: A prefilled reply, handled by the model over ACP
+              type: string
+          additionalProperties: false
+      freeform:
+        description: Whether a typed reply is accepted
+        type: boolean
+        default: false
+    additionalProperties: false
   section:
     description: One entry in a docRecord's sections map, keyed by internal reference
     type: object

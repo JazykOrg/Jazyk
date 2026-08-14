@@ -45,7 +45,11 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
     `duplicate-requirement` info diagnostic when the restatement is intentional
     cross-document redundancy (both kept).
   - contradiction: the two statements cannot both hold. Report a `contradiction`
-    diagnostic naming both.
+    diagnostic naming both, and when the repair is enumerable, attach a
+    [prompt](./model/diagnostic.md#prompts): one suggested edit per side (rewrite
+    the other document's sentence to agree), freeform allowed. The question reaches
+    the owner inline in the file and in chat; the answer resolves the conflict
+    without a fresh investigation.
   - consistent: no action.
   It also resolves a pair diagnostic whose condition no longer holds. An open
   diagnostic naming a requirement that was deleted shows the dead subject marked

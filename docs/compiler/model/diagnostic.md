@@ -21,7 +21,78 @@ checks alike.
 - `lifecycle`: `open` or `resolved`.
 - `triage`: `null`, `acknowledged`, `suppressed`, or `wontfix`. Set by a human, never
   changed by the compiler.
+- `prompt`: an optional question or proposal attached to the finding. See
+  [prompts](#prompts).
+- `answer`: the human response, once one arrives. See [answers](#answers).
 - `created` and `updated`: build markers.
+
+## Prompts
+
+A diagnostic can carry a `prompt`: a question for the document owner, with optional
+suggested resolutions. The prompt lives on the node, so it survives rebuilds exactly
+like the finding itself, and every frontend renders the same question from the same
+place.
+
+```yaml
+prompt:
+  question: "orders.md says 21 days, payment.md says 30. Which one holds?"
+  options:
+    - label: "21 days; fix payment.md"
+      edit: {doc: docs/payment.md, section: /payment/rules,
+             old_text: "within 30 days", new_text: "within 21 days"}
+    - label: "30 days; fix orders.md"
+      edit: {doc: docs/orders.md, section: /order/lifecycle,
+             old_text: "within 21 days", new_text: "within 30 days"}
+    - label: "Both are right; they cover different order kinds"
+      answer: "The bounds differ on purpose; make each document name which orders it covers."
+  freeform: true
+```
+
+- `question`: one sentence, addressed to a person.
+- `options`: up to 4 choices. Each has a `label` and exactly one of:
+  - `edit`: a suggested edit, the same shape the
+    [dual-write tools](../../frontends/acp.md#dual-write-tools) use. Choosing it is
+    deterministic: no model runs.
+  - `answer`: a prefilled reply. Choosing it hands the reply to the model.
+- `freeform`: whether a typed reply is accepted (handled like an `answer`).
+
+Who writes prompts: [review turns](../turns.md#task-types) and chat sessions attach
+them through `report_diagnostic` and edit them through `update_diagnostic`
+([write tools](../tools.md#write-tools)); deterministic
+[checks](../reconciler.md#waves) attach them mechanically where the resolution is
+enumerable. A prompt is optional; most diagnostics carry none.
+
+Gates: an `edit` option's `old_text` must locate in its section
+(whitespace-insensitively) when the prompt is staged, `label` is required, and `edit`
+and `answer` are mutually exclusive per option.
+
+## Answers
+
+Answering is a human act, through any frontend ([LSP code actions](../../frontends/lsp.md#capabilities),
+[chat sessions](../../frontends/acp.md#questions-in-chat), the
+[GUI](../../frontends/gui.md#questions)). The response lands on the node:
+
+```yaml
+answer:
+  choice: 2        # option index, null for a freeform reply
+  text: "The bounds differ on purpose; ..."
+  status: handling # applied | handling | handled | failed
+```
+
+- Choosing an `edit` option applies it as a dual write: the file changes on disk, the
+  section hashes are absorbed in the same changeset (no recompile owed), and the
+  diagnostic resolves immediately with the option's label as the reason
+  (`status: applied`). Anchors elsewhere in the section that no longer locate go
+  stale normally and the next build reconciles them.
+- Choosing an `answer` option or replying freeform records the text
+  (`status: handling`) and invokes the model over [ACP](../../frontends/acp.md#answer-sessions):
+  in a chat session the session's own agent acts on it with its tools; elsewhere
+  jazyk spawns an answer session. The handling turn resolves the diagnostic (or
+  updates its prompt and leaves it open); `status` moves to `handled`, or `failed`
+  with the error.
+- An `answer` is a human record, like `triage`: the compiler never overwrites it, and
+  a re-detected condition on a node that carries one is not re-asked. A rejected
+  suggestion stays rejected across rebuilds.
 
 ## Lifecycle and triage
 
@@ -54,5 +125,6 @@ checks alike.
 | checks | `unreachable-entity` | warning | an entity not reachable from the declared roots |
 | checks | `unstable-extraction` | warning | a natural key deleted and recreated across recent builds |
 | checks | `stale-provenance` | warning | a `quote` that no longer locates in its section |
+| checks | `pinned-fact-drift` | warning | a literal the docs pin (a path, id, or value in a code span) that the requirement's bound files never mention |
 | [reconciler](../reconciler.md#convergence) | `incomplete-build` | warning | work parked when the build budget ran out |
 | [project settings](../project-settings.md) | lint rules | configurable | project-specific lint over the graph |

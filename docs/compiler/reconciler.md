@@ -119,6 +119,16 @@ A build runs in waves:
   file has no dirty sections to schedule, and links only feed scheduling, so both
   problems are invisible to the model. The deterministic checks own them.
   Thresholds live in [limits](./project-settings.md#limits).
+- Pinned-fact drift, when the [ledger](../consumers/gen.md#the-ledger) exists: a
+  code-span literal in a requirement's statement that looks pinned (a path, an
+  identifier, a value: it carries a digit, dot, slash, dash, colon, or underscore)
+  and appears in none of the requirement's bound files becomes a
+  `pinned-fact-drift` warning on that requirement. The docs say `us-east-1` and the
+  code never mentions it: one of them is wrong, and no model is needed to notice.
+  The diagnostic carries a [prompt](./model/diagnostic.md#prompts) (the docs are
+  right and the code must change, or the value is stale here, or a freeform reply),
+  and a human answer sticks: the check never re-asks a question a person already
+  answered.
 
 ## The task queue
 

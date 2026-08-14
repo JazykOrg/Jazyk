@@ -24,6 +24,14 @@ a verification line: the derived status, the test name and kind, the last run ti
 the evidence. A requirement with no row reads `not generated`. The status derives at
 render time, so the document never shows a stored stale flag.
 
+## Relationships view
+
+The index carries one mermaid `flowchart` rendered from the graph's derived
+[relationships](../compiler/model/relationship.md): one node per entity, one labeled
+arrow per relationship type. It is generated on every run like everything else here,
+so it cannot drift from the graph the way a hand-drawn architecture diagram drifts
+from the code. Entities beyond a readable cap are grouped by their nearest root.
+
 ## Glossary
 
 The glossary is generated from the graph: every entity's name, aliases, and `definition`,

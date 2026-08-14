@@ -218,3 +218,84 @@ fn work_item(target: &str) -> WorkItem {
         stale_anchors: Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
+
+    // The edit-answer path end to end: the file changes on disk, the hashes are
+    // absorbed (no recompile owed for the edited doc), the answer is recorded as
+    // applied, and the diagnostic resolves in the same changeset.
+    #[test]
+    fn edit_answer_is_a_dual_write_that_resolves() {
+        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        std::fs::write(
+            dir.join("docs/pay.md"),
+            "# Pay\n\nAn Order shall be paid within 30 days.\n",
+        )
+        .unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        // Seed the graph: sync the doc, then file a prompted diagnostic on its section.
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let sec = s.docs["docs/pay.md"].sections.keys().next().unwrap().clone();
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: Diagnostic {
+                    rule: "contradiction".into(),
+                    severity: "warning".into(),
+                    subjects: vec![format!("docs/pay.md#{}", sec)],
+                    message: "21 vs 30 days".into(),
+                    reasoning: None,
+                    lifecycle: "open".into(),
+                    triage: None,
+                    prompt: Some(DiagnosticPrompt {
+                        question: "which bound holds?".into(),
+                        options: vec![PromptOption {
+                            label: "21 days".into(),
+                            edit: Some(SuggestedEdit {
+                                doc: "docs/pay.md".into(),
+                                section: sec.clone(),
+                                old_text: "within 30 days".into(),
+                                new_text: "within 21 days".into(),
+                            }),
+                            answer: None,
+                        }],
+                        freeform: true,
+                    }),
+                    answer: None,
+                    created: None,
+                    updated: None,
+                },
+            }],
+            &work_item("test"),
+            0,
+            0,
+        );
+        let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        drop(s);
+
+        let v = answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
+        assert_eq!(v["status"], "applied");
+        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        assert!(text.contains("within 21 days"), "file rewritten: {}", text);
+        let s = Store::load(&out);
+        let d = &s.graph.diagnostics[&id];
+        assert_eq!(d.lifecycle, "resolved");
+        assert_eq!(d.answer.as_ref().unwrap().status, "applied");
+        // The edit absorbed its own hashes: the doc is not dirty against the graph.
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let on_disk = &parsed["docs/pay.md"];
+        assert_eq!(s.docs["docs/pay.md"].content_hash, on_disk.0, "no recompile owed");
+        // A second answer is refused: the decision is final.
+        assert!(answer(&project, &out, &id, Reply::Text("again".into()), None).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

@@ -130,6 +130,10 @@ impl Lsp {
                 let r = self.on_code_lens(&params);
                 reply(out, id, r);
             }
+            "textDocument/codeAction" => {
+                let r = self.on_code_action(&params);
+                reply(out, id, r);
+            }
             "workspace/executeCommand" => {
                 let r = self.on_execute_command(&params, out);
                 reply(out, id, r);
@@ -153,7 +157,8 @@ impl Lsp {
                 "completionProvider": { "triggerCharacters": ["`", "["] },
                 "documentLinkProvider": { "resolveProvider": false },
                 "codeLensProvider": { "resolveProvider": false },
-                "executeCommandProvider": { "commands": ["jazyk.openRequirement"] }
+                "codeActionProvider": true,
+                "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.answerDiagnostic"] }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
@@ -264,7 +269,7 @@ impl Lsp {
     // out of the editor; resolved findings are never shown.
     fn publish<W: Write>(&self, out: &mut W, doc: &str) {
         let mut items: Vec<Value> = Vec::new();
-        for d in self.store.graph.diagnostics.values() {
+        for (did, d) in &self.store.graph.diagnostics {
             if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
                 continue;
             }
@@ -274,15 +279,28 @@ impl Lsp {
                 "info" => 3,
                 _ => 4, // none: shown as a hint
             };
+            // An unanswered prompt travels with the finding, so the question sits
+            // inline where the finding is and code actions offer its options.
+            // Mirrors docs/frontends/lsp.md#capabilities.
+            let question = match (&d.prompt, &d.answer) {
+                (Some(p), None) => Some(p.question.clone()),
+                (Some(p), Some(a)) if a.status == "failed" => Some(p.question.clone()),
+                _ => None,
+            };
             for subject in &d.subjects {
                 let anchor = self.subject_anchor(subject, doc);
                 let Some(range) = anchor else { continue };
+                let message = match &question {
+                    Some(q) => format!("{}: {}\nQ: {}", d.rule, d.message, q),
+                    None => format!("{}: {}", d.rule, d.message),
+                };
                 items.push(json!({
                     "range": self.range(range),
                     "severity": severity,
                     "source": "jazyk",
                     "code": d.rule,
-                    "message": format!("{}: {}", d.rule, d.message)
+                    "message": message,
+                    "data": { "jazykDiag": did }
                 }));
             }
         }
@@ -647,8 +665,88 @@ impl Lsp {
     // jazyk.openRequirement <rid>: ask the client to show the requirement's heading
     // in its entity's requirements document under <out>/docsgen/. Server-driven via
     // window/showDocument, so any LSP client navigates without client-side commands.
+    // The prompted diagnostics whose anchor intersects the requested range become
+    // code actions: one per option, running jazyk.answerDiagnostic server-side.
+    // Freeform needs a client input surface, so base clients get the options only.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_code_action(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let start = params["range"]["start"]["line"].as_u64().unwrap_or(0) as usize;
+        let end = params["range"]["end"]["line"].as_u64().unwrap_or(u64::MAX) as usize;
+        let mut actions: Vec<Value> = Vec::new();
+        for (did, d) in &self.store.graph.diagnostics {
+            if d.lifecycle != "open" || d.triage.as_deref() == Some("suppressed") {
+                continue;
+            }
+            let Some(p) = &d.prompt else { continue };
+            if d.answer.as_ref().map(|a| a.status != "failed").unwrap_or(false) {
+                continue;
+            }
+            let intersects = d.subjects.iter().any(|s| {
+                self.subject_anchor(s, &doc)
+                    .map(|(sl, _, el, _)| sl <= end && el >= start)
+                    .unwrap_or(false)
+            });
+            if !intersects {
+                continue;
+            }
+            for (i, o) in p.options.iter().enumerate() {
+                let title = if o.edit.is_some() {
+                    format!("Apply: {}", o.label)
+                } else {
+                    format!("Answer: {}", o.label)
+                };
+                actions.push(json!({
+                    "title": title,
+                    "kind": "quickfix",
+                    "isPreferred": i == 0 && o.edit.is_some(),
+                    "command": {
+                        "title": o.label,
+                        "command": "jazyk.answerDiagnostic",
+                        "arguments": [{"id": did, "option": i}]
+                    }
+                }));
+            }
+        }
+        json!(actions)
+    }
+
+    // Answer a prompted diagnostic: the LSP's one explicit, human-initiated write
+    // path. An edit option applies as a dual write and resolves immediately; any
+    // other reply records handling and a background answer session acts on it.
+    // Mirrors docs/frontends/lsp.md and docs/compiler/model/diagnostic.md#answers.
+    fn on_answer_diagnostic<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
+        let arg = params["arguments"][0].clone();
+        let Some(did) = arg["id"].as_str() else {
+            return json!({"error": "jazyk.answerDiagnostic needs {id, option|text}"});
+        };
+        let reply = if let Some(i) = arg["option"].as_u64() {
+            crate::answer::Reply::Choice(i as usize)
+        } else if let Some(t) = arg["text"].as_str() {
+            crate::answer::Reply::Text(t.to_string())
+        } else {
+            return json!({"error": "pass option (an index into the prompt's options) or text (a freeform reply)"});
+        };
+        let mut project = crate::project::Project::load(&self.root);
+        project.out = self.out.clone();
+        match crate::answer::answer(&project, &self.out, did, reply, None) {
+            Ok(v) => {
+                if v["status"] == "handling" {
+                    crate::answer::spawn_handler(project, self.out.clone(), did.to_string());
+                }
+                // The store moved (answer recorded, possibly resolved): repaint now.
+                self.refresh(out);
+                v
+            }
+            Err(e) => json!({"error": e}),
+        }
+    }
+
     fn on_execute_command<W: Write>(&mut self, params: &Value, out: &mut W) -> Value {
         let cmd = params.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        if cmd == "jazyk.answerDiagnostic" {
+            return self.on_answer_diagnostic(params, out);
+        }
         if cmd != "jazyk.openRequirement" {
             return Value::Null;
         }

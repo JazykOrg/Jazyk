@@ -1,10 +1,15 @@
 # F2 expected outcomes (hand-labeled, not part of the docs glob)
 
-Entities (~10): Customer, Order, Payment, Shipment, Product, Catalog, Stock (or
-Inventory), Return, Admin CLI, Email (borderline), Orderly (borderline). buyer must
-NOT survive as a separate entity (see traps).
+Counts are indicative, not graded (owner ruling 2026-08-14): a richer graph is
+acceptable when every extra requirement is independently testable and every extra
+entity has statements directly about it. The graded part is the traps.
 
-Requirements: roughly 18 to 22 shall-statements across the docs.
+Core entities (must exist): Customer, Order, Payment, Shipment, Product, Catalog,
+Stock (or Inventory), Return, Admin CLI, Email (borderline), Orderly (borderline).
+buyer must NOT survive as a separate entity (see traps).
+
+Requirements: at least ~18 shall-statements across the docs; no obligation the docs
+state may be missing.
 
 Planted traps:
 1. Cross-doc identity: `Order` is defined in orders.md and used in payment.md,

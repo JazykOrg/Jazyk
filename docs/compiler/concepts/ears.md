@@ -83,8 +83,9 @@ ears:  The store shall mint every id at node creation and never change it.
 ```
 
 Statements of composition and technology choice are obligations too, and one sentence
-often carries several. Requirements are atomic: one fact each, all sharing the same
-verbatim quote. E.g.:
+often carries several that can fail independently. Record one requirement per
+obligation, all sharing the same verbatim quote (see [granularity](#granularity)).
+E.g.:
 
 ```
 quote: The gateway is a REST service built with Go.
@@ -107,8 +108,10 @@ referencing its existing entity, never a new `Script` entity minted from the pre
 noun. Never substitute a broader system for a named part: "The inventory system
 manages products" is a requirement on the inventory system, not on the application
 that contains it. The requirement also references every other entity the statement
-names: "The user account shall have a `username`" references both the account and the
-`username` field, which is what ties the field into the graph.
+names, which is what ties those concepts into the graph. Naming alone does not mint an
+entity: a field, threshold, or value that a statement mentions stays requirement
+detail, carried in the `ears` text, until statements are about it directly. See
+[what is an entity](../model/entity.md#what-is-an-entity).
 
 Non-normative is the exception, not the default. A section is non-normative only when
 no sentence in it passes the test above: navigation pages that only link elsewhere,
@@ -128,26 +131,55 @@ Three reasons for marking a section non-normative are always wrong:
 - "It is not a requirement on the system." The subject is whatever the documents
   describe, and a part of it is as valid a subject as the whole.
 
+## Granularity
+
+Granularity is a judgment call, not arithmetic. The graph exists to build and verify
+quality software: record a requirement where a builder needs it to build the right
+thing and a tester can check it on its own. Two tests decide where to split:
+
+- Split what can fail independently. "The gateway is a REST service built with Go" can
+  fail as not-REST or as not-Go: two requirements, both quoting the same sentence.
+- Keep together what one check verifies. "Uploads accept PNG, JPEG, and GIF" is one
+  obligation with three values, not three requirements. Splitting it adds nodes, not
+  information.
+
+Neither direction is a goal in itself. Never shred one behavior into fragments to raise
+the count, and never fuse independent obligations to lower it. When unsure, ask what
+the failing test would be called: one honest test name per requirement is the right
+density. No count is graded; usefulness is.
+
+The same judgment governs entities: naming a concept does not mint it. See
+[what is an entity](../model/entity.md#what-is-an-entity).
+
 ## Enumerations
 
-A sentence ending in a colon followed by a list is a claim about each item. The lead-in
-sentence alone states nothing testable; never record it as a requirement on its own.
-Extract one requirement per item and quote that item's own line verbatim. E.g.:
+A sentence ending in a colon followed by a list is a claim about the items. The lead-in
+sentence alone states nothing the items do not, so requirements anchor on the items:
+
+- An item that states its own testable obligation gets its own requirement, quoting
+  that item's line verbatim. An operations list is the common case: each operation is
+  separately built and separately tested. E.g.:
 
 ```
 quote: - `addProduct` - adds a new product to the inventory
 ears:  The inventory system shall support an `addProduct` operation that adds a new product to the inventory.
 ```
 
-List items are also where entities hide. An item naming an actor, a component, a
-sub-system, or a stored field introduces that concept: "allows 3 roles: Admins,
-Warehouse Manager, Warehouse Staff" introduces three actor entities, each with its own
-requirement. An item naming an operation does not: `addProduct` states what the
-inventory system does, a requirement only, never an entity. A sub-system list ("the sub-systems are: User Management, Inventory
-Management") ties each listed sub-system to its parent; the requirement declares that
-pair in `edges`. An item that is a link still counts: under "The sub-systems are:",
-the item "[User Management](./user.md)" states that the parent includes the User
-Management sub-system. The link is navigation; the item's text is a fact.
+- Items that are values of one obligation (accepted formats, supported locales) share
+  one requirement: quote the lead-in line and carry the values in the `ears` text, the
+  same way [test cases](#test-cases-state-obligations) carry concrete values.
+
+List items are also where entities hide, under the same rule as everywhere: an item
+naming an actor, a component, or a sub-system that statements are about introduces
+that concept ("allows 3 roles: Admins, Warehouse Manager, Warehouse Staff" introduces
+three actor entities). An item naming an operation does not: `addProduct` states what
+the inventory system does, a requirement only, never an entity. A named stored field
+stays requirement detail until statements are about the field itself. A sub-system
+list ("the sub-systems are: User Management, Inventory Management") ties each listed
+sub-system to its parent; the requirement declares that pair in `edges`. An item that
+is a link still counts: under "The sub-systems are:", the item
+"[User Management](./user.md)" states that the parent includes the User Management
+sub-system. The link is navigation; the item's text is a fact.
 
 ## Code blocks state obligations
 

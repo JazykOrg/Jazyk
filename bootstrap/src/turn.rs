@@ -310,12 +310,12 @@ The graph holds entities (domain concepts), EARS requirements attached to entiti
 The documents do not necessarily describe software. The SUBJECT is whatever the documents are about and its parts: a service, a slide deck, a book, a course, a schematic, a contract. Read "the system" in any EARS pattern as that subject. An artifact that does nothing still has obligations: it must contain, show, and look like what the documents say.
 
 Work section by section, finishing one before starting the next. For ONE section:
-1. Apply this test to every sentence: does it say what the subject or one of its parts IS, DOES, CONTAINS, SHOWS, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), one atomic fact each, both quoting that same sentence. Never put two facts in one ears statement. Access and permission rules pass the test too: "All management operations can be performed by Admins only." IS a requirement ("The user management system shall allow only Admins to perform management operations."), not background. Content, appearance, and material facts pass the test too, and are the most commonly missed kind: what an artifact says, shows, or contains is an obligation on it, and a stated value, color, font, size, or measurement is an obligation on the thing it describes ("The primary color is #248555" yields "The slides shall use #248555 as the primary color.").
+1. Apply this test to every sentence: does it say what the subject or one of its parts IS, DOES, CONTAINS, SHOWS, USES, ALLOWS, REQUIRES, or LIMITS? If yes, it is a requirement. Documentation rarely says 'shall'; rephrase the sentence into an EARS shall statement and keep the source sentence verbatim as the quote. Statements of composition and technology choice pass the test: "The gateway is a REST service built with Go" yields TWO requirements ("The gateway shall be a REST service.", "The gateway shall be built with Go."), both quoting that same sentence. Granularity is judgment, not arithmetic: split what can fail independently; keep together what one check verifies ("Uploads accept PNG, JPEG, and GIF" is ONE requirement with three values). No count is a goal; one honest test name per requirement is the right density. Access and permission rules pass the test too: "All management operations can be performed by Admins only." IS a requirement ("The user management system shall allow only Admins to perform management operations."), not background. Content, appearance, and material facts pass the test too, and are the most commonly missed kind: what an artifact says, shows, or contains is an obligation on it, and a stated value, color, font, size, or measurement is an obligation on the thing it describes ("The primary color is #248555" yields "The slides shall use #248555 as the primary color.").
 2. A fenced code block giving pseudo code, steps, or an algorithm is a claim about the system, step by step. Extract one requirement per step that states behavior, quoting that step's own line verbatim. A branch is its own obligation: "If stripped line is empty string, continue to next line" is an unwanted-behavior requirement ("If a stripped line is empty, then the system shall skip it."). A variable local to the steps (a loop counter, an accumulator array) is requirement detail, never an entity. A block is an illustration only when it shows sample data or a payload format. The section is covered only when EACH behavioral step has a requirement; extracting one step and skipping the rest is a dishonest coverage claim.
 3. A test case with concrete input and expected output is an event-driven obligation on the system under test: "When given the input lines `321`, `654`, `453`, the sort utility shall output `321`, `453`, `654`." Quote the case's lead-in line; the concrete values ride in the ears text. Reference the entity of the system under test, never the test file or the suite. A test-case section is NEVER non-normative.
-4. A sentence ending in a colon followed by a list is a claim about EACH item. The lead-in sentence alone states nothing; never record it as a requirement by itself. Record one requirement per list item, quoting that item's own bullet line verbatim. An item naming an actor, a component, a sub-system, or a stored field also introduces that entity. An item that is a link still counts: under "The sub-systems are:", the item "[User Management](./user.md)" states that the parent includes the User Management sub-system; record that requirement with entities for both and an edge.
+4. A sentence ending in a colon followed by a list is a claim about the items; the lead-in alone states nothing the items do not. An item stating its own testable obligation gets its own requirement, quoting that bullet line verbatim (an operations list is the common case: each operation is separately built and tested). Items that are values of ONE obligation (accepted formats, supported locales) share one requirement: quote the lead-in line and carry the values in the ears text. An item naming an actor, a component, or a sub-system introduces that entity. An item that is a link still counts: under "The sub-systems are:", the item "[User Management](./user.md)" states that the parent includes the User Management sub-system; record that requirement with entities for both and an edge.
 5. For every entity a requirement mentions: call search first. Reuse an existing entity when it means the same concept, even under another name: "backend", "backend system", and "the Warehouse backend" are ONE entity. When you reuse under a different wording, record that wording with update_entity add_aliases. Create with upsert_entity only when search finds nothing that means the same thing. Tools take ids (ent:...), never display names.
-6. Tag each requirement with the entity the statement is about (its own grammatical subject) AND every other entity the statement names: "The user account shall have a username" references both the account and the username field; that reference is what ties the field into the graph. Only entities count here: a named operation (createUser) or technology (React) is requirement detail, never an entity. Never substitute a broader system for a named part ("The inventory system manages products" is about the inventory system, not the application containing it). One sentence introduces at most one entity for its subject: "This software is a warehouse management system" defines ONE entity, not two. A pronoun subject (This, It) resolves to the system the document already introduced: "This is a script written in javascript" is an obligation on that existing entity, never a new Script entity minted from the predicate noun.
+6. Tag each requirement with the entity the statement is about (its own grammatical subject) AND every other entity the statement names. Naming alone does not mint an entity: a field, threshold, value, operation (createUser), or technology (React) named in a statement is requirement detail, carried in the ears text; mint a sub-entity only when statements are about it directly. Never substitute a broader system for a named part ("The inventory system manages products" is about the inventory system, not the application containing it). One sentence introduces at most one entity for its subject: "This software is a warehouse management system" defines ONE entity, not two. A pronoun subject (This, It) resolves to the system the document already introduced: "This is a script written in javascript" is an obligation on that existing entity, never a new Script entity minted from the predicate noun.
 7. Record each requirement with upsert_requirement. The quote is copied character for character from the section body shown to you; for a bulleted item, quote that single bullet line exactly as it appears. Never paraphrase, merge, or reflow a quote.
 8. Then set_coverage for the section, exactly once, after its extraction: covered when you recorded (or the pack shows the section already yielded) a requirement sourced from it. non-normative is the EXCEPTION, allowed only when NO sentence passed the test: navigation pages that only link elsewhere, glossary sections that only define terms (even the subject's own terms; a definition states no obligation), changelogs, roadmap wish lists. If any sentence is about the subject, extract from it instead. These three reasons for non-normative are always wrong and will be rejected: "it states a fact, not a requirement", "it describes content or appearance, not behavior", "it is not a requirement on the system".
 
@@ -329,8 +329,7 @@ Rules:
 - Extract only obligations the source itself states; never invent facts the text does not carry. A stated fact is never "just a fact": the document states it because the result must match it.
 - The gateway sentences in these instructions are illustrations, not content. Extract only from the section bodies shown in the work pack; a quote that is not in the document will be rejected.
 - When a requirement ties two entities structurally, declare the pair in edges with a relationship type. A sub-system list is the common case: "the sub-systems are: X, Y" ties each sub-system to its parent.
-- Prefer attaching detail to a requirement over minting a new entity; mint a sub-entity only when statements are about it directly.
-- When the pack has a "Linked from" section, another document already listed this one as one of its parts and minted the entity for it. That entity is what this document is about: reference it from the requirements you extract here, and never mint a second entity for the same concept under the document's own heading. E.g. if the pack says a parent's item "[Introduction](./slide-intro.md)" introduced ent:introduction, then every statement in this document is an obligation on ent:introduction.
+- When the pack has a "Linked from" section, another document already listed this one as one of its parts and minted the entity for it. A primarySubject line names that entity when it is unambiguous: reference it from the requirements you extract here, and never mint a second entity for the same concept under the document's own heading.
 - Never set scope on an entity unless the documents explicitly name a bounded context. An invented scope splits one concept into two.
 - The ears text may rephrase the statement into EARS form, but the quote must stay a verbatim copy of the source sentence.
 - A tool error names what was wrong and how to repair the call; fix it and continue.
@@ -365,7 +364,7 @@ Work in this order:
 2. If the definition no longer matches the requirements as a whole, refresh it with update_entity.
 3. Judge every lookalike candidate listed below. A name variant ("backend" vs "backend system") or a synonym is the SAME concept: merge with merge_entities (keep the better-established id) and say why. A field, part, state, role, threshold, or child concept is a SEPARATE entity when statements are directly about it: "Product price" is not a variant of "Product", and a shared word proves nothing ("Reorder point" is not "Order"). The absorbed name survives as an alias and its requirements follow automatically.
 4. Judge each requirement listed under "Statements naming this entity without referencing it": when the statement is about this entity, add the entity to the requirement with update_requirement, passing ONLY id and entities (the full list, including the ones already there). Never pass section or quote on such a call: those two re-anchor the provenance to a different sentence in the document, they are not the ears statement, and a call that only adds a reference must leave them out. A missing reference is what strands an entity unreachable.
-5. Delete duplicate requirements: when two requirements on this entity state the same fact (the same obligation reworded), keep the better-sourced one and delete_requirement the other, saying why. A lead-in sentence's requirement duplicated by its list item's requirement is the common case; keep the item's.
+5. Delete duplicate requirements: when two requirements on this entity state the same fact (the same obligation reworded), keep the better-sourced one and delete_requirement the other, saying why. A lead-in sentence's requirement restating its list items' requirements is the common case.
 6. Report real problems with report_diagnostic: rule contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define.
 7. If requirements tie this entity to another structurally but declare no edges, add them with update_requirement, passing ONLY id and edges (with a relationship type). Again, no section and no quote.
 8. If an open diagnostic shown in the pack no longer holds, resolve it with resolve_diagnostic. One naming a subject marked (deleted) cannot stand as filed: resolve it, and if the finding still stands between surviving statements, report a new diagnostic naming them.
@@ -529,6 +528,7 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     // its parts, and that list item minted the part's entity. The link is what says which
     // entity this document details. Mirrors docs/compiler/turns.md#incoming-links.
     let mut incoming: Vec<String> = Vec::new();
+    let mut subjects: Vec<(String, String)> = Vec::new();
     for (id, e) in &store.graph.entities {
         for m in &e.mentions {
             if &m.doc != doc && crate::md::doc_links(&m.quote, &m.doc).iter().any(|l| l == doc) {
@@ -540,6 +540,7 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                     id,
                     e.name
                 ));
+                subjects.push((id.clone(), e.name.clone()));
             }
         }
     }
@@ -561,7 +562,19 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         incoming.truncate(12);
         s.push_str("\n## Linked from (what other documents already say this one details)\n");
         s.push_str(&incoming.join("\n"));
-        s.push_str("\n\nThis document details what those statements introduced. Its requirements reference those entities; do not mint a second entity for the same concept.\n");
+        subjects.sort();
+        subjects.dedup();
+        if subjects.len() == 1 {
+            // One unambiguous subject: name it once instead of asking the model to
+            // infer it from the evidence lines.
+            let (id, name) = &subjects[0];
+            s.push_str(&format!(
+                "\n\nprimarySubject: {} ({}). This document details that entity: reference it from every requirement extracted here, and never mint a second entity for the same concept.\n",
+                id, name
+            ));
+        } else {
+            s.push_str("\n\nThis document details what those statements introduced. Its requirements reference those entities; do not mint a second entity for the same concept.\n");
+        }
     }
 
     // Known entities: this document's neighborhood first, then the rest of the graph.
@@ -592,7 +605,14 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         s.push_str("\n## Stale anchors (their source text changed or vanished; re-anchor, update, or delete)\n");
         for a in &item.stale_anchors {
             if let Some(r) = store.graph.requirements.get(a) {
-                s.push_str(&format!("- {}: {} (was quoted: \"{}\")\n", a, r.ears, crate::llm::truncate(&r.source.quote, 100)));
+                s.push_str(&format!(
+                    "- {}: {} (in {}#{}; was quoted: \"{}\")\n",
+                    a,
+                    r.ears,
+                    r.source.doc,
+                    r.source.section,
+                    crate::llm::truncate(&r.source.quote, 100)
+                ));
             } else if let Some(e) = store.graph.entities.get(a) {
                 s.push_str(&format!("- {} (entity {}): a mention's section changed\n", a, e.name));
             }
@@ -781,7 +801,7 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
         if !unreferenced.is_empty() {
             s.push_str("\n## Statements naming this entity without referencing it (add the reference if the statement is about it)\n");
             s.push_str(&unreferenced.join("\n"));
-            s.push('\n');
+            s.push_str("\nThese candidates are word matches, not judgments: a name appearing in the text does not make the statement about this entity, and leaving a candidate alone is a correct outcome.\n");
         }
     }
     // Open diagnostics naming this entity's requirements: the entity review is the

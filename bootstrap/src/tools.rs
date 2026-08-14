@@ -70,7 +70,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_entity",
-            description: "Create a domain concept, or update it if the name already exists. mention cites the section and the verbatim quote that talks about it. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context.",
+            description: "Create a domain concept, or update it if the name already exists. mention cites the section and the verbatim quote that talks about it. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context. A name that reads as a variant of an existing entity is rejected unless note names how the concepts differ (a field, part, or state of X is a different concept than X).",
             parameters: obj(
                 json!({
                     "name": {"type": "string"},
@@ -979,7 +979,8 @@ impl ToolSession {
                     }
                 }
                 let total = known.len();
-                known.truncate(25);
+                known.truncate(10);
+                let shown = known.len();
                 Ok(json!({
                     "hits": [],
                     "entityCount": total,
@@ -991,8 +992,8 @@ impl ToolSession {
                         )
                     } else {
                         format!(
-                            "no match for `{}`. The graph's {} entity(ies) are listed above; searching again will return this same answer. If one of them means the same concept, use its id. Otherwise create the entity with upsert_entity.",
-                            query, total
+                            "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them means the same concept, use its id. Otherwise create the entity with upsert_entity.",
+                            query, shown, total
                         )
                     }
                 }))

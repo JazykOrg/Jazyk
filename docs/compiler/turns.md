@@ -126,11 +126,16 @@ So the `reconcile-doc` pack names every incoming link the graph already resolved
 ```
 ## Linked from
 - docs/slides.md#/slides "[Introduction](./slide-intro.md)" introduced ent:introduction (Introduction)
+
+primarySubject: ent:introduction (Introduction)
 ```
 
-The turn reads that as the document's subject: statements in this document are about
-`ent:introduction`, and its requirements reference that entity instead of minting a
-second one for the same concept. Without it, a file linked as a part yields requirements
+When every resolved link introduces the same entity, the pack names it once as
+`primarySubject`. The turn reads that as the document's subject: statements in this
+document are about `ent:introduction`, and its requirements reference that entity
+instead of minting a second one for the same concept. When the links introduce
+different entities, no `primarySubject` is named and the turn matches statements to
+entities itself. Without it, a file linked as a part yields requirements
 tied to nothing the parent knows, the part's entity keeps only the parent's one-line
 mention, and [generation](../consumers/gen.md) sees an entity with a name and no
 content.

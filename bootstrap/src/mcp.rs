@@ -36,6 +36,10 @@ pub struct McpServer {
     // Bridge-spawned serving flags: this serving belongs to one ACP session.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     bridge: BridgeFlags,
+    // Task kinds whose instructions this serving already delivered: later tasks of
+    // the same kind elide the repeated text. Mirrors
+    // docs/frontends/mcp.md#compilation-over-mcp.
+    seen_kinds: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 // Flags of a serving injected into an ACP session by the bridge. Not for standalone
@@ -195,6 +199,7 @@ impl McpServer {
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
             trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
             bridge,
+            seen_kinds: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -426,13 +431,6 @@ impl McpServer {
     }
 
     fn begin_compilation(&self, params: &Value) -> Value {
-        self.begin_compilation_inner(params, None)
-    }
-
-    // elide_kind: the kind the caller just finished via beginNext; a chained task of
-    // the same kind skips the repeated instructions text (the agent saw it one reply
-    // ago), which is the bulk of the package on review-heavy builds.
-    fn begin_compilation_inner(&self, params: &Value, elide_kind: Option<&str>) -> Value {
         if let Some(o) = self.open.lock().unwrap().as_ref() {
             return json!({"error": {"rule": "task-open", "message": format!(
                 "task `{} {}` is already open with {} staged mutation(s); finish_compilation or abandon_compilation first",
@@ -517,8 +515,12 @@ impl McpServer {
                 "note": "changeset open; stage findings with the write tools, then finish with done",
             })
         } else {
-            let instructions_field = if elide_kind == Some(item.task.as_str()) {
-                json!("(same contract as the task you just finished; unchanged)")
+            // The first task of each kind ships the full contract; later ones elide
+            // it (the agent saw it earlier in this session), which is the bulk of
+            // the reply on review-heavy builds.
+            let seen = !self.seen_kinds.lock().unwrap().insert(item.task.clone());
+            let instructions_field = if seen {
+                json!(format!("(same contract as the earlier {} task in this session; unchanged)", item.task))
             } else {
                 json!(instructions)
             };
@@ -587,7 +589,7 @@ impl McpServer {
         // beginNext claims the next ready task in the same call, saving a round trip
         // per task. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
         if params["arguments"]["beginNext"].as_bool() == Some(true) {
-            let began = self.begin_compilation_inner(&json!({"arguments": {}}), Some(o.item.task.as_str()));
+            let began = self.begin_compilation(&json!({"arguments": {}}));
             if began["error"].is_null() {
                 reply["began"] = began;
                 return reply;

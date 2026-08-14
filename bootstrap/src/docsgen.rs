@@ -19,7 +19,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if let Some(stem) = name.strip_suffix(".md") {
-                if !live.contains(stem) {
+                if stem != "index" && !live.contains(stem) {
                     std::fs::remove_file(e.path()).ok();
                 }
             }
@@ -122,6 +122,50 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         }
         std::fs::write(dir.join(format!("{}.md", slug(id))), s).ok();
         written += 1;
+    }
+
+    // The index: one entry per entity plus a relationships view rendered from the
+    // graph, so the diagram cannot drift the way a hand-drawn one does.
+    // Mirrors docs/consumers/docsgen.md#relationships-view.
+    if !store.graph.entities.is_empty() {
+        let mid = |id: &str| id.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        let mut idx = String::new();
+        idx.push_str("# Index\n\n");
+        for (id, ent) in &store.graph.entities {
+            idx.push_str(&format!("- [{}](./{}.md) `{}`\n", ent.name, slug(id), id));
+        }
+        if !store.graph.relationships.is_empty() {
+            idx.push_str("\n## Relationships\n\n");
+            if store.graph.entities.len() > 60 {
+                idx.push_str("(the graph is past a readable diagram; see each entity's Relationships section)\n");
+            } else {
+                idx.push_str("```mermaid\nflowchart LR\n");
+                let mut named: BTreeSet<String> = BTreeSet::new();
+                let mut edges: BTreeSet<(String, String, String)> = BTreeSet::new();
+                for rel in store.graph.relationships.values() {
+                    if rel.members.len() < 2 {
+                        continue;
+                    }
+                    let (a, b) = (rel.members[0].clone(), rel.members[1].clone());
+                    for m in [&a, &b] {
+                        if named.insert(m.clone()) {
+                            let name = store
+                                .graph
+                                .entities
+                                .get(store.resolve_id(m))
+                                .map(|e| e.name.replace('"', "'"))
+                                .unwrap_or_else(|| m.clone());
+                            idx.push_str(&format!("    {}[\"{}\"]\n", mid(m), name));
+                        }
+                    }
+                    if edges.insert((a.clone(), b.clone(), rel.rel_type.clone())) {
+                        idx.push_str(&format!("    {} -->|{}| {}\n", mid(&a), rel.rel_type, mid(&b)));
+                    }
+                }
+                idx.push_str("```\n");
+            }
+        }
+        std::fs::write(dir.join("index.md"), idx).ok();
     }
     written
 }

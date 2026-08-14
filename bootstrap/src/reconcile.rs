@@ -246,6 +246,106 @@ fn looks_normative(raw: &str) -> bool {
 }
 
 // Deterministic whole-graph checks. Returns (rule, subject, severity, message) findings.
+// Pinned-fact drift: a code-span literal in a bound requirement's statement that
+// none of its bound files mention. The docs say `us-east-1` and the code never does:
+// one of them is wrong, and no model is needed to notice. The finding carries its
+// question, and an answered question is never re-asked (the prompt merge in
+// reconcile_check_diags). Mirrors docs/compiler/reconciler.md#waves.
+fn drift_checks(
+    store: &Store,
+    proj: &Project,
+) -> Vec<(String, String, String, String, Option<crate::model::DiagnosticPrompt>)> {
+    use crate::model::{DiagnosticPrompt, PromptOption};
+    let ledger = crate::gen::Ledger::load(&proj.out);
+    if ledger.requirements.is_empty() {
+        return Vec::new();
+    }
+    let gs = crate::gen::GenSettings::resolve(proj);
+    let mut findings = Vec::new();
+    for (rid, row) in &ledger.requirements {
+        let Some(req) = store.graph.requirements.get(rid) else { continue };
+        let mut files: Vec<String> = row.files.clone();
+        if let Some(e) = ledger.entities.get(&row.entity) {
+            files.extend(e.files.iter().cloned());
+        }
+        files.sort();
+        files.dedup();
+        if files.is_empty() {
+            continue;
+        }
+        let mut contents = String::new();
+        for f in &files {
+            if let Ok(t) = std::fs::read_to_string(gs.deliverable.join(f)) {
+                contents.push_str(&t);
+                contents.push('\n');
+            }
+        }
+        if contents.is_empty() {
+            continue;
+        }
+        for lit in pinned_literals(&req.ears) {
+            if contents.contains(&lit) {
+                continue;
+            }
+            let prompt = DiagnosticPrompt {
+                question: format!("The docs pin `{}` but none of the bound files mention it. Which is right?", lit),
+                options: vec![
+                    PromptOption {
+                        label: "The docs are right; the code must change".into(),
+                        edit: None,
+                        answer: Some(format!(
+                            "The documents are correct: make the implementation use `{}` and rerun verification.",
+                            lit
+                        )),
+                    },
+                    PromptOption {
+                        label: "This value is not pinned for these files".into(),
+                        edit: None,
+                        answer: Some(format!(
+                            "`{}` is context, not a pinned fact for these files; reword or retarget the requirement so the check stops matching it.",
+                            lit
+                        )),
+                    },
+                ],
+                freeform: true,
+            };
+            findings.push((
+                "pinned-fact-drift".to_string(),
+                rid.clone(),
+                "warning".to_string(),
+                format!("{} pins `{}`; bound file(s) {} never mention it", rid, lit, files.join(", ")),
+                Some(prompt),
+            ));
+            // One finding per requirement keeps the noise bounded.
+            break;
+        }
+    }
+    findings
+}
+
+// A code-span token that reads as a pinned fact: one word, long enough to be a
+// value, carrying a digit, dot, slash, dash, colon, or underscore.
+fn pinned_literals(ears: &str) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    let mut rest = ears;
+    while let Some(b) = rest.find('`') {
+        let after = &rest[b + 1..];
+        let Some(e) = after.find('`') else { break };
+        let tok = after[..e].trim();
+        rest = &after[e + 1..];
+        if tok.len() >= 4
+            && tok.len() <= 80
+            && !tok.contains(' ')
+            && tok.chars().any(|c| c.is_ascii_digit() || ['.', '/', '-', ':', '_'].contains(&c))
+        {
+            v.push(tok.to_string());
+        }
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
 fn checks(store: &Store, proj: &Project, parked: &[WorkItem]) -> Vec<(String, String, String, String)> {
     let mut f = Vec::new();
     // File-level document quality: an empty file schedules no turns and a link only
@@ -829,7 +929,9 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
     if !settled.is_empty() {
         trace.line("reconcile", &format!("settle: {}", settled.join("; ")));
     }
-    let findings = checks(s, proj, parked_all);
+    let mut findings: Vec<(String, String, String, String, Option<crate::model::DiagnosticPrompt>)> =
+        checks(s, proj, parked_all).into_iter().map(|(a, b, c, d)| (a, b, c, d, None)).collect();
+    findings.extend(drift_checks(s, proj));
     s.reconcile_check_diags(findings);
 
     // Status and verdict. Coverage is part of the termination criterion

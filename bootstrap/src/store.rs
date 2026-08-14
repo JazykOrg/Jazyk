@@ -82,7 +82,8 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 13] = [
+pub const CHECK_RULES: [&str; 14] = [
+    "pinned-fact-drift",
     "empty-file",
     "broken-link",
     "uncovered-section",
@@ -1392,11 +1393,14 @@ impl Store {
 
     // Reconcile the deterministic findings: new ones are reported, existing ones updated,
     // vanished ones resolved. Keyed by rule plus subjects, like the sticky rule in apply().
-    pub fn reconcile_check_diags(&mut self, findings: Vec<(String, String, String, String)>) {
+    pub fn reconcile_check_diags(
+        &mut self,
+        findings: Vec<(String, String, String, String, Option<crate::model::DiagnosticPrompt>)>,
+    ) {
         let build = format!("g{}", self.status.generation + 1);
         let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
         let mut changed = false;
-        for (rule, subject, severity, message) in findings {
+        for (rule, subject, severity, message, prompt) in findings {
             let subjects = vec![subject];
             seen.insert((rule.clone(), subjects.clone()));
             let existing = self
@@ -1414,6 +1418,13 @@ impl Store {
                         d.updated = Some(build.clone());
                         changed = true;
                     }
+                    // The question rides along on a finding that never had one and
+                    // was never answered; an answered or standing prompt is kept.
+                    if d.prompt.is_none() && d.answer.is_none() && prompt.is_some() {
+                        d.prompt = prompt;
+                        d.updated = Some(build.clone());
+                        changed = true;
+                    }
                 }
                 None => {
                     let id = self.mint_diag_id(&rule, &BTreeSet::new());
@@ -1427,7 +1438,7 @@ impl Store {
                             reasoning: None,
                             lifecycle: "open".to_string(),
                             triage: None,
-                            prompt: None,
+                            prompt,
                             answer: None,
                             created: Some(build.clone()),
                             updated: Some(build.clone()),
@@ -1739,11 +1750,11 @@ mod tests {
     #[test]
     fn check_diags_reconcile_not_regenerate() {
         let mut s = Store { out: tmp(), ..Default::default() };
-        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into())]);
+        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into(), None)]);
         assert_eq!(s.graph.diagnostics.len(), 1);
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
         // Same finding again: same id, no duplicate.
-        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into())]);
+        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into(), None)]);
         assert_eq!(s.graph.diagnostics.len(), 1);
         assert!(s.graph.diagnostics.contains_key(&id));
         // Finding cleared: resolved, not deleted.

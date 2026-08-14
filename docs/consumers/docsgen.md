@@ -30,7 +30,8 @@ The index carries one mermaid `flowchart` rendered from the graph's derived
 [relationships](../compiler/model/relationship.md): one node per entity, one labeled
 arrow per relationship type. It is generated on every run like everything else here,
 so it cannot drift from the graph the way a hand-drawn architecture diagram drifts
-from the code. Entities beyond a readable cap are grouped by their nearest root.
+from the code. Past a readable cap the diagram is omitted with a note; each entity's
+own Relationships section carries the detail either way.
 
 ## Glossary
 

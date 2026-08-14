@@ -109,10 +109,13 @@ noun. Never substitute a broader system for a named part: "The inventory system
 manages products" is a requirement on the inventory system, not on the application
 that contains it. The requirement also references every other entity the statement
 names, which is what ties those concepts into the graph. The subject is always an
-entity: mint it when search finds nothing that means the same concept. Anything else
-a statement merely mentions (a field, threshold, or value) stays requirement detail,
-carried in the `ears` text, until statements are about it directly. See
-[what is an entity](../model/entity.md#what-is-an-entity).
+entity: mint it when search finds nothing that means the same concept. One exception:
+when the grammatical subject is barred from being an entity (a flag, a path, a
+command, a value), the requirement attaches to the owning entity in scope instead
+("The flags `--verbose` and `--quiet` control logging" is a requirement on the CLI).
+Anything else a statement merely mentions (a field, threshold, or value) stays
+requirement detail, carried in the `ears` text, until statements are about it
+directly. See [what is an entity](../model/entity.md#what-is-an-entity).
 
 Non-normative is the exception, not the default. A section is non-normative only when
 no sentence in it passes the test above: navigation pages that only link elsewhere,

@@ -1118,6 +1118,10 @@ impl McpServer {
                 }
                 reply
             }
+            // Not part of MCP (clients end a serving by closing stdin), but agents
+            // hand-driving the transport send it out of LSP habit; answering it is
+            // cheaper than teaching every agent the difference.
+            "shutdown" => Ok(Value::Null),
             _ => Err((-32601, format!("method not found: {}", method))),
         }
     }

@@ -77,7 +77,9 @@ this spawning path and are not for standalone servings:
 
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the
-order of calls, and that a tool error names its own repair. The prompting lives in
+order of calls, and that a tool error names its own repair. A serving ends when its
+input ends: close stdin to tear it down. `shutdown` is answered with null for agents
+that send it out of LSP habit; it does nothing. The prompting lives in
 three places, most specific wins: server instructions carry the loop, each
 `begin_*` package carries the task's own contract, and each tool description names
 what to call next.

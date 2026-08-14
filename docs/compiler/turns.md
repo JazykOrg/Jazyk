@@ -58,8 +58,10 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   reliably than "is this entity coherent?".
 - `review-entity`: judge one entity whose facts changed. The model checks that the
   requirements form a coherent whole, refreshes the `definition`, merges lookalike
-  duplicates, deletes requirements that restate a fact another requirement on the
-  entity already carries (keeping the better-sourced one), and reports
+  duplicates, deletes same-document duplicate requirements (keeping the
+  better-sourced one; duplicates quoting different documents are intentional
+  redundancy, kept with a `duplicate-requirement` info diagnostic, the same policy
+  the pairwise review applies), and reports
   [diagnostics](./model/diagnostic.md). The pack includes the
   entity, its requirements across all documents, lookalike candidates, and requirements
   whose statement names the entity without referencing it: candidates for a missing
@@ -135,12 +137,15 @@ So the `reconcile-doc` pack names every incoming link the graph already resolved
 primarySubject: ent:introduction (Introduction)
 ```
 
-When every resolved link introduces the same entity, the pack names it once as
-`primarySubject`. The turn reads that as the document's subject: statements in this
-document are about `ent:introduction`, and its requirements reference that entity
-instead of minting a second one for the same concept. When the links introduce
-different entities, no `primarySubject` is named and the turn matches statements to
-entities itself. Without it, a file linked as a part yields requirements
+The pack always resolves the subject question, so the turn never guesses what "the
+system" means:
+
+- One introduced entity: `primarySubject: ent:introduction`. The turn reads "the
+  system", "this", and "it" as that entity, and its requirements reference it
+  instead of minting a second one for the same concept.
+- Several introduced entities: the pack lists them as `candidateSubjects` and the
+  statement's own section decides which one it constrains. "The system" in a detail
+  document still means the part being detailed, never the containing application. Without it, a file linked as a part yields requirements
 tied to nothing the parent knows, the part's entity keeps only the parent's one-line
 mention, and [generation](../consumers/gen.md) sees an entity with a name and no
 content.

@@ -1071,4 +1071,101 @@ mod tests {
         assert!(card.contains("**test** · not generated"), "{}", card);
         std::fs::remove_dir_all(&tmp).ok();
     }
+
+    // The interactive path over the wire: a prompted finding publishes with its
+    // question, its options come back as code actions, and one executeCommand
+    // applies the edit and resolves it. Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn prompted_diagnostic_publishes_offers_actions_and_applies() {
+        use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
+        use crate::store::Op;
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let root = tmp.join("proj");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        std::fs::write(root.join("docs/pay.md"), "# Pay\n\nAn Order shall be paid within 30 days.\n").unwrap();
+        let project = crate::project::Project::load(&root);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let sec = s.docs["docs/pay.md"].sections.keys().next().unwrap().clone();
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: Diagnostic {
+                    rule: "contradiction".into(),
+                    severity: "warning".into(),
+                    subjects: vec![format!("docs/pay.md#{}", sec)],
+                    message: "21 vs 30 days".into(),
+                    reasoning: None,
+                    lifecycle: "open".into(),
+                    triage: None,
+                    prompt: Some(DiagnosticPrompt {
+                        question: "Which bound holds?".into(),
+                        options: vec![
+                            PromptOption {
+                                label: "21 days; fix this file".into(),
+                                edit: Some(SuggestedEdit {
+                                    doc: "docs/pay.md".into(),
+                                    section: sec.clone(),
+                                    old_text: "within 30 days".into(),
+                                    new_text: "within 21 days".into(),
+                                }),
+                                answer: None,
+                            },
+                            PromptOption { label: "30 days is right".into(), edit: None, answer: Some("keep 30".into()) },
+                        ],
+                        freeform: true,
+                    }),
+                    answer: None,
+                    created: None,
+                    updated: None,
+                },
+            }],
+            &crate::model::WorkItem { task: "seed".into(), target: "t".into(), dirty_sections: vec![], stale_anchors: vec![] },
+            0,
+            0,
+        );
+        let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        drop(s);
+
+        let mut lsp = Lsp::new(root.clone(), out.clone(), crate::gen::GenSettings::resolve(&project));
+        let uri = path_to_uri(&root.join("docs/pay.md"));
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri,
+                "text": std::fs::read_to_string(root.join("docs/pay.md")).unwrap()}}}),
+            &mut wire,
+        );
+        let published = String::from_utf8_lossy(&wire).to_string();
+        assert!(published.contains("Which bound holds?"), "question published inline: {}", published);
+
+        let mut wire2: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 7, "method": "textDocument/codeAction", "params": {
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 99, "character": 0}}}}),
+            &mut wire2,
+        );
+        let actions = String::from_utf8_lossy(&wire2).to_string();
+        assert!(actions.contains("Apply: 21 days; fix this file"), "{}", actions);
+        assert!(actions.contains("Answer: 30 days is right"), "{}", actions);
+
+        let mut wire3: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 8, "method": "workspace/executeCommand", "params": {
+                "command": "jazyk.answerDiagnostic", "arguments": [{"id": id, "option": 0}]}}),
+            &mut wire3,
+        );
+        let applied = String::from_utf8_lossy(&wire3).to_string();
+        assert!(applied.contains("applied"), "{}", applied);
+        let text = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        assert!(text.contains("within 21 days"), "{}", text);
+        // The refresh inside the command republished without the resolved finding.
+        assert!(applied.contains("publishDiagnostics"), "{}", applied);
+        assert!(!applied.contains("Which bound holds?"), "{}", applied);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

@@ -650,7 +650,7 @@ fn run_case_turn(
         }
     };
     let round_budget = limits.turn_rounds.max(item.dirty_sections.len() as u32 * 8);
-    let stop = agent_loop::run_loop(LoopArgs {
+    let mut stop = agent_loop::run_loop(LoopArgs {
         llm,
         history: &mut history,
         tools: &tools,
@@ -661,6 +661,23 @@ fn run_case_turn(
         max_rounds: round_budget,
         label: format!("bench {}", item.target),
     });
+    // The production client sends one mid-task reminder when a turn ends in prose
+    // without finishing (docs/frontends/acp.md#worker-sessions); the benchmark
+    // client mirrors it so a graded turn faces the same harness a real one does.
+    if matches!(stop, Stop::EndTurn) && session.borrow().done.is_none() {
+        history.push(serde_json::json!({"role": "user", "content":
+            "The task is not finished: nothing has committed. Continue with the tool calls the instructions name, then finish with done."}));
+        stop = agent_loop::run_loop(LoopArgs {
+            llm,
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut dispatch,
+            emit: &mut emit,
+            cancelled: &|| session.borrow().done.is_some(),
+            max_rounds: round_budget,
+            label: format!("bench {} (reminded)", item.target),
+        });
+    }
     let mut s = session.into_inner();
     let failed = if s.done.is_some() {
         None

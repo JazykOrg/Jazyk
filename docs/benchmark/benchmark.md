@@ -20,7 +20,9 @@ same configuration a build would use. See [CLI](../frontends/cli.md).
   agent.
 - A case run is one real [turn](../compiler/turns.md#anatomy) in a sandbox store: same
   tool registry, same [validation gates](../compiler/graph.md#validation-gates), same
-  budgets. Only the store and the fixture differ from a build.
+  budgets, same one mid-task reminder when the turn ends in prose without finishing
+  ([worker sessions](../frontends/acp.md#worker-sessions)). Only the store and the
+  fixture differ from a build.
 - Cases never touch the project graph. See [execution](./cases.md#execution).
 - A case passes only when its turn completes. An aborted turn (endpoint error, a
   rejected-call streak, an exhausted round budget) fails the case with the abort

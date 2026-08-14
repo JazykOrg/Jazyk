@@ -82,8 +82,10 @@ answer:
 - Choosing an `edit` option applies it as a dual write: the file changes on disk, the
   section hashes are absorbed in the same changeset (no recompile owed), and the
   diagnostic resolves immediately with the option's label as the reason
-  (`status: applied`). Anchors elsewhere in the section that no longer locate go
-  stale normally and the next build reconciles them.
+  (`status: applied`). A requirement whose own quoted sentence the edit rewrites is
+  re-anchored in the same changeset, its statement mechanically updated when the
+  replaced text appears in it verbatim. Anchors the engine cannot re-anchor
+  mechanically go stale normally and the next build reconciles them.
 - Choosing an `answer` option or replying freeform records the text
   (`status: handling`) and invokes the model over [ACP](../../frontends/acp.md#answer-sessions):
   in a chat session the session's own agent acts on it with its tools; elsewhere

@@ -105,20 +105,43 @@ pub fn answer(
             let mut s = Store::load(out);
             s.sync_docs(&parsed);
             s.absorb_doc_edit(&e.doc, &full);
-            let ops = vec![
-                Op::EditDocProse {
-                    doc: e.doc.clone(),
-                    section: e.section.clone(),
-                    old_text: e.old_text.clone(),
-                    new_text: e.new_text.clone(),
-                    text: full.clone(),
-                },
-                Op::AnswerDiagnostic {
-                    id: rid.clone(),
-                    answer: DiagnosticAnswer { choice, text: text.clone(), status: "applied".to_string() },
-                },
-                Op::ResolveDiagnostic { id: rid.clone(), reason: format!("suggested edit applied: {}", label) },
-            ];
+            let mut ops = vec![Op::EditDocProse {
+                doc: e.doc.clone(),
+                section: e.section.clone(),
+                old_text: e.old_text.clone(),
+                new_text: e.new_text.clone(),
+                text: full.clone(),
+            }];
+            // A requirement whose own quoted sentence this edit rewrites is
+            // re-anchored in the same changeset, its statement updated too when the
+            // replaced text appears in it verbatim. Anything less mechanical goes
+            // stale for the next build. Mirrors
+            // docs/compiler/model/diagnostic.md#answers.
+            for (qid, r) in &s.graph.requirements {
+                if r.source.doc != e.doc || r.source.section != e.section {
+                    continue;
+                }
+                let Some((qb, qe)) = crate::md::locate_bytes(&r.source.quote, &e.old_text) else { continue };
+                let new_quote = format!("{}{}{}", &r.source.quote[..qb], e.new_text, &r.source.quote[qe..]);
+                let new_ears = crate::md::locate_bytes(&r.ears, &e.old_text)
+                    .map(|(eb, ee)| format!("{}{}{}", &r.ears[..eb], e.new_text, &r.ears[ee..]));
+                ops.push(Op::UpdateRequirement {
+                    id: qid.clone(),
+                    ears: new_ears,
+                    entities: None,
+                    edges: None,
+                    source: Some(crate::model::SourceRef {
+                        doc: e.doc.clone(),
+                        section: e.section.clone(),
+                        quote: new_quote,
+                    }),
+                });
+            }
+            ops.push(Op::AnswerDiagnostic {
+                id: rid.clone(),
+                answer: DiagnosticAnswer { choice, text: text.clone(), status: "applied".to_string() },
+            });
+            ops.push(Op::ResolveDiagnostic { id: rid.clone(), reason: format!("suggested edit applied: {}", label) });
             let report = s.apply(ops, &work_item(&rid), 0, 0);
             if !report.skipped.is_empty() {
                 // The graph side skipped: put the prose back so neither moved.
@@ -338,6 +361,30 @@ mod tests {
             0,
         );
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        // A requirement anchored on the edited sentence: the answer re-anchors it
+        // mechanically in the same changeset.
+        s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:pay-1".into(),
+                requirement: crate::model::Requirement {
+                    ears: "An Order shall be paid within 30 days.".into(),
+                    entities: vec![],
+                    edges: vec![],
+                    source: crate::model::SourceRef {
+                        doc: "docs/pay.md".into(),
+                        section: sec.clone(),
+                        quote: "An Order shall be paid within 30 days.".into(),
+                    },
+                    confidence: None,
+                    reasoning: None,
+                    created: None,
+                    updated: None,
+                },
+            }],
+            &work_item("test"),
+            0,
+            0,
+        );
         drop(s);
 
         let v = answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
@@ -348,6 +395,9 @@ mod tests {
         let d = &s.graph.diagnostics[&id];
         assert_eq!(d.lifecycle, "resolved");
         assert_eq!(d.answer.as_ref().unwrap().status, "applied");
+        let r = s.graph.requirements.values().next().expect("requirement survives");
+        assert!(r.source.quote.contains("within 21 days"), "re-anchored: {}", r.source.quote);
+        assert!(r.ears.contains("within 21 days"), "statement updated: {}", r.ears);
         // The edit absorbed its own hashes: the doc is not dirty against the graph.
         let (parsed, _) = crate::reconcile::parse_all(&project);
         let on_disk = &parsed["docs/pay.md"];

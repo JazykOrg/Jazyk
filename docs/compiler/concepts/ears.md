@@ -108,9 +108,10 @@ referencing its existing entity, never a new `Script` entity minted from the pre
 noun. Never substitute a broader system for a named part: "The inventory system
 manages products" is a requirement on the inventory system, not on the application
 that contains it. The requirement also references every other entity the statement
-names, which is what ties those concepts into the graph. Naming alone does not mint an
-entity: a field, threshold, or value that a statement mentions stays requirement
-detail, carried in the `ears` text, until statements are about it directly. See
+names, which is what ties those concepts into the graph. The subject is always an
+entity: mint it when search finds nothing that means the same concept. Anything else
+a statement merely mentions (a field, threshold, or value) stays requirement detail,
+carried in the `ears` text, until statements are about it directly. See
 [what is an entity](../model/entity.md#what-is-an-entity).
 
 Non-normative is the exception, not the default. A section is non-normative only when
@@ -165,9 +166,11 @@ quote: - `addProduct` - adds a new product to the inventory
 ears:  The inventory system shall support an `addProduct` operation that adds a new product to the inventory.
 ```
 
-- Items that are values of one obligation (accepted formats, supported locales) share
-  one requirement: quote the lead-in line and carry the values in the `ears` text, the
-  same way [test cases](#test-cases-state-obligations) carry concrete values.
+- Items share one requirement only when they are plain values with no behavior of
+  their own (accepted formats, supported locales): quote the lead-in line and carry
+  the values in the `ears` text, the same way
+  [test cases](#test-cases-state-obligations) carry concrete values. An item with its
+  own verb or description is its own requirement.
 
 List items are also where entities hide, under the same rule as everywhere: an item
 naming an actor, a component, or a sub-system that statements are about introduces

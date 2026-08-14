@@ -269,7 +269,7 @@ left unprocessed. The verdict speaks to work completion, never to document healt
 graph can converge with open `error` diagnostics standing. So the verdict never
 travels alone. Open diagnostic counts by severity (suppressed excluded) ride beside
 it: in `status.yaml` (`diagnostics`), in the zero-task `compilation_tasks` reply, in
-the final `finish_compilation` reply, and in `await_changes`
+the final `done` reply, and in `await_changes`
 (`openDiagnostics`). An agent deciding "done" sees the open errors in the same
 breath as `converged`. A turn that exhausts its round budget commits
 what it staged and reports no failure, so its document is not parked; counting only

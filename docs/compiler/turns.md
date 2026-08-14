@@ -63,8 +63,13 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   [diagnostics](./model/diagnostic.md). The pack includes the
   entity, its requirements across all documents, lookalike candidates, and requirements
   whose statement names the entity without referencing it: candidates for a missing
-  reference the review adds with `update_requirement`. A missing reference is what
-  strands an entity cluster unreachable from the roots.
+  reference the review adds with `update_requirement`. The candidates are word
+  matches, not judgments; leaving one alone is a correct outcome. A missing reference
+  is what strands an entity cluster unreachable from the roots.
+
+Both review kinds share one error asymmetry: a wrong delete or merge destroys
+information, while a missed duplicate only leaves a finding for the next build. When
+in doubt, keep both nodes and file a diagnostic instead of mutating.
 
 - `generate-entity`: produce one entity's part of the deliverable and its tests. See
   [generation turns](#generation-turns).
@@ -180,8 +185,7 @@ A turn runs as one [ACP worker session](../frontends/acp.md#worker-sessions):
   (the `instructions`) and the rendered [context pack](./context.md) ride in the
   `begin_*` reply.
 - The instructions state the task, the graph invariants, and the finish contract: the
-  turn ends by calling `done` (over MCP, `finish_compilation` and its siblings, the
-  same gate).
+  turn ends by calling `done`, the same gate everywhere it is served.
 - High in every task's instructions sits the feedback contract: an instruction, a
   tool, an argument, or an error message that is ambiguous, wrong, or confusing goes
   to [`report_feedback`](./tools.md#feedback-tool), and the turn then continues with

@@ -425,7 +425,7 @@ impl McpServer {
         }
         let mut v = q.compilation_answer();
         if self.open.lock().unwrap().is_some() {
-            v["openTask"] = json!("a task is already open; finish_compilation or abandon_compilation first");
+            v["openTask"] = json!("a task is already open; done or abandon_compilation first");
         }
         v
     }
@@ -433,7 +433,7 @@ impl McpServer {
     fn begin_compilation(&self, params: &Value) -> Value {
         if let Some(o) = self.open.lock().unwrap().as_ref() {
             return json!({"error": {"rule": "task-open", "message": format!(
-                "task `{} {}` is already open with {} staged mutation(s); finish_compilation or abandon_compilation first",
+                "task `{} {}` is already open with {} staged mutation(s); done or abandon_compilation first",
                 o.item.task, o.item.target, o.session.staged.len())}});
         }
         let q = crate::queue::compute(&self.project, &self.out);
@@ -526,7 +526,8 @@ impl McpServer {
             };
             json!({
                 "task": {"kind": item.task, "target": item.target,
-                         "dirtySections": item.dirty_sections, "staleAnchors": item.stale_anchors},
+                         "dirtySections": item.dirty_sections.iter().map(|r| format!("{}#{}", item.target, r)).collect::<Vec<_>>(),
+                         "staleAnchors": item.stale_anchors},
                 "instructions": instructions_field,
                 "package": pack,
                 "writeTools": write_tools,
@@ -990,21 +991,16 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "begin_compilation",
-                        "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then finish_compilation. One task open at a time.",
+                        "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then done. One task open at a time.",
                         "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}}, "additionalProperties": false}
                     }));
-                    {
-                        // The instructions say `done`; every compile serving lists it
-                        // by that name so the model never translates.
-                        tools.push(json!({
-                            "name": "done",
-                            "description": "Finish the open task: run the done gates (every dirty section marked, every stale anchor resolved) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again.",
-                            "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"], "additionalProperties": false}
-                        }));
-                    }
+                    // One finish verb: `done` is the only listed completion tool.
+                    // finish_compilation stays dispatchable for older clients but is
+                    // not advertised; two listed names made models wonder which is
+                    // which. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
                     tools.push(json!({
-                        "name": "finish_compilation",
-                        "description": "Commit the open changeset. Rejected while a dirty section is unmarked or a stale anchor is untouched; the rejection names the repair and the changeset stays open. The reply names the next ready task (beginNext: true also claims it in the same call); the finish that empties the queue reports the verdict.",
+                        "name": "done",
+                        "description": "Finish the open task: run the done gates (every dirty section marked, every stale anchor resolved) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again. The reply names the next ready task (beginNext: true also claims it in the same call); the finish that empties the queue reports the verdict.",
                         "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "beginNext": {"type": "boolean"}}, "required": ["summary"], "additionalProperties": false}
                     }));
                     tools.push(json!({

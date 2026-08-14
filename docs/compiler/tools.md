@@ -172,11 +172,12 @@ changeset exactly as an in-process turn does. One task is open at a time per ser
   statements already extracted per section, known entities, incoming links, stale
   anchors). The [write tools](#write-tools) stage into the open changeset; outside an
   open task they are rejected toward `begin_compilation`.
-- `finish_compilation({summary})`: run the `done` gates, commit atomically, update the
+- `done({summary})`: run the gates, commit atomically, update the
   queue, and return `{committed, next}` with the next ready task. A gate failure
   leaves the changeset open and names the repair. The finish that empties the queue
   also runs the deterministic tail (checks, docsgen, verdict) and reports the verdict
-  and any generation tasks that became ready.
+  and any generation tasks that became ready. `finish_compilation` is an unlisted
+  compatibility alias.
 - `abandon_compilation({reason})`: drop the staged changeset. Leaves no trace.
 
 ## Generation tools

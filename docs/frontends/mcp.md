@@ -43,9 +43,9 @@ separated; each adds its tools to the union:
 Every serving includes the [read tools](../compiler/tools.md#read-tools),
 [`report_feedback`](../compiler/tools.md#feedback-tool), and `await_changes` (below).
 
-On a compile serving, `done` is accepted as the finishing call (the same commit as
-`finish_compilation`), and a bridge serving lists it under that name: the task
-instructions say `done`, so the model never translates a verb.
+On a compile serving, `done` is the one listed finishing call: the task instructions
+say `done`, so the model never translates a verb. `finish_compilation` stays
+dispatchable as a compatibility alias for older clients but is not advertised.
 
 ## MCP into ACP sessions
 
@@ -95,7 +95,7 @@ The agent-facing loop, common to all three toolsets:
 3. Do the work: compilation stages graph writes, binding searches the deliverable and
    writes the missing test, generation edits deliverable files with the agent's own
    tools, verification runs or judges tests.
-4. Finish: `finish_compilation` commits the changeset, `record_binding` records the
+4. Finish: `done` commits the changeset, `record_binding` records the
    row, `record_generation` records the manifest, `run_tests` and `record_verdict`
    record verdicts. The reply names the next ready task, so the loop chains without
    re-listing.
@@ -144,7 +144,7 @@ calls, exactly one at a time:
   turn faces, scoped to the task's document the same way.
 - Write tools outside an open task are rejected toward `begin_compilation`. Identity,
   provenance, and scope rules hold because they are the same code path.
-- `finish_compilation` runs the `done` gates (coverage contract, stale anchors),
+- `done` runs its gates (coverage contract, stale anchors),
   commits atomically, and updates [the task queue](../compiler/reconciler.md#the-task-queue).
   A gate failure leaves the changeset open and names the repair. `beginNext: true`
   claims the next ready task in the same call and carries its package in the reply,
@@ -156,7 +156,7 @@ calls, exactly one at a time:
   any process recomputes the queue and the task reappears.
 - When a commit empties the compile queue, the serving runs the deterministic tail
   itself (checks, docsgen, verdict), because none of it needs a model. The final
-  `finish_compilation` reply carries the verdict and the generation tasks that became
+  `done` reply carries the verdict and the generation tasks that became
   ready.
 
 ## Generation and verification over MCP
@@ -179,7 +179,7 @@ await_changes → {changedDocs: [docs/orders.md], graphStale: true, ...}
 compilation_tasks → [{kind: reconcile-document, target: docs/orders.md, ready: true}]
 begin_compilation → instructions + dirty sections + stale anchors + known entities
 (agent stages upsert_requirement / set_coverage ...)
-finish_compilation → {committed: true, next: {kind: review-entity, target: ent:order}}
+done → {committed: true, next: {kind: review-entity, target: ent:order}}
 ... reviews the same way; last finish → {verdict: converged, generation: [ent:order]}
 binding_tasks → [{requirement: req:order-3, reason: unbound}]
 begin_binding {requirement: req:order-3} → package

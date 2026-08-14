@@ -218,7 +218,7 @@ fn entity_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<
             for m in e.mentions.iter().take(1) {
                 let chain = parent_chain(store, &m.doc, &m.section, focus.parents);
                 if !chain.is_empty() {
-                    b.push(&format!("  under: {}", chain.join(" → ")));
+                    b.push(&format!("  (the first mention's section sits under: {})", chain.join(" → ")));
                 }
             }
         }

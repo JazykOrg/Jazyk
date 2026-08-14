@@ -992,7 +992,7 @@ impl ToolSession {
                         )
                     } else {
                         format!(
-                            "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them means the same concept, use its id. Otherwise create the entity with upsert_entity.",
+                            "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them, or a known entity in your work pack, means the same concept under another name, use its id. Otherwise create the entity with upsert_entity.",
                             query, shown, total
                         )
                     }

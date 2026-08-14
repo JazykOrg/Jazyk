@@ -31,6 +31,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('jazyk.restartServer', restartClient)
   );
+
+  // Freeform answers to prompted diagnostics: base LSP has no input surface, so
+  // the extension supplies one and forwards to the server's command. The options
+  // themselves arrive as ordinary quick fixes without this command.
+  // Mirrors docs/frontends/lsp.md#capabilities.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jazyk.answer', async () => {
+      if (!client) {
+        return;
+      }
+      const id = await vscode.window.showInputBox({
+        prompt: 'Diagnostic id (e.g. diag:contradiction-1)',
+        placeHolder: 'diag:…',
+      });
+      if (!id) {
+        return;
+      }
+      const text = await vscode.window.showInputBox({
+        prompt: 'Your answer, in your own words',
+      });
+      if (!text) {
+        return;
+      }
+      const result = await client.sendRequest('workspace/executeCommand', {
+        command: 'jazyk.answerDiagnostic',
+        arguments: [{ id, text }],
+      });
+      const r = result as { status?: string; error?: string } | null;
+      if (r?.error) {
+        void vscode.window.showErrorMessage(`jazyk: ${r.error}`);
+      } else {
+        void vscode.window.showInformationMessage(
+          `jazyk: answer recorded (${r?.status ?? 'ok'}); the agent is handling it`
+        );
+      }
+    })
+  );
 }
 
 async function startClient(): Promise<void> {

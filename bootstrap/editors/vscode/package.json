@@ -20,6 +20,10 @@
       {
         "command": "jazyk.restartServer",
         "title": "Jazyk: Restart Language Server"
+      },
+      {
+        "command": "jazyk.answer",
+        "title": "Jazyk: Answer a Question"
       }
     ],
     "configuration": {

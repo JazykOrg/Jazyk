@@ -156,7 +156,9 @@ calls, exactly one at a time:
   claims the next ready task in the same call and carries its package in the reply,
   saving a round trip per task; the default reply only names the next task. The first
   task of each kind ships the full instructions text; later tasks of a kind the
-  serving already delivered elide it (the agent saw it earlier in the same session).
+  serving already delivered elide it (the agent saw it earlier in the same session),
+  and `begin_compilation` with `full: true` repeats it for a client that lost its
+  context.
 - `abandon_compilation` drops the staged work. An abandoned task leaves no trace, the
   same contract as an aborted turn. A server that dies mid-task loses only staging;
   any process recomputes the queue and the task reappears.

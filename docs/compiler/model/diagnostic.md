@@ -64,7 +64,8 @@ enumerable. A prompt is optional; most diagnostics carry none.
 
 Gates: an `edit` option's `old_text` must locate in its section
 (whitespace-insensitively) when the prompt is staged, `label` is required, and `edit`
-and `answer` are mutually exclusive per option.
+and `answer` are mutually exclusive per option. The `section` takes either reference
+form: `/ref` or the full `doc.md#/ref` the packs display.
 
 ## Answers
 

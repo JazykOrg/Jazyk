@@ -417,7 +417,8 @@ pub(crate) fn prompt_schema() -> Value {
             "options": {"type": "array", "maxItems": 4, "items": {"type": "object", "properties": {
                 "label": {"type": "string"},
                 "edit": {"type": "object", "properties": {
-                    "doc": {"type": "string"}, "section": {"type": "string"},
+                    "doc": {"type": "string"},
+                    "section": {"type": "string", "description": "the section, as /ref or the full doc.md#/ref"},
                     "old_text": {"type": "string"}, "new_text": {"type": "string"}},
                     "required": ["doc", "section", "old_text", "new_text"]},
                 "answer": {"type": "string"}
@@ -981,7 +982,19 @@ impl ToolSession {
                             .map(|s| s.to_string())
                             .ok_or_else(|| ToolError::new("bad-prompt", format!("option {}: edit.{} is required", i, k)))
                     };
-                    let (doc, section) = (get("doc")?, get("section")?);
+                    let (doc, mut section) = (get("doc")?, get("section")?);
+                    // Both reference forms are accepted: `/ref` and the full
+                    // `doc.md#/ref` the packs display.
+                    if let Some((sd, sr)) = crate::model::split_section_ref(&section) {
+                        if sd == doc {
+                            section = sr;
+                        } else {
+                            return Err(ToolError::new(
+                                "bad-prompt",
+                                format!("option {}: edit.section names document `{}` but edit.doc says `{}`", i, sd, doc),
+                            ));
+                        }
+                    }
                     let (old_text, new_text) = (get("old_text")?, get("new_text")?);
                     let Some(rec) = self.snapshot.docs.get(&doc) else {
                         return Err(ToolError::new("bad-prompt", format!("option {}: unknown document `{}`", i, doc)));

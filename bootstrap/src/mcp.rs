@@ -517,10 +517,14 @@ impl McpServer {
         } else {
             // The first task of each kind ships the full contract; later ones elide
             // it (the agent saw it earlier in this session), which is the bulk of
-            // the reply on review-heavy builds.
+            // the reply on review-heavy builds. A client that lost its context asks
+            // for it back with full: true.
             let seen = !self.seen_kinds.lock().unwrap().insert(item.task.clone());
-            let instructions_field = if seen {
-                json!(format!("(same contract as the earlier {} task in this session; unchanged)", item.task))
+            let instructions_field = if seen && params["arguments"]["full"].as_bool() != Some(true) {
+                json!(format!(
+                    "(same contract as the earlier {} task in this session; unchanged. Lost it? begin again with full: true)",
+                    item.task
+                ))
             } else {
                 json!(instructions)
             };
@@ -992,7 +996,7 @@ impl McpServer {
                     tools.push(json!({
                         "name": "begin_compilation",
                         "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then done. One task open at a time.",
-                        "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}}, "additionalProperties": false}
+                        "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}, "full": {"type": "boolean", "description": "repeat the instructions even when this session already saw them"}}, "additionalProperties": false}
                     }));
                     // One finish verb: `done` is the only listed completion tool.
                     // finish_compilation stays dispatchable for older clients but is

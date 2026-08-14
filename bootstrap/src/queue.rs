@@ -326,7 +326,11 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         if let Some(l) = leases.get(target) {
             t["claimedBy"] = json!(l.worker);
             t["ready"] = json!(false);
-            t["blockedBy"] = json!(format!("claimed by worker `{}`", l.worker));
+            t["blockedBy"] = json!(format!(
+                "claimed by worker `{}` (the lease lapses {}s after its last heartbeat)",
+                l.worker,
+                crate::control::LEASE_TTL_SECS
+            ));
         }
     }
     q

@@ -344,7 +344,13 @@ impl Llm {
                         self.note(label, "model rejected the request (likely temperature); retrying without it for the rest of the run");
                         continue;
                     }
-                    if tools.is_some() && rejects_tools(&e) && !is_transient(&e) {
+                    // Ollama renders tool schemas through the model's chat template;
+                    // a template that cannot take them fails 500 with a Go template
+                    // error ("expected element type ..."). That is deterministic
+                    // tools rejection wearing a transient status code.
+                    if tools.is_some()
+                        && ((rejects_tools(&e) && !is_transient(&e)) || e.contains("expected element type"))
+                    {
                         return Err(format!("tools-rejected: {}", e));
                     }
                     last = e;

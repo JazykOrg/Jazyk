@@ -599,6 +599,7 @@ fn run_case_turn(
     limits: &Limits,
     lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
+    transcript: Option<&std::path::Path>,
 ) -> (Vec<crate::store::Op>, u32, Option<String>) {
     use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
     use crate::acp::agent::mcp_client::GenericTool;
@@ -697,24 +698,60 @@ fn run_case_turn(
             }
         }
     };
+    // The full exchange, kept beside the scores: a failed check is diagnosed from
+    // what the model saw and said. Mirrors docs/benchmark/benchmark.md#running-a-subset.
+    if let Some(path) = transcript {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).ok();
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&history).unwrap_or_default()).ok();
+    }
     (std::mem::take(&mut s.staged), rounds.get(), failed)
 }
 
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
-    run_traced(llm, out, &Trace::stderr(TraceLevel::Quiet))
+    run_filtered(llm, out, &[])
+}
+
+// `jazyk benchmark [case...]`: grade only the named cases. A filtered run is for
+// iterating on one failure; it never lands in the machine-wide history.
+// Mirrors docs/benchmark/benchmark.md#running-a-subset.
+pub fn run_filtered(llm: &Llm, out: &std::path::Path, filter: &[String]) -> i32 {
+    run_traced_filtered(llm, out, &Trace::stderr(TraceLevel::Quiet), filter)
 }
 
 // The GUI's entry: per-case lines reach the job's trace as notes, so a running grade
 // shows progress instead of a spinner. Mirrors docs/frontends/gui.md#benchmarks.
 pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
-    let cases = parse_cases();
+    run_traced_filtered(llm, out, progress, &[])
+}
+
+fn run_traced_filtered(llm: &Llm, out: &std::path::Path, progress: &Trace, filter: &[String]) -> i32 {
+    let mut cases = parse_cases();
     if cases.is_empty() {
         eprintln!("jazyk: no benchmark cases parsed");
         return 2;
     }
+    if !filter.is_empty() {
+        let known: Vec<String> = cases.iter().map(|c| c.name.clone()).collect();
+        for f in filter {
+            if !known.contains(f) {
+                eprintln!("jazyk: unknown case `{}`; available: {}", f, known.join(", "));
+                return 2;
+            }
+        }
+        cases.retain(|c| filter.contains(&c.name));
+    }
     let limits = Limits::default();
     let trace = Trace::stderr(TraceLevel::Quiet);
     println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
+    // One tiny completion before grading: a dead or misrouted endpoint fails one
+    // probe, not every case under both codecs.
+    if let Err(e) = llm.chat("Reply with the single word: ok", "ok?", "bench preflight", "preflight") {
+        println!("
+verdict: unmeasured  the endpoint never produced a completion ({})", e);
+        return 2;
+    }
     let mut any_usable = false;
     let mut codec_reports: Vec<(String, Value)> = Vec::new();
 
@@ -785,7 +822,15 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
                 (1u32, 0usize)
             } else {
                 let (staged_ops, rounds_n, failed) =
-                    run_case_turn(llm, store.clone(), &item, &limits, &case.lint, &gs);
+                    run_case_turn(
+                        llm,
+                        store.clone(),
+                        &item,
+                        &limits,
+                        &case.lint,
+                        &gs,
+                        Some(&out.join("benchmark").join("trace").join(format!("{}-{}.json", codec_name, case.name))),
+                    );
                 let staged = staged_ops.len();
                 // An aborted turn fails the case with the abort reason. Its checks are
                 // skipped and count as failed: an untouched fixture satisfying a check
@@ -947,7 +992,10 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
         return 2;
     }
     write_results(out, &llm.model, &codec_reports);
-    append_history(&llm.model, &llm.base_url, &codec_reports);
+    // A filtered run is a debugging aid, never a capability grade.
+    if filter.is_empty() {
+        append_history(&llm.model, &llm.base_url, &codec_reports);
+    }
     if any_usable {
         0
     } else {

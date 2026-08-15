@@ -31,6 +31,20 @@ same configuration a build would use. See [CLI](../frontends/cli.md).
   particular, cases whose expected outcome is zero staged mutations must not pass
   vacuously on a turn that never ran.
 
+## Running a subset
+
+`jazyk benchmark [case...]` grades only the named cases (e.g. `jazyk benchmark
+turn-density turn-reuse`), for iterating on one failure without paying for the full
+set. An unknown case name is an error that lists the available names. Verdicts still
+print but a filtered run is never a capability grade; the history entry is skipped.
+
+Before grading, one tiny completion probes the endpoint: a dead or misrouted
+endpoint fails one probe, not every case under both codecs.
+
+Every case turn writes its full message transcript to
+`<out>/benchmark/trace/<codec>-<case>.json`, so a failed check is diagnosed from
+what the model actually saw and said, not from the score line.
+
 ## Report
 
 The grade is a scale, not a boolean: a model that finds four of five planted

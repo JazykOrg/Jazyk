@@ -73,7 +73,7 @@ fn top_usage() -> String {
     s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n  jazyk release [compile|generate]  approve pending changes in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
-    s.push_str("  jazyk benchmark                grade the configured agent and model\n");
+    s.push_str("  jazyk benchmark [case...]      grade the configured agent and model\n");
     s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
     s.push_str("         --verbose, -v   full context packs and payloads in the trace\n");
     s.push_str("         --quiet, -q     only the final summary\n");
@@ -247,7 +247,7 @@ fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_OUT
         ),
         "benchmark" => format!(
-            "usage: jazyk benchmark\n\n\
+            "usage: jazyk benchmark [case...]\n\n\
              Grade the configured model: every benchmark case runs under both codecs\n\
              (native tool calls and the text codec) in a sandbox store, scored by\n\
              deterministic checks. Results land in <out>/benchmark/results.yaml.\n\n\
@@ -450,7 +450,7 @@ fn main() {
         }
         "benchmark" => {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
-            benchmark::run(&llm, &out)
+            benchmark::run_filtered(&llm, &out, &positional)
         }
         // The embedded ACP agent, spawned by the host when the `embedded` profile is
         // selected. Not meant to be run by hand. Mirrors docs/frontends/cli.md#jazyk-agent.

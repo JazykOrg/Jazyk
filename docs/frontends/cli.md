@@ -252,7 +252,9 @@ committed graph, and a `compile` or `watch` rebuild refreshes it.
 
 Grade whether the configured [agent](../compiler/project-settings.md#acp) and model
 are good enough to compile Jazyk. See [benchmark](../benchmark/benchmark.md). Results
-land in `<out>/benchmark/results.yaml`.
+land in `<out>/benchmark/results.yaml`, per-case transcripts under
+`<out>/benchmark/trace/`. `jazyk benchmark [case...]` grades
+[a subset](../benchmark/benchmark.md#running-a-subset) for iterating on one failure.
 
 ## Common options
 

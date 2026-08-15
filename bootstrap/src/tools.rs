@@ -1141,11 +1141,16 @@ impl ToolSession {
                     .filter(|(_, rel)| rel.members.contains(&rid))
                     .map(|(id, rel)| json!({"id": id, "type": rel.rel_type, "members": rel.members}))
                     .collect();
-                Ok(json!({
+                let mut v = json!({
                     "id": rid, "name": e.name, "definition": e.definition, "aliases": e.aliases,
-                    "scope": e.scope, "mentions": e.mentions.iter().map(|m| json!({"doc": m.doc, "section": m.section, "quote": m.quote})).collect::<Vec<_>>(),
+                    "mentions": e.mentions.iter().map(|m| json!({"doc": m.doc, "section": m.section, "quote": m.quote})).collect::<Vec<_>>(),
                     "requirements": reqs, "relationships": rels
-                }))
+                });
+                // The default scope is noise; showing it reads as a value someone set.
+                if e.scope != "public" {
+                    v["scope"] = json!(e.scope);
+                }
+                Ok(v)
             }
             "diagnostics" => {
                 let lifecycle = Self::opt_str(args, "lifecycle").unwrap_or_else(|| "open".to_string());
@@ -1160,10 +1165,20 @@ impl ToolSession {
                     .filter(|(_, d)| rule.as_deref().is_none_or(|r| d.rule == r))
                     .filter(|(_, d)| subject.as_deref().is_none_or(|s| d.subjects.iter().any(|x| x == s)))
                     .map(|(id, d)| {
-                        json!({
+                        let mut v = json!({
                             "id": id, "rule": d.rule, "severity": d.severity, "lifecycle": d.lifecycle,
                             "triage": d.triage, "subjects": d.subjects, "message": d.message,
-                        })
+                        });
+                        // The standing question rides along, so verifying a prompt
+                        // never requires reading the shard files.
+                        if let Some(p) = &d.prompt {
+                            v["question"] = json!(p.question);
+                            v["options"] = json!(p.options.iter().map(|o| o.label.clone()).collect::<Vec<_>>());
+                        }
+                        if let Some(a) = &d.answer {
+                            v["answered"] = json!(a.status);
+                        }
+                        v
                     })
                     .collect();
                 Ok(json!({"diagnostics": list, "count": list.len()}))

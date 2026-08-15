@@ -24,6 +24,10 @@ typically state constraints; triggered, stated, and conditioned patterns describ
 
 "The system" in these patterns is a placeholder. The real subject is whatever the
 documents describe; see [the subject](#the-subject-is-whatever-the-documents-describe).
+The placeholder is never an entity: minting `System`, `Order System`, or any name
+built from it invents a component the documents do not describe. A statement keeps
+"the system" in its `ears` (or names the real subject) and references the entities
+the sentence actually names.
 
 ## The subject is whatever the documents describe
 

@@ -209,8 +209,11 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     s.push_str(&format!(
         "\nAct on the answer with the tools: revise_requirement moves a requirement's prose and graph \
          form together, update_requirement and update_entity record decisions, update_diagnostic \
-         refines the question when the answer leaves it open. When the finding is settled, call \
-         resolve_diagnostic with id `{}` and a reason. Finish with a one-line summary.",
+         refines the question when the answer leaves it open. Scope: change only what the answer \
+         names, with the smallest edit that satisfies it. Never rewrite sentences the answer does \
+         not mention, and never fix unrelated problems in passing; they have their own findings. \
+         When the finding is settled, call resolve_diagnostic with id `{}` and a reason. Finish \
+         with a one-line summary.",
         rid
     ));
     Ok(s)

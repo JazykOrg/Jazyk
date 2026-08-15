@@ -972,8 +972,12 @@ impl McpServer {
                         }
                     }
                 }
+                // The serving is version-lenient line JSON; echoing the client's
+                // requested protocol version keeps strict clients (rmcp) from
+                // treating the reply as a downgrade.
+                let requested = params["protocolVersion"].as_str().unwrap_or("2024-11-05");
                 Ok(json!({
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": requested,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": instructions_for(&self.modes, self.write)

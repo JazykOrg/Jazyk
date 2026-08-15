@@ -117,7 +117,7 @@ answer:
 | review turns | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | review turns | `duplicate-entity` | warning | two entities that look like one concept |
 | review turns, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
-| review turns | `missing-link` | warning | a concept the documents rely on but never define |
+| review turns | `missing-link` | warning | a concept the documents rely on but never define; a dead file link is `broken-link`'s finding, never this rule's |
 | review turns | `ambiguity` | info, warning, or error | a statement open to more than one reading |
 | [checks](../reconciler.md#waves) | `unused-entity` | warning | an entity no requirement references |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |

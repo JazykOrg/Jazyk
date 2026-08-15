@@ -139,7 +139,8 @@ env = { }
 serve_files = false
 
 [acp.agents.codex]
-command = "codex-acp"
+command = "npx"
+args = ["--yes", "@zed-industries/codex-acp"]
 ```
 
 - `agent`: the name of the profile to use. `embedded` is built in: it runs

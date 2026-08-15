@@ -52,6 +52,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   usage. A prose reply in a turn that already made tool calls gets one nudge before
   the turn ends: weak models forget they are mid-task more often than they finish
   silently, and a purely conversational answer still ends the turn immediately.
+  A reply that is empty of both message and calls while carrying reasoning is a
+  stall, not an answer: reasoning models narrate the action they intend and stop, as
+  if the thinking were visible. The loop answers with a corrective nudge naming that
+  ("reasoning is not shown and does not count as acting"), at most twice per turn,
+  before the empty reply is allowed to end it.
 - `session/cancel` stops the loop at the next round.
 - `session/close` (advertised in its capabilities) tears the session down: each MCP
   server's input closes and the agent waits for it to exit before answering. An
@@ -61,7 +66,9 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
 The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
 calls for one step batched into a single reply) and `text` (tools described in the
 system prompt, one JSON action object per reply, because small models cannot
-reliably emit several). The agent probes on the first round: an endpoint that
+reliably emit several). A text reply that reads as a JSON action but does not parse
+is answered with a repair message naming the error, three strikes before the turn
+fails: a dropped brace is a resend, not an answer. The agent probes on the first round: an endpoint that
 rejects the `tools` parameter, or a model that answers prose without calls,
 downgrades the run to `text`, sticky until it ends. The endpoint fallbacks ride
 along too: streaming when the endpoint demands it, dropped `temperature`, stripped

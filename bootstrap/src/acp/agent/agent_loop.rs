@@ -35,6 +35,9 @@ that ends the turn.";
 enum Action {
     Call { id: Option<String>, name: String, args: Value },
     Text(String),
+    // A reply that reads as a JSON action but does not parse. Ending the turn on it
+    // would treat a dropped brace as a finished answer; the loop repairs instead.
+    Malformed(String),
 }
 
 trait Codec {
@@ -112,11 +115,20 @@ impl Codec for TextCodec {
     fn parse(&self, msg: &Value) -> Vec<Action> {
         let content = msg["content"].as_str().unwrap_or_default();
         if let Some(obj) = llm::extract_json_object(content) {
-            if let Ok(v) = serde_json::from_str::<Value>(&obj) {
-                if let Some(name) = v["tool"].as_str() {
-                    return vec![Action::Call { id: None, name: name.to_string(), args: v["args"].clone() }];
+            match serde_json::from_str::<Value>(&obj) {
+                Ok(v) => {
+                    if let Some(name) = v["tool"].as_str() {
+                        return vec![Action::Call { id: None, name: name.to_string(), args: v["args"].clone() }];
+                    }
                 }
+                Err(e) => return vec![Action::Malformed(e.to_string())],
             }
+        }
+        // Content that opens like an action but never yielded one is a broken
+        // action, not prose: a truncated object must not end the turn as an answer.
+        let t = content.trim_start();
+        if t.starts_with('{') && t.contains("\"tool\"") {
+            return vec![Action::Malformed("the object is incomplete or unbalanced".to_string())];
         }
         if content.trim().is_empty() {
             Vec::new()
@@ -186,6 +198,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut refusals = 0u32;
     let mut called_any = false;
     let mut nudged = false;
+    let mut empty_nudges = 0u32;
+    let mut malformed_streak = 0u32;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
             return Stop::Cancelled;
@@ -235,11 +249,41 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             }
         }
 
+        // A broken action gets a repair message naming the parse error, three
+        // strikes before the turn fails: a dropped brace is a resend, not an
+        // answer. Mirrors docs/frontends/acp.md#the-embedded-agent.
+        if let Some(Action::Malformed(err)) = actions.iter().find(|x| matches!(x, Action::Malformed(_))) {
+            malformed_streak += 1;
+            if malformed_streak >= 3 {
+                return Stop::Error(format!("the model cannot produce a parseable action ({})", err));
+            }
+            a.history.push(json!({"role": "user", "content": format!(
+                "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
+                err
+            )}));
+            continue;
+        }
+        malformed_streak = 0;
+
         // No tool calls: the model is answering, and that ends the turn. A model
         // that already worked this turn gets one nudge first: weak models forget
         // they are mid-task more often than they finish silently, and a pure
         // conversational answer (no calls at all) still ends immediately.
         if !actions.iter().any(|x| matches!(x, Action::Call { .. })) {
+            // A reply empty of both message and calls while carrying reasoning is a
+            // stall, not an answer: reasoning models narrate the action they intend
+            // and stop, as if the thinking were visible. Name that, at most twice.
+            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+            let has_text = actions.iter().any(|x| matches!(x, Action::Text(t) if !t.trim().is_empty()));
+            let has_reasoning = ["reasoning_content", "reasoning"]
+                .iter()
+                .any(|f| msg[*f].as_str().map(|r| !r.trim().is_empty()).unwrap_or(false));
+            if !has_text && has_reasoning && empty_nudges < 2 {
+                empty_nudges += 1;
+                a.history.push(json!({"role": "user", "content":
+                    "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."}));
+                continue;
+            }
             if called_any && !nudged {
                 nudged = true;
                 a.history.push(json!({"role": "user", "content":
@@ -259,6 +303,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         let mut call_n = 0u32;
         for action in actions.drain(..) {
             match action {
+                // Filtered above; a mixed reply's other actions still run.
+                Action::Malformed(_) => {}
                 Action::Text(t) => {
                     let t = t.trim();
                     if !t.is_empty() {

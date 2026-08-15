@@ -455,6 +455,7 @@ impl Llm {
             .unwrap_or(300)
             .max(10);
         let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
             .timeout_read(Duration::from_secs(read_timeout))
             .timeout_write(Duration::from_secs(60))
             .build();
@@ -478,11 +479,27 @@ impl Llm {
             return read_stream_message(BufReader::new(resp.into_reader()), max_completion_tokens(), call_timeout());
         }
 
-        let mut resp_body = String::new();
-        resp.into_reader()
-            .take(64 * 1024 * 1024)
-            .read_to_string(&mut resp_body)
-            .map_err(|e| format!("read: {}", e))?;
+        // The same wall clock the stream path enforces: per-read timeouts bound the
+        // gap between bytes, this bounds the whole body, so no call outlives
+        // JAZYK_CALL_TIMEOUT by more than one read.
+        let deadline = std::time::Instant::now() + call_timeout();
+        let mut reader = resp.into_reader().take(64 * 1024 * 1024);
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 65536];
+        loop {
+            if std::time::Instant::now() > deadline {
+                return Err(format!(
+                    "call timeout: no complete response within {}s (JAZYK_CALL_TIMEOUT)",
+                    call_timeout().as_secs()
+                ));
+            }
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => bytes.extend_from_slice(&buf[..n]),
+                Err(e) => return Err(format!("read: {}", e)),
+            }
+        }
+        let resp_body = String::from_utf8_lossy(&bytes).to_string();
         let v: Value = serde_json::from_str(&resp_body)
             .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
         let msg = v["choices"][0]["message"].clone();

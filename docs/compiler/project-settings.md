@@ -285,7 +285,9 @@ Run-level knobs are environment variables only, since they tune one run, not the
   the run, the same fallback contract as `temperature`.
 - `JAZYK_CALL_TIMEOUT`: seconds for one whole LLM call (default 600).
   `JAZYK_READ_TIMEOUT` waits for the next byte; this bounds the call even when bytes
-  keep arriving.
+  keep arriving, streaming or not. Connecting is bounded separately at 15 seconds.
+  Every layer above adds its own bound: turn round budgets, the ACP idle watchdog
+  (`JAZYK_ACP_IDLE_TIMEOUT`), and lease TTLs, so no single stall can hold a build.
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
   [trace events](./turns.md#trace-events) including full context packs and raw payloads.
 - `JAZYK_ACP_IDLE_TIMEOUT`: seconds a [worker session](../frontends/acp.md#worker-sessions)

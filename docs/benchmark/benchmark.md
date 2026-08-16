@@ -37,6 +37,8 @@ same configuration a build would use. See [CLI](../frontends/cli.md).
 turn-density turn-reuse`), for iterating on one failure without paying for the full
 set. An unknown case name is an error that lists the available names. Verdicts still
 print but a filtered run is never a capability grade; the history entry is skipped.
+A tier with no graded case prints `-` for its score and verdict instead of
+claiming a result it never measured.
 
 Before grading, one tiny completion probes the endpoint: a dead or misrouted
 endpoint fails one probe, not every case under both codecs.

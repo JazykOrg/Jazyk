@@ -16,7 +16,7 @@
 #   ollama's tool-channel XML errors, so the native verdict withholds compilation.
 #   Text pass 55/56: the one miss is turn-density paraphrasing the `addProduct`
 #   identifier out of the ears text; an identifier-preservation prompt rule landed
-#   after this run. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
+#   after this run and a filtered rerun re-graded turn-density 1.00 on both codecs. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
 #   this entry is the post-fix-loop record. Slow: ~7-8 tok/s, a full two-codec
 #   grading takes hours.
 results:

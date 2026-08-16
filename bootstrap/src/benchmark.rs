@@ -936,15 +936,33 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
             continue;
         }
         // Verdicts per workflow: a tier is held when every one of its cases scored 1.
-        // Mirrors docs/benchmark/benchmark.md#report.
+        // A tier no case ran under (a filtered run) gets `-`, never a claim.
+        // Mirrors docs/benchmark/benchmark.md#report and #running-a-subset.
         let ok = |t: &str| *tier_ok.get(t).unwrap_or(&true);
-        let compilation = match (ok("extraction"), ok("review")) {
-            (true, true) => "review",
-            (true, false) => "extraction",
-            _ => "not-capable",
+        let measured = |t: &str| tier_sum.get(t).map(|(_, n)| *n > 0).unwrap_or(false);
+        let compilation = if !measured("extraction") {
+            "-"
+        } else if !ok("extraction") {
+            "not-capable"
+        } else if measured("review") && ok("review") {
+            "review"
+        } else {
+            "extraction"
         };
-        let generation = if ok("generation") { "capable" } else { "not-capable" };
-        let verification = if ok("verification") { "capable" } else { "not-capable" };
+        let generation = if !measured("generation") {
+            "-"
+        } else if ok("generation") {
+            "capable"
+        } else {
+            "not-capable"
+        };
+        let verification = if !measured("verification") {
+            "-"
+        } else if ok("verification") {
+            "capable"
+        } else {
+            "not-capable"
+        };
         any_usable |= ok("extraction");
         let secs = started.elapsed().as_secs_f64();
         let tokens = llm::tokens_spent() - tokens_before;
@@ -957,9 +975,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
             "  verdicts: compilation {}  generation {}  verification {}",
             compilation, generation, verification
         );
+        let score_str = |t: &str| if measured(t) { format!("{:.2}", tier_score(t)) } else { "-".to_string() };
         println!(
-            "  scores: extraction {:.2}  review {:.2}  generation {:.2}  verification {:.2}  ({}/{} checks)",
-            tier_score("extraction"), tier_score("review"), tier_score("generation"), tier_score("verification"),
+            "  scores: extraction {}  review {}  generation {}  verification {}  ({}/{} checks)",
+            score_str("extraction"), score_str("review"), score_str("generation"), score_str("verification"),
             checks_passed, checks_total
         );
         println!(
@@ -971,10 +990,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
             serde_json::json!({
                 "verdicts": {"compilation": compilation, "generation": generation, "verification": verification},
                 "scores": {
-                    "extraction": (tier_score("extraction") * 100.0).round() / 100.0,
-                    "review": (tier_score("review") * 100.0).round() / 100.0,
-                    "generation": (tier_score("generation") * 100.0).round() / 100.0,
-                    "verification": (tier_score("verification") * 100.0).round() / 100.0,
+                    "extraction": score_json("extraction", &measured, &tier_score),
+                    "review": score_json("review", &measured, &tier_score),
+                    "generation": score_json("generation", &measured, &tier_score),
+                    "verification": score_json("verification", &measured, &tier_score),
                 },
                 "checks": format!("{}/{}", checks_passed, checks_total),
                 "efficiency": (efficiency * 100.0).round() / 100.0,
@@ -1117,6 +1136,16 @@ pub fn all_results(out: &std::path::Path) -> Value {
 
 // One entry per model in <out>/benchmark/results.yaml, updated in place. Mirrors
 // docs/benchmark/benchmark.md#results-file.
+// A tier score is a number only when at least one of its cases ran; a filtered
+// run leaves the rest null instead of a fake 0.0.
+fn score_json(t: &str, measured: &dyn Fn(&str) -> bool, tier_score: &dyn Fn(&str) -> f64) -> Value {
+    if measured(t) {
+        serde_json::json!((tier_score(t) * 100.0).round() / 100.0)
+    } else {
+        Value::Null
+    }
+}
+
 fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, Value)]) {
     let path = out.join("benchmark").join("results.yaml");
     let mut all: BTreeMap<String, Value> = std::fs::read_to_string(&path)

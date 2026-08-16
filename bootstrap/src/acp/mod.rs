@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod config;
 pub mod host;
+pub mod install;
 pub mod policy;
 pub mod proxy;
 pub mod runner;

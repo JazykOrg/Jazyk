@@ -28,10 +28,9 @@ build, inspects the [graph store](../compiler/graph.md), and hosts the other fro
   (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
   non-interactive stdin skips it too, so scripts never hang.
 - Offers [ACP registration](./acp.md#registration) the same way: a numbered choice of
-  `none`, JetBrains, or Zed, running
-  [`jazyk acp install`](#jazyk-acp) for the chosen editor. `--acp IDE`
-  (`jetbrains`, `zed`, `none`) skips the prompt, and a non-interactive stdin skips
-  it too.
+  `none` or one of the supported clients, running
+  [`jazyk acp install`](#jazyk-acp) for the chosen one. `--acp IDE` (any client name,
+  or `none`) skips the prompt, and a non-interactive stdin skips it too.
 
 The server entry is read-only; add `--write` to its `args` to hand the agent the
 [write tools](../compiler/tools.md#write-tools). Exit `0` when something was set up,
@@ -232,9 +231,13 @@ adds jazyk in between: tool injection, doc edit delegation, slash commands, buil
 status. Outside a jazyk project it is a transparent passthrough. Not meant to be run
 by hand.
 
-`jazyk acp install --ide <jetbrains|zed>` merges the Jazyk entry into the named
-editor's global agent registry (see [registration](./acp.md#registration)). Exit `0`
-when the entry was written or already current, `1` when nothing could be written.
+`jazyk acp install --ide <client>` registers Jazyk with an ACP client:
+`zed`, `jetbrains`, `vscode`, `neovim`, `emacs`, `obsidian`, `acpx`, `marimo` (see
+[registration](./acp.md#registration)). The editor may also be given positionally
+(`jazyk acp install zed`). For a client whose config jazyk writes, the entry is
+merged in place, leaving comments and other agents alone; for the rest, the snippet
+to paste is printed. Exit `0` when the entry was written, was already current, or the
+snippet was printed, `1` when a file could not be written.
 
 ### jazyk agent
 

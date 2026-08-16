@@ -315,7 +315,9 @@ fn main() {
                 i += 1;
                 opts.agent = args.get(i).cloned();
             }
-            "--acp" => {
+            // `--acp` names the editor during init; `--ide` is the same argument
+            // spelled for `acp install`. Mirrors docs/frontends/cli.md#jazyk-acp.
+            "--acp" | "--ide" => {
                 i += 1;
                 opts.acp_ide = args.get(i).cloned();
             }
@@ -458,7 +460,9 @@ fn main() {
         // The IDE-facing proxy, and its registry installer.
         // Mirrors docs/frontends/cli.md#jazyk-acp.
         "acp" => match positional.first().map(|s| s.as_str()) {
-            Some("install") => cli::run_acp_install(positional.get(1).map(|s| s.as_str()).or(opts.mcp.as_deref())),
+            Some("install") => cli::run_acp_install(
+                positional.get(1).map(|s| s.as_str()).or(opts.acp_ide.as_deref()),
+            ),
             _ => acp::proxy::run(&opts),
         },
         _ => usage(),

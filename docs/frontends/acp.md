@@ -295,13 +295,39 @@ channel.
 
 ## Registration
 
-Editors register ACP agents globally, not per project (JetBrains in
-`~/.jetbrains/acp.json`, Zed in its global `settings.json`).
-`jazyk acp install --ide <jetbrains|zed>` merges a `Jazyk` entry pointing at
-`jazyk acp` into the named editor's registry, never overwriting other entries.
-[`jazyk init`](./cli.md#jazyk-init) offers the same step. Per-project behavior comes
-from the protocol: every session names its `cwd`, and the proxy resolves the project
-from there, so one global entry serves every project and stays inert outside them.
+Every ACP client spawns its agent as a child process over stdio, so a registration is
+always the same three facts: a name, a command, and its arguments.
+`jazyk acp install --ide <client>` writes them where that client keeps them, and
+[`jazyk init`](./cli.md#jazyk-init) offers the same step.
+
+Clients register agents globally, not per project (Zed and JetBrains both, by
+design). Per-project behavior comes from the protocol instead: every session names
+its `cwd`, and the proxy resolves the project from there, so one global entry serves
+every project and stays inert outside them.
+
+The clients jazyk writes config for:
+
+- `zed`: `~/.config/zed/settings.json`, under `agent_servers`. A custom agent states
+  its kind: `"type": "custom"` alongside `command` and `args`.
+- `jetbrains`: `~/.jetbrains/acp.json`, under `agent_servers`, with `command` and
+  `args` and no kind.
+- `vscode`: the user `settings.json`, under `acp.agents`, read by the ACP client
+  extension (VS Code hosts no agent of its own).
+
+The clients jazyk prints a snippet for, because their config is a program (Neovim's
+Lua, Emacs' Lisp) or another application's private state (the Obsidian plugin's vault
+data), and rewriting either is not jazyk's business: `neovim`, `emacs`, `obsidian`,
+`acpx`, `marimo`.
+
+Two rules hold for every written config:
+
+- The command is the name the user runs, `jazyk`, whenever that name resolves to this
+  same binary on `PATH`; the absolute path only when it does not. A registration
+  written as a path into a build directory breaks on the next rebuild or move.
+- These files are kept by hand. The merge is a splice at the entry's own position, so
+  comments, trailing commas, formatting, and every other agent survive it. A rerun
+  that would change nothing writes nothing; a stale `Jazyk` entry is corrected in
+  place rather than duplicated.
 
 ## Protocol versions
 

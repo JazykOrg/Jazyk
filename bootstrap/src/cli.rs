@@ -346,93 +346,52 @@ pub(crate) fn resolve_llm(
 // stdin skips the step. Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_acp(flag: Option<&str>) -> bool {
     use std::io::IsTerminal;
+    let ides = crate::acp::install::IDES;
     let choice = match flag {
         Some("none") => return false,
         Some(ide) => ide.to_string(),
         None => {
             if !std::io::stdin().is_terminal() {
-                println!("jazyk: skipping ACP setup (no interactive stdin); rerun with --acp jetbrains|zed");
+                println!(
+                    "jazyk: skipping ACP setup (no interactive stdin); rerun with --acp {}",
+                    ides.join("|")
+                );
                 return false;
             }
             println!("\nRegister Jazyk as an ACP agent in an editor? The proxy activates only inside jazyk projects.");
-            println!("  1) none\n  2) JetBrains   (~/.jetbrains/acp.json)\n  3) Zed         (~/.config/zed/settings.json)");
-            print!("choose [1-3] (default 1): ");
+            println!("  1) none");
+            let cmd = crate::acp::install::spawn_command();
+            for (i, id) in ides.iter().enumerate() {
+                let label = crate::acp::install::ide(id, &cmd).map(|i| i.label).unwrap_or(id);
+                println!("  {}) {}", i + 2, label);
+            }
+            print!("choose [1-{}] (default 1): ", ides.len() + 1);
             use std::io::Write;
             std::io::stdout().flush().ok();
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).ok();
-            match line.trim() {
-                "2" => "jetbrains".to_string(),
-                "3" => "zed".to_string(),
-                _ => return false,
+            match line.trim().parse::<usize>().ok().filter(|n| *n >= 2 && *n <= ides.len() + 1) {
+                Some(n) => ides[n - 2].to_string(),
+                None => return false,
             }
         }
     };
     run_acp_install(Some(&choice)) == 0
 }
 
-// Register the Jazyk entry in an editor's global agent registry. Neither editor
-// supports per-project registration; the proxy resolves the project from the
-// session's cwd instead. Mirrors docs/frontends/acp.md#registration.
+// Register the Jazyk entry in an editor's agent registry. No client supports
+// per-project registration, so one global entry serves every project and the proxy
+// resolves the project from the session's cwd instead.
+// Mirrors docs/frontends/acp.md#registration.
 pub fn run_acp_install(ide: Option<&str>) -> i32 {
     let Some(ide) = ide else {
-        eprintln!("usage: jazyk acp install --ide <jetbrains|zed> (or: jazyk acp install jetbrains)");
+        eprintln!(
+            "usage: jazyk acp install --ide <{}> (or: jazyk acp install zed)",
+            crate::acp::install::IDES.join("|")
+        );
         return 2;
     };
-    let home = std::env::var("HOME").unwrap_or_default();
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "jazyk".to_string());
-    let path = match ide {
-        "jetbrains" => PathBuf::from(&home).join(".jetbrains/acp.json"),
-        "zed" => PathBuf::from(&home).join(".config/zed/settings.json"),
-        other => {
-            eprintln!("jazyk: unknown IDE `{}`; one of jetbrains, zed", other);
-            return 2;
-        }
-    };
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
-    let mut root: serde_json::Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => {
-            // Zed settings may carry comments; never risk clobbering a hand-kept file.
-            eprintln!(
-                "jazyk: {} is not plain JSON (comments?); add this entry by hand:\n  \"agent_servers\": {{ \"Jazyk\": {{ \"command\": \"{}\", \"args\": [\"acp\"] }} }}",
-                path.display(),
-                exe
-            );
-            return 1;
-        }
-    };
-    let Some(obj) = root.as_object_mut() else {
-        eprintln!("jazyk: {} does not hold a JSON object", path.display());
-        return 1;
-    };
-    let servers = obj.entry("agent_servers").or_insert_with(|| serde_json::json!({}));
-    let Some(servers) = servers.as_object_mut() else {
-        eprintln!("jazyk: agent_servers in {} is not an object", path.display());
-        return 1;
-    };
-    let entry = serde_json::json!({"command": exe, "args": ["acp"]});
-    if servers.get("Jazyk") == Some(&entry) {
-        println!("jazyk: {} already registers Jazyk", path.display());
-        return 0;
-    }
-    servers.insert("Jazyk".to_string(), entry);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    match std::fs::write(&path, serde_json::to_string_pretty(&root).unwrap_or_default() + "\n") {
-        Ok(()) => {
-            println!("jazyk: registered Jazyk in {}", path.display());
-            0
-        }
-        Err(e) => {
-            eprintln!("jazyk: cannot write {}: {}", path.display(), e);
-            1
-        }
-    }
+    crate::acp::install::install(ide)
 }
 
 // Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.

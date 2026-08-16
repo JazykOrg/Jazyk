@@ -20,4 +20,4 @@ The primary color is #248555 with a complementary color #8e4367.
 
 ### Font
 
-Comis Sans
+Use `Comic Sans MS` throughout.

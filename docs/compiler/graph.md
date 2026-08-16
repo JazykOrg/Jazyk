@@ -21,6 +21,8 @@ jazyk-out/
     <mirrored doc path>.yaml   # per document: content hash, section tree, coverage
   journal/
     g<generation>.yaml   # one file per committed changeset
+  sessions/
+    <session id>.jsonl   # one chat conversation, see frontends/acp.md#session-store
   status.yaml            # generation counter, parked work, budgets spent, verdict,
                          # open diagnostic counts by severity
   .lock                  # single-writer lock

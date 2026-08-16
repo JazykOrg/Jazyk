@@ -8,4 +8,5 @@ pub mod install;
 pub mod policy;
 pub mod proxy;
 pub mod runner;
+pub mod sessions;
 pub mod translate;

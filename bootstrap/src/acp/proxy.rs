@@ -24,6 +24,10 @@ struct ProxyState {
     // None outside a jazyk project. `/jazyk-init` fills it in without a restart, so
     // it is behind a lock. Mirrors docs/frontends/acp.md#the-ide-proxy.
     project: Mutex<Option<crate::project::Project>>,
+    // Which downstream agent this proxy drives, recorded with each conversation.
+    agent_name: String,
+    // Whether that agent can reopen one of its own sessions, learned at initialize.
+    down_loads: Mutex<bool>,
     llm: crate::llm::Llm,
     out: std::path::PathBuf,
 }
@@ -99,6 +103,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         last_session: Mutex::new(None),
         sink_path: Mutex::new(None),
         project: Mutex::new(in_project.then(|| proj.clone())),
+        agent_name: agent.name.clone(),
+        down_loads: Mutex::new(false),
         llm,
         out,
     });
@@ -129,12 +135,14 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         req.client_capabilities.fs.write_text_file;
                     let down = ensure_down(&st_init, &cx, config.clone())?;
                     let mirror = st_init.in_project();
+                    let st_caps = st_init.clone();
                     down.send_request(req).on_receiving_result(async move |result| {
                         // Inside a project the proxy answers session/list and
                         // session/load itself, mirroring recorded runs; advertise it
                         // whatever the downstream agent supports.
                         // Mirrors docs/frontends/acp.md#mirroring-into-ides.
                         let result = result.map(|mut r| {
+                            *st_caps.down_loads.lock().unwrap() = r.agent_capabilities.load_session;
                             if mirror {
                                 r.agent_capabilities.load_session = true;
                                 r.agent_capabilities.session_capabilities = r
@@ -177,10 +185,17 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     }
                     let down = st_new.down.get().cloned().ok_or_else(not_initialized)?;
                     let st = st_new.clone();
+                    let cwd = req.cwd.clone();
                     down.send_request(req).on_receiving_result(async move |result| {
                         let sid = result.as_ref().ok().map(|r| r.session_id.to_string());
                         if let Some(sid) = &sid {
                             *st.last_session.lock().unwrap() = Some(sid.clone());
+                            // A conversation in a project is recorded from its first
+                            // moment, so it can be listed and reopened later.
+                            // Mirrors docs/frontends/acp.md#session-store.
+                            if st.in_project() {
+                                crate::acp::sessions::open(&st.out, sid, &cwd, &st.agent_name);
+                            }
                         }
                         responder.respond_with_result(result)?;
                         // Inside a project, the session advertises the jazyk commands;
@@ -246,6 +261,34 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             .collect::<Vec<_>>()
                             .join("\n");
                         let in_project = st_prompt.in_project();
+                        // Both sides of a conversation are recorded: what was asked
+                        // here, what came back at the update choke point below.
+                        // Mirrors docs/frontends/acp.md#session-store.
+                        if in_project {
+                            let sid = req.session_id.to_string();
+                            let first = crate::acp::sessions::turns(&st_prompt.out, &sid) == 0;
+                            crate::acp::sessions::record_prompt(&st_prompt.out, &sid, &text);
+                            // A conversation earns its name from its opening line.
+                            // Pushing it means the IDE's history row is labelled the
+                            // moment it exists, not on the next listing.
+                            // Mirrors docs/frontends/acp.md#session-store.
+                            if first {
+                                if let Some(title) =
+                                    crate::acp::sessions::list(&st_prompt.out)
+                                        .into_iter()
+                                        .find(|m| m.id == sid)
+                                        .map(|m| m.title)
+                                {
+                                    use agent_client_protocol::schema::v1::SessionInfoUpdate;
+                                    let _ = cx.send_notification(SessionNotification::new(
+                                        req.session_id.clone(),
+                                        SessionUpdate::SessionInfoUpdate(
+                                            SessionInfoUpdate::new().title(title),
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
                         if let Some((cmd, args)) =
                             crate::acp::commands::split(&text, in_project)
                         {
@@ -279,12 +322,20 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |_req: agent_client_protocol::schema::v1::ListSessionsRequest,
                             responder,
                             _cx| {
+                    // Conversations first, then the automated runs: a person looking
+                    // through history wants what they said before, and the runs are
+                    // the machine's own record.
+                    // Mirrors docs/frontends/acp.md#session-store.
                     let sessions = st_list
                         .project
                         .lock()
                         .unwrap()
                         .as_ref()
-                        .map(|p| mirrored_sessions(&p.root, &st_list.out))
+                        .map(|p| {
+                            let mut all = recorded_sessions(&p.root, &st_list.out);
+                            all.extend(mirrored_sessions(&p.root, &st_list.out));
+                            all
+                        })
                         .unwrap_or_default();
                     responder.respond(
                         agent_client_protocol::schema::v1::ListSessionsResponse::new(sessions),
@@ -311,10 +362,37 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             agent_client_protocol::schema::v1::LoadSessionResponse::new(),
                         );
                     }
+                    // An agent that keeps its own sessions owns the replay: its
+                    // history is the real one, and replaying jazyk's copy too would
+                    // show the conversation twice. Only when it cannot does the
+                    // project's store answer, and then it says what it is.
+                    // Mirrors docs/frontends/acp.md#session-store.
                     let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
-                    down.send_request(req).on_receiving_result(async move |result| {
-                        responder.respond_with_result(result)
-                    })
+                    if *st_load.down_loads.lock().unwrap() {
+                        return down.send_request(req).on_receiving_result(async move |result| {
+                            responder.respond_with_result(result)
+                        });
+                    }
+                    let records = crate::acp::sessions::read(&st_load.out, &sid);
+                    if records.is_empty() {
+                        return down.send_request(req).on_receiving_result(async move |result| {
+                            responder.respond_with_result(result)
+                        });
+                    }
+                    for update in replay_conversation(&records) {
+                        let _ = cx.send_notification(SessionNotification::new(sid_of(&sid), update));
+                    }
+                    let _ = cx.send_notification(SessionNotification::new(
+                        sid_of(&sid),
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(
+                            "\n(replayed from this project's session store. This agent does not \
+                             restore conversation memory, so it answers from here on without it.)"
+                                .to_string(),
+                        ))),
+                    ));
+                    // The response is the protocol's end-of-replay signal, so it goes
+                    // last. Mirrors docs/frontends/acp.md#session-store.
+                    responder.respond(agent_client_protocol::schema::v1::LoadSessionResponse::new())
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -383,6 +461,7 @@ fn ensure_down(
         return Ok(d.clone());
     }
     let up_n = state.up.get().cloned();
+    let st_rec = state.clone();
     let up_p = up_n.clone();
     let up_r = up_n.clone();
     let up_w = up_n.clone();
@@ -391,6 +470,18 @@ fn ensure_down(
         .name("jazyk-acp-down")
         .on_receive_notification(
             async move |n: SessionNotification, _cx| {
+                // Every update the agent sends passes through here on its way to the
+                // IDE, which is where the conversation is recorded.
+                // Mirrors docs/frontends/acp.md#session-store.
+                if st_rec.in_project() {
+                    if let Ok(v) = serde_json::to_value(&n.update) {
+                        crate::acp::sessions::record_update(
+                            &st_rec.out,
+                            &n.session_id.to_string(),
+                            &v,
+                        );
+                    }
+                }
                 if let Some(up) = &up_n {
                     let _ = up.send_notification(n);
                 }
@@ -698,4 +789,50 @@ fn watch_runs(state: &Arc<ProxyState>) {
             }
         }
     });
+}
+
+// The project's recorded conversations, as sessions an IDE can reopen.
+// Mirrors docs/frontends/acp.md#session-store.
+fn recorded_sessions(
+    root: &std::path::Path,
+    out: &std::path::Path,
+) -> Vec<agent_client_protocol::schema::v1::SessionInfo> {
+    use agent_client_protocol::schema::v1::SessionInfo;
+    crate::acp::sessions::list(out)
+        .into_iter()
+        .take(30)
+        // The timestamp is what a history picker renders as "5m ago"; without it a
+        // row cannot be placed in time. Mirrors docs/frontends/acp.md#session-store.
+        .map(|m| SessionInfo::new(sid_of(&m.id), root).title(m.title).updated_at(m.updated_at))
+        .collect()
+}
+
+// A recorded conversation replayed as updates: what the person asked, and the
+// agent's own updates exactly as they were sent.
+// Mirrors docs/frontends/acp.md#session-store.
+fn replay_conversation(records: &[serde_json::Value]) -> Vec<SessionUpdate> {
+    let mut updates = Vec::new();
+    for r in records {
+        match r["kind"].as_str().unwrap_or("") {
+            "user" => {
+                let text = r["text"].as_str().unwrap_or_default().to_string();
+                updates.push(SessionUpdate::UserMessageChunk(ContentChunk::new(
+                    ContentBlock::from(text),
+                )));
+            }
+            "update" => {
+                // A recorded update is replayed as itself. One jazyk does not
+                // recognize is skipped rather than guessed at.
+                if let Ok(u) = serde_json::from_value::<SessionUpdate>(r["update"].clone()) {
+                    updates.push(u);
+                }
+            }
+            _ => {}
+        }
+    }
+    if updates.len() > 400 {
+        let cut = updates.len() - 400;
+        updates.drain(..cut);
+    }
+    updates
 }

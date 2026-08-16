@@ -124,6 +124,40 @@ Three session kinds, all the same protocol:
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).
 
+### Session store
+
+A conversation about a project is part of that project's working state, so it is kept
+with it: one JSON-lines file per chat session under `<out>/sessions/`, a metadata line
+first (id, cwd, agent, start) and then one record per thing said. Both frontends write
+it, so a conversation started in an IDE and one started in the GUI pane are the same
+kind of object in the same place.
+
+Most agents keep sessions globally under their own home directory, keyed by the
+working directory (`~/.claude/projects/<munged cwd>/`, `~/.codex/sessions/`, a SQLite
+table with a directory column). Jazyk keeps them per project instead, because every
+other thing jazyk remembers already lives in the out directory: the graph, the
+journal, the traces. A conversation is about those documents. Deleting the project's
+out directory forgets the conversations with it, which is the honest behavior.
+
+What the store serves:
+
+- `session/list` answers with the recorded conversations, newest first, each with the
+  first line of its opening prompt as `title` and its last activity as `updatedAt`.
+  A client renders that as a history row; without the timestamp the row cannot be
+  placed in time. The [mirrored runs](#mirroring-into-ides) follow the conversations
+  in the same list.
+- A conversation is named the moment it has a first prompt: jazyk pushes
+  `session_info_update` with the title rather than making the client wait for the
+  next listing.
+- `session/load` replays the conversation as `user_message_chunk` and the agent's own
+  recorded updates, then answers, because the response is the protocol's
+  end-of-replay signal.
+- An agent that keeps its own sessions (Claude, Codex, OpenCode all advertise
+  `loadSession`) owns the replay instead: its history is the real one, and jazyk
+  forwards the load untouched rather than showing the conversation twice. The store
+  answers only for agents that cannot, and then it says what it is: the transcript is
+  restored for the person, and the agent continues without that memory.
+
 ## Worker sessions
 
 The automated path. For each work item the runner:

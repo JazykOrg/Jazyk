@@ -417,8 +417,10 @@ in two places:
 
 Opening a project with standing errors and warnings re-surfaces them here without
 any action: the list reads from the graph, and the graph kept them.
-- Transcripts persist under `<out>/trace/` like job traces, so a reloaded page
-  restores the session list and history.
+- Transcripts persist in the [session store](./acp.md#session-store) under
+  `<out>/sessions/`, so a reloaded page, and a restarted server, restore the session
+  list and its history. A restored conversation has no agent behind it until it is
+  prompted again, which opens a fresh agent session under the same id.
 
 API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
 them, `GET /api/chat/sessions/{id}` returns one with its transcript,

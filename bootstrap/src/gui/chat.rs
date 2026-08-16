@@ -115,9 +115,53 @@ impl ChatManager {
             })
             .collect()
     }
+
+    // The conversations this project already had, read back from the store on first
+    // use so a restarted server shows them. They have no live agent behind them
+    // until prompted, which opens a fresh session under the same id.
+    // Mirrors docs/frontends/acp.md#session-store.
+    pub fn restore(&self, out: &std::path::Path) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if !sessions.is_empty() {
+            return;
+        }
+        for meta in crate::acp::sessions::list(out).into_iter().take(30) {
+            let records = crate::acp::sessions::read(out, &meta.id);
+            let mut ring: VecDeque<(u64, Value)> = VecDeque::new();
+            for (n, r) in records.iter().enumerate() {
+                let update = match r["kind"].as_str().unwrap_or("") {
+                    "user" => json!({"sessionUpdate": "user_message", "text": r["text"]}),
+                    "update" => r["update"].clone(),
+                    _ => continue,
+                };
+                ring.push_back((n as u64, update));
+            }
+            let next_n = ring.back().map(|(n, _)| n + 1).unwrap_or(0);
+            // A number a later append cannot collide with, whatever was trimmed.
+            let seq = self.seq.load(Ordering::Relaxed);
+            let n = meta.id.strip_prefix("chat-").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            if n > seq {
+                self.seq.store(n, Ordering::Relaxed);
+            }
+            sessions.insert(
+                meta.id.clone(),
+                Arc::new(Mutex::new(ChatSession {
+                    id: meta.id,
+                    title: meta.title,
+                    state: "idle".into(),
+                    handle: None,
+                    ring,
+                    next_n,
+                    pending: Vec::new(),
+                })),
+            );
+        }
+    }
 }
 
 fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
+    // The transcript outlives the page and the process: the same per-project store
+    // the IDE proxy writes. Mirrors docs/frontends/acp.md#session-store.
     let (id, n, elided) = {
         let mut s = sess.lock().unwrap();
         let n = s.next_n;
@@ -128,6 +172,14 @@ fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
         }
         (s.id.clone(), n, super::jobs::elide(&update))
     };
+    match update["sessionUpdate"].as_str() {
+        Some("user_message") => crate::acp::sessions::record_prompt(
+            &st.out,
+            &id,
+            update["text"].as_str().unwrap_or_default(),
+        ),
+        _ => crate::acp::sessions::record_update(&st.out, &id, &update),
+    }
     st.events.emit("chat.update", json!({"sessionId": id, "n": n, "update": elided}));
 }
 
@@ -153,12 +205,14 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         next_n: 0,
         pending: Vec::new(),
     };
+    crate::acp::sessions::open(&st.out, &id, &st.proj().root, "gui");
     st.chat.sessions.lock().unwrap().insert(id.clone(), Arc::new(Mutex::new(session)));
     st.events.emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
     Json(json!({"id": id})).into_response()
 }
 
 pub async fn list_sessions(State(st): State<SharedState>) -> Response {
+    st.chat.restore(&st.out);
     // The same catalog the IDE proxy advertises; the GUI is a jazyk client like any
     // other. Mirrors docs/frontends/acp.md#slash-commands.
     let commands: Vec<Value> = crate::acp::commands::available(true)
@@ -168,6 +222,8 @@ pub async fn list_sessions(State(st): State<SharedState>) -> Response {
 }
 
 pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
+    // A reload can ask for one conversation by id without listing first.
+    st.chat.restore(&st.out);
     let sess = st.chat.sessions.lock().unwrap().get(&id).cloned();
     match sess {
         Some(s) => {
@@ -193,6 +249,8 @@ pub async fn post_prompt(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
+    // Prompting a conversation restored from the store is how it resumes.
+    st.chat.restore(&st.out);
     let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
         return (StatusCode::NOT_FOUND, "no such session").into_response();
     };

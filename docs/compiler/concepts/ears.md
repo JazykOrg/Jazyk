@@ -173,6 +173,11 @@ quote: - `addProduct` - adds a new product to the inventory
 ears:  The inventory system shall support an `addProduct` operation that adds a new product to the inventory.
 ```
 
+  When a statement names an operation, command, field, or value by a literal
+  identifier, the `ears` text keeps that identifier verbatim, backticks included.
+  Downstream binding searches code by the requirement text, so a paraphrase that
+  drops the name ("shall add a new product") breaks the link to the code.
+
 - Items share one requirement only when they are plain values with no behavior of
   their own (accepted formats, supported locales): quote the lead-in line and carry
   the values in the `ears` text, the same way

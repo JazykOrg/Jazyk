@@ -2,13 +2,23 @@
 # Curated by hand from machine-wide history entries worth publishing.
 # Shape per entry: {model, baseUrl, gradedAt, caseSetHash, codecs: {native|text|agent: report}}
 #
-# Current set (graded 2026-08-03, case set f41d8375...):
+# Set graded 2026-08-03 (case set f41d8375...):
 # - claude-fable-5 (agent): a coding agent over `jazyk mcp benchmark`; 52/52 checks,
 #   every tier 1.0, verdicts review/capable/capable.
 # - gemma4:e4b-mlx via LocalRouter: text codec routes best; review and verification
 #   capable, generation not.
 # - qwen3:4b-instruct via Ollama: native codec routes best; verification capable,
 #   text codec collapses on big packs.
+#
+# Graded 2026-08-15 (case set 1f6fb2e4...):
+# - qwen3.8:27b-mlx via Ollama: best local model graded so far. Native pass 56/56,
+#   every case 1.0, but three cases finished on the sticky text downgrade after
+#   ollama's tool-channel XML errors, so the native verdict withholds compilation.
+#   Text pass 55/56: the one miss is turn-density paraphrasing the `addProduct`
+#   identifier out of the ears text; an identifier-preservation prompt rule landed
+#   after this run. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
+#   this entry is the post-fix-loop record. Slow: ~7-8 tok/s, a full two-codec
+#   grading takes hours.
 results:
 - baseUrl: agent
   caseSetHash: f41d8375dddd312f
@@ -756,3 +766,310 @@ results:
         verification: capable
   gradedAt: 1785776324
   model: qwen3:4b-instruct
+- baseUrl: http://127.0.0.1:11434/v1
+  caseSetHash: 1f6fb2e48101b4a5
+  codecs:
+    native:
+      cases:
+        gen-basic:
+          checks: 4/4
+          efficiency: 0.42
+          fail: ''
+          parRounds: 10
+          rounds: 24
+          score: 1.0
+          tokens: 10825
+        turn-converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 3
+          score: 1.0
+          tokens: 1446
+        turn-declarative:
+          checks: 6/6
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 4
+          score: 1.0
+          tokens: 2235
+        turn-density:
+          checks: 6/6
+          efficiency: 0.33
+          fail: endpoint or model rejected native tool calls
+          parRounds: 6
+          rounds: 18
+          score: 1.0
+          tokens: 3519
+        turn-edges:
+          checks: 6/6
+          efficiency: 0.46
+          fail: endpoint or model rejected native tool calls
+          parRounds: 6
+          rounds: 13
+          score: 1.0
+          tokens: 1782
+        turn-extract:
+          checks: 6/6
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 5
+          score: 1.0
+          tokens: 2567
+        turn-navigation:
+          checks: 4/4
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 540
+        turn-repair:
+          checks: 2/2
+          efficiency: 0.5
+          fail: endpoint or model rejected native tool calls
+          parRounds: 6
+          rounds: 12
+          score: 1.0
+          tokens: 3235
+        turn-reuse:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 5
+          score: 1.0
+          tokens: 1514
+        turn-review:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 708
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 1
+          score: 1.0
+          tokens: 391
+        turn-review-duplicate:
+          checks: 3/3
+          efficiency: 0.75
+          fail: ''
+          parRounds: 3
+          rounds: 4
+          score: 1.0
+          tokens: 1087
+        turn-review-lint:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 1012
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 1012
+        turn-steps:
+          checks: 5/5
+          efficiency: 1.0
+          fail: ''
+          parRounds: 8
+          rounds: 6
+          score: 1.0
+          tokens: 1403
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+      checks: 56/56
+      efficiency: 0.85
+      scores:
+        extraction: 1.0
+        generation: 1.0
+        review: 1.0
+        verification: 1.0
+      throughput: 8
+      tokens: 33276
+      verdicts:
+        compilation: not-capable
+        generation: capable
+        verification: capable
+    text:
+      cases:
+        gen-basic:
+          checks: 4/4
+          efficiency: 0.63
+          fail: ''
+          parRounds: 10
+          rounds: 16
+          score: 1.0
+          tokens: 4153
+        turn-converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 5
+          score: 1.0
+          tokens: 1136
+        turn-declarative:
+          checks: 6/6
+          efficiency: 0.4
+          fail: ''
+          parRounds: 6
+          rounds: 15
+          score: 1.0
+          tokens: 1662
+        turn-density:
+          checks: 5/6
+          efficiency: 0.29
+          fail: 'requirementExists: no requirement matching `addProduct` on ent:inventory-system'
+          parRounds: 6
+          rounds: 21
+          score: 0.83
+          tokens: 5746
+        turn-edges:
+          checks: 6/6
+          efficiency: 0.67
+          fail: ''
+          parRounds: 6
+          rounds: 9
+          score: 1.0
+          tokens: 1290
+        turn-extract:
+          checks: 6/6
+          efficiency: 0.38
+          fail: ''
+          parRounds: 6
+          rounds: 16
+          score: 1.0
+          tokens: 4291
+        turn-navigation:
+          checks: 4/4
+          efficiency: 0.75
+          fail: ''
+          parRounds: 3
+          rounds: 4
+          score: 1.0
+          tokens: 817
+        turn-repair:
+          checks: 2/2
+          efficiency: 0.6
+          fail: ''
+          parRounds: 6
+          rounds: 10
+          score: 1.0
+          tokens: 2766
+        turn-reuse:
+          checks: 2/2
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 1442
+        turn-review:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 511
+        turn-review-clean:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 1
+          score: 1.0
+          tokens: 354
+        turn-review-duplicate:
+          checks: 3/3
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 1153
+        turn-review-lint:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 876
+        turn-review-lookalike:
+          checks: 3/3
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 1255
+        turn-steps:
+          checks: 5/5
+          efficiency: 0.8
+          fail: ''
+          parRounds: 8
+          rounds: 10
+          score: 1.0
+          tokens: 1114
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+      checks: 55/56
+      efficiency: 0.73
+      scores:
+        extraction: 0.98
+        generation: 1.0
+        review: 1.0
+        verification: 1.0
+      throughput: 7
+      tokens: 28566
+      verdicts:
+        compilation: not-capable
+        generation: capable
+        verification: capable
+  gradedAt: 1786842422
+  model: qwen3.8:27b-mlx

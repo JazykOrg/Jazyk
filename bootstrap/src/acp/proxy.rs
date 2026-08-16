@@ -191,22 +191,20 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                                 AvailableCommand, AvailableCommandsUpdate,
                             };
                             let in_project = st.in_project();
-                            let listed: &[(&str, &str)] = if in_project {
-                                &[
-                                    ("compile", "reconcile the graph with the documents"),
-                                    ("generate", "bind and generate the deliverable"),
-                                    ("verify", "run verification over the ledger"),
-                                    ("status", "summarize the last build"),
-                                    ("release", "approve pending changes in manual mode"),
-                                    ("questions", "list the standing questions on open findings"),
-                                ]
-                            } else {
-                                &[("jazyk-init", "scaffold a jazyk project in this directory")]
-                            };
-                            let commands: Vec<AvailableCommand> = listed
-                                .iter()
-                                .map(|(n, d)| AvailableCommand::new(*n, *d))
-                                .collect();
+                            let commands: Vec<AvailableCommand> =
+                                crate::acp::commands::available(in_project)
+                                    .map(|c| {
+                                        let cmd = AvailableCommand::new(c.name, c.description);
+                                        match c.hint {
+                                            Some(h) => cmd.input(
+                                                agent_client_protocol::schema::v1::AvailableCommandInput::Unstructured(
+                                                    agent_client_protocol::schema::v1::UnstructuredCommandInput::new(h),
+                                                ),
+                                            ),
+                                            None => cmd,
+                                        }
+                                    })
+                                    .collect();
                             let _ = up.send_notification(SessionNotification::new(
                                 sid_of(&sid),
                                 SessionUpdate::AvailableCommandsUpdate(
@@ -247,30 +245,18 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             })
                             .collect::<Vec<_>>()
                             .join("\n");
-                        let cmd = text.trim().split_whitespace().next().unwrap_or("");
                         let in_project = st_prompt.in_project();
-                        // The one command a bare directory answers: it scaffolds the
-                        // project and the proxy stops being a passthrough.
-                        // Mirrors docs/frontends/acp.md#the-ide-proxy.
-                        if !in_project && cmd == "/jazyk-init" {
-                            let reply = st_prompt.init_here();
-                            let _ = cx.send_notification(SessionNotification::new(
-                                req.session_id.clone(),
-                                SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                                    ContentBlock::from(reply),
-                                )),
-                            ));
-                            return responder.respond(PromptResponse::new(StopReason::EndTurn));
-                        }
-                        if in_project
-                            && ["/compile", "/generate", "/verify", "/status", "/release", "/questions"].contains(&cmd)
+                        if let Some((cmd, args)) =
+                            crate::acp::commands::split(&text, in_project)
                         {
                             let st = st_prompt.clone();
                             let sid = req.session_id.to_string();
                             let up = cx.clone();
-                            let cmd = cmd.to_string();
+                            let args = args.to_string();
+                            // A command runs off the dispatch task: a build takes
+                            // minutes, and the connection must keep serving.
                             std::thread::spawn(move || {
-                                let reply = run_command(&st, &cmd, &up, &sid);
+                                let reply = run_command(&st, cmd, &args, &up, &sid);
                                 let _ = up.send_notification(SessionNotification::new(
                                     sid_of(&sid),
                                     SessionUpdate::AgentMessageChunk(ContentChunk::new(
@@ -493,7 +479,22 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Stri
 
 // The intercepted commands: the real paths, their progress narrated into the open
 // turn. Mirrors docs/frontends/acp.md#slash-commands.
-fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: &str) -> String {
+fn run_command(
+    st: &Arc<ProxyState>,
+    cmd: &str,
+    args: &str,
+    up: &ConnectionTo<Client>,
+    sid: &str,
+) -> String {
+    use crate::acp::commands;
+    // The two commands a directory without a project still answers.
+    // Mirrors docs/frontends/acp.md#slash-commands.
+    let in_project = st.in_project();
+    match cmd {
+        "help" => return commands::help_text(in_project),
+        "init" if !in_project => return st.init_here(),
+        _ => {}
+    }
     let Some(proj) = st.project.lock().unwrap().clone() else {
         return "not a jazyk project".into();
     };
@@ -505,10 +506,17 @@ fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: 
         ));
     };
     match cmd {
-        "/questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
+        "init" => format!(
+            "{} is already a jazyk project.\n\n{}",
+            proj.root.display(),
+            commands::init_next_steps(proj, &st.llm)
+        ),
+        "config" if args.is_empty() => commands::config_text(proj, &st.llm),
+        "config" => commands::config_set(proj, args),
+        "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
             "no standing questions; every open finding is either unprompted or already answered".into()
         }),
-        "/status" => {
+        "status" => {
             let s = crate::store::Store::load(&st.out);
             format!(
                 "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}",
@@ -519,11 +527,11 @@ fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: 
                 s.open_diag_counts()
             )
         }
-        "/release" => {
+        "release" => {
             crate::control::release(proj, &st.out, None);
             "released: pending compile and generate work is approved".into()
         }
-        "/compile" => {
+        "compile" => {
             say("compiling…\n".into());
             let trace = narrated_trace(up.clone(), sid.to_string());
             let report = crate::reconcile::compile(proj, &st.llm, &st.out, &trace);
@@ -532,7 +540,7 @@ fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: 
                 report.verdict, report.turns, report.applied, report.parked, report.coverage_pct
             )
         }
-        "/generate" | "/verify" => {
+        "generate" | "verify" => {
             let runner = match crate::acp::runner::AcpRunner::start(proj, &st.llm, &st.out) {
                 Ok(r) => r,
                 Err(e) => return format!("agent failed to start: {}", e),
@@ -540,7 +548,7 @@ fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: 
             let trace = narrated_trace(up.clone(), sid.to_string());
             let store = crate::store::Store::load(&st.out);
             let gs = crate::gen::GenSettings::resolve(proj);
-            let result = if cmd == "/generate" {
+            let result = if cmd == "generate" {
                 let _guard = match crate::control::begin_internal_build(proj, &st.out, "generate") {
                     Ok(g) => g,
                     Err(e) => return format!("refused: {}", e),

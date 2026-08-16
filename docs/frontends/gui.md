@@ -385,9 +385,10 @@ session kinds:
 
 The pane's behaviors:
 
-- [Slash commands](./acp.md#chat-sessions): `/compile`, `/generate`, `/verify`,
-  `/status`, `/release`, completed in the prompt box from the advertised list. A
-  command runs the real job and streams its progress into the same session.
+- [Slash commands](./acp.md#slash-commands): the same catalog the IDE proxy
+  advertises, completed in the prompt box from the advertised list. A command means
+  the same thing in both frontends; here a build command runs through the job queue
+  and streams its progress into the same session.
 - The [build plan](./acp.md#plans) renders as a live checklist: one entry per work
   item, flipping as the build advances.
 - Follow mode: a toggle that pins the transcript to the newest update and moves the

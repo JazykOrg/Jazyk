@@ -159,8 +159,11 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
 }
 
 pub async fn list_sessions(State(st): State<SharedState>) -> Response {
-    let commands: Vec<Value> =
-        COMMANDS.iter().map(|(name, desc)| json!({"name": name, "description": desc})).collect();
+    // The same catalog the IDE proxy advertises; the GUI is a jazyk client like any
+    // other. Mirrors docs/frontends/acp.md#slash-commands.
+    let commands: Vec<Value> = crate::acp::commands::available(true)
+        .map(|c| json!({"name": format!("/{}", c.name), "description": c.description, "hint": c.hint}))
+        .collect();
     Json(json!({"sessions": st.chat.snapshot(), "commands": commands})).into_response()
 }
 
@@ -313,46 +316,48 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
     }
 }
 
-// The advertised commands and their implementations. Commands run the same paths the
-// buttons do; the reply names what happened, and the pane follows the job's own
-// stream. Mirrors docs/frontends/acp.md#slash-commands.
-pub const COMMANDS: [(&str, &str); 6] = [
-    ("/compile", "reconcile the graph with the documents"),
-    ("/generate", "bind and generate the deliverable"),
-    ("/verify", "run verification over the ledger"),
-    ("/status", "summarize the last build"),
-    ("/release", "approve pending changes in manual mode"),
-    ("/questions", "list the standing questions on open findings"),
-];
-
+// The commands' GUI implementations. The catalog is shared with the IDE proxy; what
+// differs here is only how work starts, because the GUI has a job queue and the
+// proxy does not. Mirrors docs/frontends/acp.md#slash-commands.
 async fn run_command(st: &SharedState, text: &str) -> Option<String> {
-    let (cmd, _rest) = match text.split_once(char::is_whitespace) {
-        Some((c, r)) => (c, r.trim()),
-        None => (text, ""),
-    };
+    let (cmd, rest) = crate::acp::commands::split(text, true)?;
+    let proj = st.proj();
+    let llm = st.llm();
     match cmd {
-        "/compile" => {
+        "help" => Some(crate::acp::commands::help_text(true)),
+        "init" => Some(format!(
+            "{} is already a jazyk project.\n\n{}",
+            proj.root.display(),
+            crate::acp::commands::init_next_steps(&proj, &llm)
+        )),
+        "config" if rest.is_empty() => Some(crate::acp::commands::config_text(&proj, &llm)),
+        "config" => {
+            let reply = crate::acp::commands::config_set(&proj, rest);
+            st.events.emit("settings.changed", json!({}));
+            Some(reply)
+        }
+        "compile" => {
             let id = st.jobs.submit(st, super::jobs::JobKind::Compile);
             Some(format!("compile queued (job {}); its turns stream below as the build runs", id))
         }
-        "/generate" => {
+        "generate" => {
             let id = st
                 .jobs
                 .submit(st, super::jobs::JobKind::Gen { entities: Vec::new(), force: false });
             Some(format!("generation queued (job {})", id))
         }
-        "/verify" => {
+        "verify" => {
             let id = st.jobs.submit(
                 st,
                 super::jobs::JobKind::Verify { targets: Vec::new(), test_kind: None, force: false },
             );
             Some(format!("verification queued (job {})", id))
         }
-        "/questions" => Some(
+        "questions" => Some(
             crate::answer::questions_summary(&st.out)
                 .unwrap_or_else(|| "no standing questions; every open finding is either unprompted or already answered".to_string()),
         ),
-        "/status" => {
+        "status" => {
             let s = crate::store::Store::load(&st.out);
             Some(format!(
                 "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}",
@@ -363,7 +368,7 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
                 s.open_diag_counts()
             ))
         }
-        "/release" => {
+        "release" => {
             crate::control::release(&st.proj(), &st.out, None);
             st.events.emit("control.changed", json!({}));
             Some("released: pending compile and generate work is approved".to_string())

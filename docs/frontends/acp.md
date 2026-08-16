@@ -234,16 +234,40 @@ the store.
 
 ### Slash commands
 
-Chat sessions advertise commands through `available_commands_update`: `/compile`,
-`/generate`, `/verify`, `/status`, `/release`, `/questions`. ACP has no invoke method for commands;
-they arrive as prompt text. Jazyk matches the prefix before the prompt reaches the
-agent: a matched command runs the real work (the same path as the CLI command of that
-name) and streams its progress into the open turn, then ends the turn. Unmatched
-prompts go to the agent as conversation.
+Chat sessions advertise commands through `available_commands_update`. ACP has no
+invoke method for commands; they arrive as prompt text. Jazyk matches the prefix
+before the prompt reaches the agent: a matched command runs the real work (the same
+path as the CLI command of that name) and streams its progress into the open turn,
+then ends the turn. Unmatched prompts go to the agent as conversation.
 
-The list follows the directory. A session outside a project advertises `/jazyk-init`
-and nothing else: no build command has anything to build yet, and offering six that
-all answer "not a jazyk project" reads as breakage.
+A command exists when a person needs an answer jazyk can give exactly, and no model
+should be improvising it: what this project is set to, what state the build is in,
+what setup remains. The catalog:
+
+| Command | What it does |
+| --- | --- |
+| `/help` | What jazyk is, and every command in this session with one line each. |
+| `/init` | Set the project up: scaffold what is missing, then state what is still unanswered (agent, model) and the command that answers it. |
+| `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
+| `/status` | The last build: verdict, graph size, open findings. |
+| `/questions` | The [standing questions](#questions-in-chat) on open findings. |
+| `/compile` | Reconcile the graph with the documents. |
+| `/generate` | Bind and generate the deliverable. |
+| `/verify` | Run verification over the ledger. |
+| `/release` | Approve pending work in manual mode. |
+
+The catalog is one list, served identically by the IDE proxy and the
+[GUI pane](./gui.md): a command means the same thing in both, and neither invents its
+own. What differs is only how the work is started, because the GUI already has a job
+queue and the proxy does not.
+
+The list follows the directory. A session outside a project advertises `/help` and
+`/init` and nothing else: no build command has anything to build yet, and offering
+nine that all answer "not a jazyk project" reads as breakage.
+
+Jazyk's names win over the downstream agent's. An agent that advertises its own
+`/init` is shadowed inside a jazyk project, which is the intended trade: in a jazyk
+session, `/init` is the project's own setup.
 
 ## Plans
 
@@ -281,11 +305,11 @@ the protocol on stdio; downstream it drives the configured agent. In between:
   worker sessions and streams synthetic tool calls and the [plan](#plans) into the
   open IDE turn.
 - Outside a jazyk project (no `jazyk.toml` above the session's `cwd`), the proxy is a
-  transparent passthrough plus one advertised command, `/jazyk-init`, which scaffolds
-  a project. The proxy adopts it immediately: the commands it runs itself work in the
-  open session, and because a session's tools are injected when it is created, the
-  agent's own jazyk tools arrive with the next session. The reply says so. The IDE's
-  global agent entry works everywhere; jazyk lights up only where a project exists.
+  transparent passthrough plus `/help` and `/init`. `/init` scaffolds a project and
+  the proxy adopts it immediately: the commands it runs itself work in the open
+  session, and because a session's tools are injected when it is created, the agent's
+  own jazyk tools arrive with the next session. The reply says so. The IDE's global
+  agent entry works everywhere; jazyk lights up only where a project exists.
 
 ### Doc edit delegation
 

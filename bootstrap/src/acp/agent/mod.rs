@@ -10,7 +10,9 @@ use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
     ContentBlock, ContentChunk, InitializeRequest, InitializeResponse, McpServer,
     NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
-    SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
+    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+    SessionConfigSelectOption, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, UsageUpdate,
 };
 use agent_client_protocol::{Agent, Stdio};
@@ -29,6 +31,33 @@ struct SessionState {
     history: Vec<Value>,
     #[allow(dead_code)]
     cwd: std::path::PathBuf,
+    // The model this session prompts, which the client may change between turns.
+    // Mirrors docs/frontends/acp.md#choosing-a-model.
+    model: String,
+}
+
+// The id the model selector carries. A client persists a user's default under this
+// id and replays it on the next session, so it must not drift.
+const MODEL_OPTION: &str = "model";
+
+// The models this endpoint offers, as one select option carrying the current choice.
+// Mirrors docs/frontends/acp.md#choosing-a-model.
+fn model_options(llm: &crate::llm::Llm, current: &str) -> Vec<SessionConfigOption> {
+    let names = llm.list_models();
+    let options: Vec<SessionConfigSelectOption> = names
+        .iter()
+        .map(|n| SessionConfigSelectOption::new(n.clone(), n.clone()))
+        .collect();
+    if options.is_empty() {
+        return Vec::new();
+    }
+    vec![SessionConfigOption::new(
+        MODEL_OPTION,
+        "Model",
+        SessionConfigKind::Select(SessionConfigSelect::new(current.to_string(), options)),
+    )
+    .description(format!("Served by {}", llm.base_url))
+    .category(SessionConfigOptionCategory::Model)]
 }
 
 #[derive(Clone)]
@@ -60,8 +89,11 @@ pub fn run() -> i32 {
     let init_sessions = sessions.clone();
     let new_sessions = sessions.clone();
     let prompt_sessions = sessions.clone();
+    let config_sessions = sessions.clone();
     let close_sessions = sessions.clone();
     let cancel_sessions = sessions;
+    let new_llm = llm.clone();
+    let config_llm = llm.clone();
 
     let result = futures::executor::block_on(
         Agent
@@ -118,6 +150,7 @@ pub fn run() -> i32 {
                         }
                     }
                     let tools: Vec<GenericTool> = conns.iter().flat_map(|c| c.tools.clone()).collect();
+                    let model = new_llm.model.clone();
                     new_sessions.lock().unwrap().insert(
                         id.clone(),
                         SessionEntry {
@@ -126,11 +159,17 @@ pub fn run() -> i32 {
                                 tools,
                                 history: Vec::new(),
                                 cwd,
+                                model: model.clone(),
                             })),
                             cancelled: Arc::new(AtomicBool::new(false)),
                         },
                     );
-                    responder.respond(NewSessionResponse::new(id))
+                    let options = model_options(&new_llm, &model);
+                    let mut resp = NewSessionResponse::new(id);
+                    if !options.is_empty() {
+                        resp = resp.config_options(options);
+                    }
+                    responder.respond(resp)
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -159,6 +198,9 @@ pub fn run() -> i32 {
                     // own thread; updates are queued straight onto the connection.
                     std::thread::spawn(move || {
                         let mut state = entry.state.lock().unwrap();
+                        // The session's model, which the client may have changed since
+                        // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
+                        let llm = crate::llm::Llm { model: state.model.clone(), ..llm };
                         state.history.push(json!({"role": "user", "content": text}));
                         let notify = |update: SessionUpdate| {
                             let _ = cx.send_notification(SessionNotification::new(sid.clone(), update));
@@ -229,6 +271,36 @@ pub fn run() -> i32 {
                 },
                 agent_client_protocol::on_receive_request!(),
             )
+            // The client picked a model. It takes effect on the next prompt, and the
+            // answer restates the whole option set, per the protocol.
+            // Mirrors docs/frontends/acp.md#choosing-a-model.
+            .on_receive_request(
+                async move |req: SetSessionConfigOptionRequest, responder, _cx| {
+                    let Some(entry) =
+                        config_sessions.lock().unwrap().get(req.session_id.0.as_ref()).cloned()
+                    else {
+                        return responder.respond_with_internal_error("unknown session");
+                    };
+                    if req.config_id.0.as_ref() != MODEL_OPTION {
+                        return responder
+                            .respond_with_internal_error(format!("unknown option `{}`", req.config_id));
+                    }
+                    let Some(value) = req.value.as_value_id() else {
+                        return responder.respond_with_internal_error("the model is named by value id");
+                    };
+                    let chosen = value.0.to_string();
+                    let current = {
+                        let mut state = entry.state.lock().unwrap();
+                        state.model = chosen;
+                        state.model.clone()
+                    };
+                    responder.respond(SetSessionConfigOptionResponse::new(model_options(
+                        &config_llm,
+                        &current,
+                    )))
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
             .on_receive_request(
                 async move |req: CloseSessionRequest, responder, _cx| {
                     let entry = close_sessions.lock().unwrap().remove(req.session_id.0.as_ref());
@@ -267,5 +339,40 @@ pub fn run() -> i32 {
             eprintln!("jazyk agent: {}", e);
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The picker an IDE renders: a select in the model category, carrying the
+    // resolved model as its current value, under the id clients persist.
+    // Mirrors docs/frontends/acp.md#choosing-a-model.
+    #[test]
+    fn the_model_option_offers_the_endpoint_and_keeps_its_id() {
+        // An endpoint that cannot answer leaves exactly one honest choice.
+        let llm = crate::llm::Llm {
+            base_url: "http://127.0.0.1:1/v1".into(),
+            model: "some-model".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let options = model_options(&llm, &llm.model);
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id.0.as_ref(), MODEL_OPTION);
+        assert_eq!(options[0].category, Some(SessionConfigOptionCategory::Model));
+        let SessionConfigKind::Select(select) = &options[0].kind else {
+            panic!("the model option is a select");
+        };
+        assert_eq!(select.current_value.0.as_ref(), "some-model");
+        let json = serde_json::to_value(&options[0]).unwrap();
+        assert_eq!(json["type"], "select");
+        assert_eq!(json["options"][0]["value"], "some-model");
+
+        // A model with no name at all offers nothing rather than an empty picker.
+        let bare = crate::llm::Llm { model: String::new(), ..llm };
+        assert!(model_options(&bare, "").is_empty());
     }
 }

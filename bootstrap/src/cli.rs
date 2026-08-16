@@ -116,6 +116,11 @@ pub fn run_init(opts: &Options) -> i32 {
             return 1;
         }
     }
+    // Which agent does the AI work, and for the embedded one, which model.
+    // Mirrors docs/frontends/cli.md#jazyk-init.
+    if init_agent(&cwd, opts.agent.as_deref()) {
+        wrote_something = true;
+    }
     // ACP registration is global per editor; the proxy resolves the project from the
     // session's cwd. Mirrors docs/frontends/cli.md#jazyk-init.
     if init_acp(opts.acp_ide.as_deref()) {
@@ -340,6 +345,145 @@ pub(crate) fn resolve_llm(
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
     Llm { base_url, model, api_key, temperature, trace: None }
+}
+
+// The agents init can wire without being told anything else: the built-in one, and
+// the external ones whose command line is public and stable.
+// Mirrors docs/frontends/acp.md#agents.
+const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
+    (
+        crate::acp::config::EMBEDDED,
+        "Embedded (jazyk's own agent, over your LLM endpoint)",
+        "",
+        &[],
+    ),
+    ("codex", "Codex", "npx", &["--yes", "@zed-industries/codex-acp"]),
+    ("claude", "Claude Code", "npx", &["--yes", "@zed-industries/claude-code-acp"]),
+    ("opencode", "OpenCode", "opencode", &["acp"]),
+];
+
+// Choose the agent that performs AI work, and for the embedded agent the model it
+// prompts. Both land in jazyk.toml, so the project carries its own answer and no
+// later command has to ask again. `--agent` skips the prompt; a non-interactive
+// stdin skips the step. Mirrors docs/frontends/cli.md#jazyk-init.
+fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
+    use std::io::IsTerminal;
+    let path = cwd.join("jazyk.toml");
+    let interactive = flag.is_none() && std::io::stdin().is_terminal();
+    let name = match flag {
+        Some("none") => return false,
+        Some(a) => a.to_string(),
+        None => {
+            if !interactive {
+                println!(
+                    "jazyk: keeping the default agent (embedded); `jazyk init --agent {}` chooses another",
+                    ACP_AGENTS.iter().map(|a| a.0).collect::<Vec<_>>().join("|")
+                );
+                return false;
+            }
+            println!("\nWhich agent should do the AI work? Jazyk drives it over ACP.");
+            for (i, (_, label, cmd, args)) in ACP_AGENTS.iter().enumerate() {
+                let how = if cmd.is_empty() {
+                    String::new()
+                } else {
+                    format!("   ({} {})", cmd, args.join(" "))
+                };
+                println!("  {}) {}{}", i + 1, label, how);
+            }
+            match ask(&format!("choose [1-{}] (default 1): ", ACP_AGENTS.len()))
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|n| *n >= 1 && *n <= ACP_AGENTS.len())
+            {
+                Some(n) => ACP_AGENTS[n - 1].0.to_string(),
+                None => crate::acp::config::EMBEDDED.to_string(),
+            }
+        }
+    };
+    let Some(agent) = ACP_AGENTS.iter().find(|a| a.0 == name) else {
+        eprintln!(
+            "jazyk: unknown agent `{}`; one of {}",
+            name,
+            ACP_AGENTS.iter().map(|a| a.0).collect::<Vec<_>>().join(", ")
+        );
+        return false;
+    };
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut full = crate::mcp::toml_set(&old, "acp", "agent", agent.0);
+    // An external agent needs its command line recorded; the embedded one is built in.
+    if !agent.2.is_empty() {
+        let section = format!("acp.agents.{}", agent.0);
+        full = crate::mcp::toml_set(&full, &section, "command", agent.2);
+        let args = agent.3.iter().map(|a| format!("\"{}\"", a)).collect::<Vec<_>>().join(", ");
+        full = toml_set_raw(&full, &section, "args", &format!("[{}]", args));
+    } else if interactive {
+        // The embedded agent prompts a model, so init asks which one. The endpoint is
+        // whatever the config ladder resolves; asking it what it serves beats making
+        // the user recall model names. Mirrors docs/frontends/acp.md#choosing-a-model.
+        let (_, llm, _) = resolve(&[], &Options::default());
+        println!("\nAsking {} what models it serves...", llm.base_url);
+        let models = llm.list_models();
+        let chosen = match models.len() {
+            0 => {
+                println!(
+                    "jazyk: the endpoint did not answer; keeping model `{}` (change it in jazyk.toml or ~/.jazyk/config.toml)",
+                    llm.model
+                );
+                String::new()
+            }
+            _ => {
+                for (i, m) in models.iter().enumerate().take(20) {
+                    let mark = if *m == llm.model { "  (current)" } else { "" };
+                    println!("  {}) {}{}", i + 1, m, mark);
+                }
+                if models.len() > 20 {
+                    println!("  ... and {} more; type a name instead", models.len() - 20);
+                }
+                let answer = ask(&format!("choose [1-{}], a model name, or blank to keep `{}`: ",
+                    models.len().min(20), llm.model));
+                let answer = answer.trim().to_string();
+                match answer.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= models.len()) {
+                    Some(n) => models[n - 1].clone(),
+                    None if answer.is_empty() => String::new(),
+                    None => answer,
+                }
+            }
+        };
+        if !chosen.is_empty() {
+            full = crate::mcp::toml_set(&full, "llm", "model", &chosen);
+            println!("jazyk: model {}", chosen);
+        }
+    }
+    if full == old {
+        return false;
+    }
+    match std::fs::write(&path, &full) {
+        Ok(()) => {
+            println!("jazyk: agent {} recorded in {}", agent.0, path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!("jazyk: cannot write {}: {}", path.display(), e);
+            false
+        }
+    }
+}
+
+// A TOML value that is not a string (an array, a number): same minimal edit, no
+// quoting. Kept next to its caller because nothing else needs it.
+fn toml_set_raw(text: &str, section: &str, key: &str, raw: &str) -> String {
+    let quoted = crate::mcp::toml_set(text, section, key, "\u{0}");
+    quoted.replace(&format!("{} = \"\u{0}\"", key), &format!("{} = {}", key, raw))
+}
+
+fn ask(prompt: &str) -> String {
+    use std::io::Write;
+    print!("{}", prompt);
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok();
+    line
 }
 
 // Offer ACP registration during init: `--acp` skips the prompt, a non-interactive

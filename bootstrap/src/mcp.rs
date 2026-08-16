@@ -1820,7 +1820,7 @@ impl McpServer {
 
 // Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
 // the section or the key when missing, touching nothing else.
-fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
+pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{}]", section);
     let rendered = format!("{} = \"{}\"", key, value.replace('\\', "\\\\").replace('"', "\\\""));
     let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();

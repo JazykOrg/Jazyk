@@ -242,6 +242,39 @@ impl Llm {
         Llm { trace: Some(trace.clone()), ..self.clone() }
     }
 
+    // What the endpoint says it can serve, for a client that offers the user a
+    // choice. An endpoint that does not answer `/models` (or answers something
+    // unexpected) is not an error: the configured model is the only one on offer,
+    // which is exactly the state of the world before asking.
+    // Mirrors docs/frontends/acp.md#choosing-a-model.
+    pub fn list_models(&self) -> Vec<String> {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(5))
+            .timeout_read(Duration::from_secs(10))
+            .build();
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+        let mut req = agent.get(&url);
+        if !self.api_key.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", self.api_key));
+        }
+        let mut names: Vec<String> = req
+            .call()
+            .ok()
+            .and_then(|r| r.into_string().ok())
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .and_then(|v| v["data"].as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+            .collect();
+        names.sort();
+        names.dedup();
+        if !self.model.is_empty() && !names.iter().any(|n| *n == self.model) {
+            names.insert(0, self.model.clone());
+        }
+        names
+    }
+
     // A provider-behavior notice (a sticky fallback, a rate-limit wait). It belongs to
     // the work that triggered it, so it goes to the trace when there is one.
     fn note(&self, label: &str, text: &str) {

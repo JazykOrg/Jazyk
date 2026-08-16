@@ -27,6 +27,17 @@ build, inspects the [graph store](../compiler/graph.md), and hosts the other fro
   never overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
   (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
   non-interactive stdin skips it too, so scripts never hang.
+- Asks which [agent](./acp.md#agents) does the AI work: the `embedded` one, or an
+  external agent whose command line jazyk knows (`codex`, `claude`, `opencode`). The
+  answer lands in the project's `[acp]` section, with the command line recorded for
+  an external agent. `--agent NAME` (or `none`) skips the prompt, and a
+  non-interactive stdin keeps the default.
+- For the embedded agent, asks which model. Jazyk asks the configured endpoint what
+  it serves and lists that, so the choice is between models that exist rather than
+  remembered names; a blank answer keeps the resolved one, and a typed name is taken
+  as given. The answer lands in `[llm] model`. An unanswering endpoint is reported,
+  not fatal. Inside an IDE the same choice is available per session through
+  [session config options](./acp.md#choosing-a-model).
 - Offers [ACP registration](./acp.md#registration) the same way: a numbered choice of
   `none` or one of the supported clients, running
   [`jazyk acp install`](#jazyk-acp) for the chosen one. `--acp IDE` (any client name,

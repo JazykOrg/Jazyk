@@ -108,6 +108,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_prompt = state.clone();
     let st_list = state.clone();
     let st_load = state.clone();
+    let st_config = state.clone();
+    let st_mode = state.clone();
     let st_cancel = state.clone();
     if state.in_project() {
         watch_runs(&state);
@@ -321,6 +323,32 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         );
                     }
                     let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
+                    down.send_request(req).on_receiving_result(async move |result| {
+                        responder.respond_with_result(result)
+                    })
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            // Session configuration belongs to the agent behind the proxy: the model
+            // picker and the mode picker an IDE shows are its options, so both
+            // requests pass straight through.
+            // Mirrors docs/frontends/acp.md#choosing-a-model.
+            .on_receive_request(
+                async move |req: agent_client_protocol::schema::v1::SetSessionConfigOptionRequest,
+                            responder,
+                            _cx| {
+                    let down = st_config.down.get().cloned().ok_or_else(not_initialized)?;
+                    down.send_request(req).on_receiving_result(async move |result| {
+                        responder.respond_with_result(result)
+                    })
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |req: agent_client_protocol::schema::v1::SetSessionModeRequest,
+                            responder,
+                            _cx| {
+                    let down = st_mode.down.get().cloned().ok_or_else(not_initialized)?;
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
                     })

@@ -57,6 +57,8 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   if the thinking were visible. The loop answers with a corrective nudge naming that
   ("reasoning is not shown and does not count as acting"), at most twice per turn,
   before the empty reply is allowed to end it.
+- On `session/new` it also offers the endpoint's models as a session config option,
+  so the person in the IDE picks one (below).
 - `session/cancel` stops the loop at the next round.
 - `session/close` (advertised in its capabilities) tears the session down: each MCP
   server's input closes and the agent waits for it to exit before answering. An
@@ -78,6 +80,34 @@ the reasoning behind earlier calls. No jazyk prompting, no jazyk tool knowledge,
 shortcut into the store. The same session against OpenCode or the embedded agent
 carries the same prompt and the same injected tools, which is what makes the embedded
 agent a faithful test double for the whole path.
+
+### Choosing a model
+
+The protocol carries the choice: an agent may return `configOptions` from
+`session/new`, and the client sets one with `session/set_config_option`. A select
+option in the `model` category is what an IDE renders as a model picker.
+
+The embedded agent offers one such option, `model`:
+
+- The values come from the endpoint itself, asked once per session over the
+  OpenAI-compatible `/models` listing. An endpoint that does not answer is not an
+  error: the configured model is then the only value, which is the state of the world
+  before asking.
+- The current value is the model the [LLM settings](../compiler/project-settings.md#llm)
+  resolved, so an unchanged session prompts exactly what the CLI would.
+- A choice applies to the next prompt in that session and to no other, and the answer
+  restates the whole option set, as the protocol requires. The option id stays
+  `model` across sessions because clients persist a user's default under that id and
+  replay it on the next session.
+- Nothing else moves: the endpoint and the key stay machine configuration, and a
+  session choice never edits `jazyk.toml`. To change what every session starts with,
+  set the model in the project or global settings, or answer the question
+  [`jazyk init`](./cli.md#jazyk-init) asks.
+
+For an external agent the options are its own. The proxy forwards
+`session/set_config_option` and `session/set_mode` downstream and passes the
+`configOptions` it returns back up untouched, so an IDE's model picker drives the
+agent behind jazyk exactly as it would without jazyk in the middle.
 
 ## Sessions
 

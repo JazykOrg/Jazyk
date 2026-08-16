@@ -160,10 +160,15 @@ quote. A chat edit must move both or neither:
 Setup and configuration are chat tools too, routed through the same edit delegation:
 
 - `init_project`: scaffold `jazyk.toml` and the starter layout, what
-  [`jazyk init`](./cli.md#jazyk-init) writes.
+  [`jazyk init`](./cli.md#jazyk-init) writes. Offered only where there is nothing to
+  scaffold onto: a serving whose directory already holds a `jazyk.toml` does not list
+  the tool at all, because the answer could only ever be a refusal. The serving's
+  instructions state which case it is in, so the agent knows whether it is talking
+  about a project or about an empty directory without calling anything.
 - `update_project_settings`: typed edits to `jazyk.toml` (workflow modes, docs glob,
   lint rules, the `[acp]` profile), rendered as minimal edits, never a whole-file
-  rewrite.
+  rewrite. An uninitialized directory has no settings to edit, so this tool is
+  offered only in a project.
 
 ### Questions in chat
 
@@ -206,6 +211,10 @@ agent: a matched command runs the real work (the same path as the CLI command of
 name) and streams its progress into the open turn, then ends the turn. Unmatched
 prompts go to the agent as conversation.
 
+The list follows the directory. A session outside a project advertises `/jazyk-init`
+and nothing else: no build command has anything to build yet, and offering six that
+all answer "not a jazyk project" reads as breakage.
+
 ## Plans
 
 Build progress is an ACP plan. The runner publishes one plan entry per scheduled work
@@ -243,8 +252,10 @@ the protocol on stdio; downstream it drives the configured agent. In between:
   open IDE turn.
 - Outside a jazyk project (no `jazyk.toml` above the session's `cwd`), the proxy is a
   transparent passthrough plus one advertised command, `/jazyk-init`, which scaffolds
-  a project and switches the session to the full bridge. The IDE's global agent entry
-  works everywhere; jazyk lights up only where a project exists.
+  a project. The proxy adopts it immediately: the commands it runs itself work in the
+  open session, and because a session's tools are injected when it is created, the
+  agent's own jazyk tools arrive with the next session. The reply says so. The IDE's
+  global agent entry works everywhere; jazyk lights up only where a project exists.
 
 ### Doc edit delegation
 

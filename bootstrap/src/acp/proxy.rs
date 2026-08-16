@@ -21,9 +21,43 @@ struct ProxyState {
     last_session: Mutex<Option<String>>,
     // The delegation socket the injected servings write through.
     sink_path: Mutex<Option<std::path::PathBuf>>,
-    project: Option<crate::project::Project>,
+    // None outside a jazyk project. `/jazyk-init` fills it in without a restart, so
+    // it is behind a lock. Mirrors docs/frontends/acp.md#the-ide-proxy.
+    project: Mutex<Option<crate::project::Project>>,
     llm: crate::llm::Llm,
     out: std::path::PathBuf,
+}
+
+impl ProxyState {
+    fn in_project(&self) -> bool {
+        self.project.lock().unwrap().is_some()
+    }
+
+    // `/jazyk-init` in a bare directory: scaffold, then adopt the project without a
+    // restart. The commands this proxy runs itself work in the open session; the
+    // agent's own jazyk tools are injected at session/new, so they arrive with the
+    // next session. Mirrors docs/frontends/acp.md#the-ide-proxy.
+    fn init_here(self: &Arc<Self>) -> String {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        if cwd.join("jazyk.toml").exists() {
+            return format!("{} already holds a jazyk.toml.", cwd.display());
+        }
+        if let Err(e) = std::fs::write(cwd.join("jazyk.toml"), crate::cli::INIT_TOML) {
+            return format!("jazyk: cannot write jazyk.toml: {}", e);
+        }
+        if let Err(e) = crate::cli::init_scaffold(&cwd) {
+            return format!("jazyk: cannot scaffold the project: {}", e);
+        }
+        *self.project.lock().unwrap() = Some(crate::project::Project::load(&cwd));
+        start_sink(self);
+        watch_runs(self);
+        format!(
+            "Initialized a jazyk project in {}: jazyk.toml, docs/README.md, deliverable/.\n\
+             Describe what you are building in docs/README.md, then run /compile.\n\
+             Start a new conversation to give the agent the jazyk tools; the commands work here now.",
+            cwd.display()
+        )
+    }
 }
 
 pub fn run(opts: &crate::cli::Options) -> i32 {
@@ -61,11 +95,11 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         client_fs_write: Mutex::new(false),
         last_session: Mutex::new(None),
         sink_path: Mutex::new(None),
-        project: in_project.then(|| proj.clone()),
+        project: Mutex::new(in_project.then(|| proj.clone())),
         llm,
         out,
     });
-    if state.project.is_some() {
+    if state.in_project() {
         start_sink(&state);
     }
 
@@ -75,7 +109,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_list = state.clone();
     let st_load = state.clone();
     let st_cancel = state.clone();
-    if state.project.is_some() {
+    if state.in_project() {
         watch_runs(&state);
     }
 
@@ -89,7 +123,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     *st_init.client_fs_write.lock().unwrap() =
                         req.client_capabilities.fs.write_text_file;
                     let down = ensure_down(&st_init, &cx, config.clone())?;
-                    let mirror = st_init.project.is_some();
+                    let mirror = st_init.in_project();
                     down.send_request(req).on_receiving_result(async move |result| {
                         // Inside a project the proxy answers session/list and
                         // session/load itself, mirroring recorded runs; advertise it
@@ -114,7 +148,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |mut req: NewSessionRequest, responder, _cx| {
                     // Inside a jazyk project, the session gains the chat serving; the
                     // dropdown entry stays inert everywhere else.
-                    if let Some(proj) = &st_new.project {
+                    if st_new.in_project() {
                         let exe = std::env::current_exe()
                             .ok()
                             .and_then(|p| p.to_str().map(|s| s.to_string()))
@@ -130,7 +164,6 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             args.push("--edit-sink".to_string());
                             args.push(sink.to_string_lossy().into_owned());
                         }
-                        let _ = proj;
                         let mut servers = req.mcp_servers.clone();
                         servers.push(agent_client_protocol::schema::v1::McpServer::Stdio(
                             McpServerStdio::new("jazyk", exe).args(args),
@@ -145,25 +178,30 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             *st.last_session.lock().unwrap() = Some(sid.clone());
                         }
                         responder.respond_with_result(result)?;
-                        // Inside a project, the session advertises the jazyk commands.
+                        // Inside a project, the session advertises the jazyk commands;
+                        // outside one it advertises the way in, and nothing else.
                         // Mirrors docs/frontends/acp.md#slash-commands.
-                        if let (Some(sid), Some(up), true) =
-                            (sid, st.up.get(), st.project.is_some())
-                        {
+                        if let (Some(sid), Some(up)) = (sid, st.up.get()) {
                             use agent_client_protocol::schema::v1::{
                                 AvailableCommand, AvailableCommandsUpdate,
                             };
-                            let commands: Vec<AvailableCommand> = [
-                                ("compile", "reconcile the graph with the documents"),
-                                ("generate", "bind and generate the deliverable"),
-                                ("verify", "run verification over the ledger"),
-                                ("status", "summarize the last build"),
-                                ("release", "approve pending changes in manual mode"),
-                                ("questions", "list the standing questions on open findings"),
-                            ]
-                            .into_iter()
-                            .map(|(n, d)| AvailableCommand::new(n, d))
-                            .collect();
+                            let in_project = st.in_project();
+                            let listed: &[(&str, &str)] = if in_project {
+                                &[
+                                    ("compile", "reconcile the graph with the documents"),
+                                    ("generate", "bind and generate the deliverable"),
+                                    ("verify", "run verification over the ledger"),
+                                    ("status", "summarize the last build"),
+                                    ("release", "approve pending changes in manual mode"),
+                                    ("questions", "list the standing questions on open findings"),
+                                ]
+                            } else {
+                                &[("jazyk-init", "scaffold a jazyk project in this directory")]
+                            };
+                            let commands: Vec<AvailableCommand> = listed
+                                .iter()
+                                .map(|(n, d)| AvailableCommand::new(*n, *d))
+                                .collect();
                             let _ = up.send_notification(SessionNotification::new(
                                 sid_of(&sid),
                                 SessionUpdate::AvailableCommandsUpdate(
@@ -173,7 +211,9 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             // Opening a project with standing questions re-surfaces
                             // them without any request.
                             // Mirrors docs/frontends/acp.md#questions-in-chat.
-                            if let Some(q) = crate::answer::questions_summary(&st.out) {
+                            if let Some(q) =
+                                in_project.then(|| crate::answer::questions_summary(&st.out)).flatten()
+                            {
                                 let _ = up.send_notification(SessionNotification::new(
                                     sid_of(&sid),
                                     SessionUpdate::AgentMessageChunk(ContentChunk::new(
@@ -192,7 +232,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     *st_prompt.last_session.lock().unwrap() = Some(req.session_id.to_string());
                     // Slash commands run the real work here; everything else forwards.
                     // Mirrors docs/frontends/acp.md#slash-commands.
-                    if st_prompt.project.is_some() {
+                    {
                         let text: String = req
                             .prompt
                             .iter()
@@ -203,7 +243,23 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             .collect::<Vec<_>>()
                             .join("\n");
                         let cmd = text.trim().split_whitespace().next().unwrap_or("");
-                        if ["/compile", "/generate", "/verify", "/status", "/release", "/questions"].contains(&cmd) {
+                        let in_project = st_prompt.in_project();
+                        // The one command a bare directory answers: it scaffolds the
+                        // project and the proxy stops being a passthrough.
+                        // Mirrors docs/frontends/acp.md#the-ide-proxy.
+                        if !in_project && cmd == "/jazyk-init" {
+                            let reply = st_prompt.init_here();
+                            let _ = cx.send_notification(SessionNotification::new(
+                                req.session_id.clone(),
+                                SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                    ContentBlock::from(reply),
+                                )),
+                            ));
+                            return responder.respond(PromptResponse::new(StopReason::EndTurn));
+                        }
+                        if in_project
+                            && ["/compile", "/generate", "/verify", "/status", "/release", "/questions"].contains(&cmd)
+                        {
                             let st = st_prompt.clone();
                             let sid = req.session_id.to_string();
                             let up = cx.clone();
@@ -234,6 +290,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             _cx| {
                     let sessions = st_list
                         .project
+                        .lock()
+                        .unwrap()
                         .as_ref()
                         .map(|p| mirrored_sessions(&p.root, &st_list.out))
                         .unwrap_or_default();
@@ -405,7 +463,10 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Stri
 // The intercepted commands: the real paths, their progress narrated into the open
 // turn. Mirrors docs/frontends/acp.md#slash-commands.
 fn run_command(st: &Arc<ProxyState>, cmd: &str, up: &ConnectionTo<Client>, sid: &str) -> String {
-    let Some(proj) = &st.project else { return "not a jazyk project".into() };
+    let Some(proj) = st.project.lock().unwrap().clone() else {
+        return "not a jazyk project".into();
+    };
+    let proj = &proj;
     let say = |text: String| {
         let _ = up.send_notification(SessionNotification::new(
             sid_of(sid),

@@ -91,7 +91,7 @@ struct OpenTask {
 // because they own the queue and the open changeset.
 const LIFECYCLE: [&str; 4] = ["compilation_tasks", "begin_compilation", "finish_compilation", "abandon_compilation"];
 
-fn instructions_for(modes: &[String], write: bool) -> String {
+fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String {
     let mut s = String::from(
         "This server is one jazyk project's semantic graph: entities and EARS requirements \
          reconciled from prose documentation, consumed by generation and verification. ",
@@ -147,15 +147,28 @@ fn instructions_for(modes: &[String], write: bool) -> String {
         );
     }
     if modes.iter().any(|m| m == "chat") {
-        s.push_str(
-            "CHAT SERVING: you are in a conversation about this project. Read the graph with the \
-             read tools. A requirement lives in the prose: change one with revise_requirement (new \
-             prose, optional new ears), add one with add_requirement, remove one with \
-             retract_requirement; each moves the document and the graph in one atomic commit. \
-             init_project scaffolds a project; update_project_settings edits jazyk.toml keys. The \
-             compilation, binding, generation, and verification lifecycles are available for \
-             explicit requests. ",
-        );
+        // An uninitialized directory has no graph to talk about, so the serving says
+        // so plainly instead of offering tools that could only refuse.
+        // Mirrors docs/frontends/acp.md#project-tools.
+        if !initialized {
+            s.push_str(
+                "CHAT SERVING, NO PROJECT HERE: this directory holds no jazyk.toml, so there is no \
+                 graph yet and the read tools have nothing to return. Call init_project to scaffold \
+                 one (jazyk.toml, docs/ with a placeholder root document, deliverable/), then tell \
+                 the user to reopen the conversation: the new session serves the project. ",
+            );
+        } else {
+            s.push_str(
+                "CHAT SERVING: you are in a conversation about this project. Read the graph with the \
+                 read tools. A requirement lives in the prose: change one with revise_requirement (new \
+                 prose, optional new ears), add one with add_requirement, remove one with \
+                 retract_requirement; each moves the document and the graph in one atomic commit. \
+                 update_project_settings edits jazyk.toml keys. The project is already initialized: \
+                 there is no init_project tool and nothing to scaffold. The \
+                 compilation, binding, generation, and verification lifecycles are available for \
+                 explicit requests. ",
+            );
+        }
     }
     if modes.iter().any(|m| m == "graph") && write {
         s.push_str("Write tools are enabled for manual graph surgery; each call commits as its own changeset. ");
@@ -174,6 +187,12 @@ fn instructions_for(modes: &[String], write: bool) -> String {
 }
 
 impl McpServer {
+    // Whether this serving stands in a project or in a bare directory. Decides which
+    // project tools exist. Mirrors docs/frontends/acp.md#project-tools.
+    fn initialized(&self) -> bool {
+        self.project.root.join("jazyk.toml").exists()
+    }
+
     pub fn new(project: crate::project::Project, out: PathBuf, modes: Vec<String>, write: bool) -> McpServer {
         Self::with_bridge(project, out, modes, write, BridgeFlags::default())
     }
@@ -980,7 +999,7 @@ impl McpServer {
                     "protocolVersion": requested,
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": instructions_for(&self.modes, self.write)
+                    "instructions": instructions_for(&self.modes, self.write, self.initialized())
                 }))
             }
             "ping" => Ok(json!({})),
@@ -1082,16 +1101,23 @@ impl McpServer {
                         "description": "Replace the question attached to an open diagnostic (null prompt removes it). Never touches a human answer or triage.",
                         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "prompt": crate::tools::prompt_schema()}, "required": ["id"], "additionalProperties": false}
                     }));
-                    tools.push(json!({
-                        "name": "init_project",
-                        "description": "Scaffold a jazyk project here: jazyk.toml, docs/ with a placeholder root document, and deliverable/. Refused when jazyk.toml already exists.",
-                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
-                    }));
-                    tools.push(json!({
-                        "name": "update_project_settings",
-                        "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile, workflow.generate, workflow.worker, acp.agent, gen.deliverable, gen.worker, llm.model, llm.base_url.",
-                        "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
-                    }));
+                    // Scaffolding is offered only where there is something to scaffold,
+                    // and settings only where a jazyk.toml holds them. Listing both
+                    // everywhere spends a call to earn a refusal.
+                    // Mirrors docs/frontends/acp.md#project-tools.
+                    if !self.initialized() {
+                        tools.push(json!({
+                            "name": "init_project",
+                            "description": "Scaffold a jazyk project in this directory: jazyk.toml, docs/ with a placeholder root document, and deliverable/. This directory has none yet.",
+                            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+                        }));
+                    } else {
+                        tools.push(json!({
+                            "name": "update_project_settings",
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile, workflow.generate, workflow.worker, acp.agent, gen.deliverable, gen.worker, llm.model, llm.base_url.",
+                            "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
+                        }));
+                    }
                 }
                 // An ephemeral serving exists for one task; a long poll there is a
                 // stall wearing a tool's name, so it is not offered.
@@ -1766,6 +1792,10 @@ impl McpServer {
         let Some(settings) = args["settings"].as_object() else {
             return json!({"error": {"rule": "missing-argument", "message": "settings is required: a map of key to value"}});
         };
+        if !self.initialized() {
+            return json!({"error": {"rule": "not-a-project", "message":
+                "no jazyk.toml here to edit; call init_project first"}});
+        }
         let path = self.project.root.join("jazyk.toml");
         let old_full = std::fs::read_to_string(&path).unwrap_or_default();
         let mut full = old_full.clone();
@@ -1854,4 +1884,56 @@ fn text_result(v: Value, is_error: bool) -> Value {
         "content": [{"type": "text", "text": v.to_string()}],
         "isError": is_error
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chat_server(dir: &std::path::Path) -> McpServer {
+        let project = crate::project::Project::load(dir);
+        let out = project.out.clone();
+        McpServer::with_bridge(project, out, vec!["chat".to_string()], false, BridgeFlags::default())
+    }
+
+    fn tool_names(s: &McpServer) -> Vec<String> {
+        let r = s.handle("tools/list", &json!({})).unwrap();
+        r["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    // A project tool is offered only where it can do something: scaffolding in a bare
+    // directory, settings in a project. The instructions say which case it is, so the
+    // agent never spends a call to learn it.
+    // Mirrors docs/frontends/acp.md#project-tools.
+    #[test]
+    fn project_tools_follow_the_project_state() {
+        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        let bare = base.join("bare");
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+
+        let bare_tools = tool_names(&chat_server(&bare));
+        assert!(bare_tools.iter().any(|t| t == "init_project"), "{:?}", bare_tools);
+        assert!(!bare_tools.iter().any(|t| t == "update_project_settings"), "{:?}", bare_tools);
+
+        let proj_tools = tool_names(&chat_server(&proj));
+        assert!(!proj_tools.iter().any(|t| t == "init_project"), "{:?}", proj_tools);
+        assert!(proj_tools.iter().any(|t| t == "update_project_settings"), "{:?}", proj_tools);
+
+        assert!(instructions_for(&["chat".to_string()], false, false).contains("NO PROJECT HERE"));
+        assert!(instructions_for(&["chat".to_string()], false, true).contains("already initialized"));
+
+        // The refusal survives as a floor under the listing: settings without a file.
+        let r = chat_server(&bare).update_project_settings(&json!({"settings": {"llm.model": "x"}}));
+        assert_eq!(r["error"]["rule"], "not-a-project");
+        std::fs::remove_dir_all(&base).ok();
+    }
 }

@@ -103,9 +103,16 @@ pub fn run_init(opts: &Options) -> i32 {
                 );
             }
         }
-        if let Err(e) = init_scaffold(&cwd) {
-            eprintln!("jazyk: {}", e);
-            return 1;
+        match init_scaffold(&cwd) {
+            Ok(made) => {
+                for what in made {
+                    println!("jazyk: created {}", what);
+                }
+            }
+            Err(e) => {
+                eprintln!("jazyk: {}", e);
+                return 1;
+            }
         }
     }
     match init_mcp(&cwd, opts.mcp.as_deref()) {
@@ -141,13 +148,16 @@ pub(crate) const INIT_TOML: &str = "# A directory with jazyk.toml is a Jazyk pro
 
 // Scaffold the layout the fresh jazyk.toml names: docs/ with a placeholder root
 // document, and the deliverable directory. Existing directories and files stay
-// untouched.
-pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<(), String> {
+// untouched. Returns what it created and prints nothing: the same scaffold runs
+// inside the MCP serving and the ACP proxy, where stdout carries the protocol and a
+// stray line of prose corrupts the stream.
+pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut made = Vec::new();
     for dir in ["docs", "deliverable"] {
         let path = cwd.join(dir);
         if !path.exists() {
             std::fs::create_dir(&path).map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
-            println!("jazyk: created {}/", dir);
+            made.push(format!("{}/", dir));
         }
     }
     let readme = cwd.join("docs/README.md");
@@ -157,9 +167,9 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<(), String> {
                        file is the root document: the compiler reads it first, and every other\n\
                        document under `docs/` should be reachable from it.\n";
         std::fs::write(&readme, content).map_err(|e| format!("cannot write {}: {}", readme.display(), e))?;
-        println!("jazyk: seeded docs/README.md with a TODO placeholder");
+        made.push("docs/README.md".to_string());
     }
-    Ok(())
+    Ok(made)
 }
 
 // The agents init knows how to wire: display name, config path, and the JSON key that

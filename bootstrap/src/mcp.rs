@@ -1778,10 +1778,12 @@ impl McpServer {
         if let Err(e) = std::fs::write(root.join("jazyk.toml"), crate::cli::INIT_TOML) {
             return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
         }
-        if let Err(e) = crate::cli::init_scaffold(root) {
-            return json!({"error": {"rule": "write-failed", "message": e}});
-        }
-        json!({"initialized": root.display().to_string(), "next": "edit docs/README.md, then compile"})
+        let made = match crate::cli::init_scaffold(root) {
+            Ok(made) => made,
+            Err(e) => return json!({"error": {"rule": "write-failed", "message": e}}),
+        };
+        json!({"initialized": root.display().to_string(), "created": made,
+               "next": "edit docs/README.md, then compile"})
     }
 
     fn update_project_settings(&self, args: &Value) -> Value {

@@ -45,17 +45,20 @@ impl ProxyState {
         if let Err(e) = std::fs::write(cwd.join("jazyk.toml"), crate::cli::INIT_TOML) {
             return format!("jazyk: cannot write jazyk.toml: {}", e);
         }
-        if let Err(e) = crate::cli::init_scaffold(&cwd) {
-            return format!("jazyk: cannot scaffold the project: {}", e);
-        }
+        let made = match crate::cli::init_scaffold(&cwd) {
+            Ok(made) => made,
+            Err(e) => return format!("jazyk: cannot scaffold the project: {}", e),
+        };
         *self.project.lock().unwrap() = Some(crate::project::Project::load(&cwd));
         start_sink(self);
         watch_runs(self);
         format!(
-            "Initialized a jazyk project in {}: jazyk.toml, docs/README.md, deliverable/.\n\
+            "Initialized a jazyk project in {}: jazyk.toml{}{}.\n\
              Describe what you are building in docs/README.md, then run /compile.\n\
              Start a new conversation to give the agent the jazyk tools; the commands work here now.",
-            cwd.display()
+            cwd.display(),
+            if made.is_empty() { "" } else { ", " },
+            made.join(", ")
         )
     }
 }

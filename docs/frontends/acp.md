@@ -283,6 +283,16 @@ before the prompt reaches the agent: a matched command runs the real work (the s
 path as the CLI command of that name) and streams its progress into the open turn,
 then ends the turn. Unmatched prompts go to the agent as conversation.
 
+A build command streams the work at full fidelity, not just its boundaries:
+
+- Wave and turn boundaries are message text, the running commentary.
+- The worker's reasoning (`modelText` trace events) flows as `agent_thought_chunk`,
+  so the minutes inside a turn are visible thinking, not silence.
+- Each graph tool call flows as `tool_call` with the arguments as raw input, and its
+  result as `tool_call_update` (completed with the output, or failed with the
+  violated rule). Ids are namespaced per worker (`jazyk:<label>:<n>`), so parallel
+  turns never collide in the client's tool-call table.
+
 A command exists when a person needs an answer jazyk can give exactly, and no model
 should be improvising it: what this project is set to, what state the build is in,
 what setup remains. The catalog:

@@ -766,28 +766,93 @@ fn run_command(
 }
 
 // Build progress narrated as message chunks: one line per turn lifecycle event.
+// A command's build streams into the open turn at full fidelity: boundaries as
+// message text, worker reasoning as thought chunks, and each graph tool call as a
+// tool_call row with its result. Ids are namespaced per worker so parallel turns
+// never collide. Mirrors docs/frontends/acp.md#slash-commands.
 fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
     use crate::turn::TraceEvent;
+    use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields};
+    // Per worker label: calls made so far, and the id of the one still open.
+    let open: Mutex<std::collections::HashMap<String, (u64, Option<String>)>> =
+        Mutex::new(std::collections::HashMap::new());
+    let send = move |update: SessionUpdate| {
+        let _ = up.send_notification(SessionNotification::new(sid_of(&sid), update));
+    };
     let sink: Arc<dyn Fn(&TraceEvent) + Send + Sync> = Arc::new(move |ev| {
-        let line = match ev {
-            TraceEvent::WaveStart { task, items, .. } => {
-                Some(format!("wave: {} ({} item(s))\n", task, items.len()))
-            }
-            TraceEvent::TurnStart { label, .. } => Some(format!("▶ {}\n", label)),
-            TraceEvent::TurnDone { label, staged, .. } => Some(format!("✓ {} ({} staged)\n", label, staged)),
-            TraceEvent::TurnFailed { label, error, .. } => Some(format!("✗ {}: {}\n", label, error)),
-            TraceEvent::GenEntityDone { entity, files } => Some(format!("✓ gen {} ({} file(s))\n", entity, files)),
-            TraceEvent::GenEntityFailed { entity, error, .. } => Some(format!("✗ gen {}: {}\n", entity, error)),
-            TraceEvent::VerifyRowDone { requirement, verdict, .. } => {
-                Some(format!("{} {}\n", verdict, requirement))
-            }
-            _ => None,
+        let text_update = |text: String| {
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
         };
-        if let Some(text) = line {
-            let _ = up.send_notification(SessionNotification::new(
-                sid_of(&sid),
-                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text))),
-            ));
+        match ev {
+            TraceEvent::WaveStart { task, items, .. } => {
+                send(text_update(format!("wave: {} ({} item(s))\n", task, items.len())));
+            }
+            TraceEvent::TurnStart { label, .. } => send(text_update(format!("▶ {}\n", label))),
+            TraceEvent::TurnDone { label, staged, .. } => {
+                send(text_update(format!("✓ {} ({} staged)\n", label, staged)));
+            }
+            TraceEvent::TurnFailed { label, error, .. } => {
+                send(text_update(format!("✗ {}: {}\n", label, error)));
+            }
+            TraceEvent::GenEntityDone { entity, files } => {
+                send(text_update(format!("✓ gen {} ({} file(s))\n", entity, files)));
+            }
+            TraceEvent::GenEntityFailed { entity, error, .. } => {
+                send(text_update(format!("✗ gen {}: {}\n", entity, error)));
+            }
+            TraceEvent::VerifyRowDone { requirement, verdict, .. } => {
+                send(text_update(format!("{} {}\n", verdict, requirement)));
+            }
+            TraceEvent::ModelText { text, .. } => {
+                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
+                    format!("{}\n", text),
+                ))));
+            }
+            TraceEvent::Note { text, verbose, .. } if !verbose => {
+                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
+                    format!("{}\n", text),
+                ))));
+            }
+            TraceEvent::ToolCall { label, name, summary, full } => {
+                let id = {
+                    let mut map = open.lock().unwrap();
+                    let entry = map.entry(label.clone()).or_insert((0, None));
+                    entry.0 += 1;
+                    let id = format!("jazyk:{}:{}", label, entry.0);
+                    entry.1 = Some(id.clone());
+                    id
+                };
+                let input = full.clone().unwrap_or_else(|| summary.clone());
+                send(SessionUpdate::ToolCall(
+                    ToolCall::new(id, name.clone())
+                        .status(ToolCallStatus::InProgress)
+                        .raw_input(serde_json::Value::String(input)),
+                ));
+            }
+            TraceEvent::ToolResult { label, name, summary, full } => {
+                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.1.take()) {
+                    let output = full.clone().unwrap_or_else(|| summary.clone());
+                    send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                        id,
+                        ToolCallUpdateFields::new()
+                            .status(ToolCallStatus::Completed)
+                            .title(name.clone())
+                            .raw_output(serde_json::Value::String(output)),
+                    )));
+                }
+            }
+            TraceEvent::ToolError { label, rule, message } => {
+                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.1.take()) {
+                    send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                        id,
+                        ToolCallUpdateFields::new()
+                            .status(ToolCallStatus::Failed)
+                            .title(rule.clone())
+                            .raw_output(serde_json::Value::String(message.clone())),
+                    )));
+                }
+            }
+            _ => {}
         }
     });
     crate::turn::Trace::to_sink(crate::turn::TraceLevel::Normal, sink, Default::default())

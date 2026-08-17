@@ -154,9 +154,18 @@ What the store serves:
   end-of-replay signal.
 - An agent that keeps its own sessions (Claude, Codex, OpenCode all advertise
   `loadSession`) owns the replay instead: its history is the real one, and jazyk
-  forwards the load untouched rather than showing the conversation twice. The store
-  answers only for agents that cannot, and then it says what it is: the transcript is
-  restored for the person, and the agent continues without that memory.
+  forwards the load rather than showing the conversation twice. The forwarded
+  request gains the jazyk serving the same way `session/new` does, so a reopened
+  session keeps its tools.
+- A load never reaches an agent that did not advertise `loadSession`. The proxy
+  answers it: it opens a fresh downstream session for the continuation, routes the
+  loaded id onto it (prompts, cancels, and configuration one way, updates and
+  permission requests the other), replays whatever the store holds, and responds.
+  A conversation with no recorded history still loads, with a note saying so; a
+  missing transcript is not a launch failure.
+- After any load, the proxy re-advertises the [slash commands](#slash-commands) and
+  the store keeps appending to the same conversation file, so a reopened session
+  behaves like the one it continues.
 
 ## Worker sessions
 
@@ -362,7 +371,9 @@ window in the IDE. What the protocol does allow:
 - The proxy advertises `loadSession` and session listing, and lists worker runs as
   read-only sessions with descriptive titles ("compile docs/cli.md"). An IDE with a
   session picker attaches through the standard `session/load`, which replays the full
-  history (tool calls included) and then streams the live tail.
+  history (tool calls included) and then streams the live tail. A prompt typed into a
+  mirrored run is answered by the proxy with a note that the session is a read-only
+  mirror; it is never forwarded to the agent, which has no such session.
 - `_jazyk/session_list_changed` is a custom notification (underscore-namespaced, so
   clients that do not know it ignore it, per the protocol's extensibility rules)
   telling a capable client to refresh its session list. The GUI honors it; plain IDEs

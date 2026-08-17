@@ -28,6 +28,10 @@ struct ProxyState {
     agent_name: String,
     // Whether that agent can reopen one of its own sessions, learned at initialize.
     down_loads: Mutex<bool>,
+    // A loaded conversation continues on a fresh downstream session when the agent
+    // cannot reopen its own: the loaded id routes onto the new one, and back.
+    // Mirrors docs/frontends/acp.md#session-store.
+    routes: Mutex<std::collections::HashMap<String, String>>,
     llm: crate::llm::Llm,
     out: std::path::PathBuf,
 }
@@ -35,6 +39,26 @@ struct ProxyState {
 impl ProxyState {
     fn in_project(&self) -> bool {
         self.project.lock().unwrap().is_some()
+    }
+
+    fn add_route(&self, up: &str, down: &str) {
+        self.routes.lock().unwrap().insert(up.to_string(), down.to_string());
+    }
+
+    // The id the downstream agent knows a session by.
+    fn route_down(&self, sid: &str) -> String {
+        self.routes.lock().unwrap().get(sid).cloned().unwrap_or_else(|| sid.to_string())
+    }
+
+    // The id the IDE knows a session by.
+    fn route_up(&self, sid: &str) -> String {
+        self.routes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, d)| d.as_str() == sid)
+            .map(|(u, _)| u.clone())
+            .unwrap_or_else(|| sid.to_string())
     }
 
     // `/jazyk-init` in a bare directory: scaffold, then adopt the project without a
@@ -105,6 +129,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         project: Mutex::new(in_project.then(|| proj.clone())),
         agent_name: agent.name.clone(),
         down_loads: Mutex::new(false),
+        routes: Mutex::new(std::collections::HashMap::new()),
         llm,
         out,
     });
@@ -161,28 +186,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 async move |mut req: NewSessionRequest, responder, _cx| {
                     // Inside a jazyk project, the session gains the chat serving; the
                     // dropdown entry stays inert everywhere else.
-                    if st_new.in_project() {
-                        let exe = std::env::current_exe()
-                            .ok()
-                            .and_then(|p| p.to_str().map(|s| s.to_string()))
-                            .unwrap_or_else(|| "jazyk".to_string());
-                        let mut args = vec![
-                            "mcp".to_string(),
-                            "chat".to_string(),
-                            "--ephemeral".to_string(),
-                            "--out".to_string(),
-                            st_new.out.to_string_lossy().into_owned(),
-                        ];
-                        if let Some(sink) = st_new.sink_path.lock().unwrap().as_ref() {
-                            args.push("--edit-sink".to_string());
-                            args.push(sink.to_string_lossy().into_owned());
-                        }
-                        let mut servers = req.mcp_servers.clone();
-                        servers.push(agent_client_protocol::schema::v1::McpServer::Stdio(
-                            McpServerStdio::new("jazyk", exe).args(args),
-                        ));
-                        req = req.mcp_servers(servers);
-                    }
+                    let servers = with_jazyk_serving(&st_new, req.mcp_servers.clone());
+                    req = req.mcp_servers(servers);
                     let down = st_new.down.get().cloned().ok_or_else(not_initialized)?;
                     let st = st_new.clone();
                     let cwd = req.cwd.clone();
@@ -202,35 +207,14 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         // outside one it advertises the way in, and nothing else.
                         // Mirrors docs/frontends/acp.md#slash-commands.
                         if let (Some(sid), Some(up)) = (sid, st.up.get()) {
-                            use agent_client_protocol::schema::v1::{
-                                AvailableCommand, AvailableCommandsUpdate,
-                            };
-                            let in_project = st.in_project();
-                            let commands: Vec<AvailableCommand> =
-                                crate::acp::commands::available(in_project)
-                                    .map(|c| {
-                                        let cmd = AvailableCommand::new(c.name, c.description);
-                                        match c.hint {
-                                            Some(h) => cmd.input(
-                                                agent_client_protocol::schema::v1::AvailableCommandInput::Unstructured(
-                                                    agent_client_protocol::schema::v1::UnstructuredCommandInput::new(h),
-                                                ),
-                                            ),
-                                            None => cmd,
-                                        }
-                                    })
-                                    .collect();
-                            let _ = up.send_notification(SessionNotification::new(
-                                sid_of(&sid),
-                                SessionUpdate::AvailableCommandsUpdate(
-                                    AvailableCommandsUpdate::new(commands),
-                                ),
-                            ));
+                            advertise_commands(&st, up, &sid);
                             // Opening a project with standing questions re-surfaces
                             // them without any request.
                             // Mirrors docs/frontends/acp.md#questions-in-chat.
-                            if let Some(q) =
-                                in_project.then(|| crate::answer::questions_summary(&st.out)).flatten()
+                            if let Some(q) = st
+                                .in_project()
+                                .then(|| crate::answer::questions_summary(&st.out))
+                                .flatten()
                             {
                                 let _ = up.send_notification(SessionNotification::new(
                                     sid_of(&sid),
@@ -248,6 +232,22 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             .on_receive_request(
                 async move |req: PromptRequest, responder, cx: ConnectionTo<Client>| {
                     *st_prompt.last_session.lock().unwrap() = Some(req.session_id.to_string());
+                    // A mirrored run has no agent behind it; a prompt typed into one
+                    // is answered here, never forwarded.
+                    // Mirrors docs/frontends/acp.md#mirroring-into-ides.
+                    if req.session_id.to_string().starts_with("jazyk-run-") {
+                        let _ = cx.send_notification(SessionNotification::new(
+                            req.session_id.clone(),
+                            SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                ContentBlock::from(
+                                    "This session is a read-only mirror of an automated run. \
+                                     Start a new session to talk to the agent."
+                                        .to_string(),
+                                ),
+                            )),
+                        ));
+                        return responder.respond(PromptResponse::new(StopReason::EndTurn));
+                    }
                     // Slash commands run the real work here; everything else forwards.
                     // Mirrors docs/frontends/acp.md#slash-commands.
                     {
@@ -312,6 +312,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                         }
                     }
                     let down = st_prompt.down.get().cloned().ok_or_else(not_initialized)?;
+                    let mut req = req;
+                    req.session_id = sid_of(&st_prompt.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
                     })
@@ -362,37 +364,76 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                             agent_client_protocol::schema::v1::LoadSessionResponse::new(),
                         );
                     }
+                    *st_load.last_session.lock().unwrap() = Some(sid.clone());
+                    let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
                     // An agent that keeps its own sessions owns the replay: its
                     // history is the real one, and replaying jazyk's copy too would
-                    // show the conversation twice. Only when it cannot does the
-                    // project's store answer, and then it says what it is.
+                    // show the conversation twice. The forwarded load keeps the
+                    // jazyk serving, the same way session/new gains it.
                     // Mirrors docs/frontends/acp.md#session-store.
-                    let down = st_load.down.get().cloned().ok_or_else(not_initialized)?;
                     if *st_load.down_loads.lock().unwrap() {
+                        let mut req = req;
+                        let servers = with_jazyk_serving(&st_load, req.mcp_servers.clone());
+                        req = req.mcp_servers(servers);
+                        let st = st_load.clone();
+                        let up = cx.clone();
                         return down.send_request(req).on_receiving_result(async move |result| {
-                            responder.respond_with_result(result)
+                            let ok = result.is_ok();
+                            responder.respond_with_result(result)?;
+                            if ok {
+                                advertise_commands(&st, &up, &sid);
+                            }
+                            Ok(())
                         });
                     }
-                    let records = crate::acp::sessions::read(&st_load.out, &sid);
-                    if records.is_empty() {
-                        return down.send_request(req).on_receiving_result(async move |result| {
-                            responder.respond_with_result(result)
-                        });
-                    }
-                    for update in replay_conversation(&records) {
-                        let _ = cx.send_notification(SessionNotification::new(sid_of(&sid), update));
-                    }
-                    let _ = cx.send_notification(SessionNotification::new(
-                        sid_of(&sid),
-                        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(
+                    // The agent cannot reopen a session, so the load never reaches
+                    // it: a fresh downstream session carries the continuation, the
+                    // loaded id routes onto it, and the store replays what it holds.
+                    // Mirrors docs/frontends/acp.md#session-store.
+                    let new_req = agent_client_protocol::schema::v1::NewSessionRequest::new(
+                        req.cwd.clone(),
+                    )
+                    .mcp_servers(with_jazyk_serving(&st_load, req.mcp_servers.clone()));
+                    let st = st_load.clone();
+                    let up = cx.clone();
+                    let cwd = req.cwd.clone();
+                    down.send_request(new_req).on_receiving_result(async move |result| {
+                        let down_sid = match result {
+                            Ok(r) => r.session_id.to_string(),
+                            Err(e) => return responder.respond_with_result(Err(e)),
+                        };
+                        st.add_route(&sid, &down_sid);
+                        let records = crate::acp::sessions::read(&st.out, &sid);
+                        if st.in_project() {
+                            crate::acp::sessions::open(&st.out, &sid, &cwd, &st.agent_name);
+                        }
+                        let replay = replay_conversation(&records);
+                        let empty = replay.is_empty();
+                        for update in replay {
+                            let _ =
+                                up.send_notification(SessionNotification::new(sid_of(&sid), update));
+                        }
+                        let note = if empty {
+                            "(no recorded history for this conversation in this project's \
+                             session store; continuing fresh.)"
+                        } else {
                             "\n(replayed from this project's session store. This agent does not \
                              restore conversation memory, so it answers from here on without it.)"
-                                .to_string(),
-                        ))),
-                    ));
-                    // The response is the protocol's end-of-replay signal, so it goes
-                    // last. Mirrors docs/frontends/acp.md#session-store.
-                    responder.respond(agent_client_protocol::schema::v1::LoadSessionResponse::new())
+                        };
+                        let _ = up.send_notification(SessionNotification::new(
+                            sid_of(&sid),
+                            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(
+                                note.to_string(),
+                            ))),
+                        ));
+                        // The response is the protocol's end-of-replay signal, so it
+                        // goes last. Mirrors docs/frontends/acp.md#session-store.
+                        responder.respond(
+                            agent_client_protocol::schema::v1::LoadSessionResponse::new(),
+                        )?;
+                        advertise_commands(&st, &up, &sid);
+                        Ok(())
+                    })
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -401,10 +442,11 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             // requests pass straight through.
             // Mirrors docs/frontends/acp.md#choosing-a-model.
             .on_receive_request(
-                async move |req: agent_client_protocol::schema::v1::SetSessionConfigOptionRequest,
+                async move |mut req: agent_client_protocol::schema::v1::SetSessionConfigOptionRequest,
                             responder,
                             _cx| {
                     let down = st_config.down.get().cloned().ok_or_else(not_initialized)?;
+                    req.session_id = sid_of(&st_config.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
                     })
@@ -412,10 +454,11 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |req: agent_client_protocol::schema::v1::SetSessionModeRequest,
+                async move |mut req: agent_client_protocol::schema::v1::SetSessionModeRequest,
                             responder,
                             _cx| {
                     let down = st_mode.down.get().cloned().ok_or_else(not_initialized)?;
+                    req.session_id = sid_of(&st_mode.route_down(&req.session_id.to_string()));
                     down.send_request(req).on_receiving_result(async move |result| {
                         responder.respond_with_result(result)
                     })
@@ -423,8 +466,9 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_notification(
-                async move |n: CancelNotification, _cx| {
+                async move |mut n: CancelNotification, _cx| {
                     if let Some(down) = st_cancel.down.get() {
+                        n.session_id = sid_of(&st_cancel.route_down(&n.session_id.to_string()));
                         let _ = down.send_notification(n);
                     }
                     Ok(())
@@ -446,6 +490,59 @@ fn sid_of(s: &str) -> SessionId {
     SessionId::new(std::sync::Arc::from(s))
 }
 
+// Inside a project, every session the downstream agent opens carries the jazyk chat
+// serving, whether it came from session/new or session/load.
+// Mirrors docs/frontends/acp.md#session-store.
+fn with_jazyk_serving(
+    st: &Arc<ProxyState>,
+    mut servers: Vec<agent_client_protocol::schema::v1::McpServer>,
+) -> Vec<agent_client_protocol::schema::v1::McpServer> {
+    if !st.in_project() {
+        return servers;
+    }
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "jazyk".to_string());
+    let mut args = vec![
+        "mcp".to_string(),
+        "chat".to_string(),
+        "--ephemeral".to_string(),
+        "--out".to_string(),
+        st.out.to_string_lossy().into_owned(),
+    ];
+    if let Some(sink) = st.sink_path.lock().unwrap().as_ref() {
+        args.push("--edit-sink".to_string());
+        args.push(sink.to_string_lossy().into_owned());
+    }
+    servers.push(agent_client_protocol::schema::v1::McpServer::Stdio(
+        McpServerStdio::new("jazyk", exe).args(args),
+    ));
+    servers
+}
+
+// Mirrors docs/frontends/acp.md#slash-commands.
+fn advertise_commands(st: &Arc<ProxyState>, up: &ConnectionTo<Client>, sid: &str) {
+    use agent_client_protocol::schema::v1::{AvailableCommand, AvailableCommandsUpdate};
+    let commands: Vec<AvailableCommand> = crate::acp::commands::available(st.in_project())
+        .map(|c| {
+            let cmd = AvailableCommand::new(c.name, c.description);
+            match c.hint {
+                Some(h) => cmd.input(
+                    agent_client_protocol::schema::v1::AvailableCommandInput::Unstructured(
+                        agent_client_protocol::schema::v1::UnstructuredCommandInput::new(h),
+                    ),
+                ),
+                None => cmd,
+            }
+        })
+        .collect();
+    let _ = up.send_notification(SessionNotification::new(
+        sid_of(sid),
+        SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
+    ));
+}
+
 fn not_initialized() -> agent_client_protocol::Error {
     agent_client_protocol::Error::internal_error().data("initialize first")
 }
@@ -462,6 +559,9 @@ fn ensure_down(
     }
     let up_n = state.up.get().cloned();
     let st_rec = state.clone();
+    let st_p = state.clone();
+    let st_r = state.clone();
+    let st_w = state.clone();
     let up_p = up_n.clone();
     let up_r = up_n.clone();
     let up_w = up_n.clone();
@@ -469,7 +569,10 @@ fn ensure_down(
         .builder()
         .name("jazyk-acp-down")
         .on_receive_notification(
-            async move |n: SessionNotification, _cx| {
+            async move |mut n: SessionNotification, _cx| {
+                // Traffic from a routed session carries the id the IDE knows.
+                // Mirrors docs/frontends/acp.md#session-store.
+                n.session_id = sid_of(&st_rec.route_up(&n.session_id.to_string()));
                 // Every update the agent sends passes through here on its way to the
                 // IDE, which is where the conversation is recorded.
                 // Mirrors docs/frontends/acp.md#session-store.
@@ -490,24 +593,27 @@ fn ensure_down(
             agent_client_protocol::on_receive_notification!(),
         )
         .on_receive_request(
-            async move |req: RequestPermissionRequest, responder, _cx| {
+            async move |mut req: RequestPermissionRequest, responder, _cx| {
                 let up = up_p.clone().ok_or_else(not_initialized)?;
+                req.session_id = sid_of(&st_p.route_up(&req.session_id.to_string()));
                 up.send_request(req)
                     .on_receiving_result(async move |result| responder.respond_with_result(result))
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |req: ReadTextFileRequest, responder, _cx| {
+            async move |mut req: ReadTextFileRequest, responder, _cx| {
                 let up = up_r.clone().ok_or_else(not_initialized)?;
+                req.session_id = sid_of(&st_r.route_up(&req.session_id.to_string()));
                 up.send_request(req)
                     .on_receiving_result(async move |result| responder.respond_with_result(result))
             },
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |req: WriteTextFileRequest, responder, _cx| {
+            async move |mut req: WriteTextFileRequest, responder, _cx| {
                 let up = up_w.clone().ok_or_else(not_initialized)?;
+                req.session_id = sid_of(&st_w.route_up(&req.session_id.to_string()));
                 up.send_request(req)
                     .on_receiving_result(async move |result| responder.respond_with_result(result))
             },

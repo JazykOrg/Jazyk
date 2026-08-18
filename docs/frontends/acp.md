@@ -101,8 +101,10 @@ The embedded agent offers one such option, `model`:
   replay it on the next session.
 - Nothing else moves: the endpoint and the key stay machine configuration, and a
   session choice never edits `jazyk.toml`. To change what every session starts with,
-  set the model in the project or global settings, or answer the question
-  [`jazyk init`](./cli.md#jazyk-init) asks.
+  set the model in the project or global settings, answer the question
+  [`jazyk init`](./cli.md#jazyk-init) asks, or run [`/model`](#slash-commands),
+  which does both: it pins the choice in `jazyk.toml` and applies it to the open
+  session through the same config option.
 
 For an external agent the options are its own. The proxy forwards
 `session/set_config_option` and `session/set_mode` downstream and passes the
@@ -302,6 +304,8 @@ what setup remains. The catalog:
 | `/help` | What jazyk is, and every command in this session with one line each. |
 | `/init` | Set the project up: scaffold what is missing, then state what is still unanswered (agent, model) and the command that answers it. |
 | `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
+| `/model` | The models the endpoint serves, the current one marked. With a name, pins it in `jazyk.toml` and applies it to this session where the agent takes the `model` config option. |
+| `/agent` | The agents jazyk can drive (built-in and configured), the current one marked. With a name, records it in `jazyk.toml`; the switch takes effect when the IDE restarts the jazyk agent. |
 | `/status` | The last build: verdict, graph size, open findings. |
 | `/questions` | The [standing questions](#questions-in-chat) on open findings. |
 | `/compile` | Reconcile the graph with the documents. |

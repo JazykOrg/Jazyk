@@ -12,7 +12,7 @@ pub struct Command {
     pub needs_project: bool,
 }
 
-pub const COMMANDS: [Command; 9] = [
+pub const COMMANDS: [Command; 11] = [
     Command {
         name: "help",
         description: "what jazyk is, and what these commands do",
@@ -29,6 +29,18 @@ pub const COMMANDS: [Command; 9] = [
         name: "config",
         description: "show the project's settings, or change one",
         hint: Some("key value, e.g. llm.model qwen3.8:27b-mlx"),
+        needs_project: true,
+    },
+    Command {
+        name: "model",
+        description: "list the endpoint's models, or pin one for this project",
+        hint: Some("name, e.g. qwen3.8:27b-mlx"),
+        needs_project: true,
+    },
+    Command {
+        name: "agent",
+        description: "list the agents jazyk can drive, or switch to one",
+        hint: Some("name, e.g. embedded, claude, codex, opencode"),
         needs_project: true,
     },
     Command {
@@ -222,6 +234,97 @@ pub fn config_set(proj: &Project, args: &str) -> String {
     }
 }
 
+// The endpoint's models with the current one marked.
+// Mirrors docs/frontends/acp.md#slash-commands.
+pub fn model_text(llm: &crate::llm::Llm) -> String {
+    let mut s = format!("Models at {}:\n", llm.base_url);
+    for m in llm.list_models() {
+        let mark = if m == llm.model { "  (current)" } else { "" };
+        s.push_str(&format!("  {}{}\n", m, mark));
+    }
+    s.push_str(
+        "\nPin one with `/model <name>`: it lands in jazyk.toml, and where the agent \
+         takes a `model` config option it applies to this session too.",
+    );
+    s
+}
+
+// Pinning a model is a config edit plus honesty about what the edit cannot reach.
+pub fn model_set(proj: &Project, llm: &crate::llm::Llm, name: &str) -> String {
+    let mut s = config_set(proj, &format!("llm.model {}", name));
+    if !llm.list_models().iter().any(|m| m == name) {
+        s.push_str(&format!(
+            "\n\nNote: {} does not list `{}`. The name is written as given; prompting \
+             fails if the endpoint does not know it.",
+            llm.base_url, name
+        ));
+    }
+    if std::env::var("JAZYK_MODEL").is_ok() {
+        s.push_str("\n\nJAZYK_MODEL is set in this environment and wins over the file.");
+    }
+    s
+}
+
+// Every agent jazyk can drive: the built-ins, then the profiles the project or the
+// global config defines. Mirrors docs/frontends/acp.md#slash-commands.
+pub fn known_agents(proj: &Project) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = crate::cli::ACP_AGENTS
+        .iter()
+        .map(|(name, label, _, _)| (name.to_string(), label.to_string()))
+        .collect();
+    let global = crate::project::load_global_acp();
+    for (name, p) in proj.acp.agents.iter().chain(global.agents.iter()) {
+        if !v.iter().any(|(n, _)| n == name) {
+            v.push((name.clone(), format!("configured: {} {}", p.command, p.args.join(" "))));
+        }
+    }
+    v
+}
+
+pub fn agent_text(proj: &Project) -> String {
+    let current = crate::acp::config::resolve_acp(
+        None,
+        &proj.acp,
+        &crate::project::load_global_acp(),
+        |n| std::env::var(n).ok(),
+    )
+    .map(|a| a.name)
+    .unwrap_or_default();
+    let mut s = String::from("Agents jazyk can drive:\n");
+    for (name, label) in known_agents(proj) {
+        let mark = if name == current { "  (current)" } else { "" };
+        s.push_str(&format!("  {:12} {}{}\n", name, label, mark));
+    }
+    s.push_str(
+        "\nSwitch with `/agent <name>`. A custom agent is an `[acp.agents.<name>]` \
+         entry in jazyk.toml with `command` and `args`.",
+    );
+    s
+}
+
+pub fn agent_set(proj: &Project, name: &str) -> String {
+    let known = known_agents(proj);
+    if !known.iter().any(|(n, _)| n == name) {
+        return format!(
+            "`{}` is not an agent jazyk knows:\n{}\nDefine one with an `[acp.agents.{}]` \
+             entry in jazyk.toml (`command`, `args`), then run `/agent {}` again.",
+            name,
+            known
+                .iter()
+                .map(|(n, l)| format!("  {:12} {}\n", n, l))
+                .collect::<String>(),
+            name,
+            name
+        );
+    }
+    let mut s = config_set(proj, &format!("acp.agent {}", name));
+    s.push_str(
+        "\n\nThe switch takes effect when the jazyk agent restarts: reopen the window, \
+         or restart the agent in the IDE.",
+    );
+    s
+}
+
 // What a fresh project still needs answered, as prose plus the command that answers
 // it. A chat turn cannot stop and prompt, so the walkthrough is a list of the next
 // moves rather than a questionnaire. Mirrors docs/frontends/acp.md#slash-commands.
@@ -239,7 +342,7 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
         Ok(a) if a.name == crate::acp::config::EMBEDDED && !states_agent => {
             s.push_str(&format!(
                 "- Agent: the built-in one, prompting `{}` at {}. Another agent takes over with \
-                 `/config acp.agent <name>`.\n",
+                 `/agent <name>`.\n",
                 llm.model, llm.base_url
             ));
         }
@@ -248,7 +351,7 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
     }
     if !toml.contains("model") {
         s.push_str(&format!(
-            "- Model: `{}`, inherited rather than stated here. `/config llm.model <name>` pins it \
+            "- Model: `{}`, inherited rather than stated here. `/model <name>` pins it \
              to this project.\n",
             llm.model
         ));

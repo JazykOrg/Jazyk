@@ -394,6 +394,21 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
             st.events.emit("settings.changed", json!({}));
             Some(reply)
         }
+        "model" if rest.is_empty() => Some(crate::acp::commands::model_text(&llm)),
+        "model" => {
+            let reply = crate::acp::commands::model_set(&proj, &llm, rest);
+            st.events.emit("settings.changed", json!({}));
+            Some(format!(
+                "{}\n\nNew jobs use it once settings reload; open conversations keep theirs.",
+                reply
+            ))
+        }
+        "agent" if rest.is_empty() => Some(crate::acp::commands::agent_text(&proj)),
+        "agent" => {
+            let reply = crate::acp::commands::agent_set(&proj, rest);
+            st.events.emit("settings.changed", json!({}));
+            Some(reply)
+        }
         "compile" => {
             let id = st.jobs.submit(st, super::jobs::JobKind::Compile);
             Some(format!("compile queued (job {}); its turns stream below as the build runs", id))

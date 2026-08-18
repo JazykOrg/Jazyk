@@ -360,7 +360,7 @@ pub(crate) fn resolve_llm(
 // The agents init can wire without being told anything else: the built-in one, and
 // the external ones whose command line is public and stable.
 // Mirrors docs/frontends/acp.md#agents.
-const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
+pub const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
     (
         crate::acp::config::EMBEDDED,
         "Embedded (jazyk's own agent, over your LLM endpoint)",

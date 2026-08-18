@@ -32,7 +32,8 @@ struct ProxyState {
     // cannot reopen its own: the loaded id routes onto the new one, and back.
     // Mirrors docs/frontends/acp.md#session-store.
     routes: Mutex<std::collections::HashMap<String, String>>,
-    llm: crate::llm::Llm,
+    // Behind a lock because `/model` retunes it without a restart.
+    llm: Mutex<crate::llm::Llm>,
     out: std::path::PathBuf,
 }
 
@@ -130,7 +131,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         agent_name: agent.name.clone(),
         down_loads: Mutex::new(false),
         routes: Mutex::new(std::collections::HashMap::new()),
-        llm,
+        llm: Mutex::new(llm),
         out,
     });
     if state.in_project() {
@@ -696,6 +697,7 @@ fn run_command(
         return "not a jazyk project".into();
     };
     let proj = &proj;
+    let llm = st.llm.lock().unwrap().clone();
     let say = |text: String| {
         let _ = up.send_notification(SessionNotification::new(
             sid_of(sid),
@@ -706,10 +708,38 @@ fn run_command(
         "init" => format!(
             "{} is already a jazyk project.\n\n{}",
             proj.root.display(),
-            commands::init_next_steps(proj, &st.llm)
+            commands::init_next_steps(proj, &llm)
         ),
-        "config" if args.is_empty() => commands::config_text(proj, &st.llm),
+        "config" if args.is_empty() => commands::config_text(proj, &llm),
         "config" => commands::config_set(proj, args),
+        "model" if args.is_empty() => commands::model_text(&llm),
+        "model" => {
+            let mut reply = commands::model_set(proj, &llm, args);
+            // The proxy's own builds pick the new model up immediately; the open
+            // session gets it through the protocol's config option where the agent
+            // takes one. Mirrors docs/frontends/acp.md#choosing-a-model.
+            st.llm.lock().unwrap().model = args.to_string();
+            if let Some(down) = st.down.get() {
+                use agent_client_protocol::schema::v1::{
+                    SessionConfigId, SessionConfigValueId, SetSessionConfigOptionRequest,
+                };
+                let req = SetSessionConfigOptionRequest::new(
+                    sid_of(&st.route_down(sid)),
+                    SessionConfigId::new(std::sync::Arc::from("model")),
+                    SessionConfigValueId::new(std::sync::Arc::from(args)),
+                );
+                let _ = down
+                    .send_request(req)
+                    .on_receiving_result(async move |_result| Ok(()));
+                reply.push_str(
+                    "\n\nBuilds from this proxy use it now. The open session was asked to \
+                     switch too; an agent without a `model` option keeps its own.",
+                );
+            }
+            reply
+        }
+        "agent" if args.is_empty() => commands::agent_text(proj),
+        "agent" => commands::agent_set(proj, args),
         "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
             "no standing questions; every open finding is either unprompted or already answered".into()
         }),
@@ -731,14 +761,14 @@ fn run_command(
         "compile" => {
             say("compiling…\n".into());
             let trace = narrated_trace(up.clone(), sid.to_string());
-            let report = crate::reconcile::compile(proj, &st.llm, &st.out, &trace);
+            let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
             format!(
                 "\n{} — {} turn(s), {} mutation(s), {} parked, coverage {}%",
                 report.verdict, report.turns, report.applied, report.parked, report.coverage_pct
             )
         }
         "generate" | "verify" => {
-            let runner = match crate::acp::runner::AcpRunner::start(proj, &st.llm, &st.out) {
+            let runner = match crate::acp::runner::AcpRunner::start(proj, &llm, &st.out) {
                 Ok(r) => r,
                 Err(e) => return format!("agent failed to start: {}", e),
             };

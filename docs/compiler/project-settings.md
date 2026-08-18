@@ -68,7 +68,7 @@ path = "./handlers/drawio.wasm"
 
 Linting rules are plain English, grouped by the severity they produce. Rules are
 evaluated during [review turns](./turns.md#task-types) and the
-[checks wave](./reconciler.md#waves). Findings become
+[checks wave](./compilation.md#waves). Findings become
 [diagnostics](./model/diagnostic.md): `warnings` let `jazyk check` pass, `errors` fail it.
 
 ```toml
@@ -165,7 +165,7 @@ resolve per field, highest priority first:
 `roots.files` is a glob list (matched like [`docs.glob`](#glob)) naming the root
 documents. Roots seed [reconciler scheduling](./reconciler.md#scheduling): the root
 document reconciles first, so the core vocabulary exists before other documents need it.
-Roots also anchor reachability [checks](./reconciler.md#waves): an entity unreachable
+Roots also anchor reachability [checks](./compilation.md#waves): an entity unreachable
 from a root is flagged.
 
 ```toml
@@ -209,7 +209,7 @@ state, reaching workers through the graph; see
 
 ## Workflow
 
-Defaults for the [control plane](./reconciler.md#the-control-plane). All optional.
+Defaults for the [control plane](./control-plane.md). All optional.
 
 ```toml
 [workflow]
@@ -219,12 +219,12 @@ worker = "agent"
 ```
 
 - `compile`, `generate`: `manual` (default) or `auto`. `manual` gates the work
-  behind a [release](./reconciler.md#modes-and-releases): changes queue, nothing
+  behind a [release](./control-plane.md#modes-and-releases): changes queue, nothing
   acts until approved. `auto` lets a watcher act on changes as they land; it spends
   LLM budget, so it is opt-in. Explicit commands (`jazyk compile`, `jazyk gen`,
   `jazyk watch`) are their own approval and run under either mode.
 - `worker`: who acts on a GUI release. `internal`, `agent`, or `any` (default).
-  See [dispatch](./reconciler.md#dispatch).
+  See [dispatch](./control-plane.md#dispatch).
 
 These are defaults; the live values sit in `control.yaml` in the out directory,
 where a GUI toggle or CLI flag changes them at runtime without editing the project
@@ -250,7 +250,7 @@ max_entity_requirements = 50
 - `context_budget`: maximum context pack size in characters. Default 24000.
 - `build_turn_factor`: sets the per-build turn cap as
   `build_turn_factor × (dirty documents + touched entities)`. Default 3. See
-  [convergence](./reconciler.md#convergence).
+  [convergence](./compilation.md#convergence).
 - `max_section_chars`: a section body over this size draws `section-too-large`.
   Default 6000.
 - `max_doc_sections`: a document with more sections draws `doc-too-large`. Default 40.

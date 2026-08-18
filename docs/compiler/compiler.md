@@ -41,22 +41,19 @@ The model owns everything that requires judgment:
   [embedded agent](../frontends/acp.md#the-embedded-agent)); every
   [turn](./turns.md) runs as a session against it, with the jazyk tools injected
   over MCP.
-- The [reconciler](./reconciler.md): computes what is stale, schedules turns level by
-  level with bounded parallelism, and decides when the build has converged.
+- The [reconciler](./reconciler.md): computes what is stale and schedules turns level
+  by level with bounded parallelism.
+- The [control plane](./control-plane.md): the workflow policy on disk. Modes,
+  releases, workers, and leases decide whether anyone may act on the queued work and
+  who is acting, the same answer for every frontend.
 
 ## Build lifecycle
 
-```
-parse all docs → diff section trees → dirty set
-  → ingest wave (reconcile-doc turns, root first, then levels in parallel)
-  → review wave (review-entity turns)
-  → checks (deterministic lint, coverage, reachability)
-  → fixed point reached, or budget exhausted with work parked
-```
-
-The first build and every rebuild run the same lifecycle. The first build starts
-from an empty graph, so everything is dirty. A rebuild with no changes has an empty dirty
-set and makes zero LLM calls.
+A build runs waves of turns over the dirty documents until the graph and the
+documents agree: ingest, pair review, entity review, then deterministic checks and
+the verdict. [Compilation](./compilation.md) describes it stage by stage. The first
+build is not special: it is reconciliation against an empty graph, and a rebuild
+with no changes makes zero LLM calls.
 
 ## Outputs
 

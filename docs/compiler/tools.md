@@ -177,7 +177,7 @@ changeset exactly as an in-process turn does. One task is open at a time per ser
   count, ready or blocked with the reason. Zero tasks returns the build verdict
   instead; nothing to do is an answer. The verdict carries `openDiagnostics`, the
   open diagnostic counts by severity, so a converged build with standing errors
-  says so ([convergence](./reconciler.md#convergence)).
+  says so ([convergence](./compilation.md#convergence)).
 - `begin_compilation({task?})`: claim the named task, or the first ready one. Reloads
   the store, syncs section trees in memory, opens a changeset, and returns the work
   package: the task's `instructions` (the same extraction or review contract an

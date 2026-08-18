@@ -41,4 +41,4 @@ E.g. `docs/cli.md#/cli/commands/compile`. See [references](../parsing.md#referen
 
 Every section carries a coverage state in the store (`unprocessed`, `covered`, or
 `non-normative`, with a `note` and `claimedBy`). Coverage is the completeness meter of a
-build. See [coverage](../reconciler.md#coverage).
+build. See [coverage](../compilation.md#coverage).

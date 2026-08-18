@@ -412,7 +412,7 @@ impl Store {
 
     // Deterministic neighbor set for one requirement: other requirements sharing an
     // entity, scored by overlapping content tokens, at least two shared, best six.
-    // Feeds the review-requirement pair wave (docs/compiler/reconciler.md#waves).
+    // Feeds the review-requirement pair wave (docs/compiler/compilation.md#waves).
     pub fn requirement_neighbors(&self, rid: &str) -> Vec<String> {
         let Some(req) = self.graph.requirements.get(rid) else { return Vec::new() };
         let subject_entities: BTreeSet<&str> = req.entities.iter().map(|e| self.resolve_id(e)).collect();
@@ -453,7 +453,7 @@ impl Store {
     }
 
     // Open diagnostic counts by severity, suppressed excluded: the health line that
-    // rides beside every verdict. Mirrors docs/compiler/reconciler.md#convergence.
+    // rides beside every verdict. Mirrors docs/compiler/compilation.md#convergence.
     pub fn open_diag_counts(&self) -> BTreeMap<String, u64> {
         let mut m: BTreeMap<String, u64> = BTreeMap::new();
         for d in self.graph.diagnostics.values() {
@@ -466,7 +466,7 @@ impl Store {
 
     // An open judged diagnostic naming this node: reason enough to schedule a review
     // even when the neighbor computation finds nothing (a partner may be deleted; the
-    // diagnostic itself is the remaining work). Mirrors docs/compiler/reconciler.md#waves.
+    // diagnostic itself is the remaining work). Mirrors docs/compiler/compilation.md#waves.
     pub fn has_open_judged_diag(&self, id: &str) -> bool {
         self.graph.diagnostics.values().any(|d| {
             d.lifecycle == "open" && JUDGED_RULES.contains(&d.rule.as_str()) && d.subjects.iter().any(|s| s == id)
@@ -484,7 +484,7 @@ impl Store {
     // resolves the diagnostic in place (the returned ops go to the journal); surviving
     // subjects re-enqueue for review, so a turn re-judges the finding. Runs on every
     // deleting commit, turn and GC alike. Mirrors docs/compiler/graph.md#garbage-collection
-    // and docs/compiler/reconciler.md#waves.
+    // and docs/compiler/compilation.md#waves.
     fn propagate_deletions(&mut self, deleted: &BTreeSet<String>, build: &str) -> Vec<Op> {
         let mut resolved = Vec::new();
         if deleted.is_empty() {
@@ -556,7 +556,7 @@ impl Store {
     // The level-triggered half of deletion propagation: sweep every open judged
     // diagnostic for missing subjects and settle it, journaled like GC. A graph
     // deleted into a stranded state heals here instead of staying wedged.
-    // Mirrors docs/compiler/reconciler.md#waves.
+    // Mirrors docs/compiler/compilation.md#waves.
     pub fn settle_dangling_diags(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
         let missing = self.missing_diag_subjects();
@@ -601,7 +601,7 @@ impl Store {
     // Completing a pair task also completes its mirror: when two changed requirements
     // are each other's only neighbor, one judgment covers the pair, and scheduling the
     // reverse would judge the identical pair again.
-    // Mirrors docs/compiler/reconciler.md#waves.
+    // Mirrors docs/compiler/compilation.md#waves.
     pub fn complete_pair_mirrors(&mut self, rid: &str) {
         let judged: std::collections::BTreeSet<String> = self.pair_review_neighbors(rid).into_iter().collect();
         for r in self.status.pending.requirements.clone() {
@@ -1894,7 +1894,7 @@ mod tests {
 
     // The example-sort failure: deleting one side of a filed contradiction left the
     // diagnostic open forever. Deletion now settles or re-enqueues.
-    // Mirrors docs/compiler/reconciler.md#waves.
+    // Mirrors docs/compiler/compilation.md#waves.
     #[test]
     fn deleting_a_subject_settles_or_reenqueues_its_diagnostics() {
         let dir = std::env::temp_dir().join(format!("jazyk-propagate-test-{}", std::process::id()));
@@ -1925,7 +1925,7 @@ mod tests {
     }
 
     // A graph deleted into a stranded state before propagation existed heals at the
-    // deterministic tail. Mirrors docs/compiler/reconciler.md#waves.
+    // deterministic tail. Mirrors docs/compiler/compilation.md#waves.
     #[test]
     fn settle_dangling_diags_heals_a_stranded_graph() {
         let dir = std::env::temp_dir().join(format!("jazyk-settle-test-{}", std::process::id()));

@@ -19,10 +19,10 @@ pub struct Queue {
     pub verify: Vec<Value>,
     pub verdict: String,
     // Open diagnostic counts by severity: the verdict never travels alone
-    // (docs/compiler/reconciler.md#convergence).
+    // (docs/compiler/compilation.md#convergence).
     pub open_diags: std::collections::BTreeMap<String, u64>,
     // An open judged diagnostic names a subject the graph no longer holds: the
-    // deterministic tail has settling to do (docs/compiler/reconciler.md#waves).
+    // deterministic tail has settling to do (docs/compiler/compilation.md#waves).
     pub dangling_diags: bool,
 }
 
@@ -292,7 +292,7 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     let mut q = Queue { compile, bind, generate, verify, verdict, open_diags, dangling_diags };
 
     // Manual mode gates work behind a release; leases mark claimed tasks. Reviews and
-    // verification are never gated. Mirrors docs/compiler/reconciler.md#the-control-plane.
+    // verification are never gated. Mirrors docs/compiler/control-plane.md.
     let control = crate::control::Control::load(proj, out);
     // A gated task is not ready, and blockedBy names the one release phrase used
     // everywhere: the flags never contradict each other.

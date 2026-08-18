@@ -51,7 +51,7 @@ decide what to consolidate. Fragmentation is a query over the `mentions`
 Open [diagnostics](../compiler/model/diagnostic.md) grouped by section give a staleness map
 of the docs: which pages accumulate contradictions, stale anchors, and low-confidence
 facts. Sections marked `non-normative` whose `note` looks weak are listed for re-review.
-See [coverage](../compiler/reconciler.md#coverage).
+See [coverage](../compiler/compilation.md#coverage).
 
 ## Plain-English lint
 
@@ -62,6 +62,6 @@ E.g.:
 - style rules: a requirement names its actor, no passive voice.
 
 The rules ride along in review turns and in the checks
-([waves](../compiler/reconciler.md#waves)). Findings are ordinary diagnostics under the
+([waves](../compiler/compilation.md#waves)). Findings are ordinary diagnostics under the
 `lint` rule (e.g. `diag:lint-1`), so each carries a `quote` and `reasoning`, lands in the
 same triage queue, and is resolved like any other diagnostic.

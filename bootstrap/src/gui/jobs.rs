@@ -390,7 +390,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
 pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
     // Dispatch by worker preference: with an agent attached and preferred, the click
     // records the release and the agent does the work. Mirrors
-    // docs/compiler/reconciler.md#dispatch.
+    // docs/compiler/control-plane.md#dispatch.
     if let Some(stage) = match body["kind"].as_str() {
         Some("compile") => Some("compile"),
         Some("gen") => Some("generate"),

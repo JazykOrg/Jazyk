@@ -50,7 +50,7 @@ The server entry is read-only; add `--write` to its `args` to hand the agent the
 ### jazyk compile
 
 `jazyk compile [path...]` runs the [reconciler](../compiler/reconciler.md) to a
-[fixed point](../compiler/reconciler.md#convergence). Turns run as
+[fixed point](../compiler/compilation.md#convergence). Turns run as
 [ACP worker sessions](./acp.md#worker-sessions) against the configured
 [agent](../compiler/project-settings.md#acp); the agent process lives for the run.
 
@@ -87,7 +87,7 @@ watcher is available). Event bursts debounce, and a fingerprint over the matched
 documents decides whether a build actually runs, so editor temp files and the out
 directory's own writes never trigger one. The same loop as `compile`: each change feeds
 the [dirty set](../compiler/reconciler.md#dirty-set), so unchanged documents are not
-revisited. See [incremental builds](../compiler/reconciler.md#incremental-builds).
+revisited. See [incremental builds](../compiler/compilation.md#incremental-builds).
 
 A build that ends `incomplete` (work parked, e.g. by a transient endpoint outage)
 retries on its own with backoff (30s doubling to 5 minutes, reset by any file change)
@@ -122,7 +122,7 @@ This is the external agent's trigger, in two shapes:
 `watch` is the same trigger wired to the internal loop instead; the notice an agent
 reads is the work item the internal loop would run.
 
-In `manual` [mode](../compiler/reconciler.md#modes-and-releases), gated work prints
+In `manual` [mode](../compiler/control-plane.md#modes-and-releases), gated work prints
 as "awaiting release" instead of prompting the agent to begin, and the notice fires
 again when the release lands. `--once` waits for work that is actually actionable,
 so a released click is what makes it exit.
@@ -130,7 +130,7 @@ so a released click is what makes it exit.
 ### jazyk release
 
 `jazyk release [compile|generate]` records a
-[release](../compiler/reconciler.md#modes-and-releases): approve the pending changes
+[release](../compiler/control-plane.md#modes-and-releases): approve the pending changes
 for the named stage (both when unnamed) without running anything. The watchers wake,
 whichever worker is attached does the work. This is the scriptable form of the GUI's
 release button. An explicit `jazyk compile` or `jazyk gen` is itself a release for
@@ -143,7 +143,7 @@ its stage: a typed command is an approval. The generate stage covers
 Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)):
 
 - generation counter,
-- [coverage](../compiler/reconciler.md#coverage) percentage,
+- [coverage](../compiler/compilation.md#coverage) percentage,
 - open diagnostics by severity,
 - parked work,
 - the [unclaimed report](../consumers/bind.md#the-unclaimed-report): deliverable
@@ -202,7 +202,7 @@ artifact markers. Exit 0 when every targeted row is `verified`, 1 otherwise.
 documents describing what the code under the named scopes does (default: the whole
 [unclaimed report](../consumers/bind.md#the-unclaimed-report)). The command records
 the decompile release for its scopes; with an agent attached and preferred by the
-[dispatch](../compiler/reconciler.md#dispatch) preference, the agent's watcher does
+[dispatch](../compiler/control-plane.md#dispatch) preference, the agent's watcher does
 the drafting, otherwise the built-in worker runs each scope as a turn with read-only
 file tools over the deliverable. Drafts land in the docs tree carrying `unratified`
 diagnostics until edited ([ratification](../consumers/decompile.md#ratification)).

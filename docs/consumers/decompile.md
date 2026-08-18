@@ -36,7 +36,7 @@ package carries the inventory slice, the test list with their assertions, the pr
   described faithfully is a correct draft.
 
 Drafting is code-reading work, so the task defaults to the `agent`
-[worker](../compiler/reconciler.md#dispatch). The built-in worker runs the task as a
+[worker](../compiler/control-plane.md#dispatch). The built-in worker runs the task as a
 turn with read-only file tools over the deliverable; an attached coding agent with its
 own tools is the better worker and the default dispatch target.
 
@@ -91,7 +91,7 @@ gated until a decompile release names their scope:
   ([workflow modes](../frontends/gui.md#workflow-modes)).
 - `released.decompile` in `control.yaml` holds the approved scopes; a submitted draft
   covering a scope consumes it. See
-  [the control plane](../compiler/reconciler.md#the-control-plane).
+  [the control plane](../compiler/control-plane.md).
 
 An attached agent works the tasks over `jazyk mcp decompile`
 ([toolsets](../frontends/mcp.md#toolsets)): `decompile_tasks` lists the scoped work,

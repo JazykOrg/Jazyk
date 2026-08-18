@@ -24,7 +24,7 @@ Jazyk takes both protocol roles, depending on the direction:
   tool injection, doc edit translation, build status. See [the IDE proxy](#the-ide-proxy).
 
 One process that runs builds holds one connection to one downstream agent, with many
-concurrent sessions on it. The [control plane](../compiler/reconciler.md#the-control-plane)
+concurrent sessions on it. The [control plane](../compiler/control-plane.md)
 arbitrates between processes as it does today: the build lease and the per-task leases
 make a CLI run beside a GUI harmless.
 
@@ -409,7 +409,7 @@ window in the IDE. What the protocol does allow:
 The [LSP](./lsp.md) stays read-only and never compiles. What it knows (stale
 documents, open diagnostics, pending work) reaches the IDE's chat surface through the
 proxy instead: on session start and on every
-[control plane](../compiler/reconciler.md#the-control-plane) or queue change, the
+[control plane](../compiler/control-plane.md) or queue change, the
 proxy refreshes the advertised commands and the pending-work plan. The queue and the
 leases are files, so the proxy reads them the way every other frontend does, no new
 channel.

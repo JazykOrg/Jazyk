@@ -69,7 +69,7 @@ Project and store reads:
 - `GET /api/context?target=&focus=&budget=`: the rendered
   [context pack](../compiler/context.md) with its expansion handles.
 - `GET /api/coverage`: per document, the section tree and the
-  [coverage](../compiler/reconciler.md#coverage) map.
+  [coverage](../compiler/compilation.md#coverage) map.
 - `GET /api/journal?from=&to=&limit=`: [journal](../compiler/graph.md#journal) entries
   for a generation range, paginated, newest first.
 - `GET /api/diff?from=&to=`: per-node before and after between two generations,
@@ -219,7 +219,7 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
   stale.
 - `pending.changed`: the generation or verification worklists changed size.
 - `watch.state`: the workflow modes changed (compile or generation). Carries both.
-- `control.changed`: the [control plane](../compiler/reconciler.md#the-control-plane)
+- `control.changed`: the [control plane](../compiler/control-plane.md)
   moved: a release landed, a worker registered or dropped, a lease was taken or
   freed. Carries the workers snapshot the workers strip renders.
 
@@ -491,7 +491,7 @@ job id).
 
 The GUI always watches the documents (that is what `docs.changed` reports). What a
 change triggers is the workflow mode, and the mode is not the GUI's private state: it
-lives in the [control plane](../compiler/reconciler.md#the-control-plane)
+lives in the [control plane](../compiler/control-plane.md)
 (`control.yaml` in the out directory), where the internal loop, `jazyk monitor`, and
 every agent over MCP read the same policy. A mode set in the GUI survives a restart
 and binds the agents too; before the control plane, "manual" was a GUI-process
@@ -504,7 +504,7 @@ regardless.
 - `compile: manual` (the default): changes queue visibly and carry `gated: true`.
   The control line counts the documents that drifted from the graph; compiling is an
   explicit click. The click records a
-  [release](../compiler/reconciler.md#modes-and-releases), so an attached agent's
+  [release](../compiler/control-plane.md#modes-and-releases), so an attached agent's
   watcher fires from the same click.
 - `compile: auto`: changes compile automatically, the loop of
   [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate,
@@ -532,13 +532,13 @@ lock, and the second build finds nothing dirty.
 ### Workers
 
 `GET /api/workers` reports the control plane: the modes, the registered
-[workers](../compiler/reconciler.md#workers-and-leases) with their heartbeats and
+[workers](../compiler/control-plane.md#workers-and-leases) with their heartbeats and
 held tasks, the live leases, and the gated task counts. The workers strip renders
 it: who is attached ("claude-code agent, awaiting release", "working on reconcile
 docs/orders.md"), and a release button per stage when gated work exists.
 
 Compile and generate clicks dispatch by the `worker` preference
-([dispatch](../compiler/reconciler.md#dispatch)): with an agent registered and
+([dispatch](../compiler/control-plane.md#dispatch)): with an agent registered and
 preferred, the click records the release and the agent does the work, its progress
 streaming into the [activity view](#activity) from the MCP transcript; otherwise the
 GUI runs its own job as before. `POST /api/release` with `{stage}` records a release

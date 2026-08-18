@@ -1014,7 +1014,7 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
     };
     crate::control::release_decompile(&proj, &out, &wanted);
     // Dispatch: with an agent attached and preferred, the release is the trigger and
-    // the agent's watcher does the drafting. Mirrors docs/compiler/reconciler.md#dispatch.
+    // the agent's watcher does the drafting. Mirrors docs/compiler/control-plane.md#dispatch.
     let control = crate::control::Control::load(&proj, &out);
     let agents: Vec<String> = crate::control::workers(&out)
         .into_iter()

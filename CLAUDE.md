@@ -44,9 +44,10 @@ turns rephrase it into EARS, keep the quote verbatim (`docs/compiler/concepts/ea
 ## Repo layout
 
 - `docs/main.md`: front door. `docs/compiler/`: compiler.md, parsing.md, model.md +
-  `model/`, graph.md, context.md, turns.md, reconciler.md, tools.md, `concepts/`,
-  project-settings.md, schemas (draft-07 JSON Schema in YAML, `$id`
-  `https://jazyk.org/schemas/*.json`).
+  `model/`, graph.md, context.md, turns.md, compilation.md (the build lifecycle),
+  reconciler.md (dirty set, scheduling, task queue), control-plane.md (modes,
+  releases, workers, leases), tools.md, `concepts/`, project-settings.md, schemas
+  (draft-07 JSON Schema in YAML, `$id` `https://jazyk.org/schemas/*.json`).
 - `docs/frontends/`: cli.md, mcp.md, lsp.md, viewer.md. `docs/consumers/`: gen.md
   (generation + verification ledger), pm.md, docsgen.md. `docs/benchmark/`: benchmark.md,
   cases.md, `cases/` (the case files are embedded into the binary at compile time; they are

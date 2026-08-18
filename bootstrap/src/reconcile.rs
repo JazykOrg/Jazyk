@@ -207,7 +207,7 @@ fn review_groups(store: &Store, targets: &BTreeSet<String>) -> Vec<Vec<String>> 
 // A non-normative claim over text that still reads as obligations. Deliberately cheap
 // and deterministic: `shall`, obligation verbs, access rules, or definition-list
 // bullets (`- \`name\` - description`). Docs rarely say `shall`, so the word alone
-// misses whole documents. Mirrors docs/compiler/reconciler.md#coverage.
+// misses whole documents. Mirrors docs/compiler/compilation.md#coverage.
 fn looks_normative(raw: &str) -> bool {
     // A lead-in-only body (one sentence ending in a colon, its items living in child
     // sections) states nothing by itself; non-normative is the correct mark there.
@@ -250,7 +250,7 @@ fn looks_normative(raw: &str) -> bool {
 // none of its bound files mention. The docs say `us-east-1` and the code never does:
 // one of them is wrong, and no model is needed to notice. The finding carries its
 // question, and an answered question is never re-asked (the prompt merge in
-// reconcile_check_diags). Mirrors docs/compiler/reconciler.md#waves.
+// reconcile_check_diags). Mirrors docs/compiler/compilation.md#waves.
 fn drift_checks(
     store: &Store,
     proj: &Project,
@@ -620,7 +620,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     };
     // The control plane's build contract: one coarse lease for the run, refused while
     // an agent is mid-task, and the run itself is an approval in manual mode.
-    // Mirrors docs/compiler/reconciler.md#the-control-plane.
+    // Mirrors docs/compiler/control-plane.md.
     let _build = match crate::control::begin_internal_build(proj, out, "compile") {
         Ok(g) => g,
         Err(e) => return refused(e),
@@ -788,7 +788,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     // Pair-review wave: dirtiness propagates from sections to requirements. Every
     // requirement the ingest and fix-up commits created or revised is re-judged
     // against its computed neighbors and sticky partners. A changed requirement
-    // with neither schedules nothing. Mirrors docs/compiler/reconciler.md#waves.
+    // with neither schedules nothing. Mirrors docs/compiler/compilation.md#waves.
     let mut pair_targets: BTreeSet<String> = changed_all.clone();
     for p in &previously_parked {
         if p.task == "review-requirement" {
@@ -924,7 +924,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
 pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &Trace) -> BuildReport {
     // Level-triggered deletion propagation: settle open judged diagnostics whose
     // subjects left the graph, re-enqueueing survivors for review
-    // (docs/compiler/reconciler.md#waves).
+    // (docs/compiler/compilation.md#waves).
     let settled = s.settle_dangling_diags();
     if !settled.is_empty() {
         trace.line("reconcile", &format!("settle: {}", settled.join("; ")));
@@ -935,7 +935,7 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
     s.reconcile_check_diags(findings);
 
     // Status and verdict. Coverage is part of the termination criterion
-    // (docs/compiler/reconciler.md#coverage): a section the build never processed is
+    // (docs/compiler/compilation.md#coverage): a section the build never processed is
     // work still open, whether or not its turn parked. A turn that exhausts its round
     // budget commits what it staged and returns no failure, so parked items alone would
     // report a build that stopped early as converged. Pending reviews are open work the
@@ -953,7 +953,7 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
         .count();
     // A pending review whose target no longer exists is complete by definition, and so
     // is a pair review with nothing tying it to a judgment: no computed neighbors and
-    // no open judged diagnostic naming it (docs/compiler/reconciler.md#waves).
+    // no open judged diagnostic naming it (docs/compiler/compilation.md#waves).
     let (exists_e, exists_r): (Vec<String>, Vec<String>) = (
         s.status.pending.entities.iter().filter(|e| s.graph.entities.contains_key(*e)).cloned().collect(),
         s.status
@@ -978,7 +978,7 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
     }
     s.status.spent.tokens = crate::llm::tokens_spent();
     // The verdict never travels alone: open diagnostic counts ride beside it
-    // (docs/compiler/reconciler.md#convergence).
+    // (docs/compiler/compilation.md#convergence).
     s.status.diagnostics = s.open_diag_counts();
     s.save_status();
 
@@ -1045,7 +1045,7 @@ mod tests {
 
     // The drift check: a pinned literal none of the bound files mention becomes a
     // prompted warning; a mentioned one stays silent.
-    // Mirrors docs/compiler/reconciler.md#waves.
+    // Mirrors docs/compiler/compilation.md#waves.
     #[test]
     fn drift_check_flags_missing_literals_with_a_question() {
         use crate::gen::{Ledger, ReqRow, RowHashes, TestRef};

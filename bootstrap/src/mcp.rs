@@ -31,7 +31,7 @@ pub struct McpServer {
     // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
     bench: std::sync::Mutex<BenchRun>,
     // The serving's registration in the worker registry, heartbeated while the
-    // process lives. Mirrors docs/compiler/reconciler.md#workers-and-leases.
+    // process lives. Mirrors docs/compiler/control-plane.md#workers-and-leases.
     worker: std::sync::Arc<std::sync::Mutex<Option<crate::control::WorkerHandle>>>,
     // Bridge-spawned serving flags: this serving belongs to one ACP session.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
@@ -588,7 +588,7 @@ impl McpServer {
             let report = crate::reconcile::finalize(&mut s2, &self.project, &parked, &quiet);
             reply["verdict"] = json!(report.verdict);
             reply["coveragePct"] = json!(report.coverage_pct);
-            // The verdict never travels alone (docs/compiler/reconciler.md#convergence).
+            // The verdict never travels alone (docs/compiler/compilation.md#convergence).
             let counts = s2.open_diag_counts();
             if !counts.is_empty() {
                 reply["openDiagnostics"] = json!(counts);

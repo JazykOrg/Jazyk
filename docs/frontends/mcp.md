@@ -56,7 +56,7 @@ server into it: `jazyk mcp` with the task's toolsets and flags. The flags exist 
 this spawning path and are not for standalone servings:
 
 - `--ephemeral`: the serving belongs to one session. It does not register in the
-  [worker registry](../compiler/reconciler.md#workers-and-leases) (the session is not
+  [worker registry](../compiler/control-plane.md#workers-and-leases) (the session is not
   a peer worker, it is part of a run that already holds its lease), and end of input
   with an open task runs the implicit finish: staged work commits under the same
   gates the [budget path](../compiler/turns.md#budgets) uses, so an agent that dies
@@ -113,7 +113,7 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
 - `await_changes({timeout_seconds?})`: a long poll. It returns when the graph's
   generation counter moves, a documentation file changes on disk, a manifest or test
   file in the deliverable changes, the ledger changes, or the
-  [control plane](../compiler/reconciler.md#the-control-plane) changes (a mode
+  [control plane](../compiler/control-plane.md) changes (a mode
   toggle or a release, so the user's click in the GUI is what wakes the agent), or
   at the timeout (default 300 seconds). `timeout_seconds: 0` waits indefinitely. The
   default returns because most MCP clients bound a tool call with their own timeout
@@ -128,7 +128,7 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
 The serving is a worker among workers, and says so:
 
 - `initialize` registers the serving in the
-  [worker registry](../compiler/reconciler.md#workers-and-leases) under the client's
+  [worker registry](../compiler/control-plane.md#workers-and-leases) under the client's
   name (kind `agent`), heartbeats while the process lives, and deregisters on exit.
 - `begin_compilation`, `begin_binding`, and `begin_generation` take the task's
   lease; `finish_*`, `record_binding`, and `abandon_*` release it. A task another worker holds is refused with `claimed`

@@ -37,7 +37,7 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
   and `report_diagnostic` is not in this task's toolset. A conflict noticed here is
   not lost; the review wave sees the statements side by side.
 - `review-requirement`: judge one changed statement against its computed neighbors.
-  The [reconciler](./reconciler.md#waves) picks the neighbors; the turn only judges.
+  The [reconciler](./compilation.md#waves) picks the neighbors; the turn only judges.
   The pack shows the changed requirement (`ears`, `quote`, source section) and each
   neighbor side by side, plus any open diagnostic already tying a pair. The model gives
   one verdict per neighbor:
@@ -248,7 +248,7 @@ unmarked sections stay unprocessed for the next build.
   bounds its own, and the
   [idle timeout](../frontends/acp.md#worker-sessions) bounds them all.
 - Per build: a hard turn cap, so a stuck build stops instead of looping. See
-  [convergence](./reconciler.md#convergence).
+  [convergence](./compilation.md#convergence).
 
 An agent whose session ends with mutations staged and no `done` is treated as having
 called it: the serving runs the same commit gates, and a clean batch commits. Weak

@@ -241,7 +241,7 @@ pub struct Status {
     pub verdict: String,
     // Open diagnostic counts by severity (suppressed excluded), refreshed by the
     // deterministic tail. The verdict speaks to work completion; this line speaks to
-    // document health. Mirrors docs/compiler/reconciler.md#convergence.
+    // document health. Mirrors docs/compiler/compilation.md#convergence.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub diagnostics: BTreeMap<String, u64>,
 }

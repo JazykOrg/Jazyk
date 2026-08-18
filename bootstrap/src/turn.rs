@@ -666,7 +666,7 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
 
 // The pair-review pack: the changed requirement and its neighbors side by side. The
 // neighbor set is recomputed here with the same deterministic function the reconciler
-// used to schedule the turn (docs/compiler/reconciler.md#waves).
+// used to schedule the turn (docs/compiler/compilation.md#waves).
 fn review_requirement_pack(store: &Store, rid: &str) -> String {
     let mut s = String::new();
     s.push_str(&format!("# Work item: review changed requirement {} against its neighbors\n", rid));

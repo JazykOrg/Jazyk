@@ -30,8 +30,8 @@ pointed at [jazyk.org](https://jazyk.org).
   - parse and diff the documents into the [dirty set](./compiler/reconciler.md#dirty-set),
   - run [turns](./compiler/turns.md) that mutate the graph through
     [tools](./compiler/tools.md),
-  - repeat in [waves](./compiler/reconciler.md#waves) until
-    [convergence](./compiler/reconciler.md#convergence) at a fixed point.
+  - repeat in [waves](./compiler/compilation.md#waves) until
+    [convergence](./compiler/compilation.md#convergence) at a fixed point.
 - One diagram of the [build lifecycle](./compiler/compiler.md#build-lifecycle).
 
 ### Graph (/graph)

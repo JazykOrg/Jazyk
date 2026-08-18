@@ -4,7 +4,7 @@ Grades convergence discipline. The graph already reflects the document exactly a
 sections are already covered in the fixture. A capable model recognizes there is nothing
 to add. Idempotent coverage re-claims are tolerated (natural-key upserts make them
 harmless); creating entities or requirements is not. See
-[incremental builds](../../compiler/reconciler.md#incremental-builds).
+[incremental builds](../../compiler/compilation.md#incremental-builds).
 
 ```yaml
 name: turn-converge

@@ -121,9 +121,9 @@ par of 6).
   a requirement sourced from it; stops silent requirement loss
   (docs/compiler/graph.md#validation-gates).
 - One bounded fix-up pass re-enqueues documents with uncovered sections
-  (docs/compiler/reconciler.md#waves).
+  (docs/compiler/compilation.md#waves).
 - Review turns run grouped: entities sharing requirements review in order, groups in
-  parallel, so judgments see their neighbors' merges (docs/compiler/reconciler.md#waves).
+  parallel, so judgments see their neighbors' merges (docs/compiler/compilation.md#waves).
 - `report_diagnostic` accepts only the cataloged review rules; free-form rule names were
   producing incomparable findings (docs/compiler/tools.md#write-tools).
 - Stage-time natural-key resolution for `upsert_requirement`: the example-sort stale
@@ -138,7 +138,7 @@ par of 6).
   by side. A pair-review wave now schedules `review-requirement` turns for every
   created or revised statement (revised includes a quote that changed in substance)
   against deterministically computed neighbors, with sticky re-review of open
-  contradiction and duplicate pairs (docs/compiler/reconciler.md#waves). Validated on
+  contradiction and duplicate pairs (docs/compiler/compilation.md#waves). Validated on
   example-sort: the wave selected exactly `req:main-js-2` and `req:main-js-3` as
   neighbors of the changed `req:main-js-8`; `qwen3:4b-instruct` reported the planted
   contradiction with the right subjects at severity error and repaired the drifted

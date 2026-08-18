@@ -1,7 +1,7 @@
 // The control plane: workflow modes and releases (control.yaml), the worker registry
 // (workers/), and task leases (leases/), all in the out directory so every consumer
 // reads the same intent the same way the queue is the same everywhere.
-// Mirrors docs/compiler/reconciler.md#the-control-plane.
+// Mirrors docs/compiler/control-plane.md.
 use crate::project::Project;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -80,7 +80,7 @@ impl Control {
 
 // Record a release: approve the pending changes for the stage. Compile approves each
 // document at its current content hash; generate approves the current graph
-// generation. Unnamed approves both. Mirrors docs/compiler/reconciler.md#modes-and-releases.
+// generation. Unnamed approves both. Mirrors docs/compiler/control-plane.md#modes-and-releases.
 pub fn release(proj: &Project, out: &Path, stage: Option<&str>) {
     let mut c = Control::load(proj, out);
     if stage.is_none() || stage == Some("compile") {
@@ -313,7 +313,7 @@ pub fn build_lease(out: &Path) -> Option<Lease> {
 // The internal loop's entry contract: refuse while an agent is mid-task, then hold
 // the coarse build lease for the run and record the implicit release (a typed command
 // or a clicked button is an approval). A background thread heartbeats the lease so a
-// long build never loses it; drop frees it. Mirrors docs/compiler/reconciler.md#workers-and-leases.
+// long build never loses it; drop frees it. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub struct BuildGuard {
     out: PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,

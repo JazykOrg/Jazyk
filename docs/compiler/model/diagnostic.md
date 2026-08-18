@@ -59,7 +59,7 @@ prompt:
 Who writes prompts: [review turns](../turns.md#task-types) and chat sessions attach
 them through `report_diagnostic` and edit them through `update_diagnostic`
 ([write tools](../tools.md#write-tools)); deterministic
-[checks](../reconciler.md#waves) attach them mechanically where the resolution is
+[checks](../compilation.md#waves) attach them mechanically where the resolution is
 enumerable. A prompt is optional; most diagnostics carry none.
 
 Gates: an `edit` option's `old_text` must locate in its section
@@ -112,14 +112,14 @@ answer:
 | --- | --- | --- | --- |
 | [parsing](../parsing.md#format-handlers) | `unsupported-format` | warning | a matched file with no format handler |
 | parsing | `parse-error` | error | a format handler failed on the file |
-| [coverage](../reconciler.md#coverage) | `uncovered-section` | warning | a section still `unprocessed` after the build |
+| [coverage](../compilation.md#coverage) | `uncovered-section` | warning | a section still `unprocessed` after the build |
 | coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | review turns | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | review turns | `duplicate-entity` | warning | two entities that look like one concept |
 | review turns, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
 | review turns | `missing-link` | warning | a concept the documents rely on but never define; a dead file link is `broken-link`'s finding, never this rule's |
 | review turns | `ambiguity` | info, warning, or error | a statement open to more than one reading |
-| [checks](../reconciler.md#waves) | `unused-entity` | warning | an entity no requirement references |
+| [checks](../compilation.md#waves) | `unused-entity` | warning | an entity no requirement references |
 | checks | `section-too-large` | warning | a section body over the configured size; split it |
 | checks | `doc-too-large` | warning | a document with more sections than the configured cap; split it |
 | checks | `empty-file` | warning | a matched file with no content |
@@ -129,5 +129,5 @@ answer:
 | checks | `unstable-extraction` | warning | a natural key deleted and recreated across recent builds |
 | checks | `stale-provenance` | warning | a `quote` that no longer locates in its section |
 | checks | `pinned-fact-drift` | warning | a literal the docs pin (a path, id, or value in a code span) that the requirement's bound files never mention |
-| [reconciler](../reconciler.md#convergence) | `incomplete-build` | warning | work parked when the build budget ran out |
+| [reconciler](../compilation.md#convergence) | `incomplete-build` | warning | work parked when the build budget ran out |
 | [project settings](../project-settings.md) | lint rules | configurable | project-specific lint over the graph |

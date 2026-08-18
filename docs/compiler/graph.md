@@ -34,7 +34,7 @@ Each document file under `docs/` holds:
 - `sections`: map of internal reference → `title`, `kind`, `order`, `parent`, `raw`,
   `hash`, `lines`.
 - `coverage`: map of internal reference → `state`, `note`, `claimedBy`. See
-  [coverage](./reconciler.md#coverage).
+  [coverage](./compilation.md#coverage).
 
 ## Mutations
 
@@ -168,7 +168,7 @@ Cleanup is deterministic and never delegated to the model:
   subjects are all gone is resolved by the store, journaled; one with surviving subjects
   re-enqueues them for review, so a turn re-judges the finding. This runs on every
   deleting commit, turn and GC alike. See
-  [waves](./reconciler.md#waves).
+  [waves](./compilation.md#waves).
 
 ## Concurrency
 

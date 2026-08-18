@@ -70,9 +70,9 @@ by name; the queue notices the gap:
 A bind task is ready when the compile queue is empty: the statement must be final
 before a test encodes it. It writes test files into the deliverable, so in `manual`
 mode it gates under the generate
-[release](../compiler/reconciler.md#modes-and-releases) beside generation. It takes a
+[release](../compiler/control-plane.md#modes-and-releases) beside generation. It takes a
 per-requirement lease and defaults to the `agent`
-[worker](../compiler/reconciler.md#dispatch): searching a codebase is what a coding
+[worker](../compiler/control-plane.md#dispatch): searching a codebase is what a coding
 agent's own tools are best at. The built-in worker performs the same task in-process
 with read tools over the deliverable; what separates the workers is model quality,
 never capability.

@@ -287,13 +287,21 @@ then ends the turn. Unmatched prompts go to the agent as conversation.
 
 A build command streams the work at full fidelity, not just its boundaries:
 
-- Wave and turn boundaries are message text, the running commentary.
+- Wave and turn boundaries, and jazyk's own narration (dirty counts, wave summaries),
+  are message text. Narration is not thinking, so it never renders as a thought.
 - The worker's reasoning (`modelText` trace events) flows as `agent_thought_chunk`,
   so the minutes inside a turn are visible thinking, not silence.
-- Each graph tool call flows as `tool_call` with the arguments as raw input, and its
-  result as `tool_call_update` (completed with the output, or failed with the
-  violated rule). Ids are namespaced per worker (`jazyk:<label>:<n>`), so parallel
-  turns never collide in the client's tool-call table.
+- Each graph tool call flows as `tool_call` titled by the decision, not the tool
+  name: `add entity store`, `coverage /tiny covered`. When the result settles what
+  happened, the completed `tool_call_update` retitles the row (`added entity
+  ent:store` against `updated entity ent:store`) and carries the output; a failed
+  call carries the violated rule. The raw arguments ride as the row's input. Ids are
+  namespaced per worker (`jazyk:<label>:<n>`), so parallel turns never collide in
+  the client's tool-call table.
+- The lifecycle calls (`begin_compilation`, `done`, `finish_compilation`) get no
+  row: the person asked for the build, so its machinery is not news. What the `done`
+  call says lands where it belongs: the turn's closing line carries the model's own
+  summary of what it did.
 
 A command exists when a person needs an answer jazyk can give exactly, and no model
 should be improvising it: what this project is set to, what state the build is in,

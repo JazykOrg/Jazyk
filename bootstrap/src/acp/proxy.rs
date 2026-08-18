@@ -796,6 +796,68 @@ fn run_command(
 }
 
 // Build progress narrated as message chunks: one line per turn lifecycle event.
+// The machinery of a turn is not news to the person who asked for the build: these
+// calls get no row. Mirrors docs/frontends/acp.md#slash-commands.
+const LIFECYCLE_TOOLS: &[&str] = &["begin_compilation", "finish_compilation", "done"];
+
+// A row is titled by the decision it carries, not the tool's identifier.
+// Mirrors docs/frontends/acp.md#slash-commands.
+fn call_title(name: &str, input: &str) -> String {
+    let args: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+    let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
+    let short = |t: String| {
+        if t.chars().count() > 80 {
+            format!("{}…", t.chars().take(80).collect::<String>())
+        } else {
+            t
+        }
+    };
+    match name {
+        "search" => format!("search: {}", s("query")),
+        "context" => format!("context: {}", s("target")),
+        "expand" => "expand context".into(),
+        "read_section" => format!("read {}", s("section")),
+        "get_entity" => format!("read entity {}", s("id")),
+        "diagnostics" => "read diagnostics".into(),
+        "upsert_entity" => format!("entity {}", s("name")),
+        "update_entity" => format!("update entity {}", s("id")),
+        "delete_entity" => format!("delete entity {}", s("id")),
+        "merge_entities" => format!("merge {} into {}", s("absorb"), s("keep")),
+        "upsert_requirement" => format!("requirement: {}", short(s("ears"))),
+        "update_requirement" => format!("update requirement {}", s("id")),
+        "delete_requirement" => format!("delete requirement {}", s("id")),
+        "report_diagnostic" => format!("report {} {}", s("severity"), s("rule")),
+        "update_diagnostic" => format!("update finding {}", s("id")),
+        "resolve_diagnostic" => format!("resolve finding {}", s("id")),
+        "set_coverage" => format!("coverage: {} {}", s("section"), s("state")),
+        "edit_doc_prose" => format!("edit {}", s("doc")),
+        _ => name.replace('_', " "),
+    }
+}
+
+// When the result settles what happened, the completed row says so: an upsert is
+// retitled `added` or `updated` with the id the store minted.
+// Mirrors docs/frontends/acp.md#slash-commands.
+fn result_title(name: &str, output: &str) -> Option<String> {
+    let mut v: serde_json::Value = serde_json::from_str(output).ok()?;
+    // MCP results arrive as a JSON string holding JSON: unwrap the inner document.
+    if let serde_json::Value::String(inner) = &v {
+        v = serde_json::from_str(inner).ok()?;
+    }
+    let id = v["id"].as_str()?;
+    let verb = match v["created"].as_bool() {
+        Some(true) => "added",
+        Some(false) => "updated",
+        None => return None,
+    };
+    let kind = match name {
+        "upsert_entity" | "update_entity" => "entity",
+        "upsert_requirement" | "update_requirement" => "requirement",
+        _ => return None,
+    };
+    Some(format!("{} {} {}", verb, kind, id))
+}
+
 // A command's build streams into the open turn at full fidelity: boundaries as
 // message text, worker reasoning as thought chunks, and each graph tool call as a
 // tool_call row with its result. Ids are namespaced per worker so parallel turns
@@ -803,8 +865,16 @@ fn run_command(
 fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
     use crate::turn::TraceEvent;
     use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields};
-    // Per worker label: calls made so far, and the id of the one still open.
-    let open: Mutex<std::collections::HashMap<String, (u64, Option<String>)>> =
+    // Per worker label: calls made so far, the id of the one still open, and the
+    // summary the suppressed `done` call carried (the runner's TurnDone has none;
+    // the model's own words fill the closing line).
+    #[derive(Default)]
+    struct WorkerRow {
+        calls: u64,
+        open: Option<String>,
+        done_summary: Option<String>,
+    }
+    let open: Mutex<std::collections::HashMap<String, WorkerRow>> =
         Mutex::new(std::collections::HashMap::new());
     let send = move |update: SessionUpdate| {
         let _ = up.send_notification(SessionNotification::new(sid_of(&sid), update));
@@ -817,9 +887,25 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             TraceEvent::WaveStart { task, items, .. } => {
                 send(text_update(format!("wave: {} ({} item(s))\n", task, items.len())));
             }
-            TraceEvent::TurnStart { label, .. } => send(text_update(format!("▶ {}\n", label))),
-            TraceEvent::TurnDone { label, staged, .. } => {
-                send(text_update(format!("✓ {} ({} staged)\n", label, staged)));
+            TraceEvent::TurnStart { label, .. } => {
+                open.lock().unwrap().entry(label.clone()).or_default().done_summary = None;
+                send(text_update(format!("▶ {}\n", label)));
+            }
+            TraceEvent::TurnDone { label, staged, summary, .. } => {
+                // The model's own account of the turn: the answer to "done doing
+                // what?". Mirrors docs/frontends/acp.md#slash-commands.
+                let said = if summary.trim().is_empty() {
+                    open.lock()
+                        .unwrap()
+                        .get_mut(label)
+                        .and_then(|r| r.done_summary.take())
+                        .unwrap_or_default()
+                } else {
+                    summary.trim().to_string()
+                };
+                let tail =
+                    if said.is_empty() { String::new() } else { format!(": {}", said) };
+                send(text_update(format!("✓ {} ({} staged){}\n", label, staged, tail)));
             }
             TraceEvent::TurnFailed { label, error, .. } => {
                 send(text_update(format!("✗ {}: {}\n", label, error)));
@@ -838,41 +924,60 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                     format!("{}\n", text),
                 ))));
             }
+            // Jazyk's own narration is commentary, not the model thinking: it
+            // renders as message text, so a thought section is never empty.
+            // Mirrors docs/frontends/acp.md#slash-commands.
             TraceEvent::Note { text, verbose, .. } if !verbose => {
-                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
-                    format!("{}\n", text),
-                ))));
+                send(text_update(format!("{}\n", text)));
             }
             TraceEvent::ToolCall { label, name, summary, full } => {
+                let input = full.clone().unwrap_or_else(|| summary.clone());
+                if LIFECYCLE_TOOLS.contains(&name.as_str()) {
+                    if name == "done" {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&input) {
+                            if let Some(s) = v["summary"].as_str().filter(|s| !s.is_empty()) {
+                                open.lock()
+                                    .unwrap()
+                                    .entry(label.clone())
+                                    .or_default()
+                                    .done_summary = Some(s.to_string());
+                            }
+                        }
+                    }
+                    return;
+                }
                 let id = {
                     let mut map = open.lock().unwrap();
-                    let entry = map.entry(label.clone()).or_insert((0, None));
-                    entry.0 += 1;
-                    let id = format!("jazyk:{}:{}", label, entry.0);
-                    entry.1 = Some(id.clone());
+                    let entry = map.entry(label.clone()).or_default();
+                    entry.calls += 1;
+                    let id = format!("jazyk:{}:{}", label, entry.calls);
+                    entry.open = Some(id.clone());
                     id
                 };
-                let input = full.clone().unwrap_or_else(|| summary.clone());
                 send(SessionUpdate::ToolCall(
-                    ToolCall::new(id, name.clone())
+                    ToolCall::new(id, call_title(name, &input))
                         .status(ToolCallStatus::InProgress)
                         .raw_input(serde_json::Value::String(input)),
                 ));
             }
             TraceEvent::ToolResult { label, name, summary, full } => {
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.1.take()) {
+                if LIFECYCLE_TOOLS.contains(&name.as_str()) {
+                    return;
+                }
+                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
                     let output = full.clone().unwrap_or_else(|| summary.clone());
+                    let title = result_title(name, &output);
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                         id,
                         ToolCallUpdateFields::new()
                             .status(ToolCallStatus::Completed)
-                            .title(name.clone())
+                            .title(title)
                             .raw_output(serde_json::Value::String(output)),
                     )));
                 }
             }
             TraceEvent::ToolError { label, rule, message } => {
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.1.take()) {
+                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                         id,
                         ToolCallUpdateFields::new()

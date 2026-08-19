@@ -49,11 +49,23 @@ The model owns everything that requires judgment:
 
 ## Build lifecycle
 
-A build runs waves of turns over the dirty documents until the graph and the
-documents agree: ingest, pair review, entity review, then deterministic checks and
-the verdict. [Compilation](./compilation.md) describes it stage by stage. The first
-build is not special: it is reconciliation against an empty graph, and a rebuild
-with no changes makes zero LLM calls.
+Compilation is not a component: it is the process the components above run
+together, and [compilation](./compilation.md) describes it stage by stage. One
+build, with each component in its place:
+
+- The [reconciler](./reconciler.md) parses the documents, diffs the section trees
+  into the dirty set, and derives the [task queue](./reconciler.md#the-task-queue).
+- The [control plane](./control-plane.md) says whether the queued work may run:
+  everything in `auto` mode, only released work in `manual`.
+- Turns run in [waves](./compilation.md#waves) as sessions over the
+  [ACP bridge](../frontends/acp.md), with the [tool registry](./tools.md) injected:
+  ingest, pair review, entity review. The [graph store](./graph.md) commits each
+  turn's changeset atomically.
+- Deterministic checks and the verdict close the build. See
+  [convergence](./compilation.md#convergence).
+
+The first build is not special: it is reconciliation against an empty graph. A
+rebuild with no changes has an empty dirty set and makes zero LLM calls.
 
 ## Outputs
 

@@ -29,43 +29,39 @@ The model owns everything that requires judgment:
 - writing and refining definitions,
 - judging severity, and marking sections covered or non-normative.
 
-## Components
-
-- The [tool registry](./tools.md), served as an MCP server (`jazyk mcp`). Read tools
-  are the public query surface. Write tools mutate the graph and are used by
-  compilation turns, or by an external agent given `--write`. The same serving is
-  injected into every [ACP session](../frontends/acp.md), so the tools have one
-  implementation whoever calls them.
-- The [ACP bridge](../frontends/acp.md): the single AI path. Jazyk is the ACP client
-  of one configured agent (an external coding agent, or the generic
-  [embedded agent](../frontends/acp.md#the-embedded-agent)); every
-  [turn](./turns.md) runs as a session against it, with the jazyk tools injected
-  over MCP.
-- The [reconciler](./reconciler.md): computes what is stale and schedules turns level
-  by level with bounded parallelism.
-- The [control plane](./control-plane.md): the workflow policy on disk. Modes,
-  releases, workers, and leases decide whether anyone may act on the queued work and
-  who is acting, the same answer for every frontend.
-
 ## Build lifecycle
 
-Compilation is not a component: it is the process the components above run
-together, and [compilation](./compilation.md) describes it stage by stage. One
-build, with each component in its place:
+Compilation is one build: bring the graph in line with the documents.
+[Compilation](./compilation.md) describes the stages; these are the components that
+carry them, in the order they act:
 
-- The [reconciler](./reconciler.md) parses the documents, diffs the section trees
-  into the dirty set, and derives the [task queue](./reconciler.md#the-task-queue).
-- The [control plane](./control-plane.md) says whether the queued work may run:
-  everything in `auto` mode, only released work in `manual`.
-- Turns run in [waves](./compilation.md#waves) as sessions over the
-  [ACP bridge](../frontends/acp.md), with the [tool registry](./tools.md) injected:
-  ingest, pair review, entity review. The [graph store](./graph.md) commits each
-  turn's changeset atomically.
-- Deterministic checks and the verdict close the build. See
-  [convergence](./compilation.md#convergence).
+- The [reconciler](./reconciler.md) drives the build from start to verdict. It
+  parses the documents, diffs the section trees into the dirty set, and derives the
+  [task queue](./reconciler.md#the-task-queue): what work exists, in what order,
+  with bounded parallelism.
+- The [control plane](./control-plane.md) decides whether anyone may act on that
+  work and who is acting: everything in `auto` mode, only released work in
+  `manual`. Modes, releases, workers, and leases are files in the out directory,
+  so every frontend reads the same policy.
+- Each scheduled [turn](./turns.md) runs as one session over the
+  [ACP bridge](../frontends/acp.md): jazyk is the ACP client of one configured
+  agent (an external coding agent, or the generic
+  [embedded agent](../frontends/acp.md#the-embedded-agent)). All AI work takes this
+  one path.
+- The session's tools come from the [tool registry](./tools.md), served as an MCP
+  server (`jazyk mcp`) and injected into every session, so the tools have one
+  implementation whoever calls them. Read tools are the public query surface; write
+  tools mutate the graph and are used by compilation turns, or by an external agent
+  given `--write`.
+- The [graph store](./graph.md) commits each turn's changeset atomically, behind
+  validation gates, and journals it.
+- When the last turn lands, deterministic checks run and the verdict closes the
+  build. See [convergence](./compilation.md#convergence).
 
-The first build is not special: it is reconciliation against an empty graph. A
-rebuild with no changes has an empty dirty set and makes zero LLM calls.
+The reconciler repeats [waves](./compilation.md#waves) (ingest, pair review, entity
+review) until the graph and the documents agree. The first build is not special: it
+is reconciliation against an empty graph. A rebuild with no changes has an empty
+dirty set and makes zero LLM calls.
 
 ## Outputs
 

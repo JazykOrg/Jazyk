@@ -20,7 +20,9 @@ Delete freely once acted on or dismissed.
   and the chat-serving text. Same treatment (extract + embed) is possible if wanted.
 - The feedback note is inserted by splitting the system prompt on its first blank
   line (`with_feedback_note`). A prompt file that loses its blank line silently
-  changes the insertion point. An explicit `{feedback}` slot would be sturdier.
+  changes the insertion point. An explicit `{feedback}` slot would be sturdier. The
+  splice guard now covers all five system prompts, so a payload edit that breaks the
+  role-line-then-note shape fails the build; the brittleness itself remains.
 - Payload files cannot carry comments: whatever is in the file reaches the model.
   Commentary lives in the per-task doc instead. If inline commentary is ever
   wanted, a comment-stripping load step (or a real template engine) is the price.
@@ -40,9 +42,9 @@ Delete freely once acted on or dismissed.
   confirms it. Candidates: enumerate deterministic suspect pairs in the pack (a
   concrete-value statement against the entity's unconditional rules), or split the
   entity review into narrower checks.
-- The verify judge parses the first `PASS`/`FAIL` occurrence anywhere in the reply.
-  A reply that quotes the criteria ("the criteria says FAIL when...") before its
-  verdict is misread. Require the verdict on the first line and parse only that.
+- ~~The verify judge parses the first `PASS`/`FAIL` occurrence anywhere in the
+  reply.~~ Fixed: a first line that leads with the word is the verdict, otherwise
+  the reply is read from its conclusion (`verify.rs parse_verdict`, unit-tested).
 - The worker protocol line says "Do exactly this one task, then stop" after the
   system prompt already framed the turn; the pointer prompts repeat the same. Minor
   duplication, cheap tokens, but three texts state the stop rule differently.

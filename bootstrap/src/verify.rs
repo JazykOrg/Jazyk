@@ -199,6 +199,33 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     }))
 }
 
+
+// The judge's verdict. The contract asks for a verdict line first, so a first line
+// that LEADS with PASS or FAIL (bare, bolded, or after "Verdict:") is the answer.
+// Anything else is a reasoning-first reply and is read from its conclusion: the
+// later of PASS or FAIL wins, so quoting the criteria's own words on the way there
+// never flips the verdict.
+// Mirrors docs/compiler/turns/verify-requirement.md.
+fn parse_verdict(reply: &str) -> Option<bool> {
+    let first = reply.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_uppercase();
+    let strip = |s: &str| s.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    let head = strip(&first);
+    let head = head.strip_prefix("VERDICT").map(strip).unwrap_or(head);
+    if head.starts_with("PASS") {
+        return Some(true);
+    }
+    if head.starts_with("FAIL") {
+        return Some(false);
+    }
+    let up = reply.to_uppercase();
+    match (up.rfind("PASS"), up.rfind("FAIL")) {
+        (Some(p), Some(f)) => Some(p > f),
+        (Some(_), None) => Some(true),
+        (None, Some(_)) => Some(false),
+        (None, None) => None,
+    }
+}
+
 // Record a verdict. Rebaselines the test and files hashes, never the requirement hash;
 // a stale factHash is recorded but the row stays pending by derivation.
 pub fn mark(store: &Store, rid: &str, verdict: &str, fact_hash_seen: Option<&str>, evidence: Option<&str>, gs: &GenSettings) -> Result<Value, String> {
@@ -566,6 +593,26 @@ pub fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    // The judge contract puts the verdict on the first line; a reasoning-first reply
+    // is read from its conclusion. Mirrors docs/compiler/turns/verify-requirement.md.
+    #[test]
+    fn verdict_parse_reads_the_verdict_line_then_the_conclusion() {
+        assert_eq!(parse_verdict("PASS\nAll criteria met."), Some(true));
+        assert_eq!(parse_verdict("FAIL\nThe criteria says PASS only when the color is set."), Some(false));
+        // Reasoning first, quoting the criteria, conclusion last: the old
+        // first-occurrence parse read this as a fail.
+        assert_eq!(
+            parse_verdict("The criteria says FAIL when the title is missing. It is present.\nTherefore: PASS"),
+            Some(true)
+        );
+        assert_eq!(parse_verdict("Checked everything. The row does not hold. FAIL"), Some(false));
+        assert_eq!(parse_verdict("PASS. Note the criteria would FAIL a missing title."), Some(true));
+        assert_eq!(parse_verdict("**PASS**\n\nEvery criterion holds."), Some(true));
+        assert_eq!(parse_verdict("Verdict: FAIL\nThe title is absent."), Some(false));
+        assert_eq!(parse_verdict("no verdict words here"), None);
+        assert_eq!(parse_verdict(""), None);
+    }
+
     use super::*;
     use crate::gen::{mark as gen_mark, test_name, GenSettings};
     use crate::model::*;
@@ -838,12 +885,9 @@ pub fn run_all(
                     );
                     match runner.ask_traced(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge", Some(trace)) {
                         Ok(reply) => {
-                            let up = reply.to_uppercase();
-                            match (up.find("PASS"), up.find("FAIL")) {
-                                (Some(p), Some(f)) => Some((p < f, crate::llm::truncate(reply.trim(), 300).to_string())),
-                                (Some(_), None) => Some((true, crate::llm::truncate(reply.trim(), 300).to_string())),
-                                (None, Some(_)) => Some((false, crate::llm::truncate(reply.trim(), 300).to_string())),
-                                (None, None) => {
+                            match parse_verdict(&reply) {
+                                Some(pass) => Some((pass, crate::llm::truncate(reply.trim(), 300).to_string())),
+                                None => {
                                     trace.event(TraceEvent::VerifyRowError {
                                         requirement: rid.clone(),
                                         message: " verdict unparseable (no PASS or FAIL in reply)".into(),

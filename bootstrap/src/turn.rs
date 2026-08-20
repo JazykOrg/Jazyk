@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn feedback_note_rides_under_the_role_line_of_every_prompt() {
-        for system in [RECONCILE_SYSTEM, REVIEW_REQ_SYSTEM, REVIEW_SYSTEM] {
+        for system in [RECONCILE_SYSTEM, REVIEW_REQ_SYSTEM, REVIEW_SYSTEM, GENERATE_SYSTEM, BIND_SYSTEM] {
             let s = with_feedback_note(system);
             let paras: Vec<&str> = s.split("\n\n").collect();
             assert!(paras[0].starts_with("You are the"), "role line stays first");

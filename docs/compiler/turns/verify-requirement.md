@@ -29,8 +29,13 @@ Implementing files:
 Reply with a verdict line `PASS` or `FAIL`, then your reasoning.
 ```
 
-The reply is parsed for the first `PASS` or `FAIL`; whichever appears first wins,
-and the trimmed reply rides into the ledger as evidence.
+The verdict is read from the reply's first non-empty line when that line leads with
+the word, as the contract asks: bare, bolded, or after a `Verdict:` label. A reply
+that answers reasoning-first is read from its conclusion instead: the later of
+`PASS` or `FAIL` anywhere in the reply wins, so quoting the criteria's own words on
+the way to the answer never flips the verdict. A reply carrying neither word is
+unparseable and the row stays pending. The trimmed reply rides into the ledger as
+evidence.
 
 The criteria file was written at generation or binding time; it is the requirement's
 own test artifact. Its template lives with

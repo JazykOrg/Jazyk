@@ -12,15 +12,7 @@ use std::path::Path;
 // The bind contract, served as begin_binding instructions and as the internal turn's
 // package preamble. Mirrors docs/consumers/bind.md#the-bind-task.
 pub fn instructions() -> String {
-    "Bind ONE requirement to the deliverable. Steps: \
-     1) Search the deliverable for an implementation of the statement; record the carrying files, or none. Absence is a finding, not a failure. \
-     2) Search for an existing test that judges the statement; bind to it when found, never write a duplicate beside it. \
-     3) When no test exists, write one. Implementation found: the test pins the observed behavior. Implementation absent: the test encodes the statement and fails by design; it is the acceptance gate generation must clear. \
-     4) Run the test and record the binding with record_binding: files (empty list when nothing implements it), the test row, the verdict, the evidence. \
-     The test must be falsifiable (its assertion fails when the requirement is violated) and inspect the artifact, never prose about it. Use the suggested test name. \
-     A requirement with no falsifiable programmatic assertion binds a kind llm test: write the criteria file and record it with verdict from your own judgment of the deliverable. \
-     Never rewrite implementation files during binding; binding observes, generation changes."
-        .into()
+    include_str!("../../docs/compiler/turns/prompts/bind-contract.md").into()
 }
 
 // Requirements owing a bind, with a reason. Deterministic; no model.

@@ -44,10 +44,17 @@ turns rephrase it into EARS, keep the quote verbatim (`docs/compiler/concepts/ea
 ## Repo layout
 
 - `docs/main.md`: front door. `docs/compiler/`: compiler.md, parsing.md, model.md +
-  `model/`, graph.md, context.md, turns.md, compilation.md (the build lifecycle),
+  `model/`, graph.md, context.md, turns.md + `turns/` (one page per task kind:
+  goal, prompt, pack template, toolset), compilation.md (the build lifecycle),
   reconciler.md (dirty set, scheduling, task queue), control-plane.md (modes,
   releases, workers, leases), tools.md, `concepts/`, project-settings.md, schemas
   (draft-07 JSON Schema in YAML, `$id` `https://jazyk.org/schemas/*.json`).
+- Prompt payloads live in `docs/compiler/turns/prompts/` and are embedded into the
+  binary at compile time (`include_str!`), so docs and code share the same bytes by
+  construction. Edit the files, never reintroduce string constants in code. They
+  are excluded from the docs glob (they are instructions to a model, not prose
+  about jazyk). Placeholders: `{target}` (worker-protocol, pointers), `{GROUP}`
+  (generate-contract).
 - `docs/frontends/`: cli.md, mcp.md, lsp.md, viewer.md. `docs/consumers/`: gen.md
   (generation + verification ledger), pm.md, docsgen.md. `docs/benchmark/`: benchmark.md,
   cases.md, `cases/` (the case files are embedded into the binary at compile time; they are

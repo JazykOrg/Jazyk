@@ -20,6 +20,20 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
 
 ## Task types
 
+Each task type has its own page stating exactly what the model sees: the goal, the
+prompt, the pack template, and the toolset:
+[reconcile-doc](./turns/reconcile-doc.md),
+[review-requirement](./turns/review-requirement.md),
+[review-entity](./turns/review-entity.md),
+[bind-requirement](./turns/bind-requirement.md),
+[generate-entity](./turns/generate-entity.md),
+[verify-requirement](./turns/verify-requirement.md),
+[draft-document](./turns/draft-document.md).
+The prompt payloads live under `docs/compiler/turns/prompts/` as plain files the
+binary embeds at compile time, so the text in the docs and the text a model
+receives are the same bytes. They are excluded from the docs glob: they are
+instructions to a model, not statements about jazyk.
+
 - `reconcile-doc`: bring the graph in line with one document's dirty sections. The model
   reads the sections, extracts requirements and the entities they need, updates what
   drifted, and marks sections covered. The pack includes the dirty section bodies, the

@@ -173,29 +173,18 @@ impl AcpRunner {
             let (system, pack) =
                 crate::turn::task_prompt(&store, item, &self.project.limits, &self.project.linting, &gs);
             return format!(
-                "{}\n\n{}\n\nPROTOCOL: the `jazyk` tools carry this task. First call `begin_compilation` with {{\"task\": \"{}\"}} to open the changeset (its reply only confirms). Stage findings with the write tools. Finish with `done` and a one-line summary; if `done` is rejected, repair exactly what the error names and call it again. Do exactly this one task, then stop.",
+                "{}\n\n{}\n\n{}",
                 crate::turn::with_feedback_note(system),
                 pack,
-                item.target
+                include_str!("../../../docs/compiler/turns/prompts/worker-protocol.md")
+                    .replace("{target}", &item.target)
             );
         }
         match item.task.as_str() {
-            "bind-requirement" => format!(
-                "You are performing one jazyk binding task through the connected `jazyk` MCP server. \
-                 Call `begin_binding` with {{\"requirement\": \"{}\"}}. Follow the returned package exactly: \
-                 search the deliverable for the implementation and an existing test, write the missing test \
-                 (never an implementation file), run it, then `record_binding` with the verdict and evidence. \
-                 Do exactly this one requirement, then stop.",
-                item.target
-            ),
-            "generate-entity" => format!(
-                "You are performing one jazyk generation task through the connected `jazyk` MCP server. \
-                 Call `begin_generation` with {{\"entity\": \"{}\"}}. Follow the returned package exactly: \
-                 write the entity's part of the deliverable and its tests, make the bound tests pass, then \
-                 `record_generation` with the manifest, then `run_tests`. \
-                 Do exactly this one entity, then stop.",
-                item.target
-            ),
+            "bind-requirement" => include_str!("../../../docs/compiler/turns/prompts/bind-pointer.md")
+                .replace("{target}", &item.target),
+            "generate-entity" => include_str!("../../../docs/compiler/turns/prompts/generate-pointer.md")
+                .replace("{target}", &item.target),
             _ => unreachable!("compilation prompts are packaged above"),
         }
     }

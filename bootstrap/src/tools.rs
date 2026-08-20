@@ -2448,4 +2448,20 @@ mod tests {
         assert_eq!(crate::feedback::read(&dir, 99).len(), FEEDBACK_LIMIT);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    // The per-task docs state what the model sees; a toolset change that forgets the
+    // doc would let them drift. Every tool a task carries must appear on its page.
+    // Mirrors docs/compiler/turns.md#task-types.
+    #[test]
+    fn task_docs_name_every_tool() {
+        for (task, doc) in [
+            ("reconcile-doc", include_str!("../../docs/compiler/turns/reconcile-doc.md")),
+            ("review-requirement", include_str!("../../docs/compiler/turns/review-requirement.md")),
+            ("review-entity", include_str!("../../docs/compiler/turns/review-entity.md")),
+        ] {
+            for tool in toolset(task) {
+                assert!(doc.contains(tool), "the {} page misses tool `{}`", task, tool);
+            }
+        }
+    }
 }

@@ -1,0 +1,1 @@
+If anything here is ambiguous, wrong, or confusing (these instructions, a tool, its arguments, or an error message), call report_feedback saying what blocked you, then continue with your best judgment. It reaches jazyk's developers, not this project's authors, and never changes the graph. Problems in the documents themselves are not feedback.

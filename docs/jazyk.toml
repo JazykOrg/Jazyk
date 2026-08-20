@@ -6,6 +6,10 @@ glob = [
     # Benchmark case files are fixtures, not documentation. Compiling them would leak
     # their planted entities (Cart, ABC) into the project graph.
     "!benchmark/cases/**",
+    # Prompt payloads are what the turns say to the model, embedded into the binary
+    # verbatim at compile time. They are instructions to a model, not statements
+    # about jazyk; compiling them would extract their imperatives as requirements.
+    "!compiler/turns/prompts/**",
 ]
 
 [docs.linting.rules]

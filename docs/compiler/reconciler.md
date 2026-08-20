@@ -51,25 +51,29 @@ agent perform compilation over [MCP](../frontends/mcp.md#compilation-over-mcp) w
 same semantics as `jazyk compile`, and lets an interrupted build resume from any
 consumer.
 
-Task kinds, in dependency order:
+Task kinds, in dependency order (each links to the page stating exactly what the
+model sees when the task runs):
 
-- `reconcile-document`: derived from the section-tree diff, uncovered sections, and
-  stale anchors. Ready when every document in an earlier
-  [level](#scheduling) is clean.
-- `review-requirement`: a changed requirement judged against its computed neighbors.
-  Ready when no reconcile task is pending.
-- `review-entity`: an entity whose facts changed. Ready when no reconcile or
-  pair-review task is pending.
-- `bind-requirement`: a requirement whose [binding](../consumers/bind.md) is absent
-  or invalid (no ledger row, a reworded statement, a gone test artifact). Ready when
-  the compile queue is empty: the statement must be final before a test encodes it.
-- `generate-entity` and `verify-requirement`: [generation](../consumers/gen.md) and
-  verification pending, derived from the ledger. Generation is ready when the compile
-  queue is empty and none of the entity's requirements owes a bind; a row's
-  verification is ready when its entity is generated.
-- `draft-document`: [decompilation](../consumers/decompile.md), derived from the
-  [unclaimed report](../consumers/bind.md#the-unclaimed-report). Always gated until a
-  decompile release names its scope; there is no auto mode.
+- [`reconcile-document`](./turns/reconcile-doc.md): derived from the section-tree
+  diff, uncovered sections, and stale anchors. Ready when every document in an
+  earlier [level](#scheduling) is clean.
+- [`review-requirement`](./turns/review-requirement.md): a changed requirement
+  judged against its computed neighbors. Ready when no reconcile task is pending.
+- [`review-entity`](./turns/review-entity.md): an entity whose facts changed. Ready
+  when no reconcile or pair-review task is pending.
+- [`bind-requirement`](./turns/bind-requirement.md): a requirement whose
+  [binding](../consumers/bind.md) is absent or invalid (no ledger row, a reworded
+  statement, a gone test artifact). Ready when the compile queue is empty: the
+  statement must be final before a test encodes it.
+- [`generate-entity`](./turns/generate-entity.md) and
+  [`verify-requirement`](./turns/verify-requirement.md):
+  [generation](../consumers/gen.md) and verification pending, derived from the
+  ledger. Generation is ready when the compile queue is empty and none of the
+  entity's requirements owes a bind; a row's verification is ready when its entity
+  is generated.
+- [`draft-document`](./turns/draft-document.md): [decompilation](../consumers/decompile.md),
+  derived from the [unclaimed report](../consumers/bind.md#the-unclaimed-report).
+  Always gated until a decompile release names its scope; there is no auto mode.
 
 Everything above is derivable from disk except which reviews are owed: the ingest
 turns that made an entity's facts change may have run in another process. So the

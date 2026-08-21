@@ -26,6 +26,24 @@ pub struct Queue {
     pub dangling_diags: bool,
 }
 
+// Task kinds as the queue and MCP name them, and back. Mirrors
+// docs/compiler/reconciler.md#the-task-queue.
+pub fn kind_of(task: &str) -> &str {
+    match task {
+        "reconcile-doc" => "reconcile-document",
+        "align-doc" => "align-document",
+        t => t,
+    }
+}
+
+pub fn task_of(kind: &str) -> &str {
+    match kind {
+        "reconcile-document" => "reconcile-doc",
+        "align-document" => "align-doc",
+        k => k,
+    }
+}
+
 impl Queue {
     pub fn compile_empty(&self) -> bool {
         self.compile.is_empty()
@@ -85,13 +103,17 @@ impl Queue {
             return None;
         }
         Some(WorkItem {
-            task: entry["kind"].as_str().unwrap_or_default().replace("reconcile-document", "reconcile-doc"),
+            task: task_of(entry["kind"].as_str().unwrap_or_default()).to_string(),
             target: entry["target"].as_str().unwrap_or_default().to_string(),
             dirty_sections: entry["dirtySections"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             stale_anchors: entry["staleAnchors"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            proposals: entry["proposals"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
@@ -104,6 +126,7 @@ impl Queue {
 // come from status.pending; generation and verification from the ledger.
 pub fn compute(proj: &Project, out: &Path) -> Queue {
     let mut store = Store::load(out);
+    store.align = align_thresholds(proj);
     let verdict = store.status.verdict.clone();
     let open_diags = store.open_diag_counts();
     let dangling_diags = store.has_dangling_diags();
@@ -126,14 +149,14 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             })
             .map(|(r, _)| r.clone())
             .collect();
-        let stale: Vec<String> = store
-            .graph
-            .requirements
-            .iter()
-            .filter(|(_, q)| &q.source.doc == doc)
-            .filter(|(_, q)| !store.quote_locates(&q.source.doc, &q.source.section, &q.source.quote))
-            .map(|(id, _)| id.clone())
-            .collect();
+        // Quote-stale and re-evaluation anchors, with the sections they sit in.
+        let (stale, stale_sections) = store.stale_extras(doc);
+        let mut uncovered = uncovered;
+        for sec in stale_sections {
+            if !uncovered.contains(&sec) {
+                uncovered.push(sec);
+            }
+        }
         if uncovered.is_empty() && stale.is_empty() {
             continue;
         }
@@ -160,16 +183,35 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
 
     let levels = crate::reconcile::schedule_levels(&dirty, &links, proj);
     let mut compile: Vec<Value> = Vec::new();
+    // Alignment first: anchors are placed before any document is reconciled, and a
+    // document with pending proposals waits for its own align task.
+    // Mirrors docs/compiler/alignment.md#the-align-doc-turn.
+    let aligning: BTreeSet<String> = store.status.alignment.iter().map(|b| b.doc.clone()).collect();
+    for b in &store.status.alignment {
+        compile.push(json!({
+            "kind": "align-document",
+            "target": b.doc,
+            "proposals": b.proposals.iter().map(|p| p.anchor.clone()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>(),
+            "ready": true,
+        }));
+    }
     let mut first_level_seen = false;
     for (i, level) in levels.iter().enumerate() {
         for d in level {
+            let blocked = if aligning.contains(&d.doc) {
+                json!("alignment pending: its align-document task places the anchors first")
+            } else if first_level_seen {
+                json!(format!("level {} documents reconcile first", i))
+            } else {
+                Value::Null
+            };
             compile.push(json!({
                 "kind": "reconcile-document",
                 "target": d.doc,
                 "dirtySections": d.dirty_sections,
                 "staleAnchors": d.stale_anchors,
-                "ready": !first_level_seen,
-                "blockedBy": if first_level_seen { json!(format!("level {} documents reconcile first", i)) } else { Value::Null },
+                "ready": blocked.is_null(),
+                "blockedBy": blocked,
             }));
         }
         if !level.is_empty() {
@@ -222,15 +264,16 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
 
     // Parked work resumes first: it is ready by definition.
     for p in &store.status.parked {
-        if compile.iter().any(|e| e["target"] == p.target.as_str()) {
+        let kind = kind_of(&p.task);
+        if compile.iter().any(|e| e["target"] == p.target.as_str() && e["kind"] == kind) {
             continue;
         }
-        let kind = if p.task == "reconcile-doc" { "reconcile-document" } else { p.task.as_str() };
         compile.push(json!({
             "kind": kind,
             "target": p.target,
             "dirtySections": p.dirty_sections,
             "staleAnchors": p.stale_anchors,
+            "proposals": p.proposals,
             "ready": true,
             "parked": true,
         }));
@@ -334,6 +377,13 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         }
     }
     q
+}
+
+pub fn align_thresholds(proj: &Project) -> crate::align::Thresholds {
+    crate::align::Thresholds {
+        move_similarity: proj.limits.align_move_similarity,
+        split_coverage: proj.limits.align_split_coverage,
+    }
 }
 
 // Actionable work: ready, not gated, not claimed by someone else. What monitor

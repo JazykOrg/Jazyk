@@ -180,7 +180,7 @@ export const useApp = create<AppStore>((set) => ({
           label,
           task,
           target,
-          doc: task === 'reconcile-doc' ? target : null,
+          doc: task === 'reconcile-doc' || task === 'align-doc' ? target : null,
           state: 'queued',
           sections: [],
           touched: [],

@@ -22,6 +22,7 @@ item. Nothing in between. An aborted turn leaves no trace in the graph.
 
 Each task type has its own page stating exactly what the model sees: the goal, the
 prompt, the pack template, and the toolset:
+[align-doc](./turns/align-doc.md),
 [reconcile-doc](./turns/reconcile-doc.md),
 [review-requirement](./turns/review-requirement.md),
 [review-entity](./turns/review-entity.md),
@@ -34,6 +35,15 @@ binary embeds at compile time, so the text in the docs and the text a model
 receives are the same bytes. They are excluded from the docs glob: they are
 instructions to a model, not statements about jazyk.
 
+- `align-doc`: place the anchors [alignment](./alignment.md) could not place with
+  certainty in one document. The pack shows each anchor's previous location and
+  wording, its candidate sections with their wording, and the computed section
+  changes (moved, split, merged, edited, deleted). Per anchor the model either
+  places it as it stands (`place_anchor`, `reevaluate: false`), places it and marks
+  it for re-evaluation (`reevaluate: true`, which lists it as a stale anchor for the
+  document's `reconcile-doc` turn), or orphans it (`orphan_anchor`, a stale anchor
+  on its old document). The turn writes no entities, requirements, coverage, or
+  diagnostics. The `done` gate rejects a turn that leaves a proposal undecided.
 - `reconcile-doc`: bring the graph in line with one document's dirty sections. The model
   reads the sections, extracts requirements and the entities they need, updates what
   drifted, and marks sections covered. The pack includes the dirty section bodies, the
@@ -300,7 +310,8 @@ The event kinds:
 
 - `turnStart`, `turnDone`, `turnFailed`: the turn lifecycle. `turnStart` carries where
   the turn is working: `task`, `target`, the `doc` when the task is `reconcile-doc`,
-  the dirty `sections` it must process, and the stale anchor count.
+  the dirty `sections` it must process, and the stale anchor count; for an
+  `align-doc` turn, the proposal count.
 - `toolCall`, `toolResult`, `toolError`: one row per tool call, condensed.
 - `modelText`: prose or reasoning the model produced.
 - `section`: the turn moved to a section. Emitted when an accepted tool call names a

@@ -25,7 +25,7 @@ As produced by [parsing](../parsing.md#section-tree):
 - `parent`: the internal reference of the parent section. The root section has none.
 - `raw`: the verbatim source text.
 - `hash`: a content hash of `raw`, the input to
-  [section diffing](../parsing.md#section-diffing).
+  [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md).
 - `lines`: the line range in the source file, for editor integration.
 
 Sections are stored per document under the graph store's `docs/` shard, not under

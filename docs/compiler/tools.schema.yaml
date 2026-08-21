@@ -234,6 +234,38 @@ definitions:
       reason:
         type: string
     additionalProperties: false
+  placeAnchor:
+    description: >-
+      Request payload of place_anchor. Moves one proposed anchor to a section; the
+      align-doc turn only
+    type: object
+    required:
+      - id
+      - section
+      - reevaluate
+    properties:
+      id:
+        type: string
+        description: A requirement or entity id named by the work item's proposals
+      section:
+        type: string
+        description: Target section reference, /ref or doc.md#/ref
+      quote:
+        type: string
+        description: Replacement quote; must locate in the target section
+      reevaluate:
+        type: boolean
+        description: List the anchor as a stale anchor for the target document's reconcile-doc turn
+    additionalProperties: false
+  orphanAnchor:
+    description: Request payload of orphan_anchor. Leaves one proposed anchor homeless
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+    additionalProperties: false
   reportDiagnostic:
     description: Request payload of report_diagnostic
     type: object

@@ -141,6 +141,24 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
+            name: "place_anchor",
+            description: "Move one proposed anchor (a requirement or an entity mention named in this align task) to the section that now holds its text. quote, when given, must locate verbatim there and replaces the stored quote. reevaluate true lists the anchor for the extraction turn to re-judge; false keeps it as an unchanged statement.",
+            parameters: obj(
+                json!({
+                    "id": {"type": "string"},
+                    "section": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "reevaluate": {"type": "boolean"}
+                }),
+                &["id", "section", "reevaluate"],
+            ),
+        },
+        ToolDef {
+            name: "orphan_anchor",
+            description: "Leave one proposed anchor homeless: no candidate section states it any more. It stays a stale anchor for the extraction turn, which will delete it unless the document still states it.",
+            parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
+        },
+        ToolDef {
             name: "report_diagnostic",
             description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt optionally attaches a question for the document owner: up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies.",
             parameters: obj(
@@ -331,6 +349,9 @@ pub const FEEDBACK_LIMIT: usize = 5;
 
 pub fn toolset(task: &str) -> Vec<&'static str> {
     let mut v = match task {
+        "align-doc" => vec![
+            "context", "expand", "search", "read_section", "get_entity", "place_anchor", "orphan_anchor", "done",
+        ],
         "reconcile-doc" => vec![
             "context", "expand", "search", "read_section", "upsert_entity", "update_entity", "delete_entity",
             "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
@@ -377,6 +398,7 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             "context", "expand", "search", "read_section", "get_entity", "diagnostics", "upsert_entity",
             "update_entity", "delete_entity", "merge_entities", "upsert_requirement", "update_requirement",
             "delete_requirement", "set_coverage", "report_diagnostic", "update_diagnostic", "resolve_diagnostic",
+            "place_anchor", "orphan_anchor",
         ],
         "mcp-write" => catalog()
             .iter()
@@ -512,6 +534,9 @@ pub struct WorkScope {
     // Requirement ids whose quote stopped locating; the done gate holds the turn to
     // addressing each one. See docs/compiler/graph.md#validation-gates.
     pub stale_anchors: Vec<String>,
+    // Anchor ids an align-doc turn must decide; place_anchor and orphan_anchor accept
+    // no others, and done holds the turn to every one.
+    pub proposals: Vec<String>,
 }
 
 // One turn's tool session: reads answer from the snapshot, writes stage into the changeset.
@@ -1574,6 +1599,85 @@ impl ToolSession {
                 self.stage(Op::DeleteRequirement { id, reason })?;
                 Ok(json!({"deleted": true}))
             }
+            "place_anchor" | "orphan_anchor" => {
+                let raw = Self::str_arg(args, "id")?;
+                let id = self
+                    .canon_entity_id(&raw)
+                    .filter(|i| self.scope.proposals.contains(i))
+                    .or_else(|| self.canon_req_id(&raw).ok().filter(|i| self.scope.proposals.contains(i)))
+                    .ok_or_else(|| {
+                        ToolError::new(
+                            "unknown-anchor",
+                            format!(
+                                "`{}` is not one of this task's proposals ({}); decide only the anchors the work pack lists",
+                                raw,
+                                self.scope.proposals.join(", ")
+                            ),
+                        )
+                    })?;
+                // The proposals name the anchor's old location and quote; the op carries
+                // them so the store can tell one entity mention from another. An entity
+                // with several proposed mentions is decided in one call: every one of
+                // them goes to the same section.
+                let proposals: Vec<AnchorProposal> = self
+                    .snapshot
+                    .status
+                    .alignment
+                    .iter()
+                    .filter(|b| Some(&b.doc) == self.scope.doc.as_ref())
+                    .flat_map(|b| b.proposals.iter())
+                    .filter(|p| p.anchor == id)
+                    .cloned()
+                    .collect();
+                if proposals.is_empty() {
+                    return Err(ToolError::new("unknown-anchor", format!("no pending proposal for `{}`", id)));
+                }
+                let mut froms: Vec<SourceRef> = Vec::new();
+                for p in &proposals {
+                    let (from_doc, from_sec) = split_section_ref(&p.from)
+                        .ok_or_else(|| ToolError::new("bad-section", format!("bad proposal location `{}`", p.from)))?;
+                    froms.push(SourceRef { doc: from_doc, section: from_sec, quote: p.quote.clone() });
+                }
+                if name == "orphan_anchor" {
+                    for from in froms {
+                        self.stage(Op::OrphanAnchor { id: id.clone(), from })?;
+                    }
+                    return Ok(json!({"id": id, "orphaned": true}));
+                }
+                let (doc, sec) = self.resolve_section(&Self::str_arg(args, "section")?)?;
+                let given = match Self::opt_str(args, "quote") {
+                    Some(q) if froms.len() > 1 => {
+                        return Err(ToolError::new(
+                            "bad-argument",
+                            format!(
+                                "`{}` has {} proposed mentions; omit `quote` so each keeps its own, or decide them with the section alone",
+                                id,
+                                froms.len()
+                            ),
+                        ))
+                    }
+                    Some(q) => Some(self.check_quote(&doc, &sec, &q)?),
+                    None => None,
+                };
+                let reevaluate = args["reevaluate"].as_bool().unwrap_or(false);
+                let mut all_locate = true;
+                for from in froms {
+                    let quote = given.clone().unwrap_or_else(|| from.quote.clone());
+                    all_locate &= self.snapshot.quote_locates(&doc, &sec, &quote);
+                    self.stage(Op::PlaceAnchor {
+                        id: id.clone(),
+                        from,
+                        to: SourceRef { doc: doc.clone(), section: sec.clone(), quote },
+                        reevaluate,
+                    })?;
+                }
+                Ok(json!({
+                    "id": id,
+                    "placed": true,
+                    "reevaluate": reevaluate || !all_locate,
+                    "note": if all_locate { "quote locates in the new section" } else { "the stored quote does not locate there; the extraction turn will re-anchor or delete it" },
+                }))
+            }
             "report_diagnostic" => {
                 let rule = Self::str_arg(args, "rule")?;
                 const REVIEW_RULES: [&str; 6] =
@@ -1836,13 +1940,39 @@ impl ToolSession {
                 }))
             }
             "done" => {
+                // Batch gate for the align turn: every proposal is decided.
+                // Mirrors docs/compiler/turns/align-doc.md#finish.
+                let undecided: Vec<String> = self
+                    .scope
+                    .proposals
+                    .iter()
+                    .filter(|a| {
+                        !self.staged.iter().any(|o| {
+                            matches!(o, Op::PlaceAnchor { id, .. } | Op::OrphanAnchor { id, .. } if id == *a)
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                if !undecided.is_empty() {
+                    return Err(ToolError::new(
+                        "undecided-proposal",
+                        format!(
+                            "proposals left undecided: {}; for each, place_anchor with the section that now holds the statement (reevaluate true when its meaning may have changed), or orphan_anchor when no candidate states it",
+                            undecided.join(", ")
+                        ),
+                    ));
+                }
                 // Batch gate: stale anchors are a contract. Each must be re-anchored
                 // (its quote locates again), re-recorded under its natural key, revised,
-                // or deleted; a turn cannot mark coverage around them and walk away.
+                // or deleted; a turn cannot mark coverage around them and walk away. An
+                // anchor the align turn flagged for re-evaluation owes a decision even
+                // though its quote locates.
                 let mut untouched: Vec<String> = Vec::new();
                 for a in &self.scope.stale_anchors {
                     let Some(r) = self.snapshot.graph.requirements.get(a) else { continue };
-                    if self.snapshot.quote_locates(&r.source.doc, &r.source.section, &r.source.quote) {
+                    if self.snapshot.quote_locates(&r.source.doc, &r.source.section, &r.source.quote)
+                        && !self.snapshot.status.reevaluate.contains(a)
+                    {
                         continue;
                     }
                     let addressed = self.staged.iter().any(|o| match o {
@@ -1972,6 +2102,7 @@ mod tests {
                 target: "shop.md".into(),
                 target_sections: vec!["/shop".into(), "/shop/cart".into()],
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             },
             64,
             24_000,
@@ -2309,6 +2440,7 @@ mod tests {
                 target: "shop.md".into(),
                 target_sections: vec!["/shop/cart".into()],
                 stale_anchors: vec!["req:shop-1".into()],
+                proposals: Vec::new(),
             },
             64,
             24_000,
@@ -2455,6 +2587,7 @@ mod tests {
     #[test]
     fn task_docs_name_every_tool() {
         for (task, doc) in [
+            ("align-doc", include_str!("../../docs/compiler/turns/align-doc.md")),
             ("reconcile-doc", include_str!("../../docs/compiler/turns/reconcile-doc.md")),
             ("review-requirement", include_str!("../../docs/compiler/turns/review-requirement.md")),
             ("review-entity", include_str!("../../docs/compiler/turns/review-entity.md")),
@@ -2463,5 +2596,131 @@ mod tests {
                 assert!(doc.contains(tool), "the {} page misses tool `{}`", task, tool);
             }
         }
+    }
+
+    fn align_session() -> ToolSession {
+        let mut s = Store::default();
+        let text = "# Shop\nintro\n\n## Basket\nThe Basket keeps items a Customer intends to buy.\nItems stay until checkout.\n";
+        s.docs.insert(
+            "shop.md".into(),
+            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+        );
+        s.graph.entities.insert("ent:basket".into(), Entity { name: "Basket".into(), ..Default::default() });
+        s.graph.requirements.insert(
+            "req:shop-1".into(),
+            Requirement {
+                ears: "The Basket shall keep items until checkout.".into(),
+                entities: vec!["ent:basket".into()],
+                edges: Vec::new(),
+                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "Items stay until checkout.".into() },
+                confidence: None,
+                reasoning: None,
+                created: None,
+                updated: None,
+            },
+        );
+        s.graph.requirements.insert(
+            "req:shop-2".into(),
+            Requirement {
+                ears: "The Basket shall hold items a Customer intends to buy.".into(),
+                entities: vec!["ent:basket".into()],
+                edges: Vec::new(),
+                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "The Cart holds items a Customer intends to buy.".into() },
+                confidence: None,
+                reasoning: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let candidate = |locates: bool| crate::model::AnchorCandidate {
+            section: "shop.md#/shop/basket".into(),
+            similarity: if locates { 1.0 } else { 0.8 },
+            quote_locates: locates,
+            nearest: (!locates).then(|| "The Basket keeps items a Customer intends to buy.".to_string()),
+            excerpt: String::new(),
+        };
+        s.status.alignment.push(crate::model::DocAlignment {
+            doc: "shop.md".into(),
+            changes: vec![],
+            proposals: vec![
+                crate::model::AnchorProposal { anchor: "req:shop-1".into(), from: "shop.md#/shop/cart".into(), quote: "Items stay until checkout.".into(), excerpt: String::new(), candidates: vec![candidate(true)] },
+                crate::model::AnchorProposal { anchor: "req:shop-2".into(), from: "shop.md#/shop/cart".into(), quote: "The Cart holds items a Customer intends to buy.".into(), excerpt: String::new(), candidates: vec![candidate(false)] },
+            ],
+        });
+        ToolSession::new(
+            s,
+            WorkScope {
+                task: "align-doc".into(),
+                doc: Some("shop.md".into()),
+                target: "shop.md".into(),
+                target_sections: Vec::new(),
+                stale_anchors: Vec::new(),
+                proposals: vec!["req:shop-1".into(), "req:shop-2".into()],
+            },
+            64,
+            24_000,
+        )
+    }
+
+    #[test]
+    fn align_done_rejects_an_undecided_proposal() {
+        let mut s = align_session();
+        s.dispatch("place_anchor", &json!({"id": "req:shop-1", "section": "/shop/basket", "reevaluate": false})).unwrap();
+        let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        assert_eq!(err.rule, "undecided-proposal");
+        assert!(err.message.contains("req:shop-2"));
+        s.dispatch("orphan_anchor", &json!({"id": "req:shop-2"})).unwrap();
+        assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
+        assert_eq!(s.staged.len(), 2);
+    }
+
+    #[test]
+    fn place_anchor_gates_quote_and_section_and_rejects_strangers() {
+        let mut s = align_session();
+        let err = s.dispatch("place_anchor", &json!({"id": "ent:basket", "section": "/shop/basket", "reevaluate": false})).unwrap_err();
+        assert_eq!(err.rule, "unknown-anchor");
+        let err = s.dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/nowhere", "reevaluate": false})).unwrap_err();
+        assert_eq!(err.rule, "unknown-section");
+        let err = s
+            .dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/basket", "quote": "not in the text", "reevaluate": false}))
+            .unwrap_err();
+        assert_eq!(err.rule, "quote-not-found");
+        // Without a quote the old one rides along; the reply says it will not locate.
+        let v = s.dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/basket", "reevaluate": false})).unwrap();
+        assert_eq!(v["reevaluate"], true);
+        // With the new sentence verbatim it is a clean relocation.
+        let v = s
+            .dispatch("place_anchor", &json!({"id": "req:shop-1", "section": "shop.md#/shop/basket", "quote": "Items stay until checkout.", "reevaluate": false}))
+            .unwrap();
+        assert_eq!(v["reevaluate"], false);
+        assert!(matches!(&s.staged[1], Op::PlaceAnchor { to, .. } if to.section == "/shop/basket"));
+    }
+
+    // A relocated anchor flagged for re-evaluation owes the reconcile turn a decision
+    // even though its quote locates.
+    #[test]
+    fn reconcile_done_holds_a_flagged_anchor_whose_quote_locates() {
+        let mut s = session();
+        s.snapshot.graph.requirements.insert(
+            "req:shop-9".into(),
+            Requirement {
+                ears: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
+                entities: vec!["ent:shopping-cart".into()],
+                edges: Vec::new(),
+                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "The Shopping Cart holds items a Customer intends to buy.".into() },
+                confidence: None,
+                reasoning: None,
+                created: None,
+                updated: None,
+            },
+        );
+        s.snapshot.status.reevaluate.push("req:shop-9".into());
+        s.scope.stale_anchors.push("req:shop-9".into());
+        s.scope.target_sections = vec!["/shop/cart".into()];
+        s.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        assert_eq!(err.rule, "stale-anchor");
+        s.dispatch("delete_requirement", &json!({"id": "req:shop-9", "reason": "meaning changed"})).unwrap();
+        assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
     }
 }

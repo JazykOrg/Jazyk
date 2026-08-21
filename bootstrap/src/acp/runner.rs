@@ -197,10 +197,11 @@ impl AcpRunner {
             label: label.clone(),
             task: item.task.clone(),
             target: item.target.clone(),
-            doc: (item.task == "reconcile-doc").then(|| item.target.clone()),
+            doc: matches!(item.task.as_str(), "reconcile-doc" | "align-doc").then(|| item.target.clone()),
             sections: item.dirty_sections.clone(),
             dirty: item.dirty_sections.len(),
             stale: item.stale_anchors.len(),
+            proposals: item.proposals.len(),
         });
         let gen_before = crate::store::read_generation(&self.out);
         let session = match self.session(vec![self.mcp_spec(item)]) {
@@ -239,7 +240,8 @@ impl AcpRunner {
             if let Ok(o) = &outcome {
                 if o.stop == "end_turn" && !o.idled {
                     let q = crate::queue::compute(&self.project, &self.out);
-                    if q.compile.iter().any(|e| e["target"] == item.target.as_str()) {
+                    let kind = crate::queue::kind_of(&item.task);
+                    if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["kind"] == kind) {
                         outcome = session.prompt(
                             &format!(
                                 "The task is not finished: `{} {}` has not committed. Continue with the tool calls the instructions name, then finish with done.",

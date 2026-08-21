@@ -104,6 +104,8 @@ pub struct Limits {
     pub max_section_chars: usize,
     pub max_doc_sections: usize,
     pub max_entity_requirements: usize,
+    pub align_move_similarity: f64,
+    pub align_split_coverage: f64,
 }
 
 impl Default for Limits {
@@ -116,6 +118,8 @@ impl Default for Limits {
             max_section_chars: 6_000,
             max_doc_sections: 40,
             max_entity_requirements: 50,
+            align_move_similarity: 0.5,
+            align_split_coverage: 0.6,
         }
     }
 }
@@ -399,6 +403,12 @@ impl Project {
         if let Some(v) = t.integer("limits.max_entity_requirements") {
             p.limits.max_entity_requirements = v as usize;
         }
+        if let Some(v) = t.float("limits.align_move_similarity") {
+            p.limits.align_move_similarity = v;
+        }
+        if let Some(v) = t.float("limits.align_split_coverage") {
+            p.limits.align_split_coverage = v;
+        }
         p
     }
 
@@ -599,6 +609,9 @@ impl Toml {
     fn integer(&self, key: &str) -> Option<i64> {
         self.strings.get(key).and_then(|s| s.parse::<i64>().ok())
     }
+    fn float(&self, key: &str) -> Option<f64> {
+        self.strings.get(key).and_then(|s| s.parse::<f64>().ok())
+    }
     fn array(&self, key: &str) -> Option<Vec<String>> {
         self.arrays.get(key).cloned()
     }
@@ -709,6 +722,8 @@ const KNOWN_STRINGS: &[&str] = &[
     "limits.max_section_chars",
     "limits.max_doc_sections",
     "limits.max_entity_requirements",
+    "limits.align_move_similarity",
+    "limits.align_split_coverage",
 ];
 const KNOWN_ARRAYS: &[&str] =
     &["docs.glob", "roots.files", "docs.linting.rules.warnings", "docs.linting.rules.errors"];
@@ -763,6 +778,8 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
                 "maxSectionChars": t.integer("limits.max_section_chars"),
                 "maxDocSections": t.integer("limits.max_doc_sections"),
                 "maxEntityRequirements": t.integer("limits.max_entity_requirements"),
+                "alignMoveSimilarity": t.float("limits.align_move_similarity"),
+                "alignSplitCoverage": t.float("limits.align_split_coverage"),
             },
         },
         "defaults": {
@@ -776,6 +793,8 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
                 "maxSectionChars": d.max_section_chars,
                 "maxDocSections": d.max_doc_sections,
                 "maxEntityRequirements": d.max_entity_requirements,
+                "alignMoveSimilarity": d.align_move_similarity,
+                "alignSplitCoverage": d.align_split_coverage,
             },
         },
     })

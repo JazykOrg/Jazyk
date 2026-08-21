@@ -1475,6 +1475,7 @@ fn gen_turn(
         target: id.to_string(),
         dirty_sections: Vec::new(),
         stale_anchors: Vec::new(),
+        proposals: Vec::new(),
     };
     let report = runner.run_item(&item, trace);
     if let Some(e) = report.failed {

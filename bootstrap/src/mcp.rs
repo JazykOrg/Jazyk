@@ -511,6 +511,15 @@ impl McpServer {
                 target: item.target.clone(),
                 target_sections: item.dirty_sections.clone(),
                 stale_anchors: item.stale_anchors.clone(),
+                proposals: Vec::new(),
+            },
+            "align-doc" => WorkScope {
+                task: item.task.clone(),
+                doc: Some(item.target.clone()),
+                target: item.target.clone(),
+                target_sections: Vec::new(),
+                stale_anchors: Vec::new(),
+                proposals: item.proposals.clone(),
             },
             _ => WorkScope {
                 task: item.task.clone(),
@@ -518,6 +527,7 @@ impl McpServer {
                 target: item.target.clone(),
                 target_sections: Vec::new(),
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             },
         };
         let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
@@ -550,7 +560,8 @@ impl McpServer {
             json!({
                 "task": {"kind": item.task, "target": item.target,
                          "dirtySections": item.dirty_sections.iter().map(|r| format!("{}#{}", item.target, r)).collect::<Vec<_>>(),
-                         "staleAnchors": item.stale_anchors},
+                         "staleAnchors": item.stale_anchors,
+                         "proposals": item.proposals},
                 "instructions": instructions_field,
                 "package": pack,
                 "writeTools": write_tools,
@@ -767,6 +778,7 @@ impl McpServer {
                 _ => Vec::new(),
             },
             stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         };
         let mut reply = json!({
             "case": {"name": case.name, "tier": case.tier, "task": case.task_type, "target": case.target},
@@ -803,6 +815,7 @@ impl McpServer {
                 target: item.target.clone(),
                 target_sections: item.dirty_sections.clone(),
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             },
             _ => WorkScope {
                 task: item.task.clone(),
@@ -810,6 +823,7 @@ impl McpServer {
                 target: item.target.clone(),
                 target_sections: Vec::new(),
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             },
         };
         let mut session = ToolSession::new(store.clone(), scope, self.mutation_limit, self.context_budget);
@@ -1013,7 +1027,7 @@ impl McpServer {
                 if self.modes.iter().any(|m| m == "compile") {
                     tools.push(json!({
                         "name": "compilation_tasks",
-                        "description": "The compilation task queue: reconcile-document tasks by document level, then review tasks, each ready or blocked with the reason. Zero tasks carries the build verdict. Next: begin_compilation.",
+                        "description": "The compilation task queue: align-document tasks (anchors to place after a document reshuffle), reconcile-document tasks by document level, then review tasks, each ready or blocked with the reason. Zero tasks carries the build verdict. Next: begin_compilation.",
                         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
                     }));
                     tools.push(json!({
@@ -1479,6 +1493,7 @@ impl McpServer {
                     target: String::new(),
                     target_sections: Vec::new(),
                     stale_anchors: Vec::new(),
+                    proposals: Vec::new(),
                 };
                 let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1493,6 +1508,7 @@ impl McpServer {
                                 target: name.clone(),
                                 dirty_sections: vec![],
                                 stale_anchors: vec![],
+                                proposals: Vec::new(),
                             };
                             let report = s.apply(session.staged, &wi, 1, 0);
                             let mut v = v;
@@ -1554,6 +1570,7 @@ impl McpServer {
             target: target.to_string(),
             target_sections: Vec::new(),
             stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         };
         let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1576,7 +1593,7 @@ impl McpServer {
         let mut s = Store::load(&self.out);
         s.sync_docs(&parsed);
         s.absorb_doc_edit(doc, full);
-        let item = WorkItem { task: "chat".into(), target: target.to_string(), dirty_sections: vec![], stale_anchors: vec![] };
+        let item = WorkItem { task: "chat".into(), target: target.to_string(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
         let report = s.apply(ops, &item, 1, 0);
         if !report.skipped.is_empty() {
             // The graph side skipped: put the prose back so neither moved.
@@ -1627,6 +1644,7 @@ impl McpServer {
             target: target.clone(),
             target_sections: Vec::new(),
             stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         };
         let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1637,7 +1655,7 @@ impl McpServer {
         let ops = std::mem::take(&mut session.staged);
         let mut s = Store::load(&self.out);
         s.sync_docs(&parsed);
-        let item = crate::model::WorkItem { task: "chat".into(), target, dirty_sections: vec![], stale_anchors: vec![] };
+        let item = crate::model::WorkItem { task: "chat".into(), target, dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
         let report = s.apply(ops, &item, 1, 0);
         if !report.skipped.is_empty() {
             return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});

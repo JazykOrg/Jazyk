@@ -320,6 +320,7 @@ pub fn run_all(
             target: rid.clone(),
             dirty_sections: Vec::new(),
             stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         };
         let out = runner.run_item(&item, trace);
         if let Some(e) = out.failed {

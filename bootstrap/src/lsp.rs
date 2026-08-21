@@ -1124,7 +1124,7 @@ mod tests {
                     updated: None,
                 },
             }],
-            &crate::model::WorkItem { task: "seed".into(), target: "t".into(), dirty_sections: vec![], stale_anchors: vec![] },
+            &crate::model::WorkItem { task: "seed".into(), target: "t".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() },
             0,
             0,
         );

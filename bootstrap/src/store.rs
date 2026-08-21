@@ -38,6 +38,11 @@ pub enum Op {
         source: Option<SourceRef>,
     },
     DeleteRequirement { id: String, reason: String },
+    // The align-doc turn's decisions: move one anchor (a requirement source or the
+    // entity mention `from` names) to `to`, optionally flagging it for re-evaluation;
+    // or leave it homeless. Mirrors docs/compiler/alignment.md#the-align-doc-turn.
+    PlaceAnchor { id: String, from: SourceRef, to: SourceRef, reevaluate: bool },
+    OrphanAnchor { id: String, from: SourceRef },
     ReportDiagnostic { id: String, diagnostic: Diagnostic },
     ResolveDiagnostic { id: String, reason: String },
     // The human triage decision (acknowledged | suppressed | wontfix, None to clear).
@@ -141,6 +146,9 @@ pub struct Store {
     pub graph: Graph,
     pub docs: BTreeMap<String, DocRecord>,
     pub status: Status,
+    // Alignment thresholds from the project's [limits]; defaults when no project is
+    // at hand (docs/compiler/project-settings.md#limits).
+    pub align: crate::align::Thresholds,
 }
 
 fn normalize(name: &str) -> String {
@@ -219,6 +227,7 @@ impl Store {
             },
             docs: BTreeMap::new(),
             status: yaml_to(&out.join("status.yaml")).unwrap_or_default(),
+            align: Default::default(),
         };
         let docs_dir = out.join("docs");
         let mut files = Vec::new();
@@ -583,6 +592,7 @@ impl Store {
                     target: "graph".to_string(),
                     dirty_sections: Vec::new(),
                     stale_anchors: Vec::new(),
+                    proposals: Vec::new(),
                 },
                 mutations: ops.iter().map(|o| serde_json::to_value(o).unwrap_or_default()).collect(),
                 rounds: 0,
@@ -948,6 +958,55 @@ impl Store {
                         None => skipped.push(format!("delete_requirement: unknown id {}", rid)),
                     }
                 }
+                Op::PlaceAnchor { id, from, to, reevaluate } => {
+                    let rid = resolve(&remap, self, &id);
+                    let locates = self.quote_locates(&to.doc, &to.section, &to.quote);
+                    if let Some(r) = self.graph.requirements.get_mut(&rid) {
+                        if normalize_statement(&r.source.quote) != normalize_statement(&to.quote) {
+                            changed_reqs.insert(rid.clone());
+                        }
+                        let old_source = std::mem::replace(&mut r.source, to.clone());
+                        r.updated = Some(build.clone());
+                        touched.extend(r.entities.iter().cloned());
+                        // Mentions derived from this source at commit follow it.
+                        for e in self.graph.entities.values_mut() {
+                            if let Some(i) = e.mentions.iter().position(|m| *m == old_source) {
+                                if e.mentions.contains(&to) {
+                                    e.mentions.remove(i);
+                                } else {
+                                    e.mentions[i] = to.clone();
+                                }
+                                e.updated = Some(build.clone());
+                            }
+                        }
+                        // Flagged, or placed under a quote that does not locate: the
+                        // reconcile turn owes this anchor a decision.
+                        if (reevaluate || !locates) && !self.status.reevaluate.contains(&rid) {
+                            self.status.reevaluate.push(rid.clone());
+                        }
+                        applied.push(Op::PlaceAnchor { id: rid, from, to, reevaluate });
+                    } else if let Some(e) = self.graph.entities.get_mut(&rid) {
+                        match e.mentions.iter().position(|m| *m == from) {
+                            Some(i) => {
+                                if e.mentions.contains(&to) {
+                                    e.mentions.remove(i);
+                                } else {
+                                    e.mentions[i] = to.clone();
+                                }
+                                e.updated = Some(build.clone());
+                                touched.insert(rid.clone());
+                                applied.push(Op::PlaceAnchor { id: rid, from, to, reevaluate });
+                            }
+                            None => skipped.push(format!("place_anchor {}: no mention at {}#{}", rid, from.doc, from.section)),
+                        }
+                    } else {
+                        skipped.push(format!("place_anchor: unknown id {}", rid));
+                    }
+                }
+                Op::OrphanAnchor { id, from } => {
+                    let rid = resolve(&remap, self, &id);
+                    applied.push(Op::OrphanAnchor { id: rid, from });
+                }
                 Op::ReportDiagnostic { id, mut diagnostic } => {
                     diagnostic.subjects = diagnostic.subjects.iter().map(|s| resolve(&remap, self, s)).collect();
                     // Sticky: an open diagnostic with the same rule and subjects is updated,
@@ -1102,6 +1161,13 @@ impl Store {
                     self.status.pending.requirements.push(id.clone());
                 }
             }
+            // The done gate held the turn to every listed anchor; the re-evaluation
+            // debt is paid.
+            self.status.reevaluate.retain(|id| !work_item.stale_anchors.contains(id));
+        }
+        // An align-doc commit decided its document's proposals.
+        if work_item.task == "align-doc" {
+            self.status.alignment.retain(|b| b.doc != work_item.target);
         }
         let entry = JournalEntry {
             build: build.clone(),
@@ -1168,74 +1234,128 @@ impl Store {
     // ---- document sync (the dirty set) ----
 
     // Bring the stored document records in line with a fresh parse. Returns the dirty work.
-    // Moves (same hash, new reference) rewrite anchored references mechanically and are not
-    // dirty. Coverage carries over only for unchanged sections.
+    // Alignment matches the trees (docs/compiler/alignment.md): exact moves rewrite
+    // anchored references mechanically and are not dirty; every other relocation is a
+    // proposal persisted for the align-doc turn; an anchor with no candidate is stale.
+    // Coverage carries over only for unchanged and exactly moved sections.
     pub fn sync_docs(&mut self, parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>) -> Vec<DirtyDoc> {
+        use crate::align::Full;
+        let changed: BTreeSet<String> = self
+            .docs
+            .iter()
+            .filter(|(d, rec)| parsed.get(*d).map(|(h, _)| h != &rec.content_hash).unwrap_or(true))
+            .map(|(d, _)| d.clone())
+            .chain(parsed.keys().filter(|d| !self.docs.contains_key(*d)).cloned())
+            .collect();
         let mut out = Vec::new();
+        if changed.is_empty() {
+            return self.reevaluate_items(out);
+        }
+        let plan = crate::align::align(&self.docs, parsed, &self.graph, &self.align);
+
+        // Exact moves apply now: references follow, coverage follows.
+        let mut carried: BTreeMap<Full, Coverage> = BTreeMap::new();
+        for (from, to) in &plan.exact_moves {
+            if let Some(c) = self.docs.get(&from.doc).and_then(|r| r.coverage.get(&from.section)) {
+                carried.insert(to.clone(), c.clone());
+            }
+            self.rewrite_section_refs(from, to);
+        }
+        let moved_from: BTreeSet<&Full> = plan.exact_moves.iter().map(|(f, _)| f).collect();
+        let moved_to: BTreeSet<&Full> = plan.exact_moves.iter().map(|(_, t)| t).collect();
+        // Anchors the model will place are not stale: keyed by id plus old location,
+        // since an entity can hold several mentions.
+        let proposed: BTreeSet<(String, String)> =
+            plan.proposals.iter().map(|p| (p.anchor.clone(), p.from.clone())).collect();
+        let is_proposed = |id: &str, at: &Full| proposed.contains(&(id.to_string(), at.render()));
+        // An entity whose mentions in a section all coincide with requirement sources
+        // there follows those requirements (placed with them, or pruned by gc when
+        // they go); it is no anchor of its own.
+        let derived_only = |id: &str, at: &Full| -> bool {
+            let Some(e) = self.graph.entities.get(id) else { return false };
+            let sources: BTreeSet<&str> = self
+                .graph
+                .requirements
+                .values()
+                .filter(|r| r.source.doc == at.doc && r.source.section == at.section)
+                .map(|r| r.source.quote.as_str())
+                .collect();
+            e.mentions
+                .iter()
+                .filter(|m| m.doc == at.doc && m.section == at.section)
+                .all(|m| sources.contains(m.quote.as_str()))
+        };
+        let covered = |id: &str, at: &Full| is_proposed(id, at) || (id.starts_with("ent:") && derived_only(id, at));
+
         // Documents that disappeared from the project entirely.
         let gone: Vec<String> = self.docs.keys().filter(|d| !parsed.contains_key(*d)).cloned().collect();
         for doc in gone {
-            let stale = self.anchors_in_doc(&doc, None);
+            let mut stale: Vec<String> = Vec::new();
+            if let Some(rec) = self.docs.get(&doc) {
+                for r in rec.sections.keys() {
+                    let at = Full::new(&doc, r);
+                    if moved_from.contains(&at) {
+                        continue;
+                    }
+                    stale.extend(self.anchors_in_doc(&doc, Some(r)).into_iter().filter(|a| !covered(a, &at)));
+                }
+            }
             self.docs.remove(&doc);
             std::fs::remove_file(self.out.join("docs").join(format!("{}.yaml", doc))).ok();
+            stale.sort();
+            stale.dedup();
             if !stale.is_empty() {
                 out.push(DirtyDoc { doc, dirty_sections: Vec::new(), stale_anchors: stale });
             }
         }
         for (doc, (content_hash, sections)) in parsed {
-            let old = self.docs.get(doc).cloned().unwrap_or_default();
-            if old.content_hash == *content_hash {
+            if !changed.contains(doc) {
                 continue;
             }
-            // Detect moves: an old reference whose hash reappears under a new reference.
-            let mut moves: Vec<(String, String)> = Vec::new();
-            for (old_ref, old_sec) in &old.sections {
-                if sections.contains_key(old_ref) {
-                    continue;
-                }
-                if let Some((new_ref, _)) = sections
-                    .iter()
-                    .find(|(r, s)| s.hash == old_sec.hash && !old.sections.contains_key(*r))
-                {
-                    moves.push((old_ref.clone(), new_ref.clone()));
-                }
-            }
-            for (from, to) in &moves {
-                self.rewrite_section_refs(doc, from, to);
-            }
-            let moved_from: BTreeSet<&String> = moves.iter().map(|(f, _)| f).collect();
-            let moved_to: BTreeMap<&String, &String> =
-                moves.iter().map(|(f, t)| (t, f)).collect();
-
-            // Dirty: new or changed sections (a moved section is neither).
-            let mut dirty: Vec<String> = Vec::new();
-            for (r, s) in sections {
-                match old.sections.get(r) {
-                    Some(o) if o.hash == s.hash => {}
-                    _ if moved_to.contains_key(r) => {}
-                    _ => dirty.push(r.clone()),
-                }
-            }
-            // Removed: old sections gone from the new parse (excluding moves).
+            let old = self.docs.get(doc).cloned().unwrap_or_default();
+            // Dirty: new or changed sections (an unchanged or exactly moved one is neither).
+            let mut dirty: Vec<String> = sections
+                .keys()
+                .filter(|r| {
+                    let at = Full::new(doc, r);
+                    !plan.unchanged.contains(&at) && !moved_to.contains(&at)
+                })
+                .cloned()
+                .collect();
+            // Removed: old sections gone from the new parse (excluding exact moves).
             let removed: Vec<String> = old
                 .sections
                 .keys()
-                .filter(|r| !sections.contains_key(*r) && !moved_from.contains(*r))
+                .filter(|r| !sections.contains_key(*r) && !moved_from.contains(&Full::new(doc, r)))
                 .cloned()
                 .collect();
             let mut stale = Vec::new();
             for r in &removed {
-                stale.extend(self.anchors_in_doc(doc, Some(r)));
+                let at = Full::new(doc, r);
+                stale.extend(self.anchors_in_doc(doc, Some(r)).into_iter().filter(|a| !covered(a, &at)));
             }
-            // Also stale: anchors whose section changed and whose quote no longer locates.
+            // Also stale: anchors whose section changed and whose quote no longer
+            // locates, requirement sources and entity mentions alike.
             for r in &dirty {
+                let at = Full::new(doc, r);
+                let Some(sec) = sections.get(r) else { continue };
                 for a in self.anchors_in_doc(doc, Some(r)) {
-                    let ok = match a.split(':').next() {
-                        Some("req") => {
-                            let q = &self.graph.requirements[&a].source.quote;
-                            sections.get(r).map(|s| text_contains(&s.raw, q)).unwrap_or(false)
-                        }
-                        _ => true,
+                    if covered(&a, &at) {
+                        continue;
+                    }
+                    let ok = match self.graph.requirements.get(&a) {
+                        Some(q) => text_contains(&sec.raw, &q.source.quote),
+                        None => self
+                            .graph
+                            .entities
+                            .get(&a)
+                            .map(|e| {
+                                e.mentions
+                                    .iter()
+                                    .filter(|m| &m.doc == doc && m.section == *r)
+                                    .all(|m| text_contains(&sec.raw, &m.quote))
+                            })
+                            .unwrap_or(true),
                     };
                     if !ok {
                         stale.push(a);
@@ -1245,19 +1365,16 @@ impl Store {
             stale.sort();
             stale.dedup();
 
-            // Carry coverage only for sections whose content is unchanged.
+            // Carry coverage for unchanged sections and exact-move targets.
             let mut coverage = BTreeMap::new();
             for (r, c) in &old.coverage {
-                if let (Some(o), Some(n)) = (old.sections.get(r), sections.get(r)) {
-                    if o.hash == n.hash {
-                        coverage.insert(r.clone(), c.clone());
-                    }
+                if plan.unchanged.contains(&Full::new(doc, r)) {
+                    coverage.insert(r.clone(), c.clone());
                 }
             }
-            // A moved section keeps its coverage under the new reference.
-            for (from, to) in &moves {
-                if let Some(c) = old.coverage.get(from) {
-                    coverage.insert(to.clone(), c.clone());
+            for (to, c) in &carried {
+                if &to.doc == doc {
+                    coverage.insert(to.section.clone(), c.clone());
                 }
             }
             self.docs.insert(
@@ -1269,9 +1386,115 @@ impl Store {
                 out.push(DirtyDoc { doc: doc.clone(), dirty_sections: dirty, stale_anchors: stale });
             }
         }
+
+        // Proposals persist per target document, replacing any earlier block for a
+        // document that changed again or that receives new proposals.
+        let mut blocks: BTreeMap<String, Vec<AnchorProposal>> = BTreeMap::new();
+        for p in &plan.proposals {
+            blocks.entry(crate::align::target_doc(p)).or_default().push(p.clone());
+        }
+        self.status.alignment.retain(|b| !changed.contains(&b.doc) && !blocks.contains_key(&b.doc));
+        for (doc, proposals) in blocks {
+            let touches = |r: &str| split_section_ref(r).map(|(d, _)| d == doc).unwrap_or(false);
+            let changes: Vec<SectionOp> = plan
+                .ops
+                .iter()
+                .filter(|o| o.from.iter().chain(o.to.iter()).any(|r| touches(r)))
+                .cloned()
+                .collect();
+            self.status.alignment.push(DocAlignment { doc, changes, proposals });
+        }
+        self.status.alignment.sort_by(|a, b| a.doc.cmp(&b.doc));
+
+        // Mechanical moves are graph changes: journaled as one entry per build.
+        if !plan.exact_moves.is_empty() {
+            self.status.generation += 1;
+            let build = format!("g{}", self.status.generation);
+            let entry = JournalEntry {
+                build: build.clone(),
+                work_item: WorkItem {
+                    task: "align".to_string(),
+                    target: "graph".to_string(),
+                    dirty_sections: Vec::new(),
+                    stale_anchors: Vec::new(),
+                    proposals: Vec::new(),
+                },
+                mutations: plan
+                    .exact_moves
+                    .iter()
+                    .map(|(f, t)| serde_json::json!({"op": "move", "from": f.render(), "to": t.render()}))
+                    .collect(),
+                rounds: 0,
+                tokens: 0,
+            };
+            write_yaml(&self.out.join("journal").join(format!("{}.yaml", build)), &entry);
+        }
         // Persist the synced records so context reads see the new sections.
         self.save();
+        self.reevaluate_items(out)
+    }
+
+    // Anchors an align-doc turn flagged for re-evaluation ride on their document's
+    // reconcile item as stale anchors, their section dirty, whether or not the document
+    // changed this build. Mirrors docs/compiler/reconciler.md#dirty-set.
+    fn reevaluate_items(&self, mut out: Vec<DirtyDoc>) -> Vec<DirtyDoc> {
+        for (doc, _) in &self.docs {
+            let (stale, sections) = self.stale_extras(doc);
+            if stale.is_empty() {
+                continue;
+            }
+            let item = match out.iter_mut().find(|d| &d.doc == doc) {
+                Some(d) => d,
+                None => {
+                    out.push(DirtyDoc { doc: doc.clone(), dirty_sections: Vec::new(), stale_anchors: Vec::new() });
+                    out.last_mut().unwrap()
+                }
+            };
+            for a in stale {
+                if !item.stale_anchors.contains(&a) {
+                    item.stale_anchors.push(a);
+                }
+            }
+            for sec in sections {
+                if !item.dirty_sections.contains(&sec) {
+                    item.dirty_sections.push(sec);
+                }
+            }
+            item.dirty_sections.sort();
+        }
         out
+    }
+
+    // Requirements of one document that owe the reconcile turn a decision: the quote no
+    // longer locates, or an align-doc turn flagged the anchor for re-evaluation. Returns
+    // the ids and the existing sections they sit in (to be dirtied).
+    pub fn stale_extras(&self, doc: &str) -> (Vec<String>, Vec<String>) {
+        let mut stale: Vec<String> = Vec::new();
+        let mut sections: Vec<String> = Vec::new();
+        let rec = self.docs.get(doc);
+        // An anchor with a pending proposal is the align turn's to place, not stale.
+        let proposed = self.proposed_anchors();
+        for (rid, r) in &self.graph.requirements {
+            if r.source.doc != doc || proposed.contains(rid) {
+                continue;
+            }
+            let unlocated = !self.quote_locates(&r.source.doc, &r.source.section, &r.source.quote);
+            if unlocated || self.status.reevaluate.iter().any(|x| x == rid) {
+                stale.push(rid.clone());
+                if rec.map(|x| x.sections.contains_key(&r.source.section)).unwrap_or(false)
+                    && !sections.contains(&r.source.section)
+                {
+                    sections.push(r.source.section.clone());
+                }
+            }
+        }
+        (stale, sections)
+    }
+
+    // Anchors named by a pending alignment proposal: the model will place them, so the
+    // store must not reap them in between.
+    fn proposed_anchors(&self) -> BTreeSet<String> {
+        self.status.alignment.iter().flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone())).collect()
     }
 
     // Node ids anchored to a document (optionally to one section of it).
@@ -1290,17 +1513,20 @@ impl Store {
         out
     }
 
-    // Mechanically rewrite anchored references when a section moved.
-    fn rewrite_section_refs(&mut self, doc: &str, from: &str, to: &str) {
+    // Mechanically rewrite anchored references when a section moved, within a document
+    // or across documents.
+    fn rewrite_section_refs(&mut self, from: &crate::align::Full, to: &crate::align::Full) {
         for r in self.graph.requirements.values_mut() {
-            if r.source.doc == doc && r.source.section == from {
-                r.source.section = to.to_string();
+            if r.source.doc == from.doc && r.source.section == from.section {
+                r.source.doc = to.doc.clone();
+                r.source.section = to.section.clone();
             }
         }
         for e in self.graph.entities.values_mut() {
             for m in e.mentions.iter_mut() {
-                if m.doc == doc && m.section == from {
-                    m.section = to.to_string();
+                if m.doc == from.doc && m.section == from.section {
+                    m.doc = to.doc.clone();
+                    m.section = to.section.clone();
                 }
             }
         }
@@ -1313,10 +1539,12 @@ impl Store {
     // mentions and zero requirements is deleted with a tombstone. Journaled as one entry.
     pub fn gc(&mut self) -> Vec<String> {
         let mut actions = Vec::new();
+        let proposed = self.proposed_anchors();
         let dead_reqs: Vec<String> = self
             .graph
             .requirements
             .iter()
+            .filter(|(id, _)| !proposed.contains(*id))
             .filter(|(_, r)| {
                 !self
                     .docs
@@ -1332,17 +1560,30 @@ impl Store {
             actions.push(format!("deleted {} (source section gone)", id));
             deleted.insert(id);
         }
+        // Mentions derived from a proposed requirement's source follow it when placed.
+        let protected: Vec<SourceRef> = self
+            .graph
+            .requirements
+            .iter()
+            .filter(|(id, _)| proposed.contains(*id))
+            .map(|(_, r)| r.source.clone())
+            .collect();
         for (id, e) in self.graph.entities.iter_mut() {
+            if proposed.contains(id) {
+                continue;
+            }
             let before = e.mentions.len();
             let docs = &self.docs;
             // A mention whose section is gone, or whose quote no longer locates in it,
             // is stale prose: left in place it leaks statements the documents no longer
             // make into later context packs.
             e.mentions.retain(|m| {
-                docs.get(&m.doc)
-                    .and_then(|d| d.sections.get(&m.section))
-                    .map(|s| text_contains(&s.raw, &m.quote))
-                    .unwrap_or(false)
+                protected.contains(m)
+                    || docs
+                        .get(&m.doc)
+                        .and_then(|d| d.sections.get(&m.section))
+                        .map(|s| text_contains(&s.raw, &m.quote))
+                        .unwrap_or(false)
             });
             if e.mentions.len() < before {
                 actions.push(format!("pruned {} mention(s) on {}", before - e.mentions.len(), id));
@@ -1373,6 +1614,7 @@ impl Store {
                 target: "graph".to_string(),
                 dirty_sections: Vec::new(),
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             };
             self.status.generation += 1;
             let build = format!("g{}", self.status.generation);
@@ -1525,7 +1767,7 @@ mod tests {
     }
 
     fn wi() -> WorkItem {
-        WorkItem { task: "reconcile-doc".into(), target: "t.md".into(), dirty_sections: vec![], stale_anchors: vec![] }
+        WorkItem { task: "reconcile-doc".into(), target: "t.md".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() }
     }
 
     fn mention(doc: &str, sec: &str, quote: &str) -> SourceRef {
@@ -1573,7 +1815,7 @@ mod tests {
         assert_eq!(s.status.pending.entities, vec!["ent:cart".to_string()]);
         assert_eq!(s.status.pending.requirements, vec!["req:t-1".to_string()]);
         // A review changeset owes nothing new.
-        let review = WorkItem { task: "review-entity".into(), target: "ent:cart".into(), dirty_sections: vec![], stale_anchors: vec![] };
+        let review = WorkItem { task: "review-entity".into(), target: "ent:cart".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
         s.apply(vec![], &review, 1, 0);
         assert_eq!(s.status.pending.entities.len(), 1);
         // Completion pays the debt, task by task.
@@ -1722,8 +1964,10 @@ mod tests {
         assert_eq!(d2.len(), 1);
         // Bunch is a changed section, Beta is a changed section; the moved Alpha is not dirty.
         assert_eq!(d2[0].dirty_sections, vec!["/t/beta".to_string(), "/t/bunch".to_string()]);
-        // Beta's quote no longer locates -> stale anchor; Alpha's references were rewritten.
-        assert!(d2[0].stale_anchors.contains(&"req:t-2".to_string()));
+        // Beta's quote no longer locates -> a proposal for the align turn (the section
+        // was edited in place, so it has a candidate); Alpha's references were rewritten.
+        assert!(!d2[0].stale_anchors.contains(&"req:t-2".to_string()));
+        assert!(s.status.alignment.iter().any(|b| b.doc == "t.md" && b.proposals.iter().any(|p| p.anchor == "req:t-2")));
         assert!(!d2[0].stale_anchors.contains(&"req:t-1".to_string()));
         assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/bunch/alpha");
         assert_eq!(s.graph.entities["ent:a"].mentions[0].section, "/t/bunch/alpha");
@@ -1958,5 +2202,178 @@ mod tests {
         s.graph.diagnostics.insert("diag:duplicate-requirement-1".into(), diag("duplicate-requirement", vec!["req:a", "req:b"]));
         s.reconcile_check_diags(Vec::new());
         assert_eq!(s.graph.diagnostics["diag:duplicate-requirement-1"].lifecycle, "open");
+    }
+
+    fn req_at(doc: &str, sec: &str, quote: &str) -> Requirement {
+        Requirement {
+            ears: format!("The A shall {}", quote.trim_end_matches('.')),
+            entities: vec!["ent:a".into()],
+            edges: vec![],
+            source: mention(doc, sec, quote),
+            confidence: None,
+            reasoning: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    const CART: &str = "The cart holds items a customer intends to buy. Items stay until checkout. A cart may hold up to fifty items at once.";
+    const ORDERS: &str = "Orders are placed from a cart. An order records the address and the total. Payment is taken at placement.";
+
+    // A moved-and-edited section yields proposals, not stale anchors; the block persists
+    // in status.yaml and the anchor survives gc until the align turn decides.
+    #[test]
+    fn sync_docs_proposes_for_a_moved_and_edited_section_and_gc_waits() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        let v1 = format!("# T\nintro\n\n## Cart\n{}\n\n## Orders\n{}\n", CART, ORDERS);
+        let mut parsed = BTreeMap::new();
+        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        s.sync_docs(&parsed);
+        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")], ..Default::default() });
+        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
+        s.graph.requirements.insert("req:t-2".into(), req_at("t.md", "/t/cart", "A cart may hold up to fifty items at once."));
+
+        let v2 = format!("# T\nintro\n\n## Orders\n{}\n\n## Basket\n{}\n", ORDERS, CART.replace("fifty", "sixty"));
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        let d2 = s.sync_docs(&parsed2);
+        assert_eq!(d2.len(), 1);
+        assert_eq!(d2[0].dirty_sections, vec!["/t/basket".to_string()]);
+        assert!(d2[0].stale_anchors.is_empty(), "{:?}", d2[0].stale_anchors);
+        let block = s.status.alignment.iter().find(|b| b.doc == "t.md").expect("alignment block");
+        // ent:a's mention coincides with req:t-1's source: derived, it follows the
+        // requirement and is no proposal of its own.
+        let anchors: BTreeSet<&str> = block.proposals.iter().map(|p| p.anchor.as_str()).collect();
+        assert_eq!(anchors, ["req:t-1", "req:t-2"].into_iter().collect());
+        assert!(block.changes.iter().any(|c| c.op == "moved" && c.to == vec!["t.md#/t/basket"]));
+        // The persisted form round-trips.
+        let reloaded = Store::load(&s.out);
+        assert_eq!(reloaded.status.alignment, s.status.alignment);
+        // Anchors still point at the vanished section, and gc leaves them alone.
+        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/cart");
+        s.gc();
+        assert!(s.graph.requirements.contains_key("req:t-1"));
+        assert_eq!(s.graph.entities["ent:a"].mentions.len(), 1);
+    }
+
+    // place_anchor moves the source; reevaluate lists it as a stale anchor on the
+    // target document; a reconcile commit listing it pays the debt. orphan_anchor
+    // leaves the anchor where it was, and the align commit clears the block.
+    #[test]
+    fn place_and_orphan_anchor_apply_and_clear_the_block() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        let v1 = format!("# T\nintro\n\n## Cart\n{}\n", CART);
+        let mut parsed = BTreeMap::new();
+        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        s.sync_docs(&parsed);
+        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")], ..Default::default() });
+        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
+        s.graph.requirements.insert("req:t-2".into(), req_at("t.md", "/t/cart", "A cart may hold up to fifty items at once."));
+        s.graph.requirements.insert("req:t-3".into(), req_at("t.md", "/t/cart", "The cart holds items a customer intends to buy."));
+        let v2 = format!("# T\nintro\n\n## Basket\n{}\n", CART.replace("fifty", "sixty"));
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        s.sync_docs(&parsed2);
+        assert_eq!(s.status.alignment.len(), 1);
+
+        let align_item = WorkItem {
+            task: "align-doc".into(),
+            target: "t.md".into(),
+            dirty_sections: vec![],
+            stale_anchors: vec![],
+            proposals: vec!["req:t-1".into(), "req:t-2".into(), "req:t-3".into()],
+        };
+        let from = |q: &str| mention("t.md", "/t/cart", q);
+        let report = s.apply(
+            vec![
+                Op::PlaceAnchor { id: "req:t-1".into(), from: from("Items stay until checkout."), to: mention("t.md", "/t/basket", "Items stay until checkout."), reevaluate: false },
+                Op::PlaceAnchor { id: "req:t-2".into(), from: from("A cart may hold up to fifty items at once."), to: mention("t.md", "/t/basket", "A cart may hold up to sixty items at once."), reevaluate: true },
+                Op::OrphanAnchor { id: "req:t-3".into(), from: from("The cart holds items a customer intends to buy.") },
+            ],
+            &align_item,
+            1,
+            0,
+        );
+        assert_eq!(report.applied, 3, "{:?}", report.skipped);
+        assert!(s.status.alignment.is_empty());
+        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/basket");
+        assert_eq!(s.graph.requirements["req:t-2"].source.quote, "A cart may hold up to sixty items at once.");
+        // The mention derived from req:t-1's source followed the requirement.
+        assert_eq!(s.graph.entities["ent:a"].mentions[0].section, "/t/basket");
+        assert_eq!(s.graph.requirements["req:t-3"].source.section, "/t/cart");
+        assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
+        // A substantive quote change is a revision owed a pair review; the align task
+        // itself records no pending reviews (only reconcile commits do).
+        assert!(report.changed_requirements.contains("req:t-2"));
+
+        // The next sync lists the flagged anchor as stale on its document even though
+        // its quote locates, and the orphan (section gone) as stale too.
+        let d3 = s.sync_docs(&parsed2);
+        let t = d3.iter().find(|d| d.doc == "t.md").expect("item");
+        assert!(t.stale_anchors.contains(&"req:t-2".to_string()));
+        assert!(t.stale_anchors.contains(&"req:t-3".to_string()));
+        assert!(!t.stale_anchors.contains(&"req:t-1".to_string()));
+        assert!(t.dirty_sections.contains(&"/t/basket".to_string()));
+
+        // A reconcile commit whose item listed the anchor clears the flag.
+        let rec_item = WorkItem {
+            task: "reconcile-doc".into(),
+            target: "t.md".into(),
+            dirty_sections: vec!["/t/basket".into()],
+            stale_anchors: vec!["req:t-2".into(), "req:t-3".into()],
+            proposals: vec![],
+        };
+        s.apply(vec![Op::DeleteRequirement { id: "req:t-3".into(), reason: "gone".into() }], &rec_item, 1, 0);
+        assert!(s.status.reevaluate.is_empty());
+    }
+
+    // Exact moves are journaled, and a heading level change is an exact move: nothing
+    // dirty, coverage carried.
+    #[test]
+    fn exact_moves_are_journaled_and_survive_a_level_change() {
+        // Own directory: the shared tmp() is wiped by sibling tests mid-run.
+        let dir = std::env::temp_dir().join(format!("jazyk-align-journal-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        let mut s = Store { out: dir, ..Default::default() };
+        let v1 = format!("# T\nintro\n\n## Cart\n{}\n", CART);
+        let mut parsed = BTreeMap::new();
+        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        s.sync_docs(&parsed);
+        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), ..Default::default() });
+        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
+        s.docs.get_mut("t.md").unwrap().coverage.insert("/t/cart".into(), Coverage { state: "covered".into(), note: None, claimed_by: None });
+        let gen_before = s.status.generation;
+        let v2 = format!("# T\nintro\n\n## Group\n\n### Cart\n{}\n", CART);
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        let d2 = s.sync_docs(&parsed2);
+        assert_eq!(d2[0].dirty_sections, vec!["/t/group".to_string()]);
+        assert!(d2[0].stale_anchors.is_empty());
+        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/group/cart");
+        assert!(s.docs["t.md"].coverage.contains_key("/t/group/cart"));
+        assert_eq!(s.status.generation, gen_before + 1);
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join(format!("g{}.yaml", s.status.generation))).unwrap();
+        assert_eq!(entry.work_item.task, "align");
+        assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");
+    }
+
+    // An entity mention whose quote stopped locating in a changed section is a stale
+    // anchor too, not only a requirement source.
+    #[test]
+    fn dirty_section_checks_entity_mention_quotes() {
+        let mut s = Store { out: tmp(), ..Default::default() };
+        let v1 = "# T\nintro\n\n## Cart\nThe cart holds items.\nA customer owns the cart.\n";
+        let mut parsed = BTreeMap::new();
+        parsed.insert("t.md".to_string(), (hash_hex(v1), crate::md::parse_sections(v1)));
+        s.sync_docs(&parsed);
+        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "A customer owns the cart.")], ..Default::default() });
+        let v2 = "# T\nintro\n\n## Cart\nThe cart holds items.\nNobody owns anything here at all.\n";
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert("t.md".to_string(), (hash_hex(v2), crate::md::parse_sections(v2)));
+        let d2 = s.sync_docs(&parsed2);
+        let all: Vec<String> = d2[0].stale_anchors.clone();
+        let proposed: Vec<String> = s.status.alignment.iter().flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone())).collect();
+        assert!(all.contains(&"ent:a".to_string()) || proposed.contains(&"ent:a".to_string()), "stale {:?} proposed {:?}", all, proposed);
     }
 }

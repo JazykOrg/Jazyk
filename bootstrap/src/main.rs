@@ -1,4 +1,5 @@
 mod acp;
+mod align;
 mod answer;
 mod benchmark;
 mod bind;

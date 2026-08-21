@@ -6,7 +6,8 @@ describes what a build does with it, from dirty set to verdict. The
 [control plane](./control-plane.md) decides whether anyone may act on the work at all.
 
 ```
-parse all docs → diff section trees → dirty set
+parse all docs → align section trees → dirty set
+  → alignment wave (align-doc turns for anchors the alignment could not place)
   → ingest wave (reconcile-doc turns, root first, then levels in parallel)
   → fix-up (unprocessed sections and unlocated quotes re-enqueue once)
   → pair review wave (review-requirement turns for changed statements)
@@ -23,6 +24,10 @@ dirty set and makes zero LLM calls.
 
 A build runs in waves:
 
+- Alignment: [alignment](./alignment.md) applies exact moves mechanically and
+  persists proposals for the rest; `align-doc` turns decide them, all documents at
+  once, before any ingest. A build with no proposals runs none; a parked align turn
+  parks its document's ingest.
 - Ingest: `reconcile-doc` turns over the dirty documents, level by level.
 - Fix-up, once per build, before judgment: documents holding sections still
   unprocessed, or requirements whose `quote` no longer locates, re-enqueue once.
@@ -157,6 +162,8 @@ There is no separate incremental mode:
 
 - Nothing changed → empty dirty set → zero turns, zero LLM calls.
 - A cosmetic edit → one `reconcile-doc` turn that stages no mutations → graph unchanged.
+- A section moved, split, or merged → an `align-doc` turn places its anchors, then
+  `reconcile-doc` re-judges only the ones marked for re-evaluation.
 - A real edit → turns for that document and review turns for the touched entities. The
   rest of the graph is not visited.
 

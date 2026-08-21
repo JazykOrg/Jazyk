@@ -24,7 +24,8 @@ jazyk-out/
   sessions/
     <session id>.jsonl   # one chat conversation, see frontends/acp.md#session-store
   status.yaml            # generation counter, parked work, budgets spent, verdict,
-                         # open diagnostic counts by severity
+                         # open diagnostic counts by severity, pending alignment
+                         # proposals, anchors marked for re-evaluation
   .lock                  # single-writer lock
 ```
 
@@ -42,6 +43,7 @@ A mutation is one operation on the graph. The full set:
 
 - `upsert_entity`, `update_entity`, `delete_entity`, `merge_entities`
 - `upsert_requirement`, `update_requirement`, `delete_requirement`
+- `place_anchor`, `orphan_anchor`
 - `report_diagnostic`, `resolve_diagnostic`
 - `set_coverage`
 - `edit_doc_prose`
@@ -58,6 +60,13 @@ Mutations are exposed to the model as [write tools](./tools.md#write-tools). The
 - `merge_entities` keeps one entity, absorbs the other, rewires all requirement references,
   unions aliases and mentions, and writes a redirect from the absorbed id to the survivor.
   Downstream consumers holding the old id follow the redirect.
+- `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given)
+  and records the anchor under `status.yaml` `reevaluate` when asked to or when the
+  quote does not locate. `orphan_anchor` records nothing; the anchor's stale state
+  stands. Both are staged only by the [align-doc](./turns/align-doc.md) turn, which
+  commits them like any changeset and clears its document's `alignment` block.
+  Exact moves never reach a turn: [alignment](./alignment.md) rewrites them in the
+  store and journals one `align` entry per build.
 - `edit_doc_prose` replaces one text run in one document section. It is never staged
   alone: the [dual-write tools](../frontends/acp.md#dual-write-tools) pair it with the
   requirement mutation it carries, so the prose and the graph move in one changeset.
@@ -119,6 +128,8 @@ The gates:
 - `delete_entity` is rejected while any requirement still references the entity. The error
   lists the requirements.
 - Diagnostic `subjects` must exist.
+- `place_anchor` and `orphan_anchor` accept only the ids in the turn's proposals, and a
+  `quote` passed to `place_anchor` must locate in the target section.
 - `set_coverage` with state `non-normative` requires a `note`. A placeholder note
   (`<nil>`, `none`, `n/a`) counts as absent. Restaging coverage for a section replaces
   the earlier staged mark: one coverage mark per section per changeset.
@@ -126,7 +137,9 @@ The gates:
   scope) is rejected toward reuse plus an alias, unless a `note` says how they differ.
   See [entity](./model/entity.md#what-is-an-entity).
 
-Batch-level gates run once more when the turn calls `done`: all quotes still locate,
+Batch-level gates run once more when the turn calls `done`: in an `align-doc` turn,
+every proposal is decided (`undecided-proposal`). In a `reconcile-doc` turn, all
+quotes still locate,
 coverage claims only touch the turn's target sections, every stale anchor in the work
 item is addressed (its quote locates again, or a staged mutation re-records it under
 its natural key, revises it, or deletes it), every dirty section carries a coverage
@@ -153,7 +166,8 @@ section anyway, and from skimming past declarative prose without extracting
 ## Journal
 
 Every committed changeset appends one journal file: the work item, the mutations applied,
-rounds used, tokens spent, and the model's `reasoning` where given. The journal is the
+rounds used, tokens spent, and the model's `reasoning` where given. The store's own
+work appends entries too: `align` (mechanical moves), `gc`, and `settle-diagnostics`. The journal is the
 audit trail of the build. It answers why the graph looks the way it does.
 
 ## Garbage collection
@@ -161,7 +175,9 @@ audit trail of the build. It answers why the graph looks the way it does.
 Cleanup is deterministic and never delegated to the model:
 
 - A requirement whose source section disappeared and was not re-anchored during reconcile
-  is deleted by the store, journaled.
+  is deleted by the store, journaled. An anchor named by a pending
+  [alignment proposal](./alignment.md#what-applies-and-what-is-proposed) is exempt
+  until the align turn decides it.
 - Entity mentions pointing at removed sections are pruned.
 - An entity with zero mentions and zero requirements is deleted, with a tombstone redirect.
 - Deleting a node settles the open judged diagnostics naming it as a subject: one whose

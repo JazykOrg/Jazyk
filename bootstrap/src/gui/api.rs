@@ -229,6 +229,7 @@ pub async fn triage(
             target: rid.clone(),
             dirty_sections: vec![],
             stale_anchors: vec![],
+            proposals: vec![],
         };
         store.apply(vec![crate::store::Op::TriageDiagnostic { id: rid.clone(), triage }], &item, 0, 0);
         Ok(json!({ "id": rid, "diagnostic": store.graph.diagnostics.get(&rid) }))

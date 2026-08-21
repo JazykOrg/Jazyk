@@ -634,7 +634,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     runner.set_build_token(Some(format!("internal-{}", std::process::id())));
     trace.line("reconcile", &format!("agent: {}", runner.agent().name));
     WAVE.store(0, std::sync::atomic::Ordering::Relaxed);
-    let store = Mutex::new(Store::load(out));
+    let mut loaded = Store::load(out);
+    loaded.align = crate::queue::align_thresholds(proj);
+    let store = Mutex::new(loaded);
     let gs = crate::gen::GenSettings::resolve(proj);
     let _ = &gs;
     let (parsed, links) = parse_all(proj);
@@ -644,12 +646,41 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let levels = schedule_levels(&dirty, &links, proj);
 
     let total_dirty = dirty.len();
+    // Wave 0: alignment. Proposals the deterministic pass left for a model, decided
+    // before any document is reconciled. Mirrors docs/compiler/alignment.md.
+    let align_items: Vec<WorkItem> = {
+        let s = store.lock().unwrap();
+        let mut items: Vec<WorkItem> = previously_parked.iter().filter(|p| p.task == "align-doc").cloned().collect();
+        for b in &s.status.alignment {
+            if items.iter().any(|i| i.target == b.doc) {
+                continue;
+            }
+            items.push(WorkItem {
+                task: "align-doc".into(),
+                target: b.doc.clone(),
+                dirty_sections: Vec::new(),
+                stale_anchors: Vec::new(),
+                proposals: b.proposals.iter().map(|p| p.anchor.clone()).collect::<BTreeSet<_>>().into_iter().collect(),
+            });
+        }
+        for b in &s.status.alignment {
+            for c in &b.changes {
+                trace.event(crate::turn::TraceEvent::Note {
+                    label: "align".into(),
+                    text: format!("{}: {} → {}", c.op, c.from.join(", "), c.to.join(", ")),
+                    verbose: true,
+                });
+            }
+        }
+        items
+    };
     trace.line(
         "reconcile",
         &format!(
-            "{} dirty document(s) in {} level(s); {} parked item(s) to resume",
+            "{} dirty document(s) in {} level(s); {} align item(s); {} parked item(s) to resume",
             total_dirty,
             levels.len(),
+            align_items.len(),
             previously_parked.len()
         ),
     );
@@ -659,7 +690,33 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let mut touched_all: BTreeSet<String> = BTreeSet::new();
     let mut changed_all: BTreeSet<String> = BTreeSet::new();
     let mut parked_all: Vec<WorkItem> = Vec::new();
-    let budget_cap = proj.limits.build_turn_factor as usize * (total_dirty + previously_parked.len()).max(1) + 8;
+    let budget_cap =
+        proj.limits.build_turn_factor as usize * (total_dirty + align_items.len() + previously_parked.len()).max(1) + 8;
+
+    // A parked align item blocks its document's ingest: the anchors are not placed.
+    let mut aligning_parked: BTreeSet<String> = BTreeSet::new();
+    let (dirty, levels) = if align_items.is_empty() {
+        (dirty, levels)
+    } else {
+        if trace.is_cancelled() {
+            aligning_parked.extend(align_items.iter().map(|i| i.target.clone()));
+            parked_all.extend(align_items);
+        } else {
+            turns += align_items.len() as u32;
+            let (applied, touched, changed, parked) = run_wave(&store, &runner, &align_items, &parsed, out, trace);
+            applied_total += applied;
+            touched_all.extend(touched);
+            changed_all.extend(changed);
+            aligning_parked.extend(parked.iter().map(|p| p.target.clone()));
+            parked_all.extend(parked);
+        }
+        // The align commits relocated anchors and flagged some for re-evaluation; the
+        // ingest items read the refreshed dirty set.
+        let dirty = store.lock().unwrap().sync_docs(&parsed);
+        let levels = schedule_levels(&dirty, &links, proj);
+        (dirty, levels)
+    };
+    let _ = &dirty;
 
     // Wave 1: ingest, level by level; the root level runs alone first.
     let mut wave1: Vec<Vec<WorkItem>> = Vec::new();
@@ -681,12 +738,18 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     target: d.doc.clone(),
                     dirty_sections: d.dirty_sections.clone(),
                     stale_anchors: d.stale_anchors.clone(),
+                    proposals: Vec::new(),
                 })
                 .filter(|w| !w.dirty_sections.is_empty() || !w.stale_anchors.is_empty())
                 .collect(),
         );
     }
-    for level_items in wave1 {
+    for mut level_items in wave1 {
+        // A document whose alignment parked parks its ingest too.
+        let (blocked, runnable): (Vec<WorkItem>, Vec<WorkItem>) =
+            level_items.drain(..).partition(|w| aligning_parked.contains(&w.target));
+        parked_all.extend(blocked);
+        let level_items = runnable;
         if level_items.is_empty() {
             continue;
         }
@@ -723,7 +786,8 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     // longer fits the budget parks instead of vanishing, so the verdict stays honest.
     let fixup: Vec<WorkItem> = {
         let s = store.lock().unwrap();
-        let parked_docs: BTreeSet<&String> = parked_all.iter().map(|p| &p.target).collect();
+        let parked_docs: BTreeSet<&String> =
+            parked_all.iter().filter(|p| matches!(p.task.as_str(), "reconcile-doc" | "align-doc")).map(|p| &p.target).collect();
         s.docs
             .iter()
             .filter(|(doc, _)| !parked_docs.contains(doc))
@@ -739,17 +803,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     .map(|(r, _)| r.clone())
                     .collect();
                 // Also re-enqueue stale anchors: requirements whose quote no longer
-                // locates in this document, left behind by a failed turn.
-                let mut stale: Vec<String> = Vec::new();
-                let mut stale_sections: Vec<String> = Vec::new();
-                for (rid, r) in &s.graph.requirements {
-                    if &r.source.doc == doc && !s.quote_locates(&r.source.doc, &r.source.section, &r.source.quote) {
-                        stale.push(rid.clone());
-                        if !stale_sections.contains(&r.source.section) && rec.sections.contains_key(&r.source.section) {
-                            stale_sections.push(r.source.section.clone());
-                        }
-                    }
-                }
+                // locates in this document, or that alignment flagged, left behind by a
+                // failed turn.
+                let (stale, stale_sections) = s.stale_extras(doc);
                 let mut dirty = uncovered;
                 for sec in stale_sections {
                     if !dirty.contains(&sec) {
@@ -764,6 +820,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                         target: doc.clone(),
                         dirty_sections: dirty,
                         stale_anchors: stale,
+                        proposals: Vec::new(),
                     })
                 }
             })
@@ -818,6 +875,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                 target: rid.clone(),
                 dirty_sections: vec![],
                 stale_anchors: vec![],
+                proposals: Vec::new(),
             })
             .collect()
     };
@@ -870,7 +928,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             run_groups.push(g);
         } else {
             for id in g {
-                parked_all.push(WorkItem { task: "review-entity".into(), target: id, dirty_sections: vec![], stale_anchors: vec![] });
+                parked_all.push(WorkItem { task: "review-entity".into(), target: id, dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() });
             }
         }
     }
@@ -896,6 +954,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                     target: id.clone(),
                     dirty_sections: vec![],
                     stale_anchors: vec![],
+                    proposals: Vec::new(),
                 };
                 let (a, _t, _c, p) = run_wave(&store, &runner, std::slice::from_ref(&item), &parsed, out, trace);
                 *applied.lock().unwrap() += a;
@@ -966,6 +1025,7 @@ pub fn finalize(s: &mut Store, proj: &Project, parked_all: &[WorkItem], trace: &
     );
     s.status.pending.entities = exists_e;
     s.status.pending.requirements = exists_r;
+    s.status.reevaluate.retain(|r| s.graph.requirements.contains_key(r));
     s.status.parked = parked_all.to_vec();
     s.status.verdict = if parked_all.is_empty() && unprocessed == 0 && s.status.pending.is_empty() {
         "converged".into()

@@ -300,6 +300,7 @@ fn work_item(target: &str) -> WorkItem {
         target: target.to_string(),
         dirty_sections: Vec::new(),
         stale_anchors: Vec::new(),
+        proposals: Vec::new(),
     }
 }
 

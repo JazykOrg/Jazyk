@@ -35,7 +35,8 @@ Each section carries:
 - `parent`: the internal reference of the parent. The root section has none.
 - `raw`: the verbatim source text. Concatenating `raw` in tree order reconstructs the
   document.
-- `hash`: a content hash of `raw`, used for [diffing](#section-diffing).
+- `hash`: a content hash of `raw`, used for [diffing](#section-diffing) and
+  [alignment](./alignment.md).
 - `lines`: the line range in the source file, for editor integration.
 
 ## References
@@ -49,15 +50,19 @@ Each section carries:
 
 ## Section diffing
 
-On every build, the parser's output is diffed against the stored tree per document:
+On every build, the parser's output is matched against the stored tree of every document
+by [alignment](./alignment.md). Three outcomes:
 
-- a section whose `hash` is new or changed is dirty,
-- a removed section is dirty and its anchored nodes become stale anchors,
-- a section with the same `hash` under a new reference moved: stored references on
-  entity mentions and requirement sources are rewritten mechanically, and nothing is
-  marked dirty.
+- a section whose title or body changed (whitespace-insensitively) is dirty,
+- a section with the same title and body under a new reference (in any document)
+  moved: stored references on entity mentions and requirement sources are rewritten
+  mechanically, and nothing is marked dirty,
+- a section that was edited, moved and edited, split, merged, or removed has its anchors
+  relocated to their best candidate as a proposal, decided by the
+  [`align-doc` turn](./turns/align-doc.md); an anchor with no candidate becomes a stale
+  anchor.
 
-The diff is the sole source of the [dirty set](./reconciler.md#dirty-set).
+The alignment result is the sole source of the [dirty set](./reconciler.md#dirty-set).
 
 ## Reconstruction
 

@@ -243,6 +243,8 @@ build_turn_factor = 3
 max_section_chars = 6000
 max_doc_sections = 40
 max_entity_requirements = 50
+align_move_similarity = 0.5
+align_split_coverage = 0.6
 ```
 
 - `turn_rounds`: maximum message rounds per turn. Default 24.
@@ -258,6 +260,11 @@ max_entity_requirements = 50
   the signal to split the topic into subsections. Default 50. Code generation divides
   dense entities into parts regardless
   ([dense entities](../consumers/gen.md#dense-entities-generate-in-parts)).
+- `align_move_similarity`: the shingle similarity at or above which
+  [alignment](./alignment.md#phases) pairs an old and a new section as a move.
+  Default 0.5.
+- `align_split_coverage`: the share of an old section's shingles that two or more new
+  sections must cover together for a split (or the mirror for a merge). Default 0.6.
 
 ## Environment tuning
 

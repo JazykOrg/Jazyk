@@ -73,6 +73,17 @@ clever ones.
   `quote` names the requirement's existing anchor and says to drop the two fields when
   only `entities` or `edges` were meant to change.
 - `delete_requirement({id, reason})`.
+- `place_anchor({id, section, quote?, reevaluate})`: move one anchor (a requirement's
+  source, or every proposed mention of an entity) to `section`, in the
+  [align-doc](./turns/align-doc.md) turn only. A `quote` must locate verbatim in the
+  section and replaces the stored one; omitted, the stored quote stays. An entity
+  with several proposed mentions takes the section alone, each mention keeping its own
+  quote. A placed requirement carries the mentions derived from its source with it. `reevaluate:
+  true`, or a stored quote that does not locate in the new section, lists the anchor
+  as a stale anchor on the target document's `reconcile-doc` item. The `id` must be
+  one of the work item's proposals (`unknown-anchor` otherwise).
+- `orphan_anchor({id})`: leave one proposed anchor homeless; it stays a stale anchor
+  on its old document. Same `id` rule.
 - `report_diagnostic({rule, severity, subjects, message, reasoning, prompt?})`. `rule` is one of
   the review rules: `contradiction`, `duplicate-entity`, `duplicate-requirement`,
   `missing-link`, `ambiguity`, or `lint` for violations of the project's own
@@ -174,7 +185,7 @@ Compilation over MCP is task-based: the agent performs work items from
 changeset exactly as an in-process turn does. One task is open at a time per serving.
 
 - `compilation_tasks({})`: the queue: kind, target, dirty sections, stale anchor
-  count, ready or blocked with the reason. Zero tasks returns the build verdict
+  count (proposal count for `align-document`), ready or blocked with the reason. Zero tasks returns the build verdict
   instead; nothing to do is an answer. The verdict carries `openDiagnostics`, the
   open diagnostic counts by severity, so a converged build with standing errors
   says so ([convergence](./compilation.md#convergence)).
@@ -309,6 +320,8 @@ try again.
 Turns see subsets, not the whole catalog. Every subset carries
 [`report_feedback`](#feedback-tool); it is listed once here, not per task:
 
+- `align-doc`: `context`, `expand`, `search`, `read_section`, `get_entity`,
+  `place_anchor`, `orphan_anchor`, `done`.
 - `reconcile-doc`: `context`, `expand`, `search`, `read_section`, `upsert_entity`,
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,
   `delete_requirement`, `set_coverage`, `done`.

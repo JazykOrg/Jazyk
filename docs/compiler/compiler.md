@@ -16,7 +16,8 @@ The design splits work strictly between deterministic code and the model.
 
 The harness owns everything that must never be wrong:
 
-- [parsing](./parsing.md) and section diffing,
+- [parsing](./parsing.md) and [alignment](./alignment.md) (section diffing and anchor
+  relocation),
 - identifiers and the [graph store](./graph.md) with its validation gates,
 - the [dirty set](./reconciler.md#dirty-set) (what is stale),
 - [context assembly](./context.md),

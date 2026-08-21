@@ -202,6 +202,55 @@ pub struct WorkItem {
     pub dirty_sections: Vec<String>,
     #[serde(rename = "staleAnchors", default, skip_serializing_if = "Vec::is_empty")]
     pub stale_anchors: Vec<String>,
+    // Anchor ids an align-doc item must decide. Mirrors docs/compiler/turns/align-doc.md.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<String>,
+}
+
+// One computed section change. Mirrors docs/compiler/alignment.md#phases.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SectionOp {
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f64>,
+}
+
+// One candidate section for a proposed anchor.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AnchorCandidate {
+    pub section: String,
+    pub similarity: f64,
+    #[serde(rename = "quoteLocates")]
+    pub quote_locates: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nearest: Option<String>,
+    #[serde(default)]
+    pub excerpt: String,
+}
+
+// One anchor alignment could not place with certainty.
+// Mirrors docs/compiler/alignment.md#anchor-relocation.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AnchorProposal {
+    pub anchor: String,
+    pub from: String,
+    pub quote: String,
+    #[serde(default)]
+    pub excerpt: String,
+    pub candidates: Vec<AnchorCandidate>,
+}
+
+// The pending proposals of one target document, persisted in status.yaml.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DocAlignment {
+    pub doc: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<SectionOp>,
+    pub proposals: Vec<AnchorProposal>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -244,6 +293,14 @@ pub struct Status {
     // document health. Mirrors docs/compiler/compilation.md#convergence.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub diagnostics: BTreeMap<String, u64>,
+    // Alignment proposals awaiting an align-doc turn, one block per target document.
+    // Mirrors docs/compiler/alignment.md#what-applies-and-what-is-proposed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alignment: Vec<DocAlignment>,
+    // Anchors an align-doc turn placed with `reevaluate`: listed as stale anchors on
+    // their document's reconcile-doc item until that turn addresses them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reevaluate: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

@@ -145,7 +145,9 @@ Compilation tasks mutate the graph, so the serving holds an open changeset betwe
 calls, exactly one at a time:
 
 - `begin_compilation` claims a task from the queue, reloads the store, syncs the
-  section trees in memory, and opens a changeset. The write tools stage into it,
+  section trees in memory, and opens a changeset. An `align-document` task carries
+  the [align-doc](../compiler/turns/align-doc.md) pack; a `reconcile-document` task
+  stays blocked while its document has pending alignment. The write tools stage into it,
   validated by the same [gates](../compiler/graph.md#validation-gates) a compilation
   turn faces, scoped to the task's document the same way.
 - Write tools outside an open task are rejected toward `begin_compilation`. Identity,
@@ -184,7 +186,11 @@ E.g. the loop after a docs edit:
 
 ```
 await_changes → {changedDocs: [docs/orders.md], graphStale: true, ...}
-compilation_tasks → [{kind: reconcile-document, target: docs/orders.md, ready: true}]
+compilation_tasks → [{kind: align-document, target: docs/orders.md, ready: true},
+                     {kind: reconcile-document, target: docs/orders.md, ready: false}]
+begin_compilation → instructions + section changes + proposals with candidates
+(agent stages place_anchor / orphan_anchor ...)
+done → {committed: true, next: {kind: reconcile-document, target: docs/orders.md}}
 begin_compilation → instructions + dirty sections + stale anchors + known entities
 (agent stages upsert_requirement / set_coverage ...)
 done → {committed: true, next: {kind: review-entity, target: ent:order}}

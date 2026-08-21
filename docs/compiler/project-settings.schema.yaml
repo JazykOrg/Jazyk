@@ -169,4 +169,16 @@ properties:
           dirty documents plus touched entities
         minimum: 1
         default: 3
+      align_move_similarity:
+        type: number
+        description: Shingle similarity at or above which alignment pairs two sections as a move
+        minimum: 0
+        maximum: 1
+        default: 0.5
+      align_split_coverage:
+        type: number
+        description: Share of an old section two or more new sections must cover for a split or merge
+        minimum: 0
+        maximum: 1
+        default: 0.6
     additionalProperties: false

@@ -611,6 +611,7 @@ fn run_case_turn(
             target: item.target.clone(),
             target_sections: item.dirty_sections.clone(),
             stale_anchors: item.stale_anchors.clone(),
+            proposals: Vec::new(),
         },
         _ => WorkScope {
             task: item.task.clone(),
@@ -618,6 +619,7 @@ fn run_case_turn(
             target: item.target.clone(),
             target_sections: Vec::new(),
             stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         },
     };
     let (system, pack) = crate::turn::task_prompt(&snapshot, item, limits, lint, gs);
@@ -790,6 +792,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                 target: case.target.clone(),
                 dirty_sections: dirty,
                 stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             };
             let case_start = std::time::Instant::now();
             let case_tokens_before = llm::tokens_spent();

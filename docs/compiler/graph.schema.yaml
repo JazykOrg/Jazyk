@@ -81,11 +81,26 @@ definitions:
       task:
         type: string
         enum:
+          - align-doc
           - reconcile-doc
+          - review-requirement
           - review-entity
       target:
         type: string
-        description: Document path or entity id
+        description: Document path, entity id, or requirement id
+      dirtySections:
+        type: array
+        items:
+          type: string
+      staleAnchors:
+        type: array
+        items:
+          type: string
+      proposals:
+        description: Anchor ids an align-doc item must decide
+        type: array
+        items:
+          type: string
   entity:
     description: One entry in graph/entities.yaml
     type: object
@@ -417,3 +432,105 @@ definitions:
         enum:
           - converged
           - incomplete
+      alignment:
+        description: Pending alignment proposals, one block per target document
+        type: array
+        items:
+          $ref: '#/definitions/docAlignment'
+      reevaluate:
+        description: Anchors an align-doc turn placed with reevaluate, listed as stale anchors until addressed
+        type: array
+        items:
+          type: string
+  sectionOp:
+    description: One computed section change
+    type: object
+    required:
+      - op
+    properties:
+      op:
+        type: string
+        enum:
+          - edited
+          - moved
+          - split
+          - merged
+          - deleted
+          - added
+      from:
+        description: Old full references
+        type: array
+        items:
+          type: string
+      to:
+        description: New full references
+        type: array
+        items:
+          type: string
+      similarity:
+        type: number
+        minimum: 0
+        maximum: 1
+  anchorCandidate:
+    description: One candidate section for a proposed anchor
+    type: object
+    required:
+      - section
+      - similarity
+      - quoteLocates
+    properties:
+      section:
+        type: string
+        description: Full reference, doc.md#/ref
+      similarity:
+        type: number
+        minimum: 0
+        maximum: 1
+      quoteLocates:
+        type: boolean
+      nearest:
+        type: string
+        description: The best matching window when the quote does not locate
+      excerpt:
+        type: string
+  anchorProposal:
+    description: One anchor alignment could not place with certainty
+    type: object
+    required:
+      - anchor
+      - from
+      - quote
+      - candidates
+    properties:
+      anchor:
+        type: string
+        description: Requirement or entity id
+      from:
+        type: string
+        description: Old full reference
+      quote:
+        type: string
+      excerpt:
+        type: string
+        description: The old section around the quote
+      candidates:
+        type: array
+        items:
+          $ref: '#/definitions/anchorCandidate'
+  docAlignment:
+    description: The pending proposals of one target document
+    type: object
+    required:
+      - doc
+      - proposals
+    properties:
+      doc:
+        type: string
+      changes:
+        type: array
+        items:
+          $ref: '#/definitions/sectionOp'
+      proposals:
+        type: array
+        items:
+          $ref: '#/definitions/anchorProposal'

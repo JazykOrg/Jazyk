@@ -2,7 +2,7 @@
 // registry through a codec, stages mutations, and hands the finished changeset back to
 // the reconciler for commit. Mirrors docs/compiler/turns.md.
 use crate::llm;
-use crate::model::WorkItem;
+use crate::model::{split_section_ref, AnchorProposal, WorkItem};
 use crate::project::{Limits, Linting};
 use crate::store::Store;
 use serde_json::{json, Value};
@@ -34,6 +34,9 @@ pub enum TraceEvent {
         sections: Vec<String>,
         dirty: usize,
         stale: usize,
+        // Proposals an align-doc turn must decide; zero for every other task.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        proposals: usize,
     },
     // `summary` is the condensed line the CLI prints; `full` carries the payload
     // behind it (capped) when condensing cut something, so the GUI expands in place.
@@ -105,8 +108,15 @@ pub enum TraceEvent {
 
 // Render an event exactly as the pre-event trace printed it, so `jazyk compile`
 // output is unchanged.
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 fn render_stderr(ev: &TraceEvent) {
     match ev {
+        TraceEvent::TurnStart { label, dirty, stale, proposals, .. } if *proposals > 0 => {
+            eprintln!("[{}] turn start ({} proposal(s))", label, proposals)
+        }
         TraceEvent::TurnStart { label, dirty, stale, .. } => {
             eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
         }
@@ -303,6 +313,8 @@ pub(crate) fn with_feedback_note(system: &str) -> String {
     }
 }
 
+const ALIGN_SYSTEM: &str = include_str!("../../docs/compiler/turns/prompts/align-doc.md");
+
 const RECONCILE_SYSTEM: &str =
     include_str!("../../docs/compiler/turns/prompts/reconcile-doc.md");
 
@@ -331,6 +343,7 @@ pub fn task_prompt(
     gen: &crate::gen::GenSettings,
 ) -> (&'static str, String) {
     match item.task.as_str() {
+        "align-doc" => (ALIGN_SYSTEM, align_pack(store, item, limits.context_budget)),
         "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(store, item, limits.context_budget)),
         "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(store, &item.target)),
         "generate-entity" => (GENERATE_SYSTEM, generate_pack(store, &item.target, gen)),
@@ -522,13 +535,21 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         s.push_str("\n## Stale anchors (their source text changed or vanished; re-anchor, update, or delete)\n");
         for a in &item.stale_anchors {
             if let Some(r) = store.graph.requirements.get(a) {
+                // An anchor the align turn relocated and flagged still locates; the
+                // note says why it is listed all the same.
+                let flagged = if store.status.reevaluate.contains(a) {
+                    "; relocated by alignment, re-evaluate whether it still holds here"
+                } else {
+                    ""
+                };
                 s.push_str(&format!(
-                    "- {}: {} (in {}#{}; was quoted: \"{}\")\n",
+                    "- {}: {} (in {}#{}; was quoted: \"{}\"{})\n",
                     a,
                     r.ears,
                     r.source.doc,
                     r.source.section,
-                    crate::llm::truncate(&r.source.quote, 100)
+                    crate::llm::truncate(&r.source.quote, 100),
+                    flagged
                 ));
             } else if let Some(e) = store.graph.entities.get(a) {
                 s.push_str(&format!("- {} (entity {}): a mention's section changed\n", a, e.name));
@@ -573,6 +594,90 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         }
     }
     s
+}
+
+// The align pack: the computed section changes, then every pending proposal with its
+// old location and wording and its candidates. Mirrors docs/compiler/turns/align-doc.md.
+fn align_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
+    let doc = &item.target;
+    let mut s = String::new();
+    s.push_str(&format!("# Work item: align anchors in {}\n", doc));
+    let Some(block) = store.status.alignment.iter().find(|b| &b.doc == doc) else {
+        s.push_str("\n(no pending proposals; call done)\n");
+        return s;
+    };
+    if !block.changes.is_empty() {
+        s.push_str("\n## Section changes (computed)\n");
+        for c in &block.changes {
+            let sim = c.similarity.map(|v| format!(" (similarity {}%)", (v * 100.0).round() as u32)).unwrap_or_default();
+            let line = match c.op.as_str() {
+                "added" => format!("- added: {}", c.to.join(", ")),
+                "deleted" => format!("- deleted: {}", c.from.join(", ")),
+                "edited" => format!("- edited: {}{}", c.to.join(", "), sim),
+                op => format!("- {}: {} → {}{}", op, c.from.join(", "), c.to.join(", "), sim),
+            };
+            s.push_str(&line);
+            s.push('\n');
+        }
+    }
+    let proposals: Vec<&AnchorProposal> =
+        block.proposals.iter().filter(|p| item.proposals.is_empty() || item.proposals.contains(&p.anchor)).collect();
+    s.push_str("\n## Proposals (decide every one)\n");
+    let per_proposal = budget.saturating_sub(s.len()) / proposals.len().max(1);
+    for p in proposals {
+        let mut block = String::new();
+        let head = match (store.graph.requirements.get(&p.anchor), store.graph.entities.get(&p.anchor)) {
+            (Some(r), _) => format!("\n### {}: {}\n", p.anchor, r.ears),
+            (_, Some(e)) => format!("\n### {} (entity {}), mention\n", p.anchor, e.name),
+            _ => format!("\n### {}\n", p.anchor),
+        };
+        block.push_str(&head);
+        block.push_str(&format!("was: {} \"{}\"\n", p.from, p.quote));
+        if !p.excerpt.is_empty() {
+            block.push_str(&indent(&p.excerpt));
+        }
+        block.push_str("candidates:\n");
+        let per_candidate = per_proposal.saturating_sub(block.len()) / p.candidates.len().max(1);
+        for (i, c) in p.candidates.iter().enumerate() {
+            let title = split_section_ref(&c.section)
+                .and_then(|(d, r)| store.docs.get(&d).and_then(|rec| rec.sections.get(&r)).map(|sec| sec.title.clone()))
+                .unwrap_or_default();
+            let locates = if c.quote_locates {
+                "quote locates: yes".to_string()
+            } else {
+                format!(
+                    "quote locates: no, nearest: \"{}\"",
+                    crate::llm::truncate(c.nearest.as_deref().unwrap_or(""), 200)
+                )
+            };
+            block.push_str(&format!(
+                "  {}. {} ({}) similarity {}%, {}\n",
+                i + 1,
+                c.section,
+                title,
+                (c.similarity * 100.0).round() as u32,
+                locates
+            ));
+            if c.excerpt.len() <= per_candidate {
+                block.push_str(&indent(&indent(&c.excerpt)));
+            } else {
+                block.push_str(&indent(&indent(&crate::llm::truncate(&c.excerpt, per_candidate))));
+                block.push_str(&format!("     (truncated; read_section {} for the rest)\n", c.section));
+            }
+        }
+        s.push_str(&block);
+    }
+    s
+}
+
+fn indent(text: &str) -> String {
+    let mut out = String::new();
+    for l in text.lines() {
+        out.push_str("  ");
+        out.push_str(l);
+        out.push('\n');
+    }
+    out
 }
 
 // The pair-review pack: the changed requirement and its neighbors side by side. The

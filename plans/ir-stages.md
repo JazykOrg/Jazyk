@@ -3,6 +3,19 @@
 Status: draft for iteration. Companion plan: [orchestration](./orchestration.md), which
 defines the stage registry this plan's stages plug into.
 
+This file is the overview: motivation, the stage ladder, prior art, migration. The
+detailed design lives in three companions:
+
+- [ir-graph](./ir-graph.md): the node kinds and edge algebra, how every diagram is a
+  projection of the one graph, the justification chain from any diagram element to a
+  document sentence, and the full UML catalog with verdicts.
+- [ir-agents](./ir-agents.md): the agent roster: per agent its unit of work, trigger,
+  context pack, toolset, gates, and the effects it emits; ordering and multi-stage
+  convergence.
+- [ripple](./ripple.md): the stable system: editing docs, diagrams, or the graph and
+  converging back to a fixed point; causality-carrying effects; observing a build in
+  realtime and post hoc (`jazyk ripple`).
+
 ## The idea
 
 Today the graph holds one semantic layer: entities and EARS requirements, with

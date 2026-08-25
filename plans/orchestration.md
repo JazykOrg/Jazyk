@@ -86,6 +86,10 @@ mechanism generalizes into the routing layer:
 - With the [IR stages](./ir-stages.md) active, effects follow the `traces` axis:
   a changed requirement emits dirty effects for exactly the use case steps,
   allocations, and transitions tracing to it. The cone, not the pyramid.
+- Every effect records its cause: the generation that emitted it, the mutation
+  within it, and the edge or computation that carried the dirtiness. The ripple
+  DAG of any change is then derivable from the journal, which is what
+  `jazyk ripple` and the build report render. See [ripple](./ripple.md).
 
 The handoff table (which stage feeds which) becomes data the GUI and `jazyk explain`
 render, instead of knowledge spread across the reconciler. The model never routes;

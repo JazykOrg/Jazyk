@@ -22,14 +22,15 @@ is a separate, per-stage choice through
 | `derive-usecases` | 2 | one actor-goal cluster | cluster membership changed | uc changes |
 | `review-usecase` | 2 | one changed use case + neighbors | uc changed | uc changes, diagnostics |
 | `model-domain` | 3 | one scope cluster | ent/rel facts in scope changed | attributes, roles, cardinality |
-| `partition-architecture` | 4 | the project | stage enabled, no accepted partition; or partition invalidated | comp tree, partition ADR |
-| `design-component` | 4 | one component + neighbor interfaces | allocation candidates or owned facts changed | satisfies, interfaces, ADRs |
-| `review-component` | 4 | one changed component | comp facts changed | diagnostics, repairs |
-| `derive-statemachine` | 5 | one stateful entity | its state/event reqs changed, threshold met | sm changes |
-| `derive-interaction` | 5 | one multi-component use case | uc, allocation, or ifaces changed | ixn changes, proposed operations |
-| `bind-requirement` (exists) | 6 | one requirement | unbound / changed / artifact gone | ledger rows |
-| `generate-entity` (exists) | 6 | one entity (or component, see below) | facts differ from ledger | deliverable, manifest |
-| `verify-requirement` (exists) | 6 | one ledger row | derived status says action | verdicts |
+| `derive-instances` | 4 | one example section or fixture group | example sections or fixtures changed | inst changes |
+| `partition-architecture` | 5 | the project | stage enabled, no accepted partition; or partition invalidated | comp tree, partition ADR |
+| `design-component` | 5 | one component + neighbor interfaces | allocation candidates or owned facts changed | satisfies, interfaces, ADRs |
+| `review-component` | 5 | one changed component | comp facts changed | diagnostics, repairs |
+| `derive-statemachine` | 6 | one stateful entity | its state/event reqs changed, threshold met | sm changes |
+| `derive-interaction` | 6 | one multi-part use case | uc, allocation, or ifaces changed | ixn changes, proposed operations |
+| `bind-requirement` (exists) | 7 | one requirement | unbound / changed / artifact gone | ledger rows |
+| `generate-entity` (exists) | 7 | one entity (or component, see below) | facts differ from ledger | deliverable, manifest |
+| `verify-requirement` (exists) | 7 | one ledger row | derived status says action | verdicts |
 | `draft-document` (exists) | reverse | one released scope | unclaimed report + release | doc drafts |
 
 The existing eight port onto the registry unchanged in behavior (orchestration plan,
@@ -61,8 +62,8 @@ retry-then-park, and the finish contract (`done` runs the gates).
   (`not-applicable` with note) rejects the explicit `done` (the coverage contract,
   one stage up).
 - Emits: `Dirty(review-usecase, uc)` per changed use case;
-  `Dirty(derive-interaction, uc)` when stage 5 is on and the use case's
-  requirements span components.
+  `Dirty(derive-interaction, uc)` when dynamics (stage 6) is on and the use
+  case's requirements span components (or actors, where composition is off).
 
 ### review-usecase
 
@@ -100,12 +101,37 @@ retry-then-park, and the finish contract (`done` runs the gates).
 - Emits: relationship recompute happens at commit (derived data);
   `Dirty(design-component, comp)` for components whose satisfied requirements
   gained domain structure; `Dirty(derive-statemachine, ent)` when roles or
-  requirement sets cross the threshold.
+  requirement sets cross the threshold; `Dirty(derive-instances, section)` when
+  attributes or cardinalities under existing instances changed.
+
+### derive-instances
+
+- Unit: one example section (a section marked `non-normative` whose body
+  enumerates concrete things, detected by the same cheap signals the
+  `suspicious-non-normative` check uses today), or one fixture group the ledger
+  names.
+- Trigger: `Dirty(derive-instances, target)` when the example section changed,
+  when a fixture the ledger names changed (`test-changed`), or when the class
+  model under existing instances changed (attributes, cardinality). Ready when
+  stage 3 is quiet for the entities involved.
+- Pack: the example section body (or fixture excerpt), the candidate `of`
+  entities with their attributes and relationships, existing instances from the
+  same source.
+- Toolset: reads plus `upsert_instance`, `update_instance`, `delete_instance`,
+  `set_trace_coverage`, `done`.
+- Gates: `of` resolves to an existing entity; `values` keys name declared
+  attributes, or the call carries a `note` proposing the attribute (which lands
+  as a derived-provenance attribute candidate for `model-domain`); `links` ride
+  existing relationships.
+- Checks (wave, not gate): conformance of values and links against the class
+  model; a violation is a diagnostic naming the example sentence and the
+  contradicted attribute or cardinality, with both quotes.
+- Emits: `Dirty(model-domain, cluster)` for proposed attributes.
 
 ### partition-architecture
 
 - Unit: the whole project, one turn, rare by design.
-- Trigger: stage 4 enabled and no `accepted` partition ADR; or invalidation (the
+- Trigger: composition (stage 5) enabled and no `accepted` partition ADR; or invalidation (the
   share of unallocated or misallocated requirements crosses a threshold, or the
   owner asks). Gated in `manual` mode like any release; the partition ADR's
   prompt/answer is the human approval either way. `auto` mode still stops here:
@@ -129,14 +155,14 @@ retry-then-park, and the finish contract (`done` runs the gates).
   reconciler routes new or changed requirements to candidate components by
   similarity to what each already satisfies), an operation was proposed from an
   interaction turn, a constraining ADR was answered, or domain structure under
-  its satisfied set changed. Ready when the partition is accepted and stages 1 to 3
+  its satisfied set changed. Ready when the partition is accepted and stages 1 to 4
   are quiet for its cone.
 - Pack: the component, its `satisfies` set (summaries), candidate allocations with
   scores, its interfaces, neighbor interfaces (signatures only), constraining
   ADRs, proposed operations awaiting ratification.
 - Toolset: reads plus `update_component` (satisfies add/remove, responsibilities,
-  facets), `upsert_interface`, `update_interface`, `delete_interface`,
-  `report_adr`, `set_trace_coverage`, `done`.
+  provides/requires, facets), `upsert_interface`, `update_interface`,
+  `delete_interface`, `report_adr`, `set_trace_coverage`, `done`.
 - Gates: satisfies targets exist; every operation `satisfies` at least one
   requirement or carries derived provenance with reasoning; a candidate allocation
   neither accepted nor marked draws the coverage rejection; interface operation
@@ -178,37 +204,43 @@ retry-then-park, and the finish contract (`done` runs the gates).
 ### derive-interaction
 
 - Unit: one use case whose refined requirements are satisfied by two or more
-  components.
+  components, or, where composition is off, whose steps involve two or more
+  actor entities (the profile's dialogue-scene reading; see
+  [ir-graph](./ir-graph.md#interaction)).
 - Trigger: `Dirty(derive-interaction, uc)` from use case changes, allocation
-  moves, or interface changes. Ready when stage 4 is quiet for the involved
-  components.
-- Pack: the use case with steps, the participating components with their
-  interfaces (full operation signatures), the existing interaction.
+  moves, or interface changes. Ready when composition (stage 5), when active, is
+  quiet for the involved components.
+- Pack: the use case with steps, the participants (components with full
+  operation signatures, or actor entities), the existing interaction.
 - Toolset: reads plus `upsert_interaction`, `delete_interaction`,
   `update_interface` (propose an operation with derived provenance when a needed
-  one does not exist), `set_trace_coverage`, `done`.
-- Gates: every message names an existing operation or one staged in this changeset
-  as a proposal; every message rides an existing step; participants exist.
+  one does not exist; composition on only), `set_trace_coverage`, `done`.
+- Gates: with composition on, every message names an existing operation or one
+  staged in this changeset as a proposal; with composition off, every message
+  refines at least one requirement; every message rides an existing step;
+  participants exist.
 - Emits: `Dirty(design-component, owner)` for every proposed operation, so the
   owning component's agent ratifies, reshapes, or rejects it. This is the
-  upward handoff: stage 5 may propose into stage 4, never silently decide for it.
+  upward handoff: stage 6 may propose into stage 5, never silently decide for it.
 
-### Stage 6 changes
+### Stage 7 changes
 
 `bind-requirement`, `generate-entity`, `verify-requirement` keep their contracts.
-With stage 4 on, generation gains a grouping option: the unit becomes one component
-(its entities' requirements ordered by interfaces), falling back to per-entity when
-stage 4 is off. Test derivation consumes use case steps and extensions where they
-exist (the EARS-to-Gherkin mapping), the pattern rule otherwise.
+With composition (stage 5) on, generation gains a grouping option: the unit becomes
+one component (its entities' requirements ordered by interfaces), falling back to
+per-entity when it is off. Test derivation consumes use case steps and extensions
+where they exist (the EARS-to-Gherkin mapping), instances where they exist
+(fixtures), and the pattern rule otherwise.
 
 ## New tools, summarized
 
 Write tools added to the registry, all staging into changesets behind the same
-gates: `upsert_usecase`, `update_usecase`, `delete_usecase`, `upsert_component`,
-`update_component`, `delete_component`, `upsert_interface`, `update_interface`,
-`delete_interface`, `upsert_statemachine`, `delete_statemachine`,
-`upsert_interaction`, `delete_interaction`, `report_adr` (upsert by natural key;
-supersede, never rewrite), and `set_trace_coverage({stage, target, state, note?})`
+gates: `upsert_usecase`, `update_usecase`, `delete_usecase`, `upsert_instance`,
+`update_instance`, `delete_instance`, `upsert_component`, `update_component`,
+`delete_component`, `upsert_interface`, `update_interface`, `delete_interface`,
+`upsert_statemachine`, `delete_statemachine`, `upsert_interaction`,
+`delete_interaction`, `report_adr` (upsert by natural key; supersede, never
+rewrite), and `set_trace_coverage({stage, target, state, note?})`
 (the per-stage coverage mark; `not-applicable` requires the note, mirroring
 `set_coverage`). Chat gains `answer_adr`, riding the prompt/answer machinery.
 
@@ -219,19 +251,19 @@ and explainable.
 
 ## Ordering and convergence
 
-- Stage order is the ladder: 1 before 2 before 3 before 4 before 5 before 6, as
-  readiness predicates over the queue, not as phases. Within stage 1 the existing
-  waves stand (alignment, ingest by levels, fix-up, pair review, entity review).
-  Within every other stage: derivations in parallel over disjoint units, then
-  reviews, the same shape.
+- Stage order is the ladder: 1 through 7 as readiness predicates over the queue,
+  not as phases, with inactive stages (profile or `[stages]`) simply absent.
+  Within stage 1 the existing waves stand (alignment, ingest by levels, fix-up,
+  pair review, entity review). Within every other stage: derivations in parallel
+  over disjoint units, then reviews, the same shape.
 - A build converges when the queue is empty across active stages and the checks
   pass: the multi-stage fixed point. `status.yaml` carries a per-stage verdict
-  block; a build can be `converged` for stages 1 to 3 with stage 4 parked, and
-  says so.
+  block; a build can be `converged` for stages 1 to 3 with composition parked,
+  and says so.
 - The per-build turn cap generalizes: the budget spreads over stages with earlier
   stages outranking later ones when tight (the coverage-outranks-review precedent,
   one level up). Parked work resumes first next build, per stage.
-- Oscillation across stages (5 proposes an operation, 4 rejects it, 5 proposes it
+- Oscillation across stages (6 proposes an operation, 5 rejects it, 6 proposes it
   again) is caught by flip detection on natural keys per node kind, surfacing an
   `unstable-derivation` diagnostic with the two turns' reasoning side by side, and
   the pair parks until a human answers.

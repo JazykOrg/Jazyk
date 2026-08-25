@@ -4,28 +4,62 @@ Status: draft for iteration. Detailed design under [ir-stages](./ir-stages.md).
 Companions: [ir-agents](./ir-agents.md) (who edits this graph and when),
 [ripple](./ripple.md) (how edits propagate and how to watch them).
 
-This file defines the shape: the node kinds, the edge algebra, how diagrams project
-from the graph, and why each UML diagram type is in or out.
+This file defines the shape: the node kinds, the edge algebra, how every UML diagram
+type projects from the graph, and how one metamodel serves any deliverable medium.
 
 ## One graph, many diagrams
 
 There are no diagram elements. There are graph nodes, and diagrams are deterministic
-projections: a query selects nodes and edges, a renderer lays them out (Mermaid in
-docsgen, interactive in the GUI). The same `ent:shopping-cart` is the class in the
-class diagram, the subject of its state machine, and the aggregate a component's data
-contract names, because all three views select the same node. Identity across
-diagrams is not a synchronization feature; it is the absence of copies.
+projections: a query selects nodes and edges, a renderer lays them out. The same
+`ent:shopping-cart` is the class in the class diagram, the subject of its state
+machine, and the type an interface operation names, because all three views select
+the same node. Identity across diagrams is not a synchronization feature; it is the
+absence of copies.
+
+All 14 UML 2.5 diagram types render from the graph ([the catalog](#the-uml-25-catalog)).
+Six have stored semantics of their own; seven are projections of facts other stages
+already store; one (profiles) is a mechanism, not a picture. None is stored as a
+drawing.
 
 Consequences:
 
 - A diagram cannot drift from the graph. It is rendered fresh from it, like the
   existing [relationships view](../docs/consumers/docsgen.md#relationships-view).
 - Editing a diagram is editing the graph. The GUI edits typed nodes through the
-  same write tools turns use; Mermaid text is output, never input. See
-  [ripple](./ripple.md#edit-paths).
+  same write tools turns use; diagram text (Mermaid, PlantUML) is output, never
+  input. See [ripple](./ripple.md#edit-paths).
 - Every rendered element and edge can answer "why do you exist" by walking its
   provenance chain to a document sentence. See
   [justification closure](#justification-closure).
+
+## Any medium, one metamodel: profiles
+
+Jazyk does not assume the documents describe software
+([the subject is whatever the documents describe](../docs/compiler/concepts/ears.md#the-subject-is-whatever-the-documents-describe)).
+The node kinds below are medium-neutral: things, obligations, goals, parts,
+contracts, lifecycles, interactions. UML's own extension mechanism, the profile,
+is the authentic way to specialize a generic metamodel to a domain, and jazyk
+adopts it as the medium answer:
+
+- A profile is project configuration
+  ([`[profile]`](./ir-stages.md#configuration)), chosen once alongside the
+  [medium decision](../docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated),
+  or explicitly in `jazyk.toml`.
+- A profile supplies three things and changes no schema:
+  - a stereotype vocabulary: node-level labels rendered guillemet-style
+    («service», «character», «department», «slide»), stored as an optional
+    `stereotype` field with provenance like any fact,
+  - stage defaults: which [stages](./ir-stages.md#the-stage-ladder) earn their
+    keep in this medium (the narrative profile disables composition by default;
+    the organization profile enables activity views prominently),
+  - rendering labels: what the projections call things (the org chart is the
+    class diagram under the organization profile; a scene is a sequence diagram
+    under the narrative profile).
+- Built-in profiles to start: `software` (default), `organization`, `narrative`,
+  `slides`. A custom profile is a table in the project file, nothing more.
+
+The point: the graph stays one metamodel, checks stay uniform, and the medium
+lives in vocabulary and defaults, exactly what UML profiles were designed for.
 
 ## Provenance kinds
 
@@ -59,23 +93,27 @@ Existing kinds unchanged except where noted: `sec` (structural),
 | `req:<doc-stem>-<n>` | requirement | 1 | source section + statement | statement |
 | `rel:<a>~<b>` | relationship | 1 (derived) | member pair | entity pair |
 | `uc:<slug>` | use case | 2 | goal + actors | actor-goal |
-| `comp:<slug>` | component | 4 | name | component |
-| `iface:<slug>` | interface | 4 | owner + name | contract |
-| `adr:<n>` | decision | 4 | normalized title | decision |
-| `sm:<entity-slug>` | state machine | 5 | subject entity | stateful entity |
-| `ixn:<uc-slug>` | interaction | 5 | subject use case | multi-component use case |
+| `inst:<slug>` | instance | 4 | name + `of` entity | concrete example |
+| `comp:<slug>` | component | 5 | name | part |
+| `iface:<slug>` | interface | 5 | owner + name | contract |
+| `adr:<n>` | decision | 5 | normalized title | decision |
+| `sm:<entity-slug>` | state machine | 6 | subject entity | stateful entity |
+| `ixn:<uc-slug>` | interaction | 6 | subject use case | multi-part use case |
 | `diag:<rule>-<n>` | diagnostic | any | rule + subjects | finding |
 
 Ids are minted once by the store, immutable, readable. Merges leave redirects.
-Exactly as today.
+Exactly as today. Every kind takes the optional profile `stereotype`.
 
 ### Entity (extended)
 
 New optional fields, all provenanced per fact:
 
-- `role`: `aggregate-root`, `value`, `actor`, `service`, or unset.
+- `role`: `aggregate-root`, `value`, `actor`, `service`, or unset. Profiles read
+  it through their vocabulary (`actor` is a character in the narrative profile, a
+  business role in the organization profile).
 - `attributes`: list of `{name, type?, provenance}`. Structure the prose states
-  ("an order carries a total and a currency"). Behavior stays a requirement.
+  ("an order carries a total and a currency"; "a department has a head and a
+  budget"). Behavior stays a requirement.
 
 ### Requirement (extended)
 
@@ -86,7 +124,9 @@ New optional fields, all provenanced per fact:
 
 - Gains `cardinality` per member, strongest-claim promotion, recomputed on commit.
   Still no write tool: an edge cannot exist without a statement behind it. This is
-  the property that makes every class-diagram edge explainable.
+  the property that makes every class-diagram edge explainable, in every medium:
+  "a House is composed of Rooms" and "an Act is composed of Chapters" are the same
+  `composition` edge with different quotes behind them.
 
 ### Use case
 
@@ -105,21 +145,55 @@ uc:customer-checks-out:
     - condition: payment is declined
       refines: [req:payment-4]
       steps: [{text: the order is held and the customer notified, refines: [req:payment-5]}]
+  includes: [uc:reserve-stock]      # a shared sub-flow, rendered as «include»
   provenance: {derived: {from: [req:checkout-1, req:inventory-3, req:catalog-2], reasoning: ...}}
 ```
 
 Lean by design: no ceremony fields (level, stakeholders, guarantees). Every step
-`refines` at least one requirement; that is the gate.
+`refines` at least one requirement; that is the gate. Under the organization
+profile a use case is a business process; under the narrative profile it is a plot
+thread (actor: `ent:heroine`, goal: expose the betrayal).
+
+### Instance
+
+Concrete examples, promoted from what today is only non-normative prose: worked
+examples in the docs, enumerated concrete things, test fixtures named by the
+ledger.
+
+```yaml
+inst:gold-tier-cart:
+  name: gold tier cart
+  of: ent:shopping-cart
+  values: {items: "3", currency: EUR}
+  links:
+    - {to: inst:ana-the-gold-customer, via: rel:customer~shopping-cart}
+  provenance: {quote: {doc: docs/catalog.md, section: /catalog/examples, quote: "Ana, a gold customer, carries 3 items priced in EUR."}}
+```
+
+The payoff is the conformance check: `values` must name declared entity
+attributes, `links` must respect relationship types and cardinality. An example
+that contradicts the model is a documentation bug found deterministically, which
+is exactly the trap example values set today
+([compilation](../docs/compiler/compilation.md#waves) notes contradictions hiding
+in example values). Under the organization profile instances are named teams and
+offices; under the narrative profile, concrete scenes and events.
 
 ### Component and interface
+
+UML component semantics: a modular part with provided and required interfaces,
+nesting for levels (what C4 splits into container and component is nesting depth
+here).
 
 ```yaml
 comp:order-service:
   name: Order Service
-  kind: container
-  parent: null
+  stereotype: service                # from the profile
+  parent: comp:commerce-platform     # nesting, any depth
   responsibilities: owns order lifecycle and checkout
   technology: {value: Go, provenance: {quote: {doc: docs/arch.md, section: /arch/services, quote: "The order service is built with Go."}}}
+  provides: [iface:order-service.checkout]
+  requires: [iface:inventory.stock]
+  deployedOn: {node: aws-us-east, provenance: {quote: ...}}   # optional facet
   satisfies:
     - {target: req:checkout-1, provenance: {derived: {from: [adr:2], reasoning: ...}}}
     - {target: uc:customer-checks-out, provenance: {...}}
@@ -132,8 +206,10 @@ iface:order-service.checkout:
 ```
 
 Interface operation `inputs` and `outputs` reference entities where they carry
-domain types; that is the join between the architecture and the domain model, and
-it is one node, not a copy.
+domain types; that is the join between composition and the domain model, one node,
+not a copy. Under the organization profile a component is a business unit and its
+provided interfaces are the capabilities it offers other units; the narrative
+profile disables this stage by default (acts and parts are packaging, below).
 
 ### Decision (ADR)
 
@@ -152,7 +228,9 @@ adr:2:
 
 Append and supersede, never rewrite. A `proposed` ADR reuses the
 [diagnostic prompt machinery](../docs/compiler/model/diagnostic.md#prompts): it is
-a question to the owner, rendered wherever prompts render.
+a question to the owner, rendered wherever prompts render. Decisions are not
+software-specific: which department owns onboarding, whether the novel is told in
+first person, one decision node each.
 
 ### State machine
 
@@ -163,17 +241,16 @@ sm:order:
   states:
     - {name: placed, provenance: {...}}
     - {name: paid, provenance: {...}}
-    - {name: shipped, provenance: {...}}
     - {name: held, provenance: {...}}
   transitions:
     - {from: placed, to: paid, trigger: payment succeeds, refines: [req:payment-2]}
     - {from: placed, to: held, trigger: payment declined, refines: [req:payment-4]}
-    - {from: paid, to: shipped, trigger: fulfillment ships, refines: [req:fulfill-1]}
 ```
 
-One machine per entity, whole-node upserts (weak models handle one document-shaped
-call better than many granular ones). Triggers map onto EARS `When`/`While`/`If`
-clauses near-mechanically.
+One machine per entity, whole-node upserts. Triggers map onto EARS
+`When`/`While`/`If` clauses near-mechanically. The lifecycle reading is universal:
+an order, a hiring pipeline, a relationship arc (strangers to rivals to lovers,
+each transition refining a plot requirement).
 
 ### Interaction
 
@@ -186,9 +263,12 @@ ixn:customer-checks-out:
     - {n: 2, step: 2, from: comp:order-service, to: comp:inventory, operation: iface:inventory.stock#reserve}
 ```
 
-Each message rides a use case step (`step`) and names an interface operation. Both
-must exist; that pair of gates is what keeps sequence diagrams, use cases, and
-component contracts mutually consistent.
+Each message rides a use case step (`step`) and names an interface operation where
+composition is on; without composition, messages tie participants and refine
+requirements directly (a dialogue scene under the narrative profile: participants
+are characters, messages are beats, each refining the plot requirement it
+delivers). The gates keep sequence views, use cases, and contracts mutually
+consistent.
 
 ## Edge algebra
 
@@ -202,9 +282,12 @@ sources become entity mentions today.
 | `mentions` | entity | section | provenance (exists) |
 | `entities` / `edges` | requirement | entities | semantic (exists) |
 | `members` | relationship | entities | derived (exists) |
-| step `refines` | use case | requirements | trace |
-| extension `refines` | use case | requirements | trace |
+| step / extension `refines` | use case | requirements | trace |
+| `includes` | use case | use cases | trace |
+| `of` | instance | entity | trace |
+| `links` | instance | instances, via relationships | trace |
 | `satisfies` | component | requirements, use cases | trace |
+| `provides` / `requires` | component | interfaces | semantic |
 | operation `satisfies` | interface | requirements | trace |
 | transition `refines` | state machine | requirements | trace |
 | message `step` + `operation` | interaction | use case step, interface op | trace |
@@ -237,6 +320,10 @@ targets:
   `satisfies` `req:inventory-3` → quote in `docs/inventory.md#/inventory/stock`.
   The message also names `step: 2` → `uc:customer-checks-out` step 2 `refines` the
   same requirement: two paths, one sentence, and the checks verify they agree.
+- Object diagram instance `inst:gold-tier-cart`, value `currency: EUR` → the
+  entity attribute `currency` on `ent:shopping-cart` (its own quote) and the
+  example sentence the instance was read from. A conformance failure names both
+  sentences.
 - State transition `placed → held` → `refines: req:payment-4` ("If payment is
   declined, then the order shall be held") → quote → section.
 - Component box `comp:order-service` → `satisfies` list → requirements and use
@@ -244,83 +331,91 @@ targets:
   → the decision's question, options, and either its quote or its
   proposed-awaiting-answer state.
 
-## Diagram catalog
+## The UML 2.5 catalog
 
-### Projections jazyk renders
-
-Each is a named query plus a renderer, listed with what an edit to it means (the
-dual-write or decree it becomes; details in [ripple](./ripple.md#edit-paths)):
-
-- Class diagram, one per scope: entities of the scope with `role` and
-  `attributes`; edges from derived relationships with type and cardinality.
-  Editing an edge's cardinality edits the requirement behind it (dual-write).
-  Adding an edge means writing the statement that implies it; the GUI turns the
-  drawn edge into an `add_requirement` proposal.
-- Use case index, one per actor: goals, steps, extensions, with per-step
-  requirement links. The classic oval diagram renders as a compact index; surveys
-  say the picture adds nothing over the list.
-- C4 context and container/component diagrams: the `comp` tree with relations
-  derived from interactions and cross-component `satisfies` overlap; each arrow
-  lists the interface operations that justify it. An arrow with no justifying
-  operation cannot render, because it cannot exist.
-- Sequence diagram, one per interaction: participants and messages as stored.
-- State diagram, one per state machine.
-- Deployment view, only when containers carry a stated `deployment` facet;
-  rendered as a C4 deployment diagram. No facet, no view, no invented topology.
-- Traceability matrix: requirement × (use case, component, files, test, verdict),
-  a table projection over `traces` plus the ledger.
-- Relationships flowchart and glossary: exist today in docsgen, unchanged.
-- Ripple view: not a UML diagram; the causality DAG of a build. See
-  [ripple](./ripple.md#observing-a-run).
-
-### The full UML 2.5 catalog, and why each is in or out
+All 14 diagram types, each with its standing: `stored` (a stage writes its
+semantics), `projection` (rendered from facts other stages store, zero new IR),
+`on-evidence` (renders only when the docs state the facts), or `mechanism`.
+Medium readings show the same projection under different profiles.
 
 Structure diagrams:
 
-- Class: in, as the scope class diagram. The highest-value structural view;
-  practitioner surveys rank it first.
-- Object (instance): out. Instances are examples; examples live in the docs as
-  non-normative sections and in tests as fixtures. A stored object diagram would
-  duplicate test data without test semantics.
-- Package: out as a diagram. Scopes are the packaging; the class diagram groups by
-  scope. A separate package view restates the directory listing.
-- Composite structure: out. Its content (parts wired by connectors) is the
-  component diagram one level down; practitioner use is marginal and LLM
-  extraction reliability is poor for its niche semantics.
-- Component: in, but as C4 container/component views rather than UML notation. C4
-  is what practitioners draw now; the semantics stored (components, interfaces,
-  relations) are the same.
-- Deployment: partial. Only stated topology renders; no stage synthesizes one.
-  Deployment is an operations fact the docs either state or do not.
-- Profile: out. Metamodel machinery with no project content.
+- Class: stored (stages 1 and 3). Entities with `role` and `attributes`; edges
+  from derived relationships with type and cardinality; one diagram per scope.
+  Editing an edge edits the requirement behind it (dual write); drawing a new
+  edge becomes an `add_requirement` proposal. Readings: domain model (software),
+  org chart and role structure (organization), the web of characters, settings,
+  and themes (narrative), deck structure (slides).
+- Object: stored (stage 4, optional). Instances with values and links, conformance
+  checked against the class model. Readings: fixtures and worked examples
+  (software), named teams and offices (organization), concrete scenes and events
+  (narrative).
+- Package: projection. Scopes are the packages; the diagram is the scope grouping
+  of the class projection with dependencies summarized from cross-scope
+  relationships. Readings: modules or bounded contexts, divisions, acts and
+  parts of the book.
+- Component: stored (stage 5). UML notation: components, nesting, provided and
+  required interfaces (lollipop and socket). Nesting depth carries what C4 splits
+  into container and component levels. Readings: services and modules,
+  business units and their capabilities; off by default under narrative and
+  slides profiles.
+- Composite structure: projection over a component's internals: its nested
+  components and owned entities as parts, connectors derived from the interaction
+  messages that cross them. Renders only where composition is on and the internals
+  exist.
+- Deployment: on-evidence. `deployedOn` facets and stated topology render as
+  nodes and artifacts; no stage synthesizes topology. Readings: infrastructure
+  (software), offices and locations (organization); n/a under narrative (settings
+  are entities, not deployment).
+- Profile: mechanism, not a picture. The medium profiles above are jazyk's use of
+  it: stereotypes, stage defaults, rendering vocabulary. A profile diagram is not
+  rendered; the project settings page is its honest form.
 
 Behavior diagrams:
 
-- Use case diagram: partial. The nodes are stage 2; the oval-and-stick-figure
-  picture is replaced by the index rendering. Nothing semantic is lost; the picture
-  encodes only participation, which the index shows.
-- Activity: out. At requirements altitude its content is the use case steps; at
-  code altitude it is control flow the code states better. LLMs produce plausible,
-  vacuous flowcharts, and no deterministic check can hold one to anything. If a
-  document contains one (Mermaid/PlantUML block), parsing treats it as a `diagram`
-  section and extraction reads obligations from it as prose, which already works.
-- State machine: in, demand-driven (stage 5). Highest semantic density per byte,
-  strong deterministic checks, near-mechanical mapping from EARS patterns.
-- Sequence: in, per multi-component use case (stage 5), because every message is
-  checkable against interfaces and steps.
-- Communication: out. Same information as sequence with a worse layout; pick one
-  representation per fact.
-- Timing: out. Timing bounds are requirements with measures (the NFR facet); a
-  timing diagram stores no additional fact worth reconciling.
-- Interaction overview: out. It composes sequences the way the use case index
-  already composes scenarios.
+- Use case: stored (stage 2). Two renderings: the index (per actor, with steps
+  and requirement links) and the classic oval diagram (actors, use cases,
+  «include» from `includes`, «extend» from extensions). The oval form is a
+  legibility option; the index carries more.
+- Activity: projection of one use case's scenario: steps as actions, extensions
+  as decision branches, `includes` as sub-activity frames. No new IR and no
+  synthesis: the flow is exactly what the steps and extensions already state.
+  Readings: process flow (software), workflow (organization, where this is often
+  the primary view), plot flow (narrative).
+- State machine: stored (stage 6, demand-driven). Flat statechart semantics
+  first; hierarchy only if real projects demand it.
+- Sequence: stored (stage 6). One per interaction.
+- Communication: projection. The same interaction rendered as a wiring view with
+  numbered messages instead of a timeline. One stored fact, two layouts; offered
+  because it is free.
+- Timing: on-evidence projection. Renders for a state machine whose transitions
+  refine requirements carrying time measures (the NFR facet): lifelines of
+  states against the stated bounds. No measures, no view. Readings: latency
+  bounds, SLA timelines, pacing constraints where a narrative states them.
+- Interaction overview: projection. A use case's steps as an activity frame where
+  each step that owns interaction messages embeds a reference to its sequence
+  view. Renders only where interactions exist.
 
 Adjacent notations:
 
-- C4: adopted as the component-layer rendering (above).
-- ER diagrams: covered by the class projection (entities, attributes,
-  cardinalities); a separate ER view is a style option in docsgen, not new IR.
-- BPMN: out of domain; jazyk models the product's obligations, not the business's
-  processes around it. A BPMN-shaped document is prose input like any other.
-- Statecharts (Harel): the semantics adopted for `sm` (flat first; hierarchy and
-  entry/exit actions only if real projects demand them).
+- C4: dropped as the stored vocabulary in favor of UML components with nesting
+  (this plan's earlier draft chose C4; the swap buys the generic metamodel that
+  profiles can re-read per medium, and UML notation the models know deeply from
+  training data). C4's load-bearing insight, diagrams as projections of one
+  model, is this file's first principle and is retained. A C4-styled rendering of
+  the component tree remains a docsgen style option.
+- ER diagrams: a style option on the class projection (entities, attributes,
+  cardinalities), not new IR.
+- BPMN: out of domain as IR; the activity projection covers workflow rendering,
+  and a BPMN-shaped document is prose input like any other.
+- Statecharts (Harel): the semantics adopted for `sm`.
+
+## Renderers
+
+- docsgen: Mermaid where it is capable (class, state, sequence, flowchart for
+  activity), PlantUML for the rest of the catalog (object, component, composite
+  structure, deployment, timing, communication, use case ovals). Both are text
+  artifacts in the out directory, diffable like everything else.
+- GUI: interactive projections with the justification walks as click paths.
+- Never stored, never hand-edited: a diagram file is build output, exactly like
+  a docsgen page.

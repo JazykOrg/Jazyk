@@ -163,11 +163,35 @@ and a standard export.
   process resumes by rederiving. Replay journaling would be a downgrade dressed as
   infrastructure. Their concepts (heartbeats, lease expiry, idempotent steps) are
   already present.
-- Rust agent frameworks (Rig, Swiftide, graph-flow and kin). They provide LLM
-  clients and pipeline scaffolding, not the graph-store-gated turn semantics jazyk
-  needs; adopting one would replace the llm client (fine but small) while still
-  hand-rolling everything that matters. Not worth the dependency for the delta.
-  Worth revisiting only if the embedded agent's endpoint client grows painful.
+- Rust agent frameworks, with Rig examined closely since it is the mature one
+  (active in 2026, 20+ providers, MCP client support, OTel GenAI instrumentation,
+  tracing hooks, mock models and cassette tests). Rig's `Agent` is a model-loop
+  concept: preamble, tools, provider. Jazyk's agent definition lives a layer above
+  (prompt payload, toolset, gates, pack, finish contract) and a layer below is
+  already pluggable (any ACP agent). So Rig competes only with the embedded
+  agent's endpoint client and loop, not with orchestration, and brings no gates,
+  staging, or graph semantics. At that seam the trade is real but unfavorable
+  today: Rig would outsource provider quirks and give model-call spans and
+  mockable tests for free, but it is async (tokio) where the binary is
+  deliberately sync (ureq), it is 0.x with breaking changes under an embedded
+  agent that must stay a faithful ACP test double, and it has no equivalent of
+  the `text` codec, the probe-and-downgrade stickiness, or the repair nudges,
+  which exist for weak local models, exactly the constituency the embedded agent
+  serves (strong models arrive as external ACP agents). The natural first
+  adoption point is different: embeddings. Rig's embeddings and vector-store
+  integrations are squarely infrastructure-from-crates, and one embedding index
+  over the docs and the graph serves three deterministic consumers: the `search`
+  tool's backend (already on the TODO: same interface, no schema change),
+  lookalike-candidate computation for review packs (cross-document near-duplicate
+  entities are a known weak spot the lexical machinery misses), and the
+  reconciler's pre-partitioning (clustering requirements by similarity for the
+  [IR plan's](./ir-stages.md) use-case derivation, where shingles are the
+  fallback). The boundary: embeddings are a similarity signal inside
+  deterministic machinery, never the context path. RAG-style assembly (retrieve
+  raw doc chunks by similarity into prompts) would bypass the graph and its
+  provenance, which is the thing jazyk exists to replace. Adopt at the
+  embeddings seam first; revisit the client seam if the provider zoo grows past
+  OpenAI-compatible.
 - Do nothing (keep hardcoded kinds). Rejected by the companion plan's existence:
   five-plus new stages against four files each is exactly how the reconciler
   becomes unmaintainable.

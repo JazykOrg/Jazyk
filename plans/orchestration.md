@@ -39,22 +39,25 @@ stage. Both are configuration and registration, neither is scattered code.
 
 ## The stage registry
 
-One Rust trait, one registry, every task kind an implementation. The trait surface
+One Rust trait, one registry, every goal kind an implementation (a stage is a
+family of goal kinds; the goal system itself is defined in
+[ir-agents](./ir-agents.md#the-goal-catalog)). The trait surface
 stays small because the shared machinery (queue, leases, gates, packs, journal,
 trace) is already generic underneath:
 
 - `kind`: the task kind name (`reconcile-doc`, `derive-usecases`, ...).
 - `unit`: what one work item is (a document, an entity, a cluster, a component), so
   the queue and the GUI can render it.
-- `derive_items(store, status) -> Vec<WorkItem>`: compute this stage's pending work
-  from disk state. This is the dirty-set computation, per stage. Deterministic,
-  idempotent, cheap: the whole queue stays derivable from disk, which is the
+- `derive_goals(store, status) -> Vec<Goal>`: compute this kind's open goals from
+  disk state. This is the dirty-set computation, per goal kind. Deterministic,
+  idempotent, cheap: the whole board stays derivable from disk, which is the
   property that lets any consumer resume any build. The orchestration layer must
   not lose it.
-- `ready(item, queue) -> Ready | Blocked(reason)`: the declarative ordering
-  (`after: [align-doc, reconcile-doc]`, level rules, gating). The reason is a
-  rendered sentence, because [visibility](#visibility) shows it.
-- `pack(store, item) -> Pack`: assemble the context pack through the context engine.
+- `ready(goal, board) -> Ready | Blocked(reason)`: the declarative ordering
+  (readiness tiers, level rules, gating). The reason is a rendered sentence,
+  because [visibility](#visibility) shows it.
+- `pack(store, batch) -> Pack`: assemble a goal batch's initial focus through the
+  context engine.
 - `toolset() -> &[ToolId]`: the task-scoped subset of the one tool registry.
 - `gates(changeset) -> Vec<Violation>`: batch checks at `done`, on top of the
   store's own per-mutation gates.
@@ -67,8 +70,8 @@ policy says hand-roll domain logic, and a dynamic plugin system is infrastructur
 nobody asked for. Swappability means adding a module and a config line, not loading
 code at runtime.
 
-The existing eight task kinds port onto the trait unchanged in behavior. That refactor
-is phase 1 and it is the proof the trait surface is right.
+The existing eight task kinds port onto the trait as goal kinds unchanged in
+behavior. That refactor is phase 1 and it is the proof the trait surface is right.
 
 ## Typed handoffs
 

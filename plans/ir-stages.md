@@ -9,9 +9,10 @@ detailed design lives in three companions:
 - [ir-graph](./ir-graph.md): the node kinds and edge algebra, how all 14 UML diagram
   types project from the one graph, the justification chain from any diagram element
   to a document sentence, and the profile mechanism that serves any medium.
-- [ir-agents](./ir-agents.md): the agent roster: per agent its unit of work, trigger,
-  context pack, toolset, gates, and the effects it emits; ordering and multi-stage
-  convergence.
+- [ir-agents](./ir-agents.md): one generic agent and the goal system: the goal
+  catalog (what opens each goal, its prompt contract, its resolution gate), the
+  focus system (loading, unloading, and seeing the graph in context), skills, and
+  multi-stage convergence.
 - [ripple](./ripple.md): the stable system: editing docs, diagrams, or the graph and
   converging back to a fixed point; causality-carrying effects; observing a build in
   realtime and post hoc (`jazyk ripple`).
@@ -26,7 +27,8 @@ hold) is implicit, decided fresh inside each generation turn, and recorded nowhe
 
 The plan: model the engineering process itself as ordered IR stages in the same
 graph. Requirements stay the foundation. Above them, each stage is a set of node
-kinds reconciled by its own turn kinds, traced to the stage below, checked
+kinds reconciled through its own goal kinds (resolved by one generic agent, see
+[ir-agents](./ir-agents.md)), traced to the stage below, checked
 deterministically, and rendered as diagrams on demand. The diagram vocabulary is
 authentic UML: every UML 2.5 diagram type has a rendering path from the graph, and
 UML's own profile mechanism carries the medium specialization. Diagrams are

@@ -19,7 +19,9 @@ absence of copies.
 All 14 UML 2.5 diagram types render from the graph ([the catalog](#the-uml-25-catalog)).
 Six have stored semantics of their own; seven are projections of facts other stages
 already store; one (profiles) is a mechanism, not a picture. None is stored as a
-drawing.
+drawing. What is stored is the [view](#view): a node saying what one concrete
+diagram includes, so membership is curated and size-bounded while the edges and
+the geometry stay derived.
 
 Consequences:
 
@@ -99,6 +101,7 @@ Existing kinds unchanged except where noted: `sec` (structural),
 | `adr:<n>` | decision | 5 | normalized title | decision |
 | `sm:<entity-slug>` | state machine | 6 | subject entity | stateful entity |
 | `ixn:<uc-slug>` | interaction | 6 | subject use case | multi-part use case |
+| `view:<slug>` | view | any | kind + title | rendered diagram |
 | `diag:<rule>-<n>` | diagnostic | any | rule + subjects | finding |
 
 Ids are minted once by the store, immutable, readable. Merges leave redirects.
@@ -114,11 +117,22 @@ New optional fields, all provenanced per fact:
 - `attributes`: list of `{name, type?, provenance}`. Structure the prose states
   ("an order carries a total and a currency"; "a department has a head and a
   budget"). Behavior stays a requirement.
+- `parent`: the containing entity, one containment tree of unlimited depth (a
+  database contains its tables; a microservice its modules; a module its
+  classes). See [containment and lifting](#containment-and-lifting).
 
 ### Requirement (extended)
 
 - `edges` entries gain optional `cardinality` (`1`, `0..1`, `1..*`, `*`), promoted
-  onto the derived relationship like `type` is.
+  onto the derived relationship like `type` is, and are directional: `{a, b}`
+  reads a-acts-on-b ("A calls B to list directory content" declares
+  `{a: ent:a, b: ent:b, type: dependency}`).
+- Multi-entity statements are encouraged, not tolerated: a statement tying two
+  concepts is exactly what makes the graph a graph, and the edges it declares are
+  what every diagram renders. Extraction guidance says so, and a multi-entity
+  requirement without `edges` draws the `declare-edges` goal
+  ([the catalog](./ir-agents.md#the-goal-catalog); the TODO already plans a
+  benchmark case gating edge declaration).
 
 ### Relationship (derived, extended)
 
@@ -270,6 +284,85 @@ are characters, messages are beats, each refining the plot requirement it
 delivers). The gates keep sequence views, use cases, and contracts mutually
 consistent.
 
+### View
+
+The stored half of a diagram: what it includes, never how it looks.
+
+```yaml
+view:class/commerce-overview:
+  kind: class            # any renderable kind from the catalog
+  title: Commerce overview
+  members: [ent:catalog, ent:shopping-cart, ent:order, comp:order-service]
+  query: {scope: commerce, depth: 1}   # alternative or additional: membership by rule
+  collapse: [ent:order]  # show as one node even though it has children
+  provenance: {derived: {from: [...], reasoning: one view per scope by default}}
+```
+
+- Default views are derived on every build (one class view per scope, one use
+  case index per actor, one sequence view per interaction), so nothing must be
+  curated to get diagrams. Curated views are created by `curate-view` and
+  `split-view` goals or by humans (a decree like any other), and they are the
+  answer to diagram blow-up: a view has [size limits](#size-limits), and the way
+  to satisfy them is membership, `collapse`, and sub-views, never omitting edges
+  silently.
+- A view renders its members plus every edge among them, direct or
+  [lifted](#containment-and-lifting). A member that dies opens a `retrace` goal
+  on the view. Views nest by reference: a collapsed node links to the sub-view
+  that details it, which is how one overview diagram fans out into readable
+  detail diagrams at every depth.
+
+## Containment and lifting
+
+Containment is the structural answer to scale. Entities form one tree through
+`parent` (components already nest the same way), unlimited depth:
+`ent:warehouse-db` contains `ent:orders-table`; `comp:order-service` contains
+`comp:checkout-module` contains `ent:checkout-session`.
+
+- Where the docs state the whole-part ("the database has an orders table"), the
+  statement yields a `composition` relationship as today, and the domain goal
+  sets `parent` to match; a `parent` that contradicts a stated composition edge
+  is a check failure.
+- Where the structure is invented to tame scale (an `abstract-entity` goal
+  splitting a 60-requirement microservice into modules), the new parents and
+  children carry `derived` provenance and ratify toward prose like every
+  invented fact.
+
+Lifting is what keeps coarse diagrams true without drawing every leaf. When a
+view shows an ancestor and hides its descendants (by membership or `collapse`),
+every edge touching a hidden descendant lifts to the nearest shown ancestor:
+
+- `comp:a` contains `comp:a1`, `comp:a2`; `comp:b` contains `comp:b1`. A
+  requirement declares `{a: ent:a1-client, b: iface:b1.listing, type: dependency}`
+  ("A1 calls B1 to list directory content").
+- The system view shows only `comp:a` and `comp:b`: the renderer lifts the
+  concrete edge to one `a depends-on b` arrow.
+- The lifted arrow's justification is the set of concrete edges beneath it;
+  clicking it lists them, and each walks to its requirement and quote as always.
+  Lifting adds no stored fact: it is aggregation at render time, recomputed from
+  `parent` chains, so it can never drift.
+- Lifted edge type is the strongest across the underlying edges, the same
+  promotion rule relationships already use; the arrow label carries the count
+  ("3 dependencies") past one.
+
+## Size limits
+
+Limits make readability a computed property, not taste. All configurable under
+[`[limits]`](../docs/compiler/project-settings.md#limits), joining the existing
+section and entity thresholds:
+
+- per view kind: maximum members and maximum rendered edges (defaults on the
+  order of 20 members for class and component views, 10 for use case indexes,
+  participants and messages for sequence views),
+- per entity: maximum requirements (exists as `entity-too-dense`), maximum
+  direct children,
+- per state machine: maximum states before hierarchy is advised.
+
+A limit violation is never an error and never truncates a rendering silently: it
+opens an optional goal (`split-view`, `abstract-entity`) with hints, and the
+diagram renders meanwhile with collapse applied to the largest subtrees, marked
+as such. The agent is thereby steered toward abstraction (sub-entities,
+sub-views, moved detail) exactly where a human architect would introduce it.
+
 ## Edge algebra
 
 Edges are stored on the downstream node (the one a turn writes) pointing upstream,
@@ -279,6 +372,8 @@ sources become entity mentions today.
 | edge | stored on | points to | kind |
 |---|---|---|---|
 | `parents` | section | section | structural (exists) |
+| `parent` | entity, component | containing node | structural |
+| `members` / `collapse` | view | any semantic nodes | structural |
 | `mentions` | entity | section | provenance (exists) |
 | `entities` / `edges` | requirement | entities | semantic (exists) |
 | `members` | relationship | entities | derived (exists) |
@@ -299,7 +394,7 @@ sources become entity mentions today.
 Context engine: one new axis `traces`, walkable both directions through the reverse
 indexes, with a hop quota and optional kind filter, joining `parents`, `mentions`,
 and `requirements`. Dirtiness propagation walks the same reverse indexes; see
-[ripple](./ripple.md#causality-effects-carry-their-cause).
+[ripple](./ripple.md#causality-goals-carry-their-cause).
 
 ## Justification closure
 

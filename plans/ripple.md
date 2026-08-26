@@ -30,7 +30,8 @@ whole system.
 ## Edit paths
 
 Every human edit enters the system as one of four paths. All four end in the same
-place: effects derived by the reconciler, agents scheduled, fixed point restored.
+place: goals derived by the reconciler, sessions scheduled, fixed point restored
+(the goal system is [ir-agents](./ir-agents.md)).
 
 - Edit prose. The existing path: parse, align, dirty sections, `reconcile-doc`,
   cascade. Nothing new.
@@ -64,52 +65,53 @@ which kills quote-provenanced facts (existing GC), which dirties everything
 downstream of them through traces; derived facts whose upstream died are
 re-derived or garbage-collected with the same tombstone discipline entities have.
 
-## Causality: effects carry their cause
+## Causality: goals carry their cause
 
-The [typed effects](./orchestration.md#typed-handoffs) gain a cause record, and
-that record is the whole ripple story:
+An effect (the [typed handoff](./orchestration.md#typed-handoffs)) materializes as
+a [goal](./ir-agents.md#the-goal) on the board, and the goal's cause record is the
+whole ripple story:
 
 ```yaml
-effect:
-  id: e-1042
+goal:g-1042:
   kind: derive-usecases
   target: cluster:customer/checkout
   cause:
-    generation: 87              # the changeset that emitted it
+    generation: 87              # the changeset that opened it
     mutation: 3                 # which staged mutation in that changeset
     via: traces/refines         # the edge or computation that carried dirtiness
-  status: consumed              # pending | consumed {generation} | obsolete
+  state: resolved               # open | resolved {generation} | parked | blocked
 ```
 
-- Every committed changeset (a turn, a dual write, a decree, GC) already appends a
-  journal entry with a generation number; the entry gains `consumed_effects` (what
-  scheduled this work) and `emitted_effects` (what it caused). Human edits are
-  generation-stamped the same way: a prose save that dirties sections journals an
-  `edit` entry, so the root of every ripple is itself a generation.
+- Every committed changeset (a session, a dual write, a decree, GC) already
+  appends a journal entry with a generation number; the entry gains
+  `resolved_goals` (what this work closed) and `opened_goals` (what it caused).
+  Human edits are generation-stamped the same way: a prose save that dirties
+  sections journals an `edit` entry, so the root of every ripple is itself a
+  generation.
 - The ripple DAG of any change is then derivable, not stored: start at a
-  generation, follow emitted effects to the generations that consumed them,
-  repeat. Backward: start at any node, its `updated` marker names generations,
-  their consumed effects name causes, up to the human edit that started it.
-- Effects are durable files beside the queue state, swept when consumed and
-  journaled, so the DAG survives process restarts and is identical for every
-  consumer, like the queue itself.
+  generation, follow opened goals to the generations that resolved them, repeat.
+  Backward: start at any node, its `updated` marker names generations, their
+  resolved goals name causes, up to the human edit that started it.
+- Goals are durable files beside the board state, journaled when resolved, so
+  the DAG survives process restarts and is identical for every consumer, like
+  the queue itself.
 
 This is deliberately the same design as the queue: derived, durable, inspectable,
-no private in-memory state. An agent never triggers another agent; it commits
-state, the reconciler derives effects, and the cause field records the derivation.
+no private in-memory state. The model never opens a goal; it commits state, the
+reconciler derives the goals, and the cause field records the derivation.
 
 ## Observing a run
 
 Realtime, during compile:
 
 - The live trace as today (`turnStart`, tool rows, model text, per-turn tokens),
-  plus one new event kind: `effect` (emitted or consumed, with cause). The
+  plus one new event kind: `goal` (opened or resolved, with cause). The
   `--verbose` stream shows the cascade as it happens.
 - The GUI pipeline view ([orchestration](./orchestration.md#visibility)): stages
   as columns, work items as cards, effect arrows lighting up as they fire. A card
   click opens the live turn (the follow-session machinery exists).
-- `jazyk watch` prints one line per effect at default verbosity: what fired, why,
-  what it woke.
+- `jazyk watch` prints one line per goal at default verbosity: what opened, why,
+  what session took it.
 
 Post compile:
 
@@ -139,17 +141,17 @@ edit g87 docs/orders.md /orders/holds (human)
 converged: 6 turns, 2 stages touched, 41k tokens
 ```
 
-Every line is a journal entry; every indent is an effect with its cause on record.
+Every line is a journal entry; every indent is a goal with its cause on record.
 
 ## Termination
 
 Ripple must not mean runaway. The bounds, all existing machinery generalized:
 
-- The cone: effects only follow trace edges and computed derivations, so a change
-  reaches exactly the nodes with a justification path through it.
-- Idempotence: a turn that re-derives an unchanged conclusion stages a no-op
-  upsert; no mutation, no effect, the branch of the cascade dies there. This is
-  what makes convergence a fixed point rather than a loop.
+- The cone: goals open only along trace edges and computed derivations, so a
+  change reaches exactly the nodes with a justification path through it.
+- Idempotence: a session that re-derives an unchanged conclusion stages a no-op
+  upsert; no mutation, no new goal, the branch of the cascade dies there. This
+  is what makes convergence a fixed point rather than a loop.
 - Budgets: per-turn, per-build, per-stage; exhaustion parks with an
   `incomplete-build` diagnostic, resumed next build.
 - Flip detection per node kind catches oscillation across stages

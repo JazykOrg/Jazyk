@@ -1,269 +1,271 @@
-# Plan: the stage agents
+# Plan: the generic agent and the goal system
 
 Status: draft for iteration. Detailed design under [ir-stages](./ir-stages.md).
-Companions: [ir-graph](./ir-graph.md) (the shapes these agents write),
-[ripple](./ripple.md) (how their effects chain), and
-[orchestration](./orchestration.md) (the registry they are registered in).
+Companions: [ir-graph](./ir-graph.md) (the shapes the agent edits),
+[ripple](./ripple.md) (how goals chain), and
+[orchestration](./orchestration.md) (the registry goal kinds live in).
 
-An agent here is one task kind: a declared unit of work, a trigger, a context pack,
-a toolset, gates, and the effects it emits. The executor (which model loop runs it)
-is a separate, per-stage choice through
-[ACP profiles](./orchestration.md#per-stage-executors). Every agent below is one
-`Stage` implementation in the [registry](./orchestration.md#the-stage-registry).
+This file supersedes the earlier typed-agent roster. There is one agent. What used
+to be agent types are now goal kinds: data, not code paths. The agent is given an
+area of focus and a list of goals; it works the graph with tools, and the harness,
+never the model, decides when a goal is truly done.
 
-## The roster
+## One agent, many goals
 
-| agent | stage | unit of work | triggered by | emits |
+- One generic agent contract: a single session prompt that says what an agent is
+  here (resolve the listed goals using the tools, over the focus provided, finish
+  with `done`), identical for every session. Everything task-specific arrives as
+  data: the goal list, each goal's contract paragraph, the initial focus, and
+  [skills](#skills).
+- Compilation is a goal board. The reconciler derives goals from disk state
+  exactly as it derives the dirty set today; a build is converged when no
+  mandatory goal is open and the checks pass. There is no separate task queue:
+  the goal board is the queue.
+- The executor stays pluggable per
+  [ACP profile](./orchestration.md#per-stage-executors): the embedded agent,
+  Claude Code, OpenCode. Profiles can differ per goal family (extraction goals on
+  a local model, composition goals on a strong one).
+- The model never creates, routes, or prioritizes goals. It resolves them. Goal
+  derivation, grouping, readiness, and verification are harness code. This is the
+  existing division of labor, restated for goals.
+
+## The goal
+
+```yaml
+goal:g-1042:
+  kind: retrace                    # from the catalog below
+  mandatory: true                  # mandatory blocks convergence; optional advises
+  target: uc:order-expires
+  detail: step 2 refines req:orders-6, which was deleted in g88
+  cause: {generation: 88, mutation: 2, via: traces/refines}   # see ripple.md
+  state: open                      # open | resolved {generation} | parked | blocked {on}
+  hints:
+    - focus uc:order-expires
+    - focus view:usecase/customer (the use case appears there)
+    - skill usecase-editing
+```
+
+- `mandatory` goals are correctness debts: something changed and the graph no
+  longer agrees with itself or the docs. They block the `converged` verdict.
+- Optional goals are quality pressure: a limit exceeded, an abstraction advised, a
+  duplicate suspected. They never block convergence; unresolved ones surface as
+  warnings, exactly the standing diagnostics do today. An optional goal ignored
+  long enough does not escalate; it stays visible.
+- `cause` ties every goal to the committed change that spawned it, which is what
+  makes the [ripple](./ripple.md) renderable.
+- `hints` are computed, cheap, and honest: which focus loads the needed context,
+  which skill explains the shape, which tool typically resolves the kind. Hints
+  are suggestions; the gates are the truth.
+- `blocked` goals wait on a human (an unanswered ADR, a ratification proposal, a
+  gated release). They render in every status surface so a converged-but-waiting
+  build says what it waits for.
+
+Goals are durable files derived from disk, like the queue today: any process
+recomputes the same board, an interrupted build resumes anywhere, a no-op rebuild
+derives zero goals and makes zero LLM calls.
+
+## Goal lifecycle
+
+- Derive: the reconciler computes goals from section diffs, trace-edge dirtiness,
+  limit checks, ledger state, and pending human answers. Deterministic,
+  idempotent.
+- Group: open goals batch into sessions by locality: goals sharing a document, an
+  entity neighborhood, or a view are one session, bounded by the context budget.
+  What used to be "one turn per document" is now the natural batch of that
+  document's goals. Readiness tiers order batches
+  ([ordering](#ordering-and-convergence)).
+- Resolve: the agent works the batch and calls
+  `mark_goal_done({goal, evidence?})` per goal. The serving validates against the
+  goal kind's gate: a `reconcile-section` goal needs its coverage marks staged, a
+  `rejudge-pair` goal needs a verdict per neighbor in `evidence`, a `retrace`
+  goal needs the broken links repaired or the node deleted. A false claim is
+  rejected with the gate named, like any invalid call.
+- Bubble: staged mutations are validated the moment they are staged; the same
+  computation previews the goals a mutation will spawn, and the tool reply says
+  so: "this delete will open: retrace uc:order-expires (step 2), retrace
+  view:class/orders (member gone)". At commit the previewed goals become real,
+  with `cause` filled. The agent may finish its batch and let the next session
+  take them, or, when they fit the budget, the serving appends them to the open
+  session's board with their hints. Downstream work is never silent and never
+  model-invented.
+- Park: a goal the batch could not finish parks with the reason, resumes first
+  next build. Budgets bound sessions and builds as today.
+
+## Sessions
+
+One session per goal batch, fresh context, retries clean (the existing turn
+discipline). The session prompt is assembled, not authored:
+
+- the generic agent contract (fixed, one payload file),
+- the goal list with each kind's contract paragraph and hints,
+- the initial focus: the pack for the batch's locality, rendered by the focus
+  system below,
+- the active skills for what is in focus.
+
+The toolset is the union of what the batch's goal kinds need, computed by the
+harness. Weak-model discipline survives: a batch of extraction goals still sees a
+small toolset; the union only grows when the batch genuinely mixes families.
+
+## The focus system
+
+The context is an explicit, visible working set, not an accident of what was
+prompted. The serving maintains the focus set and renders its status into every
+round, so the agent always knows three things: what is loaded, what could be
+loaded next, and what it costs.
+
+```
+## Focus (14.2k/24k chars)
+- view:class/commerce   12 entities, 18 edges shown; 9 members unloaded  [h:view:commerce:members]
+- ent:order             full: 7 requirements, parent ent:commerce        [3 more edges: h:ent:order:traces]
+- ent:customer          stub (definition only)                           [5 edges loadable: h:ent:customer]
+- docs/orders.md#/orders/holds   section body
+Consider unfocus: ent:customer (not referenced in 6 rounds, no open goal touches it)
+
+## Goals
+- [g-1041 mandatory] reconcile-section docs/orders.md#/orders/holds      open
+- [g-1042 mandatory] retrace uc:order-expires (step 2, deleted req)      open   hint: focus uc:order-expires
+- [g-1043 optional]  abstract-entity ent:order (54 requirements > 50)    open   skill: abstraction
+```
+
+Tools:
+
+- `focus({target, depth?})`: load a node and its immediate neighborhood under the
+  loading policy below. Targets: any node id, a section reference, a view id.
+- `expand({handle})`: the existing frontier mechanism, unchanged: every truncation
+  is a handle with a size estimate.
+- `unfocus({target})`: drop an item from the focus set.
+- `graph_status({})`: re-render the status block on demand (it also rides
+  condensed on every mutating reply).
+- `search`, `read_section`, `get_entity`, `diagnostics`: the existing reads,
+  unchanged; a read's subject joins the focus as a stub.
+
+Loading policy, deterministic and budget-driven:
+
+- Focusing A loads A in full, its edges, and each neighbor as a stub: name, one
+  definition line, stereotype, and its own edge count ("ent:invoice, 7 edges
+  loadable"). Neighbors' neighbors are counts only.
+- The pack never exceeds the budget: when the next stub would cross it, the walk
+  stops and emits handles instead, exactly the existing context engine rule. The
+  "already 300 edges loaded" case is therefore impossible by construction; the
+  agent sees "9 members unloaded" and chooses.
+- Unfocus frees budget for the rest of the session: dropped items leave the
+  status, their handles close, and subsequent packs and replies stop rendering
+  them. The serving suggests unfocus candidates (least recently referenced, not
+  named by any open goal in the batch); past a high-water mark it warns that
+  further `focus` calls will be refused until something is unloaded.
+- A `focus` on something already loaded is a repeat, answered by the
+  repeated-call guard as today.
+
+## Skills
+
+A skill is a prompt payload with the working knowledge for one shape: the use case
+format and its invariants, how to read and edit a state machine node, what a good
+abstraction split looks like, the profile's vocabulary. Skills live as payload
+files beside the goal contracts (embedded at compile time, docs and binary sharing
+bytes, as prompts do today).
+
+- Auto-load: focusing a node kind loads its skill once per session (focus a
+  `view:usecase/...` and the usecase-editing skill appears; focus an `sm:` and the
+  statechart skill does). Goal hints name skills the same way.
+- Manual: `load_skill({name})` for the agent, and a skill index line in the status
+  so it knows what exists.
+- Skills render once and are listed as active in the status; unfocusing the last
+  node of a kind marks its skill inactive (the text has been seen; the status
+  stops advertising it).
+- Profiles contribute skills: the narrative profile's usecase skill speaks plot
+  threads and scenes, the organization profile's speaks processes.
+
+## The goal catalog
+
+The complete set. `M` mandatory, `O` optional, `B` blocked-on-human. Stage numbers
+are the [ladder](./ir-stages.md#the-stage-ladder); a goal kind exists only when its
+stage is active.
+
+| kind | m | stage | created when | resolved when (the gate) |
 |---|---|---|---|---|
-| `align-doc` (exists) | 1 | one document's proposals | alignment proposals pending | dirty sections |
-| `reconcile-doc` (exists) | 1 | one document's dirty sections | section-tree diff | req/ent changes |
-| `review-requirement` (exists) | 1 | one changed-statement pair set | req created/revised | req changes, diagnostics |
-| `review-entity` (exists) | 1 | one entity group | entity facts changed | merges, diagnostics |
-| `derive-usecases` | 2 | one actor-goal cluster | cluster membership changed | uc changes |
-| `review-usecase` | 2 | one changed use case + neighbors | uc changed | uc changes, diagnostics |
-| `model-domain` | 3 | one scope cluster | ent/rel facts in scope changed | attributes, roles, cardinality |
-| `derive-instances` | 4 | one example section or fixture group | example sections or fixtures changed | inst changes |
-| `partition-architecture` | 5 | the project | stage enabled, no accepted partition; or partition invalidated | comp tree, partition ADR |
-| `design-component` | 5 | one component + neighbor interfaces | allocation candidates or owned facts changed | satisfies, interfaces, ADRs |
-| `review-component` | 5 | one changed component | comp facts changed | diagnostics, repairs |
-| `derive-statemachine` | 6 | one stateful entity | its state/event reqs changed, threshold met | sm changes |
-| `derive-interaction` | 6 | one multi-part use case | uc, allocation, or ifaces changed | ixn changes, proposed operations |
-| `bind-requirement` (exists) | 7 | one requirement | unbound / changed / artifact gone | ledger rows |
-| `generate-entity` (exists) | 7 | one entity (or component, see below) | facts differ from ledger | deliverable, manifest |
-| `verify-requirement` (exists) | 7 | one ledger row | derived status says action | verdicts |
-| `draft-document` (exists) | reverse | one released scope | unclaimed report + release | doc drafts |
+| `place-anchors` | M | 1 | alignment proposals pending for a document | every proposal decided |
+| `reconcile-section` | M | 1 | a section is dirty or unprocessed | coverage mark staged or recorded; stale anchors addressed; extractions honest |
+| `rejudge-pair` | M | 1 | a requirement was created or revised; sticky pairs | a verdict per neighbor in `evidence` (duplicate, contradiction, consistent) |
+| `review-entity` | M | 1 | an entity's fact set changed | definition current; lookalikes judged; diagnostics filed or resolved |
+| `declare-edges` | O | 1 | a multi-entity requirement has no `edges` | edges declared, or `evidence` says the statement is not structural |
+| `dedupe-candidates` | O | 1 | cross-document lookalikes score high | merged, or kept with reasoning |
+| `derive-usecases` | M | 2 | a cluster's membership changed | every cluster requirement refined by a step or marked |
+| `retrace` | M | 2-6 | any node's upstream trace died or changed (a step's requirement deleted, a message's operation gone, a view member gone, an instance's attribute gone) | broken links repaired, re-derived, or the node deleted; nothing dangling |
+| `extend-usecase` | O | 2 | an `If ... then` requirement is unrefined by any extension | extension added or `missing-error-requirement` diagnostic filed |
+| `model-domain` | M | 3 | structural facts changed in a scope cluster | attributes, roles, cardinalities current; contradictions filed |
+| `conform-instance` | M | 4 | an instance or the model under it changed | values and links conform, or the conformance diagnostic is filed |
+| `partition` | M,B | 5 | composition on, no accepted partition ADR | partition ADR staged; blocked until answered |
+| `design-component` | M | 5 | allocation candidates, proposed operations, or answered ADRs pending | every candidate accepted or marked; operations satisfy or carry reasoning |
+| `derive-statemachine` | M | 6 | a stateful entity's triggering requirements changed | transitions refine requirements; machine current |
+| `derive-interaction` | M | 6 | a use case's steps, allocation, or interfaces changed | messages ride steps and name operations (or refine requirements, composition off) |
+| `curate-view` | O | any | new nodes match a view's scope; a view has no members for its query | membership decided (added, or excluded with note) |
+| `split-view` | O | any | a view exceeds its size limits | sub-views created and linked, or members collapsed under parents |
+| `abstract-entity` | O | any | an entity exceeds requirement or child limits | sub-entities introduced with `parent`, detail moved, docs proposals staged |
+| `ratify` | B | any | a derived or decree fact awaits its prose | human accepts the docsgen proposal (dual write) or retracts the fact |
+| `bind` | M | 7 | a requirement owes a binding | ledger row recorded (existing gate) |
+| `generate` | M | 7 | an entity or component's facts differ from the ledger | `record_generation` landed (existing gate) |
+| `verify` | M | 7 | a row's derived status says action | verdict recorded (existing gate) |
+| `answer` | B | any | a diagnostic or ADR carries an unanswered prompt | the human answers; the answer's application is a new goal with the answer as cause |
 
-The existing eight port onto the registry unchanged in behavior (orchestration plan,
-phase 1). The new ones follow, each with trigger, pack, toolset, gates, effects.
-Shared by all: `report_feedback`, the repeated-call guard, staged mutations, budgets,
-retry-then-park, and the finish contract (`done` runs the gates).
+Notes on the load-bearing rows:
 
-## New agents in detail
+- `retrace` is one kind, not five. The user-visible behavior the plan promises
+  (delete a requirement, and the entity, the use case, and the class view that
+  referenced it each surface as work) is three `retrace` goals with the same
+  cause, each hinting the focus that shows the damage. The gate is uniform:
+  nothing may keep pointing at the dead node.
+- `abstract-entity` and `split-view` are where
+  [containment](./ir-graph.md#containment-and-lifting) is exercised: introduce a
+  parent, distribute children, let lifting keep coarse views true. Their skill
+  carries the judgment guidance (split by cohesion of requirements, respect
+  scopes, never invent concepts the docs cannot support, propose docs sentences
+  for the new structure).
+- `partition`, `ratify`, and `answer` are the human seams. They keep the
+  convergence report honest: a build with open blocked goals is "converged,
+  awaiting 2 answers", never silently done.
 
-### derive-usecases
+Each kind has: a contract paragraph (the prompt payload, one file per kind, same
+embed discipline as today's prompts), a gate implementation, a hint computer, and
+a benchmark case that grades an executor profile on it before it is trusted.
 
-- Unit: one actor-goal cluster. The reconciler computes clusters deterministically:
-  event-driven and state-driven requirements grouped by shared actor entity and
-  trigger-token overlap (the pair-review scoring machinery; embeddings upgrade the
-  similarity later, see the orchestration plan's Rig note). Clusters are capped;
-  an oversized cluster splits by trigger similarity before any turn runs.
-- Trigger: a `Dirty(derive-usecases, cluster)` effect. Emitted when a requirement
-  enters, leaves, or changes within a cluster, or a use case's refined requirement
-  is deleted. Ready when stage 1 has no pending work for the documents in the
-  cluster's cone.
-- Pack: the cluster's requirements (full statements and quotes), the use cases
-  currently refining any of them, the actor entity with definition, per-stage
-  coverage marks, and expansion handles into neighboring clusters.
-- Toolset: `context`, `expand`, `search`, `read_section`, `get_entity`,
-  `upsert_usecase`, `update_usecase`, `delete_usecase`, `set_trace_coverage`,
-  `done`.
-- Gates: every step and extension `refines` existing requirements; natural key is
-  goal plus actors; a cluster requirement neither refined nor marked
-  (`not-applicable` with note) rejects the explicit `done` (the coverage contract,
-  one stage up).
-- Emits: `Dirty(review-usecase, uc)` per changed use case;
-  `Dirty(derive-interaction, uc)` when dynamics (stage 6) is on and the use
-  case's requirements span components (or actors, where composition is off).
+## Prompt assembly, per session
 
-### review-usecase
+```
+[generic agent contract]                 # fixed
+[skill: <active skills for initial focus>]
+## Goals
+  <goal list: id, kind, contract paragraph, detail, hints>
+## Focus
+  <initial pack + status block>
+```
 
-- Unit: one changed use case beside its neighbors (use cases sharing refined
-  requirements), computed by the reconciler like pair-review neighbors.
-- Trigger: `Dirty(review-usecase, uc)` after derive commits. Ready when no
-  derive-usecases task is pending.
-- Pack: the use case, each neighbor side by side, open diagnostics tying them,
-  unrefined unwanted-behavior requirements naming the same actors (extension
-  candidates).
-- Toolset: reads plus `update_usecase`, `delete_usecase` (merge duplicates toward
-  the better-derived one), `report_diagnostic`, `resolve_diagnostic`,
-  `set_trace_coverage`, `done`.
-- Gates: verdict per neighbor (duplicate, conflict, consistent), the same
-  asymmetry rule as entity review: when in doubt keep both and file a diagnostic.
-- Emits: `Dirty(derive-interaction, uc)` on flow changes.
-
-### model-domain
-
-- Unit: one scope; the public scope partitions into relationship-connected
-  clusters first. A turn sees one cluster.
-- Trigger: `Dirty(model-domain, cluster)` when an entity's requirement set,
-  attributes candidates, or relationships changed in the cluster. Ready when
-  stage 1 reviews for those entities are done.
-- Pack: the cluster's entities with current `role` and `attributes`, their
-  requirements (summaries with quotes on structural statements), derived
-  relationships with current type and cardinality, contradiction candidates the
-  reconciler precomputed (two requirements implying different cardinality on one
-  edge).
-- Toolset: reads plus `update_entity` (attributes, role), `update_requirement`
-  (add `edges` with `type` and `cardinality` a statement implies),
-  `report_diagnostic`, `resolve_diagnostic`, `set_trace_coverage`, `done`.
-- Gates: attributes carry provenance; an `edges` addition only ties entities the
-  statement references (existing gate); role changes carry reasoning.
-- Emits: relationship recompute happens at commit (derived data);
-  `Dirty(design-component, comp)` for components whose satisfied requirements
-  gained domain structure; `Dirty(derive-statemachine, ent)` when roles or
-  requirement sets cross the threshold; `Dirty(derive-instances, section)` when
-  attributes or cardinalities under existing instances changed.
-
-### derive-instances
-
-- Unit: one example section (a section marked `non-normative` whose body
-  enumerates concrete things, detected by the same cheap signals the
-  `suspicious-non-normative` check uses today), or one fixture group the ledger
-  names.
-- Trigger: `Dirty(derive-instances, target)` when the example section changed,
-  when a fixture the ledger names changed (`test-changed`), or when the class
-  model under existing instances changed (attributes, cardinality). Ready when
-  stage 3 is quiet for the entities involved.
-- Pack: the example section body (or fixture excerpt), the candidate `of`
-  entities with their attributes and relationships, existing instances from the
-  same source.
-- Toolset: reads plus `upsert_instance`, `update_instance`, `delete_instance`,
-  `set_trace_coverage`, `done`.
-- Gates: `of` resolves to an existing entity; `values` keys name declared
-  attributes, or the call carries a `note` proposing the attribute (which lands
-  as a derived-provenance attribute candidate for `model-domain`); `links` ride
-  existing relationships.
-- Checks (wave, not gate): conformance of values and links against the class
-  model; a violation is a diagnostic naming the example sentence and the
-  contradicted attribute or cardinality, with both quotes.
-- Emits: `Dirty(model-domain, cluster)` for proposed attributes.
-
-### partition-architecture
-
-- Unit: the whole project, one turn, rare by design.
-- Trigger: composition (stage 5) enabled and no `accepted` partition ADR; or invalidation (the
-  share of unallocated or misallocated requirements crosses a threshold, or the
-  owner asks). Gated in `manual` mode like any release; the partition ADR's
-  prompt/answer is the human approval either way. `auto` mode still stops here:
-  the partition ADR is never auto-accepted
-  ([open question resolved toward safety](./ir-stages.md#open-questions)).
-- Pack: the scope list, the derived relationship graph condensed (clusters, edge
-  weights), explicit architectural prose (sections whose entities have `service`
-  roles or stated technologies), existing components if any.
-- Toolset: reads plus `upsert_component`, `update_component`, `delete_component`,
-  `report_adr`, `done`. No interface tools: the partition names boxes, not
-  contracts.
-- Gates: the component tree is connected and acyclic; every scope maps into some
-  component's cone; the partition ADR is staged with the changeset.
-- Emits: `Dirty(design-component, comp)` for every component once the partition
-  ADR is `accepted`.
-
-### design-component
-
-- Unit: one component, with neighbors summarized.
-- Trigger: `Dirty(design-component, comp)`: allocation candidates changed (the
-  reconciler routes new or changed requirements to candidate components by
-  similarity to what each already satisfies), an operation was proposed from an
-  interaction turn, a constraining ADR was answered, or domain structure under
-  its satisfied set changed. Ready when the partition is accepted and stages 1 to 4
-  are quiet for its cone.
-- Pack: the component, its `satisfies` set (summaries), candidate allocations with
-  scores, its interfaces, neighbor interfaces (signatures only), constraining
-  ADRs, proposed operations awaiting ratification.
-- Toolset: reads plus `update_component` (satisfies add/remove, responsibilities,
-  provides/requires, facets), `upsert_interface`, `update_interface`,
-  `delete_interface`, `report_adr`, `set_trace_coverage`, `done`.
-- Gates: satisfies targets exist; every operation `satisfies` at least one
-  requirement or carries derived provenance with reasoning; a candidate allocation
-  neither accepted nor marked draws the coverage rejection; interface operation
-  types resolve to entities.
-- Emits: `Dirty(review-component, comp)`; `Dirty(derive-interaction, uc)` for use
-  cases whose requirement allocation moved; `Dirty(design-component, neighbor)`
-  when a shared interface changed.
-
-### review-component
-
-- Unit: one changed component.
-- Trigger: after design commits. Ready when no design-component task pending in
-  its neighborhood.
-- Pack: the component, its interfaces, operations with no satisfying requirement,
-  unexercised relations (no interaction message rides them), scope-split findings,
-  ADR conflicts.
-- Toolset: reads plus `update_component`, `update_interface`,
-  `report_diagnostic`, `resolve_diagnostic`, `done`.
-- Emits: diagnostics; `Dirty(design-component, comp)` when a repair is beyond
-  judgment.
-
-### derive-statemachine
-
-- Unit: one entity. Exists only past the threshold: two or more state-driven or
-  unwanted-behavior requirements reference the entity.
-- Trigger: `Dirty(derive-statemachine, ent)` when those requirements change.
-  Ready when stage 1 reviews for the entity are done.
-- Pack: the entity, its state, event, and unwanted-behavior requirements with
-  quotes, the existing machine.
-- Toolset: reads plus `upsert_statemachine`, `delete_statemachine`,
-  `set_trace_coverage`, `done`. Whole-node upsert keyed on the subject.
-- Gates: transitions `refine` existing requirements; states carry provenance; the
-  deterministic checks (reachability, determinism, event completeness) run in the
-  checks wave and file diagnostics rather than bounce the turn, because an
-  incomplete machine is usually a requirements gap, not a modeling error.
-- Emits: `Dirty(review-entity, ent)` when the machine implies facts the entity
-  definition lacks.
-
-### derive-interaction
-
-- Unit: one use case whose refined requirements are satisfied by two or more
-  components, or, where composition is off, whose steps involve two or more
-  actor entities (the profile's dialogue-scene reading; see
-  [ir-graph](./ir-graph.md#interaction)).
-- Trigger: `Dirty(derive-interaction, uc)` from use case changes, allocation
-  moves, or interface changes. Ready when composition (stage 5), when active, is
-  quiet for the involved components.
-- Pack: the use case with steps, the participants (components with full
-  operation signatures, or actor entities), the existing interaction.
-- Toolset: reads plus `upsert_interaction`, `delete_interaction`,
-  `update_interface` (propose an operation with derived provenance when a needed
-  one does not exist; composition on only), `set_trace_coverage`, `done`.
-- Gates: with composition on, every message names an existing operation or one
-  staged in this changeset as a proposal; with composition off, every message
-  refines at least one requirement; every message rides an existing step;
-  participants exist.
-- Emits: `Dirty(design-component, owner)` for every proposed operation, so the
-  owning component's agent ratifies, reshapes, or rejects it. This is the
-  upward handoff: stage 6 may propose into stage 5, never silently decide for it.
-
-### Stage 7 changes
-
-`bind-requirement`, `generate-entity`, `verify-requirement` keep their contracts.
-With composition (stage 5) on, generation gains a grouping option: the unit becomes
-one component (its entities' requirements ordered by interfaces), falling back to
-per-entity when it is off. Test derivation consumes use case steps and extensions
-where they exist (the EARS-to-Gherkin mapping), instances where they exist
-(fixtures), and the pattern rule otherwise.
-
-## New tools, summarized
-
-Write tools added to the registry, all staging into changesets behind the same
-gates: `upsert_usecase`, `update_usecase`, `delete_usecase`, `upsert_instance`,
-`update_instance`, `delete_instance`, `upsert_component`, `update_component`,
-`delete_component`, `upsert_interface`, `update_interface`, `delete_interface`,
-`upsert_statemachine`, `delete_statemachine`, `upsert_interaction`,
-`delete_interaction`, `report_adr` (upsert by natural key; supersede, never
-rewrite), and `set_trace_coverage({stage, target, state, note?})`
-(the per-stage coverage mark; `not-applicable` requires the note, mirroring
-`set_coverage`). Chat gains `answer_adr`, riding the prompt/answer machinery.
-
-Relationships keep having no write tool. Neither do ripple effects: no agent
-enqueues another agent directly. Agents write graph state; the reconciler derives
-the effects. That single rule is what keeps the cascade deterministic, replayable,
-and explainable.
+The contract paragraphs are short and imperative, in the style of the existing
+task instructions: what the goal means, what evidence the gate wants, what not to
+do (the review asymmetry, the honesty rules). The feedback contract rides once,
+high, as today.
 
 ## Ordering and convergence
 
-- Stage order is the ladder: 1 through 7 as readiness predicates over the queue,
-  not as phases, with inactive stages (profile or `[stages]`) simply absent.
-  Within stage 1 the existing waves stand (alignment, ingest by levels, fix-up,
-  pair review, entity review). Within every other stage: derivations in parallel
-  over disjoint units, then reviews, the same shape.
-- A build converges when the queue is empty across active stages and the checks
-  pass: the multi-stage fixed point. `status.yaml` carries a per-stage verdict
-  block; a build can be `converged` for stages 1 to 3 with composition parked,
-  and says so.
-- The per-build turn cap generalizes: the budget spreads over stages with earlier
-  stages outranking later ones when tight (the coverage-outranks-review precedent,
-  one level up). Parked work resumes first next build, per stage.
-- Oscillation across stages (6 proposes an operation, 5 rejects it, 6 proposes it
-  again) is caught by flip detection on natural keys per node kind, surfacing an
-  `unstable-derivation` diagnostic with the two turns' reasoning side by side, and
-  the pair parks until a human answers.
+- Readiness tiers replace waves: a goal is ready when the goals it depends on are
+  closed in its cone. The ladder gives the tiers (alignment before ingest before
+  judgment before use cases before domain before instances before composition
+  before dynamics before ledger goals), the existing document levels order
+  stage-1 batches, and disjoint localities run in parallel under the concurrency
+  bound. The scheduler is still deterministic code; "what runs next" is a query.
+- Convergence: no open mandatory goals, checks clean. Blocked goals and optional
+  goals ride the verdict as counts (`converged, 2 blocked, 5 advised`).
+- Budgets: per session (rounds, mutations, context), per build (goal resolutions),
+  per stage family when tight, earlier tiers first. Parked goals resume first.
+- Oscillation: two goals resolving each other back and forth (a proposed
+  operation bouncing between dynamics and composition) is caught by flip
+  detection on the goal target's natural key; the pair parks as one
+  `unstable-derivation` diagnostic with both reasonings, blocked on a human.
+
+## What stays true
+
+- The model owns judgment inside a goal; the harness owns everything around it:
+  derivation, grouping, readiness, gates, budgets, causes.
+- Success is read from the store and the board, never from the agent's word.
+- One agent contract, goal kinds as data, skills as payloads: adding a stage is
+  goal kinds plus gates plus skills plus benchmark cases in the registry, no new
+  agent.

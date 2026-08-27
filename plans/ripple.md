@@ -77,6 +77,16 @@ background color is info a human may suppress. Ratification is how the debt is
 repaid: every derived and decreed fact carries a proposal for the sentence the
 docs should gain, and the graph converges toward fully quoted.
 
+How to measure the grade is open, with one promising instrument: the
+deliverable itself. Generated mass attached to no requirement is exactly the
+invented detail, and the ledger with the
+[unclaimed report](../docs/consumers/bind.md#the-unclaimed-report) already
+computes attachment. "App like Facebook", three words, shows up as an enormous
+unattached remainder; docs written near pseudo-code leave almost none. Measured
+at generation time, the unattached remainder grades the ambiguity, and a later
+pass can bubble those emerged details up into the IR and the docs. Revisit once
+generation runs on the new ladder.
+
 The docs absorb this detail by dividing, not by bloating: a document states the
 high level, sub-documents carry the detail, every one readable on its own. The
 existing machinery already points there: `doc-too-large` and `section-too-large`
@@ -93,16 +103,16 @@ a [goal](./agent.md#the-goal) on the board, and the goal's cause record is the
 whole ripple story:
 
 ```yaml
-goal:g-1042:
+g:derive-usecases:cluster:customer/checkout:
   kind: derive-usecases
   target: cluster:customer/checkout
+  change: {revised: req:checkout-4}   # the disk evidence; also the identity
   cause:
     generation: 87              # the changeset that opened it
     mutation: 3                 # which staged mutation in that changeset
     via: traces/refines         # the edge or computation that carried dirtiness
   state: resolved               # open | resolved {generation, justification}
-                                # | failed {reason} | dismissed {reason, by}
-                                # | parked | blocked {on}
+                                # | failed {reason} | parked | blocked {on}
 ```
 
 - Every committed changeset (a session, a dual write, a decree, GC) already
@@ -116,9 +126,9 @@ goal:g-1042:
   generation, follow opened goals to the generations that resolved them, repeat.
   Backward: start at any node, its `updated` marker names generations, their
   resolved goals name causes, up to the human edit that started it.
-- Goals are durable files beside the board state, journaled when resolved, so
-  the DAG survives process restarts and is identical for every consumer, like
-  the queue itself.
+- Goals are derived from disk on demand, never stored as a board; what persists
+  is the journal's record of openings and resolutions, so the DAG survives
+  process restarts and is identical for every consumer.
 
 This is deliberately the same design as the queue: derived, durable, inspectable,
 no private in-memory state. The model never opens a goal; it commits state, the
@@ -153,7 +163,7 @@ sentence (`orders.md`: "held orders expire after 21 days" becomes "30 days"):
 
 ```
 edit g87 docs/orders.md /orders/holds (human)
-└─ reconcile-doc docs/orders.md g88: req:orders-6 revised (quote, ears updated)
+└─ reconcile-doc docs/orders.md g88: req:orders-6 revised (quote and statement updated)
    ├─ review-requirement (req:orders-6 ~ req:payment-9) g89: consistent
    ├─ derive-statemachine ent:order g90: transition held→expired guard updated
    │  └─ checks: event completeness ok

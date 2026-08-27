@@ -18,9 +18,9 @@ detailed design lives in three companions:
 
 ## The idea
 
-Today the graph holds one semantic layer: entities and EARS requirements, with
-relationships derived from requirement `edges`. Generation jumps from EARS statements
-straight to the deliverable. Everything between (who uses the thing and for what, how
+Today the graph holds one semantic layer: entities and requirements, with
+relationships derived from requirement `edges`. Generation jumps from requirement
+statements straight to the deliverable. Everything between (who uses the thing and for what, how
 its domain is structured, what parts it has, how the parts talk, what state they
 hold) is implicit, decided fresh inside each generation turn, and recorded nowhere.
 
@@ -117,9 +117,17 @@ Structural, deterministic. Unchanged.
 
 ### Stage 1: requirements and entities (exists)
 
-Entities, EARS requirements, derived relationships, coverage, diagnostics.
-Unchanged, with extensions already half-planned in the [TODO](../docs/TODO.md):
+Entities, requirements, derived relationships, coverage, diagnostics. One
+deliberate loosening, and extensions already half-planned in the
+[TODO](../docs/TODO.md):
 
+- Requirements go free-form. The EARS shape gate is dropped: the model writes
+  each statement in whatever wording carries the obligation best. What survives
+  is everything that made statements useful: one atomic obligation per
+  requirement, at least one entity reference, the verbatim `quote`, and
+  extraction guidance that still points at EARS-style clarity without enforcing
+  it. Facets the pattern used to carry (behavior vs constraint, failure mode)
+  become model judgments recorded at extraction, with reasoning.
 - Cardinality on derived relationship edges (`1..*`, `0..1`), declared on
   requirement `edges`, promoted like `type`.
 - Entity `attributes`: `{name, type?, quote}` captured when prose states them.
@@ -127,10 +135,10 @@ Unchanged, with extensions already half-planned in the [TODO](../docs/TODO.md):
   stays a requirement.
 - Entity `stereotype` from the profile vocabulary, captured when prose states it.
 
-A derived facet, not a stored field: each requirement classifies as functional or as
-a quality attribute (performance, security, reliability, usability, per ISO 25010)
-from its pattern and wording, the same way behavior-vs-constraint derives from the
-EARS pattern today. One deterministic check rides on it: a quality requirement whose
+The quality facet works the same way: each requirement classifies as functional or
+as a quality attribute (performance, security, reliability, usability, per
+ISO 25010) by recorded judgment, not by parsed pattern. One deterministic check
+rides on it: a quality requirement whose
 response carries no measurable bound ("shall be fast") draws a warning, because an
 unmeasurable quality statement cannot be verified. The measures also feed the
 timing projection ([catalog](./ir-graph.md#the-uml-25-catalog)).
@@ -146,28 +154,28 @@ The behavioral grouping layer: who does what for which goal, as Cockburn-style u
 cases kept deliberately lean, plus `includes` for shared sub-flows.
 
 - Node kind `uc:` per [ir-graph](./ir-graph.md#use-case).
-- Derivation: event-driven and state-driven requirements cluster by actor and
-  trigger. The reconciler computes candidate clusters deterministically (shared
+- Derivation: behavior-stating requirements cluster by actor and trigger
+  tokens. The reconciler computes candidate clusters deterministically (shared
   actor entity, overlapping trigger tokens, the same lexical machinery pair review
   uses for neighbors), so one turn sees one bounded cluster, never the whole
   requirement set.
 - Unit of work: one actor-goal cluster.
 - Trace: each step `refines` its requirements; extensions `derive` from
-  unwanted-behavior (`If ... then`) requirements.
+  failure-mode requirements.
 - Checks:
   - every step references at least one existing requirement,
-  - every event-driven requirement is refined by at least one use case step, or
-    carries a per-stage coverage mark saying why not (the coverage contract
+  - every behavior-stating requirement is refined by at least one use case step,
+    or carries a per-stage coverage mark saying why not (the coverage contract
     generalizes: each stage marks what it consciously skips),
-  - every extension either traces to an unwanted-behavior requirement or draws a
+  - every extension either traces to a failure-mode requirement or draws a
     `missing-error-requirement` diagnostic. This check is the stage's best payoff:
     enumerated failure paths are where missed requirements hide,
   - flip detection on use case natural keys (actor + goal).
 - Projections fed: use case index and oval diagram («include», «extend»),
   activity (steps and extensions as actions and branches), interaction overview
-  (with stage 6). EARS and Gherkin are near-isomorphic (`When <trigger> ... shall
-  <response>` maps onto `Given/When/Then`), so the scenario rendering is close to
-  mechanical and the scenario-to-requirement `verifies` link is exactly checkable.
+  (with stage 6). A trigger-response statement maps naturally onto
+  `Given/When/Then`, so scenarios render from the statements and the
+  scenario-to-requirement `verifies` link stays exactly checkable.
 
 ### Stage 3: domain model
 
@@ -181,7 +189,7 @@ entities and their typed relationships are the model.
   - relationship `cardinality`,
   - entity `role`: `aggregate-root`, `value`, `actor`, `service`, or unset.
     Derived provenance allowed; prose wins when it states one.
-  - invariants are not a new kind: an invariant is a ubiquitous EARS requirement.
+  - invariants are not a new kind: an invariant is an always-holding requirement.
     The domain turn may add the `edges` and attributes a statement implies, never
     a parallel invariant store.
 - Unit of work: one scope (bounded context), or the public scope partitioned by
@@ -263,8 +271,7 @@ machine; most use cases need no interaction spec. The reconciler derives the wor
 so the stage costs nothing when the triggers are absent.
 
 - Node kind `sm:` per [ir-graph](./ir-graph.md#state-machine), derived only for
-  entities referenced by two or more state-driven (`While ...`) or
-  unwanted-behavior requirements. Every transition traces to the requirements
+  entities referenced by two or more state- or failure-describing requirements. Every transition traces to the requirements
   that state it; a transition no requirement backs is derived provenance, feeding
   back to docs like any invented fact.
 - Node kind `ixn:` per [ir-graph](./ir-graph.md#interaction), derived for use
@@ -277,11 +284,10 @@ so the stage costs nothing when the triggers are absent.
     target component provides (composition on), or refines a requirement
     directly (composition off),
   - every message rides an existing use case step,
-  - every transition trigger traces to an event-driven or state-driven
-    requirement,
+  - every transition trigger traces to a behavior-stating requirement,
   - unreachable states and states with no exit (unless terminal) are warnings,
-  - event completeness: every event named by a `When`-clause requirement on the
-    entity is handled or explicitly ignored in every state. An unhandled
+  - event completeness: every event the entity's requirements name is handled
+    or explicitly ignored in every state. An unhandled
     event-state pair is a requirements gap detector, not a modeling nicety,
   - nondeterminism: two transitions from one state on one trigger with
     overlapping guards is an error.
@@ -297,8 +303,7 @@ stages above enabled:
   entity, its parts ordered by interfaces. Entity-unit generation remains the
   default and the fallback when stage 5 is off.
 - Test derivation reads scenarios: a use case's steps and extensions shape the
-  acceptance tests for its requirements, and the EARS-to-Gherkin mapping makes
-  the derivation near-mechanical; the EARS-pattern-to-test-shape rule stays for
+  acceptance tests for its requirements; statement shape guides test shape for
   requirements no use case traces. Instance nodes feed fixtures.
 - The traceability matrix (requirement → use case → component → files → test →
   verdict) is a docsgen projection over existing edges plus the ledger. Nothing
@@ -370,7 +375,9 @@ a time as they land.
 
 Standards and methods:
 
-- EARS (exists) and ISO/IEC/IEEE 29148 for the requirements layer; DO-178C and
+- EARS and ISO/IEC/IEEE 29148 inform the extraction guidance (atomic, testable,
+  entity-anchored statements); EARS is no longer enforced syntax, requirements
+  are free-form and the model chooses the wording. DO-178C and
   ISO 26262 for the traceability discipline (bidirectional links, no orphan
   requirement, no unjustified artifact, checked by tools because manual matrices
   do not scale).
@@ -442,8 +449,9 @@ No phases: the whole design lands as one coordinated change. Docs first, per the
 repo rule: the `docs/compiler/` tree is rewritten to the new design (model pages
 per node kind, goal pages with contract paragraphs as payload files, skills as
 payload files), then `bootstrap` follows the docs. Validation is what holds the
-line: benchmark cases per goal kind gating executor profiles, runs on
-`bootstrap/example/f1` and `f2`, and the dogfood compiled under the full ladder.
+line: runs on `bootstrap/example/f1` and `f2`, and the dogfood compiled under
+the full ladder; benchmarking per goal kind follows once the design has been
+exercised.
 The non-software profiles get their own fixture projects (`example-slides`
 exists; an organization and a narrative fixture join it). Stages remain
 runtime-optional per project through `[stages]` and the profile; that is
@@ -471,6 +479,11 @@ configuration, not a delivery sequence.
   answered by splitting a section or splitting an entity, and which is right is
   subjective. Declared an experiment; see
   [size limits](./ir-graph.md#size-limits).
+- The entity natural key under containment: `name` plus `scope` collides when
+  two parents each contain a same-named child (two modules, each with a
+  `Config`), and an upsert would wrongly merge them. Whether scope generalizes
+  to a namespace derived from the containment chain, or `parent` joins the key,
+  is undecided; a wrong merge is the failure to avoid.
 - Profile inference: the medium decision is already recorded once per
   deliverable; whether the profile should default from it (a slide-deck medium
   implies the slides profile) or stay an explicit setting.

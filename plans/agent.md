@@ -25,24 +25,50 @@ when a goal is truly done.
   [ACP profile](./orchestration.md#per-stage-executors). This design assumes a
   capable model: navigating the graph, managing what is loaded, and working a
   goal board are agentic behaviors small local models fumble. That is accepted
-  for now; the benchmark gates any profile per goal kind before it is trusted,
-  and the harness holds regardless (gates bounce bad calls, junk never lands).
+  for now, and the harness holds regardless (gates bounce bad calls, junk never
+  lands). Benchmarking executor profiles per goal kind is deferred until after
+  the first implementation, once real use shows what needs grading.
 - The model never creates, routes, or prioritizes goals. It resolves them, fails
   them, or parks them. Goal derivation, grouping, readiness, and verification
   are harness code. This is the existing division of labor, restated for goals.
 
+## What a compile looks like
+
+`jazyk compile` on a project with edits pending:
+
+- Parse and diff the documents, derive the board. The terminal prints the
+  summary first: `board: 47 goals (12 reconcile-section, 9 rejudge-pair,
+  6 retrace, ...), 3 blocked, 5 optional`.
+- The agent never sees the whole board. Sessions run one at a time (parallel
+  compilation is shelved for now), and each session gets one batch: the
+  scheduler takes the highest ready tier, groups open goals by locality (one
+  document, one entity neighborhood, one view), and fills the batch until the
+  context budget says stop. A batch is typically one to a handful of goals; the
+  count is a consequence of the budget and the locality, never a fixed number.
+- The session prompt lists exactly the batch's goals, the loaded graph for
+  their locality, and one summary line for the rest ("41 goals elsewhere, not
+  this session's"), so the model knows the world is bigger but bounded
+  elsewhere.
+- Each commit re-derives the board. Goals a mutation opened either join the
+  running session (same locality, fits the budget) or wait for a later one. The
+  live trace and the GUI board show the counts ticking down, each resolution
+  landing with its justification.
+- The loop ends when the board derives empty of mandatory goals and the checks
+  pass. The verdict carries what remains (`converged, 2 blocked on answers,
+  5 optional advised`), and [`jazyk ripple`](./ripple.md#observing-a-run)
+  replays how any goal came to exist and what resolving it caused.
+
 ## The goal
 
 ```yaml
-goal:g-1042:
+g:retrace:uc:order-expires:
   kind: retrace                    # from the catalog below
   mandatory: true                  # mandatory blocks convergence; optional advises
   target: uc:order-expires
-  detail: step 2 refines req:orders-6, which was deleted in g88
+  change: {deleted: req:orders-6, in: g88}   # the disk evidence; also the identity
   cause: {generation: 88, mutation: 2, via: traces/refines}   # see ripple.md
   state: open        # open | resolved {generation, justification}
-                     # | failed {reason} | dismissed {reason, by}
-                     # | parked | blocked {on}
+                     # | failed {reason} | parked | blocked {on}
   hints:
     - load uc:order-expires
     - load view:usecase/customer (the use case appears there)
@@ -57,8 +83,15 @@ goal:g-1042:
   therefore happens as things grow, inside the same convergence loop, never as a
   separate cleanup pass: a small edit that tips an entity over its hard limit
   makes the split part of that build.
-- A human may dismiss an optional goal with a recorded reason; a dismissed goal
-  does not reopen until its measure worsens past the next threshold.
+- Dismissal is not goal state. Dismissing a size goal writes to the graph: the
+  node's own limit is raised and recorded with decree provenance
+  ([size limits](./ir-graph.md#size-limits)). The goal then simply stops
+  deriving until the raised threshold is crossed in turn; nothing needs to
+  remember the dismissal but the limit itself.
+- `change` is the attached evidence: the section diff, the deleted node, the
+  crossed threshold. It is what the agent works from, and it is the goal's
+  identity: re-deriving the board matches a goal to its predecessor by the
+  change, confidently.
 - `cause` ties every goal to the committed change that spawned it, which is what
   makes the [ripple](./ripple.md) renderable.
 - `hints` are computed, cheap, and honest: what to load, which skill explains the
@@ -68,9 +101,14 @@ goal:g-1042:
   gated release). They render in every status surface so a converged-but-waiting
   build says what it waits for.
 
-Goals are durable files derived from disk, like the queue today: any process
-recomputes the same board, an interrupted build resumes anywhere, a no-op rebuild
-derives zero goals and makes zero LLM calls.
+Goals are derived, not stored. The board is recomputed from disk (documents,
+graph, ledger, status) whenever it is consulted, so any process computes the
+same board, an interrupted build resumes anywhere, and a no-op rebuild derives
+zero goals and makes zero LLM calls. What is recorded is progress, never the
+board: resolutions with their justifications and failures with their reasons go
+to the journal, parked and failed goals persist in `status.yaml` so they survive
+a restart, and dismissals are the graph writes above. The graph itself never
+stores goals, so it cannot grow with them.
 
 ## Goals and diagnostics
 
@@ -85,9 +123,9 @@ twice.
 
 ## Goal lifecycle
 
-- Derive: the reconciler computes goals from section diffs, trace-edge dirtiness,
-  limit thresholds, ledger state, and pending human answers. Deterministic,
-  idempotent.
+- Derive: the reconciler computes goals on demand from section diffs, trace-edge
+  dirtiness, limit thresholds, ledger state, and pending human answers.
+  Deterministic, idempotent.
 - Group: open goals batch into sessions by locality: goals sharing a document, an
   entity neighborhood, or a view are one session, bounded by the context budget.
   Readiness tiers order batches ([ordering](#ordering-and-convergence)).
@@ -150,11 +188,6 @@ loaded next, and what it costs.
 - ent:customer          stub (definition only)                           [5 edges loadable: h:ent:customer]
 - docs/orders.md#/orders/holds   section body
 Consider unloading: ent:customer (not referenced in 6 rounds, no open goal touches it)
-
-## Goals
-- [g-1041 mandatory] reconcile-section docs/orders.md#/orders/holds      open
-- [g-1042 mandatory] retrace uc:order-expires (step 2, deleted req)      open   hint: load uc:order-expires
-- [g-1043 optional]  abstract-entity ent:order (54 requirements > 50)    open   skill: abstraction
 ```
 
 Tools:
@@ -223,7 +256,7 @@ is active.
 | `dedupe-candidates` | O | 1 | cross-document lookalikes score high | merged, or kept with reasoning |
 | `derive-usecases` | M | 2 | a cluster's membership changed | every cluster requirement refined by a step or marked |
 | `retrace` | M | 2-6 | any node's upstream trace died or changed (a step's requirement deleted, a message's operation gone, a view member gone, an instance's attribute gone) | broken links repaired, re-derived, or the node deleted; nothing dangling |
-| `extend-usecase` | O | 2 | an `If ... then` requirement is unrefined by any extension | extension added or `missing-error-requirement` diagnostic filed |
+| `extend-usecase` | O | 2 | a failure-mode requirement is unrefined by any extension | extension added or `missing-error-requirement` diagnostic filed |
 | `model-domain` | M | 3 | structural facts changed in a scope cluster | attributes, roles, cardinalities current; contradictions filed |
 | `conform-instance` | M | 4 | an instance or the model under it changed | values and links conform, or the conformance diagnostic is filed |
 | `partition` | M | 5 | composition on, no accepted partition ADR | partition proposed and recorded; ADR answerable afterward |
@@ -254,25 +287,49 @@ Notes on the load-bearing rows:
   in whatever build tipped the threshold.
 - Judgment gates are honest about what they check: a `rejudge-pair` gate
   verifies completeness (a verdict per pair, with reasoning), not correctness.
-  The harness cannot know a "consistent" verdict is true; the benchmark is
-  where verdict quality is measured, per executor profile.
+  The harness cannot know a "consistent" verdict is true; verdict quality is a
+  benchmarking concern, deferred until after the first implementation.
 - `ratify` and `answer` are the human seams. They keep the convergence report
   honest: a build with open blocked goals is "converged, awaiting 2 answers",
   never silently done.
 
 Each kind has: a contract paragraph (the prompt payload, one file per kind, same
-embed discipline as today's prompts), a gate implementation, a hint computer, and
-a benchmark case that grades an executor profile on it before it is trusted.
+embed discipline as today's prompts), a gate implementation, and a hint
+computer. Benchmark cases per kind come after the first implementation, once
+real use shows what needs grading.
 
-## Prompt assembly, per session
+## What the model sees
+
+Every session prompt is assembled deterministically, so it can be shown before
+it is spent. `jazyk preview` renders the next session's prompt exactly as the
+model would receive it (`jazyk preview <goal|target>` for the batch that goal
+would join), and the GUI shows the same pane before a release in manual mode.
+Reviewing what the model will see is a first-class surface, not a debug flag,
+and the transcript records the same rendering per round, so post-hoc review
+sees what the model saw, verbatim.
 
 ```
-[generic agent contract]                 # fixed
-[skill: <active skills for the loaded graph>]
+[agent contract, fixed]
+
+[skill: requirement-extraction (active)]
+
+## Project
+- build 88, generation 412, manual mode
+- diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
+- board: 2 goals in this session; 41 elsewhere; 3 blocked on human answers
+
 ## Goals
-  <goal list: id, kind, contract paragraph, detail, hints>
-## Loaded
-  <initial pack + status block>
+- [g:reconcile-section:docs/orders.md#/orders/holds] mandatory
+  The section changed (diff in the loaded body). Bring the graph in line:
+  extract, update, cover. Gate: coverage marks staged, stale anchors addressed.
+- [g:retrace:uc:order-expires] mandatory
+  Step 2 refines req:orders-6, deleted in g88 (reason: duplicate). Repair,
+  re-derive, or delete. Gate: nothing dangling. Hint: load uc:order-expires.
+
+## Loaded (9.8k/24k chars)
+- docs/orders.md#/orders/holds   section body, with the diff marked
+- ent:order    full: 7 requirements, parent ent:commerce   [3 more edges: h:ent:order:traces]
+- uc:order-expires   stub   [loadable: h:uc:order-expires]
 ```
 
 The contract paragraphs are short and imperative, in the style of the existing
@@ -283,13 +340,15 @@ essays. The feedback contract rides once, high, as today.
 
 ## Ordering and convergence
 
+- Sessions are sequential: one compilation at a time, one session at a time
+  within it (the build lease already enforces the former). Parallel sessions
+  are shelved as a later optimization; nothing in the goal design depends on
+  them.
 - Readiness tiers replace waves: a goal is ready when the goals it depends on
   are closed in its cone. The ladder gives the tiers (alignment before ingest
   before judgment before use cases before domain before instances before
-  composition before dynamics before ledger goals), the existing document levels
-  order stage-1 batches, and disjoint localities run in parallel under the
-  concurrency bound, each batch leased. The scheduler is still deterministic
-  code; "what runs next" is a query.
+  composition before dynamics before ledger goals), and the existing document
+  levels order stage-1 batches.
 - Convergence: no open or failed mandatory goals, checks clean. The verdict
   carries the counts: `converged`, or
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
@@ -308,5 +367,4 @@ essays. The feedback contract rides once, high, as today.
 - Success is read from the store and the board, never from the agent's word, and
   every resolution carries its recorded why.
 - One agent contract, goal kinds as data, skills as payloads: adding a stage is
-  goal kinds plus gates plus skills plus benchmark cases in the registry, no new
-  agent.
+  goal kinds plus gates plus skills in the registry, no new agent.

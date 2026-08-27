@@ -208,9 +208,10 @@ No phases. The registry, the goal board, the loading machinery, and the
 observability surfaces land as one coordinated change, docs first per the repo
 rule: `docs/compiler/` is rewritten to the new design (`reconciler.md`,
 `turns.md`, `control-plane.md` absorb goals, the registry, and the explain
-surfaces), and `bootstrap` follows the docs. `cargo test`, the benchmark (grown
-per goal kind), and the fixture projects hold the line; the dogfood compiles
-under the new design before anything is called done.
+surfaces), and `bootstrap` follows the docs. `cargo test` and the fixture
+projects hold the line; the dogfood compiles under the new design before
+anything is called done, and benchmark growth per goal kind follows once real
+use shows what needs grading.
 
 ## Open questions
 

@@ -153,6 +153,12 @@ New optional fields, all provenanced per fact:
 
 ### Requirement (extended)
 
+- The statement is free-form: the `ears` field becomes `statement`, and the
+  shape gate is dropped. What survives: one atomic obligation per requirement,
+  at least one entity reference, the verbatim `quote`. Facets the pattern used
+  to carry (behavior, constraint, failure mode, quality attribute) are model
+  judgments recorded at extraction with reasoning, where downstream stages want
+  them.
 - `edges` entries gain optional `cardinality` (`1`, `0..1`, `1..*`, `*`), promoted
   onto the derived relationship like `type` is, and are directional: `{a, b}`
   reads a-acts-on-b ("A calls B to list directory content" declares
@@ -296,8 +302,8 @@ sm:order:
     - {from: placed, to: held, trigger: payment declined, refines: [req:payment-4]}
 ```
 
-One machine per entity, whole-node upserts. Triggers map onto EARS
-`When`/`While`/`If` clauses near-mechanically. The lifecycle reading is universal:
+One machine per entity, whole-node upserts. Triggers are read from the
+requirements' statements by judgment. The lifecycle reading is universal:
 an order, a hiring pipeline, a relationship arc (strangers to rivals to lovers,
 each transition refining a plot requirement).
 
@@ -395,7 +401,10 @@ section and entity thresholds:
 Every limit carries two thresholds. Crossing the soft one (getting big) opens an
 optional goal (`split-view`, `abstract-entity`) with hints; crossing the hard
 one (too big) escalates the goal to mandatory, so the build that tipped it also
-restructures, and cleanup debt cannot accumulate. A violation never truncates a
+restructures, and cleanup debt cannot accumulate. Dismissing a size goal is a
+graph write, not goal state: the node's own limit is raised and recorded with
+decree provenance, so the goal simply stops deriving until the raised threshold
+is crossed in turn. A violation never truncates a
 rendering silently: the diagram renders meanwhile with collapse applied to the
 largest subtrees, marked as such. The agent is thereby steered toward
 abstraction (sub-entities, sub-views, moved detail) exactly where a human

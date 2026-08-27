@@ -1,10 +1,9 @@
 # Plan: work orchestration
 
-Status: proposal for iteration. The proposal set:
-[ir-stages](./ir-stages.md) (doctrine and the stage ladder),
-[ir-graph](./ir-graph.md) (the graph, diagrams, profiles),
-[agent](./agent.md) (the agent and the goal system), [ripple](./ripple.md)
-(convergence and observing it), this file.
+Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
+the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+[agent](./agent.md) (goals and sessions), [ripple](./ripple.md) (propagation
+and observing).
 
 This file is the implementation seam: how goal kinds register, how executors
 attach, what the visibility surfaces are, and why no external orchestration
@@ -13,18 +12,19 @@ framework sits underneath.
 ## The registry
 
 One Rust trait, one registry, every [goal kind](./agent.md#the-goal-catalog) an
-implementation (a stage is a family of goal kinds). The trait surface stays
-small because the shared machinery (store, gates, context engine, journal,
-trace, control plane) is generic underneath:
+implementation. The trait surface stays small because the shared machinery
+(store, gates, context engine, journal, trace, control plane) is generic
+underneath:
 
-- `kind`: the goal kind name.
+- `kind`: the goal kind name, and the build stage (compile or cleanup) it
+  belongs to.
 - `unit`: what one target is (a document, an entity, a cluster, a view), so the
   board and the GUI can render it.
 - `derive_goals(store, status) -> Vec<Goal>`: this kind's open goals from disk
   state. Deterministic, idempotent, cheap; the board stays derivable from disk,
   which is what lets any consumer resume any build.
-- `ready(goal, board) -> Ready | Blocked(reason)`: the tier ordering and
-  gating, with the reason rendered as a sentence because the visibility
+- `ready(goal, board) -> Ready | Blocked(reason)`: the compile-tier ordering
+  and gating, with the reason rendered as a sentence because the visibility
   surfaces show it.
 - `pack(store, batch) -> Pack`: a batch's initially loaded graph, through the
   context engine.
@@ -35,37 +35,44 @@ trace, control plane) is generic underneath:
 
 Registration is compiled in, a static list: the dependency policy hand-rolls
 domain logic, and a dynamic plugin system is infrastructure nobody needs.
-Adding a stage is goal kinds plus gates plus skills in the registry, a module
-and a config line.
+Adding a feature is goal kinds plus gates plus skills in the registry, a
+module and a config line.
 
 ## Write tools
 
-Joining the existing catalog, all staging into changesets behind the same
-gates: `upsert_usecase`, `update_usecase`, `delete_usecase`, `upsert_instance`,
-`update_instance`, `delete_instance`, `upsert_component`, `update_component`,
-`delete_component`, `upsert_interface`, `update_interface`, `delete_interface`,
-`upsert_statemachine`, `delete_statemachine`, `upsert_interaction`,
-`delete_interaction`, `report_adr` (upsert by natural key; supersede, never
-rewrite), `set_trace_coverage({stage, target, state, note?})` (the per-stage
-coverage mark; `not-applicable` requires the note), and the goal tools
-(`mark_goal_done`, `mark_goal_failed`). Chat gains `answer_adr` on the
-prompt-and-answer machinery. Relationships keep having no write tool, and no
-tool enqueues work: the model writes graph state, the harness derives the
-goals.
+The unified model keeps the tool catalog small. The existing entity and
+requirement tools grow fields instead of siblings:
+
+- `upsert_entity` and `update_entity` gain `stereotype`, `parent`, and
+  `attributes` (with optional `value` per attribute).
+- `upsert_requirement` and `update_requirement` gain the plural `edges` (each
+  `{a, b, type?, cardinality?}`, several per statement), the optional
+  `transition` facet, and `facets` (behavior, constraint, failure mode,
+  quality, each with reasoning).
+- `report_diagnostic` gains the `decision` rule, whose `prompt` carries the
+  question and options; `answer_diagnostic` records the ruling, as today.
+- New: `upsert_view`, `update_view`, `delete_view` (kind, title, ordered
+  members, query, collapse, exclusions), and the goal tools
+  (`mark_goal_done`, `mark_goal_failed`).
+
+Relationships, state machines, and default views have no write tools: they are
+recomputed on commit. No tool enqueues work: the model writes graph state, the
+harness derives the goals.
 
 ## Executors
 
-One global ACP profile with per-family overrides:
+One global ACP profile with overrides per goal kind or per build stage:
 
 ```toml
 [acp]
 agent = "embedded"
 
-[stages.composition]
-agent = "claude-code"
+[executors]
+cleanup = "claude-code"          # the holistic restructuring judgment
+reconcile-section = "embedded"   # extraction stays cheap
 ```
 
-Per-family cost accounting (below) is what makes the choice informed.
+Per-kind cost accounting (below) is what makes the choice informed.
 Benchmarking per goal kind follows the first implementation, once real use
 shows what needs grading.
 
@@ -73,11 +80,11 @@ shows what needs grading.
 
 - `jazyk explain [goal|target]`: for a goal, which change produced it, what its
   readiness says, what blocks it; for a target, the cone of goals a change to
-  it would open, stage by stage. A rendering over derivable state.
+  it would open. A rendering over derivable state.
 - The GUI board, the `jazyk preview` pane, and the follow sessions
   ([observing a run](./ripple.md#observing-a-run)).
-- Cost accounting: per-session token counts aggregate per goal kind, per
-  family, per build, and per document into `status.yaml` and the GUI ("this
+- Cost accounting: per-session token counts aggregate per goal kind, per build
+  stage, per build, and per document into `status.yaml` and the GUI ("this
   build: 41 sessions, 310k tokens, 78% in reconcile-section").
 - OpenTelemetry export, off by default: one span per build, session, and tool
   call, GenAI semantic-convention attributes on session spans, OTLP endpoint
@@ -109,7 +116,7 @@ shows what needs grading.
   it is async (tokio) against a deliberately sync binary, 0.x with breaking
   changes, and without the text codec and downgrade stickiness that exist for
   weak local models. The right entry point is embeddings: one index over docs
-  and graph serving the `search` tool, lookalike candidates, and the
-  reconciler's clustering. The boundary stands regardless: embeddings are a
-  similarity signal inside deterministic machinery, never the context path;
+  and graph serving the `search` tool, lookalike candidates, and the flow
+  clustering. The boundary stands regardless: embeddings are a similarity
+  signal inside deterministic machinery, never the context path;
   retrieval-over-raw-prose is what jazyk exists to replace.

@@ -1,10 +1,9 @@
 # Plan: ripple, convergence, and observing it
 
-Status: proposal for iteration. The proposal set:
-[ir-stages](./ir-stages.md) (doctrine and the stage ladder),
-[ir-graph](./ir-graph.md) (the graph, diagrams, profiles),
-[agent](./agent.md) (the agent and the goal system), this file,
-[orchestration](./orchestration.md) (the registry, executors, alternatives).
+Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
+the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+[agent](./agent.md) (goals and sessions), [orchestration](./orchestration.md)
+(implementation notes).
 
 The target is a stable system: docs, graph, diagrams, deliverable, and tests as
 one fixed point. A human edits any surface; compile detects the change, the
@@ -20,7 +19,7 @@ goals derived, sessions scheduled, fixed point restored.
   fact's provenance names the sentence, so the edit is a dual write: the model
   proposes the sentence rewrite, the human accepts it, and the prose
   replacement commits with the graph mutation in one changeset (changing a
-  class-diagram edge's cardinality rewrites the sentence behind the
+  class-diagram arrow's cardinality rewrites the sentence behind the
   requirement that declared it). The commit absorbs the new section hashes, so
   the edit does not dirty the document it just changed; downstream goals
   derive from the graph change. When no proposed rewrite is accepted, the edit
@@ -39,8 +38,8 @@ goals derived, sessions scheduled, fixed point restored.
 
 Deletion runs the same paths in reverse: dead prose kills quotes, which kills
 quote-provenanced facts (garbage collection with tombstone redirects), which
-opens `retrace` goals through the trace edges; derived facts whose upstream
-died are re-derived or collected.
+opens `retrace` goals on the views and instances that referenced them; derived
+data (relationships, state machines, default views) simply recomputes.
 
 ## Ambiguity
 
@@ -89,9 +88,9 @@ Realtime:
 - The live trace: session lifecycle events, tool rows with condensed arguments,
   model text, per-session token counts, and `goal` events (opened or resolved,
   with cause). `--verbose` shows the cascade as it happens.
-- The GUI board: stages as columns, goals as cards (open, blocked with reason,
-  parked, failed), arrows lighting up as causes fire. A card click opens the
-  live session (the follow-session machinery).
+- The GUI board: compile and cleanup as columns, goals as cards (open, blocked
+  with reason, parked, failed), arrows lighting up as causes fire. A card click
+  opens the live session (the follow-session machinery).
 - `jazyk watch` prints one line per goal: what opened, why, what session took
   it.
 
@@ -100,8 +99,8 @@ Post compile:
 - `jazyk ripple <target|generation|doc>`: the ripple DAG rooted at a change.
   For a target, the last cascade that touched it; for a generation, the full
   tree forward; `--back` shows causes instead of consequences.
-- The build report: the causality DAG for the whole build, per-family cost
-  beside it, parked and failed goals with reasons.
+- The build report: the causality DAG for the whole build, cost beside it,
+  parked and failed goals with reasons.
 - Journal diffs between builds remain the release-diff surface for project
   management.
 
@@ -110,31 +109,31 @@ The trace a one-sentence edit leaves (`orders.md`: "held orders expire after
 
 ```
 edit g87 docs/orders.md /orders/holds (human)
-└─ reconcile-section docs/orders.md g88: req:orders-6 revised (quote and statement updated)
+└─ reconcile-section docs/orders.md g88: req:orders-6 revised (quote, statement, transition guard)
+   │  recomputed at commit: sm:order (held→expired guard), view:sequence/holds
    ├─ rejudge-pair (req:orders-6 ~ req:payment-9) g89: consistent
-   ├─ derive-statemachine ent:order g90: transition held→expired guard updated
-   │  └─ checks: event completeness ok
-   ├─ derive-usecases cluster:customer/holds g91: uc:order-expires step 2 requote
    └─ bind req:orders-6: row stale (requirement-changed)
-      └─ verify req:orders-6: fail (test asserts 21) → generate ent:order-expiry g92
+      └─ verify req:orders-6: fail (test asserts 21) → generate ent:order g90
          └─ verify req:orders-6: pass
-converged: 5 sessions, 2 stages touched, 38k tokens
+cleanup: no goals derived
+converged: 3 sessions, 2 recomputes, 29k tokens
 ```
 
 Every line is a journal entry; every indent is a goal with its cause and
-justification on record.
+justification on record. The recompute line is the payoff of derived data: the
+state machine and the sequence view followed the requirement without a session.
 
 ## Termination
 
 Ripple must not mean runaway:
 
-- The cone: goals open only along trace edges and computed derivations, so a
-  change reaches exactly the nodes with a justification path through it.
+- The cone: goals open only along stored references and computed derivations,
+  so a change reaches exactly the nodes with a justification path through it.
 - Idempotence: a session that re-derives an unchanged conclusion stages a no-op
   upsert; no mutation, no new goal, and that branch of the cascade dies. This
   is what makes convergence a fixed point rather than a loop.
-- Budgets: per session and per build, earlier tiers first when tight; tier
-  priority under the per-build cap is what bounds a runaway stage. Exhaustion
-  parks with an `incomplete-build` diagnostic, resumed next build. Unfinished
-  work is never silent.
-- Flip detection catches oscillation and parks it for a human.
+- Budgets: per session and per build, compile outranking cleanup when tight.
+  Exhaustion parks with an `incomplete-build` diagnostic, resumed next build.
+  Unfinished work is never silent.
+- Flip detection catches oscillation, including between cleanup and compile,
+  and parks it for a human.

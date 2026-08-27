@@ -1,10 +1,9 @@
 # Plan: the agent and the goal system
 
-Status: proposal for iteration. The proposal set:
-[ir-stages](./ir-stages.md) (doctrine and the stage ladder),
-[ir-graph](./ir-graph.md) (the graph, diagrams, profiles), this file,
-[ripple](./ripple.md) (convergence and observing it),
-[orchestration](./orchestration.md) (the registry, executors, alternatives).
+Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
+the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+[ripple](./ripple.md) (propagation and observing), [orchestration](./orchestration.md)
+(implementation notes).
 
 ## The agent
 
@@ -12,10 +11,9 @@ One agent. Task variety lives in goal kinds, which are data: a contract
 paragraph, a resolution gate, hints, skills. The agent's session prompt is one
 fixed contract (resolve the listed goals with the tools, over the loaded graph,
 finish with `done`); everything task-specific arrives as data. The executor is
-pluggable per ACP profile (the embedded agent, Claude Code, OpenCode), chosen
-per goal family (the goal kinds one stage contributes, keyed by the stage name
-in configuration), so extraction can run cheap while composition judgment runs
-on the strongest model available.
+pluggable per ACP profile (the embedded agent, Claude Code, OpenCode), with
+overrides per goal kind or per build stage, so extraction can run cheap while
+cleanup judgment runs on the strongest model available.
 
 The model never creates, routes, or prioritizes goals. It resolves them, fails
 them, or parks them. Derivation, grouping, readiness, gates, budgets, and
@@ -24,30 +22,35 @@ causality are harness code.
 ## Goals
 
 Compilation is a goal board. The reconciler derives goals from disk state the
-way it derives the dirty set; a build is converged when no mandatory goal is
-open or failed and the checks pass.
+way it derives the dirty set; a build is converged when both
+[stages](./ir-stages.md#the-two-stages) derive an empty board of mandatory
+goals and the checks pass.
 
 ```yaml
-g:retrace:uc:order-expires:
+g:retrace:view:usecase/holds:
   kind: retrace                    # from the catalog below
   mandatory: true                  # mandatory blocks convergence; optional advises
-  target: uc:order-expires
+  target: view:usecase/holds
   change: {deleted: req:orders-6, in: g409}   # the disk evidence; also the identity
-  cause: {generation: 409, mutation: 2, via: traces/refines}
+  cause: {generation: 409, mutation: 2, via: view-member}
   state: open        # open | resolved {generation, justification}
                      # | failed {reason} | parked | blocked {on}
   hints:
-    - load uc:order-expires
-    - load view:usecase/customer (the use case appears there)
-    - skill usecase-editing
+    - load view:usecase/holds
+    - skill flow-views
 ```
 
-- Mandatory goals are correctness debts: something changed and the graph no
-  longer agrees with itself or the docs. Optional goals are pressure: getting
-  big opens one, too big escalates it to mandatory (the two thresholds on every
-  [limit](./ir-graph.md#size-limits)). Restructuring happens inside the same
-  convergence loop, in whatever build tipped the threshold; there is no
-  separate cleanup pass.
+- Correctness debts (the graph no longer agrees with itself or the docs) are
+  mandatory goals and belong to the compile stage.
+- Restructuring pressure belongs to the cleanup stage, so it resolves
+  holistically after compile converges, never mid-flight. It opens optional
+  goals at the soft threshold and escalates them to mandatory at the hard one
+  (the two thresholds on every [limit](./ir-graph.md#size-limits)); cleanup
+  also carries the mandatory `partition` goal. Mandatory blocks convergence
+  in either stage.
+- Dismissal is not goal state. Dismissing a size goal writes to the graph: the
+  node's own limit is raised, recorded with decree provenance, and the goal
+  stops deriving until the raised threshold is crossed in turn.
 - `change` is the attached evidence (the section diff, the deleted node, the
   crossed threshold) and the goal's identity: re-deriving the board matches a
   goal to its predecessor by the change.
@@ -56,8 +59,8 @@ g:retrace:uc:order-expires:
 - `hints` are computed and honest: what to load, which skill explains the
   shape, which tool typically resolves the kind. Suggestions; the gates are
   the truth.
-- `blocked` goals wait on a human (an unanswered decision, a ratification
-  proposal, a gated release) and render on every status surface.
+- `blocked` goals wait on a human (an unanswered decision prompt, a
+  ratification proposal, a gated release) and render on every status surface.
 
 Goals are derived, not stored. The board recomputes from disk whenever
 consulted, so any process computes the same board, an interrupted build
@@ -70,17 +73,16 @@ requirements were created, revised, or deleted, which thresholds crossed) into
 "revised since last judged"; the change records can, and resolving a goal
 clears its record. What else is recorded is progress: resolutions with
 justifications and failures with reasons in the journal, parked and failed
-goals in `status.yaml`, dismissals as the limit bumps described under
-[size limits](./ir-graph.md#size-limits). The graph never stores goals, so it
-cannot grow with them.
+goals in `status.yaml`, dismissals as the limit bumps above. The graph never
+stores goals, so it cannot grow with them.
 
 ## A compile, end to end
 
 `jazyk compile` on a project with edits pending:
 
 - Parse and diff the documents, derive the board. The terminal prints the
-  summary first: `board: 47 goals (12 reconcile-section, 9 rejudge-pair,
-  6 retrace, ...), 3 blocked, 5 optional`.
+  summary first: `compile: 27 goals (12 reconcile-section, 9 rejudge-pair,
+  6 retrace), 3 blocked`.
 - The agent never sees the whole board. Sessions run one at a time, and each
   gets one batch: the scheduler takes the highest ready tier, groups open goals
   by locality (one document, one entity neighborhood, one view), and fills the
@@ -88,15 +90,22 @@ cannot grow with them.
   goals; the count is a consequence of budget and locality, never a fixed
   number.
 - The session prompt lists exactly the batch's goals, the loaded graph for
-  their locality, and one summary line for the rest ("41 goals elsewhere, not
+  their locality, and one summary line for the rest ("21 goals elsewhere, not
   this session's").
-- Each commit re-derives the board. Goals a mutation opened either join the
-  running session (same locality, fits the budget) or wait for a later one. The
-  live trace and the GUI board show counts ticking down, each resolution
+- Each commit re-derives the board and recomputes derived data (relationships,
+  state machines, default views). Goals a mutation opened either join the
+  running session (same locality, fits the budget) or wait for a later one.
+  The live trace and the GUI board show counts ticking down, each resolution
   landing with its justification.
-- The loop ends when the board derives empty of mandatory goals and the checks
-  pass. The verdict carries what remains (`converged, 2 blocked on answers,
-  5 optional advised`), and [`jazyk ripple`](./ripple.md#observing-a-run)
+- When the compile board derives empty and the checks pass, cleanup derives
+  its board from the converged graph: `cleanup: 2 goals (abstract-entity
+  ent:order 54 > 50, split-view view:class/commerce 26 > 20)`. Cleanup
+  sessions see final counts, so an entity that doubled its requirements this
+  build is abstracted once, holistically. Cleanup commits can reopen compile
+  goals (a split entity re-enqueues its reviews); the loop runs compile for
+  that cone and returns, bounded by flip detection and budgets.
+- The verdict carries what remains (`converged, 2 blocked on answers,
+  1 optional advised`), and [`jazyk ripple`](./ripple.md#observing-a-run)
   replays how any goal came to exist.
 
 Compilation is sequential: one build at a time (the build lease enforces it),
@@ -128,7 +137,7 @@ it costs.
 ```
 ## Loaded (14.2k/24k chars)
 - view:class/commerce   12 entities, 18 edges shown; 9 members unloaded  [h:view:class/commerce:members]
-- ent:order             full: 7 requirements, parent ent:commerce        [3 more edges: h:ent:order:traces]
+- ent:order             full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
 - ent:customer          stub (definition only)                           [5 edges loadable: h:ent:customer]
 - docs/orders.md#/orders/holds   section body
 Consider unloading: ent:customer (not referenced in 6 rounds, no open goal touches it)
@@ -159,64 +168,66 @@ already-loaded target is a repeat, answered by the repeated-call guard.
 
 ## Skills
 
-A skill is a prompt payload with the working knowledge for one shape: the use
-case format and its invariants, how to edit a state machine node, what a good
-abstraction split looks like, the profile's vocabulary. Skills are payload
-files embedded at compile time, like the goal contracts.
+A skill is a prompt payload with the working knowledge for one shape: how flow
+views order their members, what a good abstraction split looks like, the
+profile's vocabulary. Skills are payload files embedded at compile time, like
+the goal contracts.
 
 - Auto-load: loading a node kind brings its skill once per session (load a
-  `view:usecase/...` and the usecase-editing skill appears).
+  `view:usecase/...` and the flow-views skill appears).
 - Manual: `load_skill({name})`, with a skill index line in the status.
 - Skills render once per session, count against the context budget, and are
   capped. Unloading the last node of a kind marks the skill inactive: the text
   already in context stands, the status just stops advertising it.
-- Profiles contribute skills: the narrative profile's usecase skill speaks plot
+- Profiles contribute skills: the narrative profile's flow skill speaks plot
   threads and scenes.
 
 ## The goal catalog
 
 `M` mandatory; `O` optional; `O→M` optional, escalating to mandatory past its
-hard threshold; `B` blocked-on-human. Stage numbers are the
-[ladder](./ir-stages.md#the-stage-ladder); a goal kind exists only when its
-stage is active.
+hard threshold; `B` blocked-on-human. Feature-gated kinds exist only when
+their [feature](./ir-stages.md#what-each-feature-adds) is on.
 
-| kind | m | stage | created when | resolved when (the gate) |
-|---|---|---|---|---|
-| `place-anchors` | M | 1 | alignment proposals pending for a document | every proposal decided |
-| `reconcile-section` | M | 1 | a section is dirty or unprocessed | coverage mark staged or recorded; stale anchors addressed; extractions honest |
-| `rejudge-pair` | M | 1 | a requirement was created or revised; sticky pairs | a verdict per neighbor in `evidence` (duplicate, contradiction, consistent) |
-| `review-entity` | M | 1 | an entity's fact set changed | definition current; lookalikes judged; diagnostics filed or resolved |
-| `declare-edges` | O | 1 | a multi-entity requirement has no `edges` | edges declared, or justification says the statement is not structural |
-| `dedupe-candidates` | O | 1 | cross-document lookalikes score high | merged, or kept with reasoning |
-| `derive-usecases` | M | 2 | a cluster's membership changed | every cluster requirement refined by a step or marked |
-| `retrace` | M | any | any node's upstream trace died or changed | broken links repaired, re-derived, or the node deleted; nothing dangling |
-| `extend-usecase` | O | 2 | a failure-mode requirement is unrefined by any extension | extension added or `missing-error-requirement` filed |
-| `model-domain` | M | 3 | structural facts changed in a scope cluster | attributes, roles, cardinalities current; contradictions filed |
-| `conform-instance` | M | 4 | an instance or the model under it changed | values and links conform, or the finding is filed |
-| `partition` | M | 5 | composition on, no accepted partition decision | partition proposed and recorded; the decision answerable afterward |
-| `design-component` | M | 5 | allocation candidates, proposed operations, or answered decisions pending | every candidate accepted or marked; operations satisfy or carry reasoning |
-| `derive-statemachine` | M | 6 | a stateful entity's triggering requirements changed | transitions refine requirements; machine current |
-| `derive-interaction` | M | 6 | a use case's steps, allocation, or interfaces changed | messages ride steps and name operations (or refine requirements) |
-| `curate-view` | O | any | new nodes match a view's scope; a view has no members for its query | membership decided (added, or excluded with note) |
-| `split-view` | O→M | any | a view crosses its soft limit | sub-views created and linked, or members collapsed under parents |
-| `abstract-entity` | O→M | any | an entity crosses its requirement or child soft limit | sub-entities introduced with `parent`, detail moved, docs proposals staged |
-| `ratify` | B | any | a derived or decree fact awaits its prose | human accepts the docsgen proposal (dual write) or retracts the fact |
-| `bind` | M | 7 | a requirement owes a binding | ledger row recorded |
-| `generate` | M | 7 | an entity or component's facts differ from the ledger | `record_generation` landed |
-| `verify` | M | 7 | a row's derived status says action | verdict recorded |
-| `answer` | B | any | a diagnostic or decision carries an unanswered prompt | the human answers; applying the answer is a new goal with the answer as cause |
+Compile stage:
+
+| kind | m | created when | resolved when (the gate) |
+|---|---|---|---|
+| `place-anchors` | M | alignment proposals pending for a document | every proposal decided |
+| `reconcile-section` | M | a section is dirty or unprocessed | coverage mark staged or recorded; stale anchors addressed; extractions honest (statements, edges, transition facets, attributes) |
+| `rejudge-pair` | M | a requirement was created or revised; sticky pairs | a verdict per neighbor in `evidence` (duplicate, contradiction, consistent) |
+| `review-entity` | M | an entity's fact set changed | definition current; lookalikes judged; diagnostics filed or resolved |
+| `retrace` | M | a node's upstream died or changed (a view member deleted, an instance's type attribute gone) | repaired, re-derived, or deleted; nothing dangling |
+| `conform-instance` | M | an instance or the model under it changed | values and links conform, or the finding is filed |
+| `bind` | M | a requirement owes a binding, or its binding went stale (requirement-changed, artifact-gone) | ledger row recorded |
+| `generate` | M | an entity's facts differ from the ledger | `record_generation` landed |
+| `verify` | M | a row's derived status says action | verdict recorded |
+| `ratify` | B | a derived or decree fact awaits its prose | human accepts the docsgen proposal (dual write) or retracts the fact |
+| `answer` | B | a diagnostic carries an unanswered prompt | the human answers; applying the answer is a new goal with the answer as cause |
+
+Cleanup stage:
+
+| kind | m | created when | resolved when (the gate) |
+|---|---|---|---|
+| `declare-edges` | O | a multi-entity requirement has no `edges` | edges declared, or justification says the statement is not structural |
+| `dedupe-candidates` | O | cross-document lookalikes score high | merged, or kept with reasoning |
+| `curate-view` | O | new nodes match a view's query; a flow view's coverage check flags an unplaced behavior requirement | membership decided (added, or excluded with note on the view) |
+| `split-view` | O→M | a view crosses its member or edge limit | sub-views created and linked, or members collapsed under parents |
+| `abstract-entity` | O→M | an entity crosses its requirement or child limit | sub-entities introduced with `parent`, detail moved, docs proposals staged |
+| `partition` | M | composition on and no component structure exists | component entities proposed (derived provenance) with a `decision` prompt |
 
 Notes on the load-bearing rows:
 
-- `retrace` is one kind, not five. Delete a requirement and the entity, the use
-  case, and the class view that referenced it each surface as a `retrace` goal
-  with the same cause, each hinting what to load to see the damage. The gate is
-  uniform: nothing may keep pointing at the dead node.
+- `retrace` is one kind. Delete a requirement and the entity that carried it,
+  the flow view that stepped through it, and the instance that conformed to it
+  each surface as a `retrace` goal with the same cause, each hinting what to
+  load to see the damage. The gate is uniform: nothing may keep pointing at
+  the dead node. Derived data needs no retrace: relationships, state machines,
+  and default views recompute at commit.
 - `abstract-entity` and `split-view` are where containment is exercised:
   introduce a parent, distribute children, let lifting keep coarse views true.
-  Their skill carries the judgment guidance: split by cohesion of requirements,
-  respect scopes, never invent concepts the docs cannot support, propose docs
-  sentences for the new structure.
+  Their skill carries the judgment guidance: split by cohesion of
+  requirements, respect scopes, never invent concepts the docs cannot support,
+  propose docs sentences for the new structure.
 - Judgment gates verify completeness, not correctness: a `rejudge-pair` gate
   checks that a verdict with reasoning exists per pair; it cannot know a
   "consistent" verdict is true. Verdict quality is a benchmarking concern,
@@ -244,10 +255,10 @@ prompts), a gate implementation, and a hint computer.
   budget", resumed next build.
 - Bubbling: staged mutations are validated when staged, and the same
   computation previews the goals a mutation will open; the tool reply says so
-  ("this delete will open: retrace uc:order-expires (step 2), retrace
-  view:class/orders (member gone)"). At commit the previews become real goals
-  with causes. They join the running session when they fit its locality and
-  budget; otherwise they wait. Downstream work is never silent and never
+  ("this delete will open: retrace view:usecase/holds (member gone), retrace
+  ent:order (statement gone)"). At commit the previews become real goals with
+  causes. They join the running session when they fit its locality and budget;
+  otherwise they wait. Downstream work is never silent and never
   model-invented.
 
 ## What the model sees
@@ -262,25 +273,25 @@ what the model saw, verbatim.
 ```
 [agent contract, fixed]
 
-[skill: requirement-extraction (active)]
+[skill: extraction (active)]
 
 ## Project
 - build 12, generation 412, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
-- board: 2 goals in this session; 41 elsewhere; 3 blocked on human answers
+- board: 2 goals in this session; 21 elsewhere; 3 blocked on human answers
 
 ## Goals
 - [g:reconcile-section:docs/orders.md#/orders/holds] mandatory
   The section changed (diff in the loaded body). Bring the graph in line:
   extract, update, cover. Gate: coverage marks staged, stale anchors addressed.
-- [g:retrace:uc:order-expires] mandatory
-  Step 2 refines req:orders-6, deleted in g409 (reason: duplicate). Repair,
-  re-derive, or delete. Gate: nothing dangling. Hint: load uc:order-expires.
+- [g:retrace:view:usecase/holds] mandatory
+  Member req:orders-6 was deleted in g409 (reason: duplicate). Repair the flow,
+  or drop the member. Gate: nothing dangling. Hint: load view:usecase/holds.
 
 ## Loaded (9.8k/24k chars)
 - docs/orders.md#/orders/holds   section body, with the diff marked
-- ent:order    full: 7 requirements, parent ent:commerce   [3 more edges: h:ent:order:traces]
-- uc:order-expires   stub   [loadable: h:uc:order-expires]
+- ent:order    full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
+- view:usecase/holds   stub   [loadable: h:view:usecase/holds]
 ```
 
 Contract paragraphs are short and imperative: what the goal means, what
@@ -293,19 +304,17 @@ best judgment.
 
 ## Ordering and convergence
 
-- Readiness tiers order the work: a goal is ready when the goals it depends on
-  are closed in its cone. The ladder gives the tiers (alignment before ingest
-  before judgment before use cases before domain before instances before
-  composition before dynamics before ledger goals); document link levels order
-  stage-1 batches, roots first.
-- Convergence: no open or failed mandatory goals, checks clean. The verdict
-  carries the counts: `converged`, or
+- Within compile, readiness tiers order the work: alignment before ingest,
+  ingest before judgment, judgment before ledger goals; document link levels
+  order ingest batches, roots first. Cleanup derives only after compile is
+  quiet.
+- Convergence: both stages derive empty of open or failed mandatory goals,
+  checks clean. The verdict carries the counts: `converged`, or
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
-- Budgets: per session (rounds, mutations, context), per build (goal
-  resolutions), earlier tiers first when tight. Parked goals resume first next
-  build.
-- Oscillation: two goals resolving each other back and forth (a proposed
-  operation bouncing between dynamics and composition) is caught by flip
-  detection on the target's natural key; the pair parks as one
-  `unstable-derivation` diagnostic with both justifications side by side,
+- Budgets: per session (rounds, mutations, context) and per build (goal
+  resolutions), compile outranking cleanup when tight. Parked goals resume
+  first next build.
+- Oscillation between the stages (cleanup splits, compile review merges back)
+  is caught by flip detection on the target's natural key; the pair parks as
+  one `unstable-derivation` diagnostic with both justifications side by side,
   blocked on a human.

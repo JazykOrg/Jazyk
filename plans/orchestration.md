@@ -73,7 +73,7 @@ nobody asked for. Swappability means adding a module and a config line, not load
 code at runtime.
 
 The existing eight task kinds port onto the trait as goal kinds unchanged in
-behavior. That refactor is phase 1 and it is the proof the trait surface is right.
+behavior; that port is the proof the trait surface is right.
 
 ## Typed handoffs
 
@@ -87,7 +87,7 @@ mechanism generalizes into the routing layer:
 - Each stage declares which effects it emits and which it consumes. The reconciler
   computes emitted effects deterministically from the changeset (as it computes
   pair-review neighbors today), records them durably beside `pending`, and the
-  consuming stage's `derive_items` reads them.
+  consuming kind's `derive_goals` reads them.
 - With the [IR stages](./ir-stages.md) active, effects follow the `traces` axis:
   a changed requirement emits dirty effects for exactly the use case steps,
   allocations, and transitions tracing to it. The cone, not the pyramid.

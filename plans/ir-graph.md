@@ -503,32 +503,27 @@ Three layers, only the first two stored:
 - The rendering: build output, diffable, never hand-edited, never read back;
   deleting it loses nothing.
 
-Two renderers serve the same views, chosen per surface:
+One renderer, PlantUML, for the whole catalog:
 
-- PlantUML for the complete catalog: one file per view,
-  `<out>/diagrams/<kind>/<slug>.puml`, written deterministically on every
-  build, `.svg` and `.png` beside it when a PlantUML binary is configured.
-  Object, component, composite structure, deployment, timing, and
-  communication diagrams exist only here; Mermaid cannot draw them.
-- Mermaid for the core subset, embedded wherever markdown renders natively.
-  Mermaid is a small subset of UML, and that is acceptable because the subset
-  it covers (class, state, sequence, flowchart as the activity approximation,
-  ER) is exactly the high-value stored core.
+- Every view renders to `<out>/diagrams/<kind>/<slug>.puml` deterministically
+  on every build, and jazyk invokes the configured PlantUML binary to render
+  the picture beside it (`.png`, plus `.svg` where a surface wants vectors).
+  Without a configured binary the `.puml` files still land and every image
+  reference degrades to a link to them; nothing else breaks.
 
 The reading surfaces:
 
 - The docsgen page per entity (exists today: definition, requirements with
-  quotes, relationships) gains its relevant diagrams as embedded Mermaid: the
-  class neighborhood, the entity's derived state machine, the flows it
-  appears in, each linking onward to related entities' pages and to the full
-  PlantUML artifacts for the kinds Mermaid cannot draw.
+  quotes, relationships) embeds the rendered pictures of its relevant views:
+  the class neighborhood, the entity's derived state machine, the flows it
+  appears in, each linking onward to related entities' pages.
 - The LSP already links every entity occurrence to its docsgen page; hover
-  gains the most relevant diagram, as the rendered image when a PlantUML
-  binary provides one and as the page link always. Editors that render
-  Mermaid in markdown preview show the diagrams with no extra tooling, which
-  makes the docsgen path the first implementation.
+  embeds the picture of the most relevant view directly (editors render
+  markdown images in hovers), with the page link beside it.
 - The GUI renders its interactive projections straight from the graph and
   does not go through the files.
+
+Geometry, layout, and styling are never stored anywhere.
 
 A PlantUML block inside a source document is the opposite thing: input, parsed
 as a `diagram` section, its obligations extracted as prose.

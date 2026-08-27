@@ -1,7 +1,7 @@
 # Plan: the agent and the goal system
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [ripple](./ripple.md) (propagation and observing), [orchestration](./orchestration.md)
 (implementation notes).
 
@@ -12,7 +12,7 @@ paragraph, a resolution gate, hints, skills. The agent's session prompt is one
 fixed contract (resolve the listed goals with the tools, over the loaded graph,
 finish with `done`); everything task-specific arrives as data. The executor is
 pluggable per ACP profile (the embedded agent, Claude Code, OpenCode), with
-overrides per goal kind or per build stage, so extraction can run cheap while
+overrides per goal kind or per goal class, so extraction can run cheap while
 cleanup judgment runs on the strongest model available.
 
 The model never creates, routes, or prioritizes goals. It resolves them, fails
@@ -22,9 +22,9 @@ causality are harness code.
 ## Goals
 
 Compilation is a goal board. The reconciler derives goals from disk state the
-way it derives the dirty set; a build is converged when both
-[stages](./ir-stages.md#the-two-stages) derive an empty board of mandatory
-goals and the checks pass.
+way it derives the dirty set; a build is converged when both goal classes
+([compile and cleanup](./ir-stages.md#compile-and-cleanup)) derive an empty
+board of mandatory goals and the checks pass.
 
 ```yaml
 g:retrace:view:usecase/holds:
@@ -41,13 +41,14 @@ g:retrace:view:usecase/holds:
 ```
 
 - Correctness debts (the graph no longer agrees with itself or the docs) are
-  mandatory goals and belong to the compile stage.
-- Restructuring pressure belongs to the cleanup stage, so it resolves
-  holistically after compile converges, never mid-flight. It opens optional
-  goals at the soft threshold and escalates them to mandatory at the hard one
-  (the two thresholds on every [limit](./ir-graph.md#size-limits)); cleanup
-  also carries the mandatory `partition` goal. Mandatory blocks convergence
-  in either stage.
+  mandatory goals: compile work.
+- Restructuring pressure is cleanup work. A cleanup goal becomes ready only
+  when no compile goal is open in its target's cone, so restructuring always
+  sees settled content, and the build interleaves the two classes in bursts
+  rather than phases. Soft thresholds open optional goals, hard thresholds
+  escalate them to mandatory (the two thresholds on every
+  [limit](./ir-graph.md#size-limits)); mandatory blocks convergence in either
+  class.
 - Dismissal is not goal state. Dismissing a size goal writes to the graph: the
   node's own limit is raised, recorded with decree provenance, and the goal
   stops deriving until the raised threshold is crossed in turn.
@@ -97,13 +98,14 @@ stores goals, so it cannot grow with them.
   running session (same locality, fits the budget) or wait for a later one.
   The live trace and the GUI board show counts ticking down, each resolution
   landing with its justification.
-- When the compile board derives empty and the checks pass, cleanup derives
-  its board from the converged graph: `cleanup: 2 goals (abstract-entity
-  ent:order 54 > 50, split-view view:class/commerce 26 > 20)`. Cleanup
-  sessions see final counts, so an entity that doubled its requirements this
-  build is abstracted once, holistically. Cleanup commits can reopen compile
-  goals (a split entity re-enqueues its reviews); the loop runs compile for
-  that cone and returns, bounded by flip detection and budgets.
+- As each locality's compile goals settle, its cleanup goals become ready and
+  run in a burst, often in the session that just finished the locality (the
+  graph is already loaded, the thinking is warm): `cleanup burst:
+  abstract-entity ent:order (54 > 50)`. A cleanup session sees the locality's
+  final counts, so an entity that doubled its requirements this build is
+  abstracted once, holistically. Cleanup commits can reopen compile goals (a
+  split entity re-enqueues its reviews); the loop runs compile for that cone
+  and returns, bounded by flip detection and budgets.
 - The verdict carries what remains (`converged, 2 blocked on answers,
   1 optional advised`), and [`jazyk ripple`](./ripple.md#observing-a-run)
   replays how any goal came to exist.
@@ -169,8 +171,7 @@ already-loaded target is a repeat, answered by the repeated-call guard.
 ## Skills
 
 A skill is a prompt payload with the working knowledge for one shape: how flow
-views order their members, what a good abstraction split looks like, the
-profile's vocabulary. Skills are payload files embedded at compile time, like
+views order their members, what a good abstraction split looks like. Skills are payload files embedded at compile time, like
 the goal contracts.
 
 - Auto-load: loading a node kind brings its skill once per session (load a
@@ -179,16 +180,17 @@ the goal contracts.
 - Skills render once per session, count against the context budget, and are
   capped. Unloading the last node of a kind marks the skill inactive: the text
   already in context stands, the status just stops advertising it.
-- Profiles contribute skills: the narrative profile's flow skill speaks plot
-  threads and scenes.
+- Skill text is medium-neutral; the model adapts its wording to the medium it
+  is reading, as it does everywhere else.
 
 ## The goal catalog
 
 `M` mandatory; `O` optional; `O→M` optional, escalating to mandatory past its
-hard threshold; `B` blocked-on-human. Feature-gated kinds exist only when
-their [feature](./ir-stages.md#what-each-feature-adds) is on.
+hard threshold; `B` blocked-on-human. A kind derives only when its input
+exists in the graph
+([what the content activates](./ir-stages.md#what-the-content-activates)).
 
-Compile stage:
+Compile goals:
 
 | kind | m | created when | resolved when (the gate) |
 |---|---|---|---|
@@ -204,7 +206,7 @@ Compile stage:
 | `ratify` | B | a derived or decree fact awaits its prose | human accepts the docsgen proposal (dual write) or retracts the fact |
 | `answer` | B | a diagnostic carries an unanswered prompt | the human answers; applying the answer is a new goal with the answer as cause |
 
-Cleanup stage:
+Cleanup goals:
 
 | kind | m | created when | resolved when (the gate) |
 |---|---|---|---|
@@ -213,7 +215,6 @@ Cleanup stage:
 | `curate-view` | O | new nodes match a view's query; a flow view's coverage check flags an unplaced behavior requirement | membership decided (added, or excluded with note on the view) |
 | `split-view` | O→M | a view crosses its member or edge limit | sub-views created and linked, or members collapsed under parents |
 | `abstract-entity` | O→M | an entity crosses its requirement or child limit | sub-entities introduced with `parent`, detail moved, docs proposals staged |
-| `partition` | M | composition on and no component structure exists | component entities proposed (derived provenance) with a `decision` prompt |
 
 Notes on the load-bearing rows:
 
@@ -227,7 +228,9 @@ Notes on the load-bearing rows:
   introduce a parent, distribute children, let lifting keep coarse views true.
   Their skill carries the judgment guidance: split by cohesion of
   requirements, respect scopes, never invent concepts the docs cannot support,
-  propose docs sentences for the new structure.
+  propose docs sentences for the new structure. Proposing component structure
+  where none exists is the same move at the top of the tree, with a
+  `decision` prompt for the human.
 - Judgment gates verify completeness, not correctness: a `rejudge-pair` gate
   checks that a verdict with reasoning exists per pair; it cannot know a
   "consistent" verdict is true. Verdict quality is a benchmarking concern,
@@ -306,15 +309,15 @@ best judgment.
 
 - Within compile, readiness tiers order the work: alignment before ingest,
   ingest before judgment, judgment before ledger goals; document link levels
-  order ingest batches, roots first. Cleanup derives only after compile is
-  quiet.
-- Convergence: both stages derive empty of open or failed mandatory goals,
+  order ingest batches, roots first. A cleanup goal is ready when its
+  target's cone is quiet; the two classes interleave in bursts.
+- Convergence: both classes derive empty of open or failed mandatory goals,
   checks clean. The verdict carries the counts: `converged`, or
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
 - Budgets: per session (rounds, mutations, context) and per build (goal
   resolutions), compile outranking cleanup when tight. Parked goals resume
   first next build.
-- Oscillation between the stages (cleanup splits, compile review merges back)
+- Oscillation between the classes (cleanup splits, compile review merges back)
   is caught by flip detection on the target's natural key; the pair parks as
   one `unstable-derivation` diagnostic with both justifications side by side,
   blocked on a human.

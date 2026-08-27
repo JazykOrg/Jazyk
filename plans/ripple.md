@@ -1,7 +1,7 @@
 # Plan: ripple, convergence, and observing it
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [agent](./agent.md) (goals and sessions), [orchestration](./orchestration.md)
 (implementation notes).
 

@@ -1,7 +1,7 @@
 # Plan: the IR graph
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-the two build stages), [agent](./agent.md) (goals and sessions),
+compile and cleanup), [agent](./agent.md) (goals and sessions),
 [ripple](./ripple.md) (propagation and observing), [orchestration](./orchestration.md)
 (implementation notes).
 
@@ -22,9 +22,9 @@ The graph stores three kinds of authored semantic content, and derives the rest:
 Everything that was a candidate for its own kind is an entity with a stereotype
 or a derivation:
 
-- A component is an entity («service», «container», whatever the profile
-  names), with containment through `parent` and its contracts through
-  relationships. Its requirements attach directly, which is the point: no
+- A component is an entity («service», «container», whatever the model judges
+  the medium calls it), with containment through `parent` and its contracts
+  through relationships. Its requirements attach directly, which is the point: no
   separate allocation machinery, the statements are already on the node.
 - An interface is an entity («interface»). Its operations are requirements on
   it ("the checkout API shall accept a cart and return an order"); provided and
@@ -67,9 +67,9 @@ ratification pressure pushes every fact toward `quote`.
 
 - `name`, `aliases`, `definition`, `mentions` (each with a verbatim quote),
   `scope` (bounded context).
-- `stereotype`: the profile's vocabulary («system», «service», «interface»,
+- `stereotype`: a free-form judged label («system», «service», «interface»,
   «actor», «table», «character», «department»). One field carries what would
-  otherwise be a node kind per concept.
+  otherwise be a node kind per concept; nothing enumerates the allowed values.
 - `parent`: the containing entity, one tree, unlimited depth: a system contains
   services, a service contains modules, a module contains its domain concepts,
   a database its tables. See [containment and lifting](#containment-and-lifting).
@@ -223,8 +223,8 @@ machine derives from the subject's requirements.
 
 Every limit carries two thresholds: crossing the soft one (getting big) opens
 an optional goal, the hard one (too big) makes it mandatory. Limit goals are
-[cleanup-stage](./ir-stages.md#the-two-stages) work: they resolve after compile
-converges, holistically, seeing final counts. Dismissing a size goal is a graph
+[cleanup](./ir-stages.md#compile-and-cleanup) work: they resolve once their
+target's cone is quiet, holistically, seeing final counts. Dismissing a size goal is a graph
 write, not goal state: the node's own limit is raised, recorded with decree
 provenance, and the goal stops deriving until the raised threshold is crossed
 in turn. A violation never truncates a rendering silently: the diagram renders
@@ -483,9 +483,9 @@ stop
 @enduml
 ```
 
-Profile diagram. No picture: the profile is configuration (stereotype
-vocabulary, feature defaults, rendering labels), and the project settings page
-is its honest form.
+Profile diagram. No picture: jazyk has no profile machinery. Free-form judged
+stereotypes on entities carry the whole of what a UML profile would declare
+here.
 
 Adjacent notations: a C4-styled rendering of the containment tree is a style
 option; ER is a style option on the class projection; BPMN stays out (a
@@ -500,24 +500,48 @@ Three layers, only the first two stored:
 - The semantic facts: entities, requirements, and what derives from them. The
   only editable truth.
 - The view: which facts one diagram includes.
-- The rendering: one PlantUML file per view,
+- The rendering: build output, diffable, never hand-edited, never read back;
+  deleting it loses nothing.
+
+Two renderers serve the same views, chosen per surface:
+
+- PlantUML for the complete catalog: one file per view,
   `<out>/diagrams/<kind>/<slug>.puml`, written deterministically on every
-  build, `.svg` beside it when a PlantUML binary is configured. Build output:
-  diffable, never hand-edited, never read back; deleting them loses nothing.
-  PlantUML over Mermaid because the catalog above needs object, component,
-  composite structure, deployment, timing, and communication diagrams, which
-  Mermaid cannot render properly.
+  build, `.svg` and `.png` beside it when a PlantUML binary is configured.
+  Object, component, composite structure, deployment, timing, and
+  communication diagrams exist only here; Mermaid cannot draw them.
+- Mermaid for the core subset, embedded wherever markdown renders natively.
+  Mermaid is a small subset of UML, and that is acceptable because the subset
+  it covers (class, state, sequence, flowchart as the activity approximation,
+  ER) is exactly the high-value stored core.
+
+The reading surfaces:
+
+- The docsgen page per entity (exists today: definition, requirements with
+  quotes, relationships) gains its relevant diagrams as embedded Mermaid: the
+  class neighborhood, the entity's derived state machine, the flows it
+  appears in, each linking onward to related entities' pages and to the full
+  PlantUML artifacts for the kinds Mermaid cannot draw.
+- The LSP already links every entity occurrence to its docsgen page; hover
+  gains the most relevant diagram, as the rendered image when a PlantUML
+  binary provides one and as the page link always. Editors that render
+  Mermaid in markdown preview show the diagrams with no extra tooling, which
+  makes the docsgen path the first implementation.
+- The GUI renders its interactive projections straight from the graph and
+  does not go through the files.
 
 A PlantUML block inside a source document is the opposite thing: input, parsed
 as a `diagram` section, its obligations extracted as prose.
 
-## Profiles
+## Any medium
 
 Jazyk does not assume software. Entities, requirements, views, and the
-relationship types are medium-neutral; a profile supplies the medium as
-configuration: the stereotype vocabulary, the feature defaults, and the
-rendering labels. Built-ins: `software` (default), `organization`,
-`narrative`, `slides`; a custom profile is a table in the project file.
+relationship types are medium-neutral, and there is no profile machinery: the
+model adapts to what it reads, stereotypes are free-form judgment recorded
+with provenance, and the projections take their labels from the content (the
+class diagram of an organization is its org chart; a sequence view of a novel
+is a scene). The graph, gates, and checks are identical in every medium. The
+same kinds read:
 
 | content | software | slide deck | company organization | romance novel |
 |---|---|---|---|---|

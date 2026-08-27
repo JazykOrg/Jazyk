@@ -1,7 +1,7 @@
 # Plan: work orchestration
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-the two build stages), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [agent](./agent.md) (goals and sessions), [ripple](./ripple.md) (propagation
 and observing).
 
@@ -16,8 +16,7 @@ implementation. The trait surface stays small because the shared machinery
 (store, gates, context engine, journal, trace, control plane) is generic
 underneath:
 
-- `kind`: the goal kind name, and the build stage (compile or cleanup) it
-  belongs to.
+- `kind`: the goal kind name, and whether it is compile or cleanup work.
 - `unit`: what one target is (a document, an entity, a cluster, a view), so the
   board and the GUI can render it.
 - `derive_goals(store, status) -> Vec<Goal>`: this kind's open goals from disk
@@ -35,8 +34,8 @@ underneath:
 
 Registration is compiled in, a static list: the dependency policy hand-rolls
 domain logic, and a dynamic plugin system is infrastructure nobody needs.
-Adding a feature is goal kinds plus gates plus skills in the registry, a
-module and a config line.
+Adding a capability is goal kinds plus gates plus skills in the registry, one
+module.
 
 ## Write tools
 
@@ -61,7 +60,7 @@ harness derives the goals.
 
 ## Executors
 
-One global ACP profile with overrides per goal kind or per build stage:
+One global ACP profile with overrides per goal kind or per goal class:
 
 ```toml
 [acp]

@@ -29,86 +29,81 @@ can inspect.
 - Diagrams are projections. There are no diagram elements, only graph nodes and
   view definitions; a rendering cannot drift from the graph because it is
   recomputed from it.
+- No profiles, no feature flags. The model adapts to the medium it reads
+  ([any medium](./ir-graph.md#any-medium)), and machinery activates on what
+  the graph contains, never on configuration.
 - Incrementality: a no-op rebuild derives zero goals and makes zero LLM calls.
   A change reaches exactly its cone, never the pyramid.
 
-## The two stages
+## Compile and cleanup
 
-A build has two stages, and only two.
+Goals come in two classes, and a build interleaves them in bursts.
 
-Compile: bring the graph in line with the documents. The reconciler derives
-correctness [goals](./agent.md#goals) (dirty sections, changed statements
-needing re-judgment, dangling references, instance conformance, stale ledger
-rows) and the agent resolves them, batch by batch, to a fixed point. Nothing
-restructures here: compile runs its full course so the graph first reflects
-what the documents actually say.
+Compile goals bring the graph in line with the documents: dirty sections,
+changed statements needing re-judgment, dangling references, instance
+conformance, stale ledger rows. Cleanup goals restructure: an entity over its
+requirement cap, a view over its member cap, lookalike duplicates, missing
+edges, view curation.
 
-Cleanup: restructure holistically, from the converged graph. Only now do the
-cleanup goals derive: the limit goals (an entity over its requirement cap, a
-view over its member or edge cap), and the judgment sweeps (lookalike
-duplicates, missing edges, view curation, the partition proposal). A session
-that abstracts an entity therefore sees all of its requirements at once, not a
-stream of partial states. If
-a compile doubles an entity's requirements, one cleanup session splits it once,
-knowing everything. Cleanup mutations can reopen compile goals (a split entity
-re-enqueues reviews); the loop runs compile again for that cone, then
-re-derives cleanup, with flip detection and budgets bounding the alternation.
+One rule ties the classes together: a cleanup goal becomes ready only when no
+compile goal is open in its target's cone. Restructuring therefore always sees
+settled content (an entity is abstracted knowing every requirement this build
+gives it, never a stream of partial states), but nothing waits for a global
+phase: as each locality's compile goals settle, its cleanup goals become
+ready, and the scheduler runs them right there, often in the session that just
+finished the locality, while the graph is loaded and the thinking is warm. A
+build is bursts of compile and cleanup, cone by cone.
 
-The verdict reports both: `converged` only when compile and cleanup are both
-quiet (blocked-on-human and standing optional advice ride the verdict as
-counts). Ordering inside compile is small and internal: alignment before
+Cleanup mutations can reopen compile goals (a split entity re-enqueues its
+reviews); the loop runs compile for that cone and returns, with flip detection
+and budgets bounding the alternation. The verdict reports both classes:
+`converged` only when no mandatory goal of either class is open or failed and
+the checks pass, with blocked-on-human and standing optional advice riding as
+counts. Ordering inside compile stays small and internal: alignment before
 ingest, ingest before judgment, judgment before ledger work, document link
 levels ordering ingest, roots first.
 
-The optional capabilities are configuration, not phases: features toggle which
-extraction, views, checks, and goals are active, with defaults from the
-[profile](./ir-graph.md#profiles).
+## What the content activates
 
-```toml
-[profile]
-name = "software"        # software | organization | narrative | slides | custom
+There are no profiles and no feature flags. The model adapts to what it reads,
+and machinery activates on what the graph contains:
 
-[features]               # overrides the profile's defaults
-usecases = true          # flow views + behavior coverage check
-instances = false        # instantiation extraction + conformance checks
-composition = true       # partition goal + component and deployment views
-dynamics = true          # transition facets + derived state machines + sequence views
-```
-
-Everything off is the current compiler. Verification has no toggle: it is
-driven by the ledger and the gen and test commands. `[limits]` holds the size
-thresholds. Modes, releases, workers, and leases stay with the control plane as
-implemented.
-
-## What each feature adds
-
-- Always on: entities, requirements, edges, derived relationships, coverage,
+- Always: entities, requirements, edges, derived relationships, coverage,
   reachability, duplicate and contradiction judgment, class and package views,
   the glossary.
-- `usecases`: flow clustering (behavior requirements grouped by actor and
-  trigger, deterministically), use case and activity views over the clusters, a
-  coverage check (every behavior requirement in some flow view or marked, every
-  failure-mode requirement represented in a branch or flagged as a missing
-  error path).
-- `instances`: instantiation extraction from example sections and fixtures,
-  attribute values, object views, conformance checks (values against declared
-  attributes, links against relationship types and cardinalities; a violation
-  names both sentences).
-- `composition`: component and deployment views over stereotyped entities, the
-  partition goal (a cleanup-stage session that proposes the component
-  structure as derived entities plus a decision prompt when the docs do not
-  state one), provider checks (every required «interface» realized by exactly
-  one entity).
-- `dynamics`: transition facets at extraction, derived state machines with
-  their checks (reachability, determinism, event completeness), sequence,
-  communication, and timing views.
+- Stereotypes are free-form judgment («service», «character», «department»),
+  recorded with provenance like any fact; nothing enumerates the allowed
+  vocabulary.
+- Transition facets exist wherever statements describe state changes; wherever
+  they exist, the derived state machines and their checks (reachability,
+  determinism, event completeness) exist too.
+- Instantiation edges exist wherever prose gives worked examples; wherever
+  they exist, object views and conformance checks run.
+- Flow views derive wherever behavior requirements cluster around actors
+  (deterministic clustering by shared actor and trigger tokens); the coverage
+  check (every behavior statement placed in a flow or marked, every
+  failure-mode statement represented in a branch or flagged) rides with them.
+- Component and deployment views derive wherever containment and
+  interface-like structure exist, stated by prose or introduced by cleanup
+  abstraction; the provider check (a required «interface»-like entity realized
+  by exactly one provider) rides with them.
+
+The model decides what a document's medium calls for, the same way it already
+decides what a sentence obliges. What it extracts determines what derives,
+renders, and gets checked; configuration never gates it.
 
 Generation and verification consume all of it as designed today: the ledger,
 the two test kinds, derived statuses. Generation can group by component
-(«service» entities and their subtrees) when composition is on; the entity is
-the unit otherwise. The graph stops at interface-level requirements: below
-that altitude the code is the source of truth, the ledger verifies it against
-the graph, and round-trip engineering is not attempted.
+(«service»-like entities and their subtrees) where that structure exists; the
+entity is the unit otherwise. The graph stops at interface-level requirements:
+below that altitude the code is the source of truth, the ledger verifies it
+against the graph, and round-trip engineering is not attempted.
+
+## Configuration
+
+`[limits]` holds the size thresholds. Modes, releases, workers, and leases
+stay with the control plane as implemented. There is no other knob: no
+profile, no feature flags, no stage toggles.
 
 ## Landing
 
@@ -116,8 +111,8 @@ One coordinated change, docs first per the repo rule: the `docs/compiler/` tree
 is rewritten to this design (model pages per kind, goal pages with contract
 paragraphs as payload files, skills as payload files), then `bootstrap` follows
 the docs. Validation holds the line: `cargo test`, runs on
-`bootstrap/example/f1` and `f2`, and the dogfood compiled with the features on.
-The non-software profiles get fixture projects (`example-slides` exists; an
+`bootstrap/example/f1` and `f2`, and the dogfood compiled in full. Non-software
+fixture projects prove the medium adaptation (`example-slides` exists; an
 organization and a narrative fixture join it). Benchmarking per goal kind
 follows once the design has been exercised.
 
@@ -138,8 +133,7 @@ follows once the design has been exercised.
   per-context glossary, but making every noun phrase resolve to a known entity
   (undefined term as diagnostic) is the cheapest check with the highest
   leverage.
-- Per-feature executor defaults, and whether the profile should default from
-  the recorded medium decision.
+- Per-goal-kind executor defaults.
 - Ratification review granularity: proposals could aggregate per target
   document (one reviewed draft carrying many facts) rather than one prompt per
   fact.

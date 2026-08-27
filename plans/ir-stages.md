@@ -9,10 +9,9 @@ detailed design lives in three companions:
 - [ir-graph](./ir-graph.md): the node kinds and edge algebra, how all 14 UML diagram
   types project from the one graph, the justification chain from any diagram element
   to a document sentence, and the profile mechanism that serves any medium.
-- [ir-agents](./ir-agents.md): one generic agent and the goal system: the goal
-  catalog (what opens each goal, its prompt contract, its resolution gate), the
-  focus system (loading, unloading, and seeing the graph in context), skills, and
-  multi-stage convergence.
+- [agent](./agent.md): the one agent and the goal system: the goal catalog (what
+  opens each goal, its prompt contract, its resolution gate), loading and
+  unloading the graph in context, skills, and multi-stage convergence.
 - [ripple](./ripple.md): the stable system: editing docs, diagrams, or the graph and
   converging back to a fixed point; causality-carrying effects; observing a build in
   realtime and post hoc (`jazyk ripple`).
@@ -27,8 +26,8 @@ hold) is implicit, decided fresh inside each generation turn, and recorded nowhe
 
 The plan: model the engineering process itself as ordered IR stages in the same
 graph. Requirements stay the foundation. Above them, each stage is a set of node
-kinds reconciled through its own goal kinds (resolved by one generic agent, see
-[ir-agents](./ir-agents.md)), traced to the stage below, checked
+kinds reconciled through its own goal kinds (resolved by the one agent, see
+[agent](./agent.md)), traced to the stage below, checked
 deterministically, and rendered as diagrams on demand. The diagram vocabulary is
 authentic UML: every UML 2.5 diagram type has a rendering path from the graph, and
 UML's own profile mechanism carries the medium specialization. Diagrams are
@@ -73,7 +72,9 @@ The current design's core decisions apply to every new stage:
   [ir-graph](./ir-graph.md#provenance-kinds); the ratification loop is the
   countermeasure to the classic model-driven-engineering failure, models that
   drift from reality. Here a fact cannot drift silently: it is quoted, or it is
-  visibly marked invented and nagging for ratification.
+  visibly marked invented and nagging for ratification. An unstated fact is an
+  ambiguity, resolved with best judgment and raised at a severity graded by the
+  scope of the invention ([ripple](./ripple.md#ambiguity-is-the-debt)).
 - Incrementality: a no-op rebuild makes zero LLM calls at every stage.
 
 ## Trace edges
@@ -435,28 +436,18 @@ promises break on the first hand edit) is answered by the three provenance kinds
 the ratification loop, and the verification ledger: verification links survive
 hand edits; round-tripping is not attempted.
 
-## Migration
+## Landing
 
-Docs first at every step, per the repo rule. Each phase lands with: docs pages
-(model page per node kind, turn page per task kind, prompts as payload files), a
-benchmark case gating the new turn kind, a run on `bootstrap/example/f1` and `f2`,
-then the dogfood. The non-software profiles get their own fixture projects
-(`example-slides` exists; an organization and a narrative fixture join it).
-
-1. Stage 1 extensions: relationship cardinality, entity attributes, stereotypes,
-   the NFR facet.
-2. The `traces` axis, per-stage coverage marks, the profile setting, and the
-   stage dimension in `status.yaml` and the queue. No new stages yet; this is
-   the plumbing, landing together with the orchestration plan's registry
-   refactor.
-3. Stage 2, use cases, with the activity and oval projections. First stage with
-   derived provenance and the ratification loop; prove it here.
-4. Stage 3, domain model, with the class, package, and ER projections.
-5. Stage 4, instances, with the object projection and conformance checks.
-6. Stage 5, composition, with ADRs and the component, composite-structure, and
-   deployment projections. Generation-by-component follows once stable.
-7. Stage 6, dynamics, behind its narrow triggers, with sequence, communication,
-   timing, and interaction-overview projections.
+No phases: the whole design lands as one coordinated change. Docs first, per the
+repo rule: the `docs/compiler/` tree is rewritten to the new design (model pages
+per node kind, goal pages with contract paragraphs as payload files, skills as
+payload files), then `bootstrap` follows the docs. Validation is what holds the
+line: benchmark cases per goal kind gating executor profiles, runs on
+`bootstrap/example/f1` and `f2`, and the dogfood compiled under the full ladder.
+The non-software profiles get their own fixture projects (`example-slides`
+exists; an organization and a narrative fixture join it). Stages remain
+runtime-optional per project through `[stages]` and the profile; that is
+configuration, not a delivery sequence.
 
 ## Open questions
 
@@ -476,9 +467,10 @@ then the dogfood. The non-software profiles get their own fixture projects
   machinery; the alternative reading is that promoting it (every noun phrase in
   every stage must resolve to a term, undefined term is a diagnostic) is the
   cheapest new check with the highest leverage, and could land before stage 2.
-- ADR auto-acceptance in `auto` mode: silent structural decisions are the thing
-  this plan exists to prevent. Likely rule: `auto` accepts component detail,
-  never the partition ADR.
+- Where the docs-split vs graph-split line sits: the same size pressure can be
+  answered by splitting a section or splitting an entity, and which is right is
+  subjective. Declared an experiment; see
+  [size limits](./ir-graph.md#size-limits).
 - Profile inference: the medium decision is already recorded once per
   deliverable; whether the profile should default from it (a slide-deck medium
   implies the slides profile) or stay an explicit setting.

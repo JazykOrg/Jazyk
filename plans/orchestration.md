@@ -6,7 +6,7 @@ are the first customers of the registry defined here.
 ## The idea
 
 Jazyk already contains most of an orchestration system: a durable task queue derived
-from disk, leases and workers, a control plane with modes and releases, one focused
+from disk, leases and workers, a control plane with modes and releases, one bounded
 agent session per work item over ACP, trace events, a journal, and a GUI. What it does
 not have is a seam. The eight task kinds, their readiness rules, their packs, their
 toolsets, and their gates are hardcoded across `reconcile.rs`, `queue.rs`, `turn.rs`,
@@ -26,22 +26,24 @@ This is a generalization, not a framework adoption. The reasoning is in
 
 The word "agent" is overloaded. Jazyk splits it in two, and the split already exists:
 
-- The task kind (jazyk's side): what work exists, what one work item is, the prompt,
-  the context pack, the toolset, the validation gates, the finish contract. This is
-  the part the orchestration layer makes declarative.
+- The goal kind (jazyk's side): what work exists, what a goal means, its contract
+  paragraph, its resolution gate, its hints, its skills. This is the part the
+  orchestration layer makes declarative; the single generic agent contract that
+  consumes it is defined in [agent](./agent.md).
 - The executor (the agent's side): the model loop that drives a session. Already
   pluggable per [ACP profile](../docs/frontends/acp.md#agents): the embedded agent,
   OpenCode, Codex, or any ACP agent. Jazyk never hardcodes a model loop.
 
 So "define an agent with a prompt that handles docs-to-requirements and hands off to
-the next" decomposes into: a stage definition (below) plus an ACP profile choice per
-stage. Both are configuration and registration, neither is scattered code.
+the next" decomposes into: goal kinds in the registry (below) plus an ACP profile
+choice per goal family. Both are configuration and registration, neither is
+scattered code.
 
 ## The stage registry
 
 One Rust trait, one registry, every goal kind an implementation (a stage is a
 family of goal kinds; the goal system itself is defined in
-[ir-agents](./ir-agents.md#the-goal-catalog)). The trait surface
+[agent](./agent.md#the-goal-catalog)). The trait surface
 stays small because the shared machinery (queue, leases, gates, packs, journal,
 trace) is already generic underneath:
 
@@ -56,8 +58,8 @@ trace) is already generic underneath:
 - `ready(goal, board) -> Ready | Blocked(reason)`: the declarative ordering
   (readiness tiers, level rules, gating). The reason is a rendered sentence,
   because [visibility](#visibility) shows it.
-- `pack(store, batch) -> Pack`: assemble a goal batch's initial focus through the
-  context engine.
+- `pack(store, batch) -> Pack`: assemble a goal batch's initially loaded graph
+  through the context engine.
 - `toolset() -> &[ToolId]`: the task-scoped subset of the one tool registry.
 - `gates(changeset) -> Vec<Violation>`: batch checks at `done`, on top of the
   store's own per-mutation gates.
@@ -108,18 +110,15 @@ One global ACP profile becomes a default plus overrides:
 [acp]
 agent = "embedded"
 
-[stages.design-architecture]
+[stages.composition]
 agent = "claude-code"
-
-[stages.reconcile-doc]
-agent = "embedded"
 ```
 
-Extraction is cheap and local models handle it; architecture judgment wants the
-strongest model available. Per-stage profiles let a build mix them, which is the
-practical answer to cost on large projects. The benchmark grows a per-stage
-dimension: `jazyk benchmark` grades each stage's turn kinds against the profile
-assigned to it, so a weak pairing is measured before it is trusted.
+Extraction is cheap; composition judgment wants the strongest model available.
+Per-family profiles let a build mix them, which is the practical answer to cost
+on large projects. The benchmark grows a per-family dimension: `jazyk benchmark`
+grades each family's goal kinds against the profile assigned to it, so a weak
+pairing is measured before it is trusted.
 
 ## Visibility
 
@@ -203,26 +202,15 @@ and a standard export.
   five-plus new stages against four files each is exactly how the reconciler
   becomes unmaintainable.
 
-## Migration
+## Landing
 
-Behavior-preserving first, then the new surface:
-
-1. Extract the `Stage` trait and port the existing eight task kinds onto it. Pure
-   refactor: same queue, same waves, same gates, same docs. `cargo test` and the
-   benchmark hold the line.
-2. Typed effects: replace the `pending` block bookkeeping with recorded effects,
-   emitted and consumed per stage declaration. `status.yaml` format changes;
-   document it. `jazyk explain` lands here, since effects make it a rendering.
-3. `[stages]` activation config plus per-stage ACP profiles, with the benchmark's
-   per-stage dimension.
-4. Observability: per-stage cost aggregation, the GUI pipeline view, the OTel
-   export.
-5. The [IR stages](./ir-stages.md) then land as registrations, one phase at a time,
-   proving the seam on real new stages.
-
-Docs first at every step: the registry, effects, and explain surfaces get pages
-under `docs/compiler/`, and `control-plane.md`, `reconciler.md`, and `turns.md`
-absorb the changes.
+No phases. The registry, the goal board, the loading machinery, and the
+observability surfaces land as one coordinated change, docs first per the repo
+rule: `docs/compiler/` is rewritten to the new design (`reconciler.md`,
+`turns.md`, `control-plane.md` absorb goals, the registry, and the explain
+surfaces), and `bootstrap` follows the docs. `cargo test`, the benchmark (grown
+per goal kind), and the fixture projects hold the line; the dogfood compiles
+under the new design before anything is called done.
 
 ## Open questions
 

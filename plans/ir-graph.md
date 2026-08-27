@@ -1,7 +1,7 @@
 # Plan: the IR graph
 
 Status: draft for iteration. Detailed design under [ir-stages](./ir-stages.md).
-Companions: [ir-agents](./ir-agents.md) (who edits this graph and when),
+Companions: [agent](./agent.md) (who edits this graph and when),
 [ripple](./ripple.md) (how edits propagate and how to watch them).
 
 This file defines the shape: the node kinds, the edge algebra, how every UML diagram
@@ -28,11 +28,41 @@ Consequences:
 - A diagram cannot drift from the graph. It is rendered fresh from it, like the
   existing [relationships view](../docs/consumers/docsgen.md#relationships-view).
 - Editing a diagram is editing the graph. The GUI edits typed nodes through the
-  same write tools turns use; diagram text (Mermaid, PlantUML) is output, never
-  input. See [ripple](./ripple.md#edit-paths).
+  same write tools turns use; rendered diagram text is output, never input. See
+  [ripple](./ripple.md#edit-paths).
 - Every rendered element and edge can answer "why do you exist" by walking its
   provenance chain to a document sentence. See
   [justification closure](#justification-closure).
+
+## How a diagram is stored
+
+Stated once, because it was an open thread: a diagram is three layers, and only
+the first two are stored.
+
+- The semantic facts: nodes and edges in the graph (entities, relationships,
+  components, transitions, messages). This is the only editable truth, behind
+  the gates, with provenance.
+- The view: a `view:` node ([below](#view)) saying which facts one concrete
+  diagram includes (members, query, collapse). Stored in the graph like any
+  node, journaled, provenanced.
+- The rendering: a PlantUML file per view, written to
+  `<out>/diagrams/<kind>/<view-slug>.puml` on every build, deterministically,
+  the way docsgen pages are. When a PlantUML binary is configured, the build
+  also emits the rendered `.svg` beside it. These files are build output:
+  diffable, viewable in any PlantUML tooling, never hand-edited, never read
+  back. Deleting them loses nothing.
+
+PlantUML is the renderer, chosen over Mermaid for its full and faithful UML
+coverage (object, component, composite structure, deployment, timing, and
+communication diagrams render properly; Mermaid cannot). The GUI renders its
+interactive projections straight from the graph and does not go through the
+`.puml` files. Geometry, layout, and styling are never stored anywhere; the
+profile contributes only vocabulary and stereotype labels.
+
+A PlantUML block appearing inside a source document is the opposite thing:
+input. Parsing already treats it as a `diagram` section, and extraction reads
+its obligations as prose. Hand-written diagrams in docs are statements to
+compile; generated diagrams in the out directory are projections of the result.
 
 ## Any medium, one metamodel: profiles
 
@@ -131,7 +161,7 @@ New optional fields, all provenanced per fact:
   concepts is exactly what makes the graph a graph, and the edges it declares are
   what every diagram renders. Extraction guidance says so, and a multi-entity
   requirement without `edges` draws the `declare-edges` goal
-  ([the catalog](./ir-agents.md#the-goal-catalog); the TODO already plans a
+  ([the catalog](./agent.md#the-goal-catalog); the TODO already plans a
   benchmark case gating edge declaration).
 
 ### Relationship (derived, extended)
@@ -141,6 +171,11 @@ New optional fields, all provenanced per fact:
   the property that makes every class-diagram edge explainable, in every medium:
   "a House is composed of Rooms" and "an Act is composed of Chapters" are the same
   `composition` edge with different quotes behind them.
+- Directional. The node stays one per unordered pair (`rel:<a>~<b>`, lexical),
+  but contributions are recorded per direction: `a→b` and `b→a` each keep their
+  own type, cardinality, and contributing requirements ("A calls B" and "B
+  notifies A" are two arrows between one pair). Promotion never merges across
+  directions; each arrow renders and justifies itself.
 
 ### Use case
 
@@ -357,11 +392,26 @@ section and entity thresholds:
   direct children,
 - per state machine: maximum states before hierarchy is advised.
 
-A limit violation is never an error and never truncates a rendering silently: it
-opens an optional goal (`split-view`, `abstract-entity`) with hints, and the
-diagram renders meanwhile with collapse applied to the largest subtrees, marked
-as such. The agent is thereby steered toward abstraction (sub-entities,
-sub-views, moved detail) exactly where a human architect would introduce it.
+Every limit carries two thresholds. Crossing the soft one (getting big) opens an
+optional goal (`split-view`, `abstract-entity`) with hints; crossing the hard
+one (too big) escalates the goal to mandatory, so the build that tipped it also
+restructures, and cleanup debt cannot accumulate. A violation never truncates a
+rendering silently: the diagram renders meanwhile with collapse applied to the
+largest subtrees, marked as such. The agent is thereby steered toward
+abstraction (sub-entities, sub-views, moved detail) exactly where a human
+architect would introduce it, at the moment it becomes due.
+
+The docs have scalability limits of their own, and they stay on the human side
+of the mirror: a sentence overrunning, a paragraph or section too big, a file
+too big, ambiguity, discrepancies. Those surface as the document-quality
+diagnostics they already are (`section-too-large`, `doc-too-large`, joined by
+finer-grained prose lint), because prose is the human's to restructure. The
+boundary is genuinely subjective: an oversized entity can mean the graph should
+split the entity, or that the docs should split the section that feeds it. Where
+that line sits needs experiments, and the design keeps both paths open: the
+graph-side goal and the docs-side proposal
+([ripple](./ripple.md#ambiguity-is-the-debt)) can each resolve the same
+pressure.
 
 ## Edge algebra
 
@@ -507,10 +557,10 @@ Adjacent notations:
 
 ## Renderers
 
-- docsgen: Mermaid where it is capable (class, state, sequence, flowchart for
-  activity), PlantUML for the rest of the catalog (object, component, composite
-  structure, deployment, timing, communication, use case ovals). Both are text
-  artifacts in the out directory, diffable like everything else.
-- GUI: interactive projections with the justification walks as click paths.
+- PlantUML for the whole catalog, one `.puml` per view in the out directory,
+  `.svg` beside it when a PlantUML binary is configured. See
+  [how a diagram is stored](#how-a-diagram-is-stored).
+- GUI: interactive projections rendered from the graph directly, with the
+  justification walks as click paths.
 - Never stored, never hand-edited: a diagram file is build output, exactly like
   a docsgen page.

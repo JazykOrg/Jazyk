@@ -1,7 +1,7 @@
 # Plan: ripple, convergence, and observing it
 
 Status: draft for iteration. Detailed design under [ir-stages](./ir-stages.md).
-Companions: [ir-graph](./ir-graph.md) (the shapes), [ir-agents](./ir-agents.md)
+Companions: [ir-graph](./ir-graph.md) (the shapes), [agent](./agent.md)
 (who runs), [orchestration](./orchestration.md) (the registry and effects).
 
 The target is a stable system: docs, graph, diagrams, deliverable, and tests as one
@@ -31,7 +31,7 @@ whole system.
 
 Every human edit enters the system as one of four paths. All four end in the same
 place: goals derived by the reconciler, sessions scheduled, fixed point restored
-(the goal system is [ir-agents](./ir-agents.md)).
+(the goal system is [agent](./agent.md)).
 
 - Edit prose. The existing path: parse, align, dirty sections, `reconcile-doc`,
   cascade. Nothing new.
@@ -65,10 +65,31 @@ which kills quote-provenanced facts (existing GC), which dirties everything
 downstream of them through traces; derived facts whose upstream died are
 re-derived or garbage-collected with the same tombstone discipline entities have.
 
+## Ambiguity is the debt
+
+Natural language is the programming language here, so the doctrine is strict:
+anything the deliverable needs that the documents do not state is an ambiguity.
+Generation does not stall on it; it chooses with best judgment, records the
+choice, and raises it. The severity grades with the scope of what had to be
+invented: "build me a Facebook" is an error (the invention is the whole
+product), an unspecified out-of-memory behavior is a warning, an unspecified
+background color is info a human may suppress. Ratification is how the debt is
+repaid: every derived and decreed fact carries a proposal for the sentence the
+docs should gain, and the graph converges toward fully quoted.
+
+The docs absorb this detail by dividing, not by bloating: a document states the
+high level, sub-documents carry the detail, every one readable on its own. The
+existing machinery already points there: `doc-too-large` and `section-too-large`
+tell the human where to split, incoming links keep the parts bound to the whole,
+and ratification proposals can target a new sub-document (the draft-document
+path) rather than cramming a parent. How well this holds at scale is one of the
+plan's declared experiments
+([size limits](./ir-graph.md#size-limits)).
+
 ## Causality: goals carry their cause
 
 An effect (the [typed handoff](./orchestration.md#typed-handoffs)) materializes as
-a [goal](./ir-agents.md#the-goal) on the board, and the goal's cause record is the
+a [goal](./agent.md#the-goal) on the board, and the goal's cause record is the
 whole ripple story:
 
 ```yaml
@@ -79,12 +100,15 @@ goal:g-1042:
     generation: 87              # the changeset that opened it
     mutation: 3                 # which staged mutation in that changeset
     via: traces/refines         # the edge or computation that carried dirtiness
-  state: resolved               # open | resolved {generation} | parked | blocked
+  state: resolved               # open | resolved {generation, justification}
+                                # | failed {reason} | dismissed {reason, by}
+                                # | parked | blocked {on}
 ```
 
 - Every committed changeset (a session, a dual write, a decree, GC) already
   appends a journal entry with a generation number; the entry gains
-  `resolved_goals` (what this work closed) and `opened_goals` (what it caused).
+  `resolved_goals` (what this work closed, each with its one-line justification)
+  and `opened_goals` (what it caused).
   Human edits are generation-stamped the same way: a prose save that dirties
   sections journals an `edit` entry, so the root of every ripple is itself a
   generation.
@@ -155,5 +179,5 @@ Ripple must not mean runaway. The bounds, all existing machinery generalized:
 - Budgets: per-turn, per-build, per-stage; exhaustion parks with an
   `incomplete-build` diagnostic, resumed next build.
 - Flip detection per node kind catches oscillation across stages
-  ([ir-agents](./ir-agents.md#ordering-and-convergence)) and parks the pair for a
+  ([agent](./agent.md#ordering-and-convergence)) and parks the pair for a
   human answer.

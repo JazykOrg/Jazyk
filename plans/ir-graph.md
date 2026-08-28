@@ -215,16 +215,28 @@ hidden descendant lifts to the nearest shown ancestor:
 
 ## Size limits
 
-Limits make readability computed, not taste, configurable under `[limits]`:
-per view kind (maximum members and rendered edges), per entity (maximum
-requirements, maximum direct children), per state machine (maximum states). A
-state machine over its cap opens `abstract-entity` on its subject, since the
-machine derives from the subject's requirements.
+Limits make readability computed, not taste. They are built into the binary:
+the initial values below get tweaked as dogfooding teaches, and may be exposed
+as configuration later. Crossing the soft threshold opens an optional goal;
+crossing the hard one makes the goal mandatory, and compilation cannot report
+`converged` until the split, merge, or abstraction happens.
 
-Every limit carries two thresholds: crossing the soft one (getting big) opens
-an optional goal, the hard one (too big) makes it mandatory. Limit goals are
-[GC](./ir-stages.md#compile-and-garbage-collection) work: they resolve once
-their target's cone is quiet, holistically, seeing final counts. Dismissing a size goal is a graph
+| limit | soft (optional goal) | hard (must resolve) |
+|---|---|---|
+| requirements per entity | 50 | 80 |
+| direct children per entity | 10 | 20 |
+| members per class or component view | 20 | 30 |
+| rendered edges per view | 40 | 60 |
+| members per flow view (use case, activity, sequence) | 12 | 20 |
+| participants per sequence view | 8 | 12 |
+| instances per object view | 15 | 25 |
+| states per state machine | 12 | 20 |
+
+This table is the registry: a new limit joins it with both thresholds and the
+goal that resolves it. A state machine over its cap opens `abstract-entity` on
+its subject, since the machine derives from the subject's requirements. Limit
+goals are [GC](./ir-stages.md#compile-and-garbage-collection) work: they
+resolve once their target's cone is quiet, holistically, seeing final counts. Dismissing a size goal is a graph
 write, not goal state: the node's own limit is raised, recorded with decree
 provenance, and the goal stops deriving until the raised threshold is crossed
 in turn. A violation never truncates a rendering silently: the diagram renders

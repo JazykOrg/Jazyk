@@ -104,9 +104,11 @@ against the graph, and round-trip engineering is not attempted.
 
 ## Configuration
 
-`[limits]` holds the size thresholds. Modes, releases, workers, and leases
-stay with the control plane as implemented. There is no other knob: no
-profile, no feature flags, no stage toggles.
+There are no knobs: no profile, no feature flags, no stage toggles, and the
+size limits are built into the binary
+([the registry](./ir-graph.md#size-limits)), tweaked as dogfooding teaches and
+possibly exposed later. Modes, releases, workers, and leases stay with the
+control plane as implemented.
 
 ## Landing
 

@@ -1,7 +1,7 @@
 # Plan: the agent and the goal system
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and GC), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [ripple](./ripple.md) (propagation and observing), [orchestration](./orchestration.md)
 (implementation notes).
 
@@ -13,7 +13,7 @@ fixed contract (resolve the listed goals with the tools, over the loaded graph,
 finish with `done`); everything task-specific arrives as data. The executor is
 pluggable per ACP profile (the embedded agent, Claude Code, OpenCode), with
 overrides per goal kind or per goal class, so extraction can run cheap while
-cleanup judgment runs on the strongest model available.
+GC judgment runs on the strongest model available.
 
 The model never creates, routes, or prioritizes goals. It resolves them, fails
 them, or parks them. Derivation, grouping, readiness, gates, budgets, and
@@ -23,8 +23,8 @@ causality are harness code.
 
 Compilation is a goal board. The reconciler derives goals from disk state the
 way it derives the dirty set; a build is converged when both goal classes
-([compile and cleanup](./ir-stages.md#compile-and-cleanup)) derive an empty
-board of mandatory goals and the checks pass.
+([compile and GC](./ir-stages.md#compile-and-garbage-collection)) derive an
+empty board of mandatory goals and the checks pass.
 
 ```yaml
 g:retrace:view:usecase/holds:
@@ -42,10 +42,10 @@ g:retrace:view:usecase/holds:
 
 - Correctness debts (the graph no longer agrees with itself or the docs) are
   mandatory goals: compile work.
-- Restructuring pressure is cleanup work. A cleanup goal becomes ready only
-  when no compile goal is open in its target's cone, so restructuring always
-  sees settled content, and the build interleaves the two classes in bursts
-  rather than phases. Soft thresholds open optional goals, hard thresholds
+- Restructuring pressure is GC work (decoupling, splitting, combining). A GC
+  goal becomes ready only when no compile goal is open in its target's cone,
+  so restructuring always sees settled content, and the build interleaves the
+  two classes in bursts rather than phases. Soft thresholds open optional goals, hard thresholds
   escalate them to mandatory (the two thresholds on every
   [limit](./ir-graph.md#size-limits)); mandatory blocks convergence in either
   class.
@@ -98,14 +98,14 @@ stores goals, so it cannot grow with them.
   running session (same locality, fits the budget) or wait for a later one.
   The live trace and the GUI board show counts ticking down, each resolution
   landing with its justification.
-- As each locality's compile goals settle, its cleanup goals become ready and
-  run in a burst, often in the session that just finished the locality (the
-  graph is already loaded, the thinking is warm): `cleanup burst:
-  abstract-entity ent:order (54 > 50)`. A cleanup session sees the locality's
-  final counts, so an entity that doubled its requirements this build is
-  abstracted once, holistically. Cleanup commits can reopen compile goals (a
-  split entity re-enqueues its reviews); the loop runs compile for that cone
-  and returns, bounded by flip detection and budgets.
+- As each locality's compile goals settle, its GC goals become ready and run
+  in a burst, often in the session that just finished the locality (the graph
+  is already loaded, the thinking is warm): `gc burst: abstract-entity
+  ent:order (54 > 50)`. A GC session sees the locality's final counts, so an
+  entity that doubled its requirements this build is abstracted once,
+  holistically. GC commits can reopen compile goals (a split entity
+  re-enqueues its reviews); the loop runs compile for that cone and returns,
+  bounded by flip detection and budgets.
 - The verdict carries what remains (`converged, 2 blocked on answers,
   1 optional advised`), and [`jazyk ripple`](./ripple.md#observing-a-run)
   replays how any goal came to exist.
@@ -206,7 +206,7 @@ Compile goals:
 | `ratify` | B | a derived or decree fact awaits its prose | human accepts the docsgen proposal (dual write) or retracts the fact |
 | `answer` | B | a diagnostic carries an unanswered prompt | the human answers; applying the answer is a new goal with the answer as cause |
 
-Cleanup goals:
+GC goals:
 
 | kind | m | created when | resolved when (the gate) |
 |---|---|---|---|
@@ -309,15 +309,15 @@ best judgment.
 
 - Within compile, readiness tiers order the work: alignment before ingest,
   ingest before judgment, judgment before ledger goals; document link levels
-  order ingest batches, roots first. A cleanup goal is ready when its
-  target's cone is quiet; the two classes interleave in bursts.
+  order ingest batches, roots first. A GC goal is ready when its target's
+  cone is quiet; the two classes interleave in bursts.
 - Convergence: both classes derive empty of open or failed mandatory goals,
   checks clean. The verdict carries the counts: `converged`, or
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
 - Budgets: per session (rounds, mutations, context) and per build (goal
-  resolutions), compile outranking cleanup when tight. Parked goals resume
-  first next build.
-- Oscillation between the classes (cleanup splits, compile review merges back)
+  resolutions), compile outranking GC when tight. Parked goals resume first
+  next build.
+- Oscillation between the classes (GC splits, compile review merges back)
   is caught by flip detection on the target's natural key; the pair parks as
   one `unstable-derivation` diagnostic with both justifications side by side,
   blocked on a human.

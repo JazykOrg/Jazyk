@@ -35,26 +35,29 @@ can inspect.
 - Incrementality: a no-op rebuild derives zero goals and makes zero LLM calls.
   A change reaches exactly its cone, never the pyramid.
 
-## Compile and cleanup
+## Compile and garbage collection
 
 Goals come in two classes, and a build interleaves them in bursts.
 
 Compile goals bring the graph in line with the documents: dirty sections,
 changed statements needing re-judgment, dangling references, instance
-conformance, stale ledger rows. Cleanup goals restructure: an entity over its
-requirement cap, a view over its member cap, lookalike duplicates, missing
-edges, view curation.
+conformance, stale ledger rows. Garbage collection (GC) goals restructure and
+tidy: decoupling, splitting, combining. An entity over its requirement cap, a
+view over its member cap, lookalike duplicates, missing edges, view curation.
+GC also names the store's deterministic sweep that already runs at commit
+(orphaned facts deleted, tombstone redirects left): the sweep is the
+mechanical half, the GC goals the judgment half.
 
-One rule ties the classes together: a cleanup goal becomes ready only when no
+One rule ties the classes together: a GC goal becomes ready only when no
 compile goal is open in its target's cone. Restructuring therefore always sees
 settled content (an entity is abstracted knowing every requirement this build
 gives it, never a stream of partial states), but nothing waits for a global
-phase: as each locality's compile goals settle, its cleanup goals become
-ready, and the scheduler runs them right there, often in the session that just
-finished the locality, while the graph is loaded and the thinking is warm. A
-build is bursts of compile and cleanup, cone by cone.
+phase: as each locality's compile goals settle, its GC goals become ready, and
+the scheduler runs them right there, often in the session that just finished
+the locality, while the graph is loaded and the thinking is warm. A build is
+bursts of compile and GC, cone by cone.
 
-Cleanup mutations can reopen compile goals (a split entity re-enqueues its
+GC mutations can reopen compile goals (a split entity re-enqueues its
 reviews); the loop runs compile for that cone and returns, with flip detection
 and budgets bounding the alternation. The verdict reports both classes:
 `converged` only when no mandatory goal of either class is open or failed and
@@ -84,7 +87,7 @@ and machinery activates on what the graph contains:
   check (every behavior statement placed in a flow or marked, every
   failure-mode statement represented in a branch or flagged) rides with them.
 - Component and deployment views derive wherever containment and
-  interface-like structure exist, stated by prose or introduced by cleanup
+  interface-like structure exist, stated by prose or introduced by GC
   abstraction; the provider check (a required «interface»-like entity realized
   by exactly one provider) rides with them.
 

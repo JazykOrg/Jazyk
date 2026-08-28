@@ -1,7 +1,7 @@
 # Plan: the IR graph
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-compile and cleanup), [agent](./agent.md) (goals and sessions),
+compile and GC), [agent](./agent.md) (goals and sessions),
 [ripple](./ripple.md) (propagation and observing), [orchestration](./orchestration.md)
 (implementation notes).
 
@@ -223,8 +223,8 @@ machine derives from the subject's requirements.
 
 Every limit carries two thresholds: crossing the soft one (getting big) opens
 an optional goal, the hard one (too big) makes it mandatory. Limit goals are
-[cleanup](./ir-stages.md#compile-and-cleanup) work: they resolve once their
-target's cone is quiet, holistically, seeing final counts. Dismissing a size goal is a graph
+[GC](./ir-stages.md#compile-and-garbage-collection) work: they resolve once
+their target's cone is quiet, holistically, seeing final counts. Dismissing a size goal is a graph
 write, not goal state: the node's own limit is raised, recorded with decree
 provenance, and the goal stops deriving until the raised threshold is crossed
 in turn. A violation never truncates a rendering silently: the diagram renders

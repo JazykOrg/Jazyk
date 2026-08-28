@@ -1,7 +1,7 @@
 # Plan: ripple, convergence, and observing it
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and GC), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [agent](./agent.md) (goals and sessions), [orchestration](./orchestration.md)
 (implementation notes).
 
@@ -37,9 +37,10 @@ goals derived, sessions scheduled, fixed point restored.
   decompile drafts.
 
 Deletion runs the same paths in reverse: dead prose kills quotes, which kills
-quote-provenanced facts (garbage collection with tombstone redirects), which
-opens `retrace` goals on the views and instances that referenced them; derived
-data (relationships, state machines, default views) simply recomputes.
+quote-provenanced facts (the deterministic GC sweep, with tombstone
+redirects), which opens `retrace` goals on the views and instances that
+referenced them; derived data (relationships, state machines, default views)
+simply recomputes.
 
 ## Ambiguity
 
@@ -70,7 +71,7 @@ emerged details up into the IR and the docs.
 
 Every [goal](./agent.md#goals) carries its cause, and that record is the whole
 ripple story. Every committed changeset (a session, a dual write, a decree,
-garbage collection) appends a journal entry with a generation number; the entry
+the GC sweep) appends a journal entry with a generation number; the entry
 records `resolved_goals` (each with its one-line justification) and
 `opened_goals`. Human edits are generation-stamped the same way: a prose save
 that dirties sections journals an `edit` entry, so the root of every ripple is
@@ -88,7 +89,7 @@ Realtime:
 - The live trace: session lifecycle events, tool rows with condensed arguments,
   model text, per-session token counts, and `goal` events (opened or resolved,
   with cause). `--verbose` shows the cascade as it happens.
-- The GUI board: compile and cleanup as columns, goals as cards (open, blocked
+- The GUI board: compile and GC as columns, goals as cards (open, blocked
   with reason, parked, failed), arrows lighting up as causes fire. A card click
   opens the live session (the follow-session machinery).
 - `jazyk watch` prints one line per goal: what opened, why, what session took
@@ -115,7 +116,7 @@ edit g87 docs/orders.md /orders/holds (human)
    └─ bind req:orders-6: row stale (requirement-changed)
       └─ verify req:orders-6: fail (test asserts 21) → generate ent:order g90
          └─ verify req:orders-6: pass
-cleanup: no goals derived
+gc: no goals derived
 converged: 3 sessions, 2 recomputes, 29k tokens
 ```
 
@@ -132,8 +133,8 @@ Ripple must not mean runaway:
 - Idempotence: a session that re-derives an unchanged conclusion stages a no-op
   upsert; no mutation, no new goal, and that branch of the cascade dies. This
   is what makes convergence a fixed point rather than a loop.
-- Budgets: per session and per build, compile outranking cleanup when tight.
+- Budgets: per session and per build, compile outranking GC when tight.
   Exhaustion parks with an `incomplete-build` diagnostic, resumed next build.
   Unfinished work is never silent.
-- Flip detection catches oscillation, including between cleanup and compile,
-  and parks it for a human.
+- Flip detection catches oscillation, including between GC and compile, and
+  parks it for a human.

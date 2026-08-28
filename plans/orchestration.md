@@ -1,7 +1,7 @@
 # Plan: work orchestration
 
 Status: proposal for iteration. Read with [ir-stages](./ir-stages.md) (doctrine,
-compile and cleanup), [ir-graph](./ir-graph.md) (the graph and every diagram),
+compile and GC), [ir-graph](./ir-graph.md) (the graph and every diagram),
 [agent](./agent.md) (goals and sessions), [ripple](./ripple.md) (propagation
 and observing).
 
@@ -16,7 +16,7 @@ implementation. The trait surface stays small because the shared machinery
 (store, gates, context engine, journal, trace, control plane) is generic
 underneath:
 
-- `kind`: the goal kind name, and whether it is compile or cleanup work.
+- `kind`: the goal kind name, and whether it is compile or GC work.
 - `unit`: what one target is (a document, an entity, a cluster, a view), so the
   board and the GUI can render it.
 - `derive_goals(store, status) -> Vec<Goal>`: this kind's open goals from disk
@@ -67,7 +67,7 @@ One global ACP profile with overrides per goal kind or per goal class:
 agent = "embedded"
 
 [executors]
-cleanup = "claude-code"          # the holistic restructuring judgment
+gc = "claude-code"               # the holistic restructuring judgment
 reconcile-section = "embedded"   # extraction stays cheap
 ```
 
@@ -82,8 +82,8 @@ shows what needs grading.
   it would open. A rendering over derivable state.
 - The GUI board, the `jazyk preview` pane, and the follow sessions
   ([observing a run](./ripple.md#observing-a-run)).
-- Cost accounting: per-session token counts aggregate per goal kind, per build
-  stage, per build, and per document into `status.yaml` and the GUI ("this
+- Cost accounting: per-session token counts aggregate per goal kind, per goal
+  class, per build, and per document into `status.yaml` and the GUI ("this
   build: 41 sessions, 310k tokens, 78% in reconcile-section").
 - OpenTelemetry export, off by default: one span per build, session, and tool
   call, GenAI semantic-convention attributes on session spans, OTLP endpoint

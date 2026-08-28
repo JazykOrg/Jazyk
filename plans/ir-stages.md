@@ -112,6 +112,8 @@ control plane as implemented.
 
 ## Landing
 
+The execution checklist lives in [implementation](./implementation.md).
+
 One coordinated change, docs first per the repo rule: the `docs/compiler/` tree
 is rewritten to this design (model pages per kind, goal pages with contract
 paragraphs as payload files, skills as payload files), then `bootstrap` follows

@@ -13,7 +13,7 @@ When invoked, `sort` allows the following CLI args:
 
 ## Execution
 
-This is pseudo code:
+This is pseudo code or not:
 
 ```Pseudo
 Read CLI arguments, keep track of:

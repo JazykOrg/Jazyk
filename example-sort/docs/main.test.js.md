@@ -18,8 +18,8 @@ Test the following input:
 Expect:
 ```
 321
-453
 654
+453
 ```
 
 ### Reverse order

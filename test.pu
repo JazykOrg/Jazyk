@@ -1,0 +1,12 @@
+@startuml
+class Order {
+  +id: UUID
+  +total(): Money
+}
+
+class Customer {
+  +placeOrder(): Order
+}
+
+Customer "1" --> "*" Order : places
+@enduml

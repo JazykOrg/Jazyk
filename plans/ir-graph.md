@@ -503,13 +503,21 @@ Three layers, only the first two stored:
 - The rendering: build output, diffable, never hand-edited, never read back;
   deleting it loses nothing.
 
-One renderer, PlantUML, for the whole catalog:
+One renderer, PlantUML, for the whole catalog, in process:
 
 - Every view renders to `<out>/diagrams/<kind>/<slug>.puml` deterministically
-  on every build, and jazyk invokes the configured PlantUML binary to render
-  the picture beside it (`.png`, plus `.svg` where a surface wants vectors).
-  Without a configured binary the `.puml` files still land and every image
-  reference degrades to a link to them; nothing else breaks.
+  on every build, with the picture beside it as `.svg`. Rendering is the
+  `plantuml-little` crate: a pure-Rust reimplementation of PlantUML with
+  byte-exact SVG parity against the Java release (verified by its reference
+  suite), covering every type in the catalog, with Graphviz linked as a
+  prebuilt native library. No Java, no external tool, no degraded mode:
+  pictures are part of the build. A surface that needs raster gets `.png`
+  through an in-process SVG rasterizer (`resvg`).
+- The official PlantUML native binaries (GraalVM builds per platform, no Java
+  runtime) are the cross-check, not the renderer: the fixture views render
+  both ways and diff in CI, so a crate gap is measured before a reader meets
+  it. The crate is young; if it falls short, the native binary is the drop-in
+  replacement behind the same seam.
 
 The reading surfaces:
 

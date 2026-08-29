@@ -34,10 +34,10 @@ assert:
   - requirementCount:
       min: 6
   - requirementExists:
-      earsPattern: 'react'
+      statementPattern: 'react'
       entity: Frontend
   - requirementExists:
-      earsPattern: 'addProduct'
+      statementPattern: 'addProduct'
       entity: Inventory System
   - entityAbsent:
       namePattern: '^--|/|\.md|^addProduct$|^removeProduct$|^adjustStock$'

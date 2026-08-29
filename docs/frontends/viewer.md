@@ -15,10 +15,14 @@ never compiles.
 - Entities: id, `name`, `scope` when not `public`, `definition`, `aliases`, mentions
   (document, section, and the located `quote`), and the requirements referencing the
   entity.
-- Requirements: id, the `ears` statement, the entities it references, the `source`
-  quote, and its `edges` when declared.
-- Relationships: id, `type`, members, and the contributing requirement ids. Derived
-  nodes, shown as stored. See [derived data](../compiler/graph.md#derived-data).
+- Requirements: id, the `statement`, the entities it references, the provenance (the
+  `source` quote, or the `derived` or `decree` record), its `edges` when declared, and
+  its `transition` and `facets` when present.
+- Relationships: id, members, and each contribution group (direction, `type`,
+  cardinality, the contributing requirement ids). Derived nodes, shown as stored. See
+  [derived data](../compiler/graph.md#derived-data).
+- Views: id, `kind`, `title`, ordered members, and a link to the rendered `.svg` under
+  `<out>/diagrams/` when it exists. See [diagrams](../compiler/diagrams.md).
 - Diagnostics: id, `rule`, a severity chip, `lifecycle`, subjects, `message`, and
   `reasoning`.
 - Coverage: one row per document with covered, non-normative, and unprocessed section

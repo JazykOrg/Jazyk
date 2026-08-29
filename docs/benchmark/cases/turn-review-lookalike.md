@@ -43,13 +43,13 @@ given:
             quote: The backend system shall run as a single container.
     requirements:
       req:backend-1:
-        ears: The backend shall handle API requests and persistence.
+        statement: The backend shall handle API requests and persistence.
         entities: [ent:backend]
         source:
           section: 'docs/backend.md#/backend/role'
           quote: The backend shall handle API requests and persistence.
       req:deploy-1:
-        ears: The backend system shall run as a single container.
+        statement: The backend system shall run as a single container.
         entities: [ent:backend-system]
         source:
           section: 'docs/deploy.md#/deployment/runtime'

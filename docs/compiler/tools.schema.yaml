@@ -2,67 +2,11 @@ $schema: http://json-schema.org/draft-07/schema#
 $id: https://jazyk.org/schemas/tools.json
 title: Jazyk Tool Payloads
 description: >-
-  Input and output shapes for the tool registry. Each write tool has one request payload
-  definition. Shared node shapes are referenced from graph.json. Every call is validated
-  by the graph store's gates; a rejection is a toolError
+  Input and output shapes for the tool registry. Each tool has one request payload
+  definition and, where the reply carries structure, one response definition. Shared
+  node shapes are referenced from graph.json. Every call is validated by the graph
+  store's gates when staged; a rejection is a toolError
 definitions:
-  focus:
-    description: Hop quota per edge axis
-    type: object
-    properties:
-      parents:
-        type: integer
-        minimum: 0
-      mentions:
-        type: integer
-        minimum: 0
-      requirements:
-        type: integer
-        minimum: 0
-    additionalProperties: false
-  contextRequest:
-    description: Request payload of the context tool
-    type: object
-    required:
-      - target
-    properties:
-      target:
-        type: string
-        description: A section reference, entity id, or requirement id
-      focus:
-        $ref: '#/definitions/focus'
-      budget:
-        type: integer
-        minimum: 1
-        description: Maximum pack size in characters
-    additionalProperties: false
-  contextResponse:
-    description: Response of the context and expand tools
-    type: object
-    properties:
-      pack:
-        type: string
-        description: The rendered context pack, compact markdown with node ids inline
-      handles:
-        description: Expansion handles for frontiers the budget cut off
-        type: array
-        items:
-          type: object
-          required:
-            - handle
-          properties:
-            handle:
-              $ref: '#/definitions/expansionHandle'
-            description:
-              type: string
-            size:
-              type: integer
-              minimum: 0
-              description: Approximate size of the omitted frontier in characters
-  expansionHandle:
-    description: A stable token naming an omitted frontier, accepted by the expand tool
-    type: string
-    pattern: '^h:'
   toolError:
     description: A rejected call. Names the violated rule and how to repair the call
     type: object
@@ -74,14 +18,332 @@ definitions:
         type: string
       message:
         type: string
-  upsertEntity:
+  expansionHandle:
     description: >-
-      Request payload of upsert_entity. Keys on name plus scope; a match updates instead
-      of duplicating. Returns the entity id and whether it was created
+      A stable token naming an omitted frontier, accepted by the expand tool.
+      h:<target> for a stub in full, h:<target>:<axis> for one axis
+    type: string
+    pattern: '^h:'
+  batchId:
+    description: >-
+      A goal batch id, b<generation>-<n>: the generation the board derives from and the
+      batch's index within it. Derived with the board; an id from an earlier generation
+      names nothing
+    type: string
+    pattern: '^b[0-9]+-[0-9]+$'
+  handle:
+    description: One expansion handle as a reply renders it
+    type: object
+    required:
+      - handle
+    properties:
+      handle:
+        $ref: '#/definitions/expansionHandle'
+      description:
+        type: string
+      size:
+        type: integer
+        minimum: 0
+        description: Approximate size of the omitted frontier in characters
+    additionalProperties: false
+  loadRequest:
+    description: Request payload of load. Loads a node and its neighborhood into the loaded set
+    type: object
+    required:
+      - target
+    properties:
+      target:
+        type: string
+        description: A node id, a section reference, or a view id
+      depth:
+        type: integer
+        minimum: 1
+        default: 1
+        description: Hop count along the axes. The target in full, neighbors as stubs at depth 1
+    additionalProperties: false
+  expandRequest:
+    description: Request payload of expand. Loads the frontier behind a handle
+    type: object
+    required:
+      - handle
+    properties:
+      handle:
+        $ref: '#/definitions/expansionHandle'
+    additionalProperties: false
+  unloadRequest:
+    description: Request payload of unload. Drops one item from the loaded set
+    type: object
+    required:
+      - target
+    properties:
+      target:
+        type: string
+    additionalProperties: false
+  graphStatusRequest:
+    description: Request payload of graph_status. No arguments
+    type: object
+    additionalProperties: false
+  loadedResponse:
+    description: >-
+      Response of load and expand: the rendered items the call brought, the re-rendered
+      status block, and the handles for what the budget cut off
+    type: object
+    required:
+      - items
+      - status
+    properties:
+      items:
+        type: string
+        description: The rendered items, compact markdown with node ids inline
+      status:
+        type: string
+        description: The status block, the loaded set with its budget line
+      handles:
+        type: array
+        items:
+          $ref: '#/definitions/handle'
+      skill:
+        type: string
+        description: A skill auto-loaded by this call, rendered once
+    additionalProperties: false
+  statusResponse:
+    description: Response of unload and graph_status, and the condensed block on every mutating reply
+    type: object
+    required:
+      - status
+    properties:
+      status:
+        type: string
+    additionalProperties: false
+  searchRequest:
+    description: Request payload of search. Deterministic lookup over names and aliases
+    type: object
+    required:
+      - query
+    properties:
+      query:
+        type: string
+      kind:
+        type: string
+        enum:
+          - entity
+          - view
+        default: entity
+        description: Views are matched on title
+    additionalProperties: false
+  searchResponse:
+    description: >-
+      Response of search. A miss carries the graph's entities by id and name and a next
+      line saying to create the entity instead of searching again
+    type: object
+    required:
+      - hits
+    properties:
+      hits:
+        type: array
+        maxItems: 8
+        items:
+          type: object
+          required:
+            - id
+            - name
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            definition:
+              type: string
+          additionalProperties: false
+      entityCount:
+        type: integer
+        minimum: 0
+      entities:
+        description: Up to 25 entities by id and name, on a miss
+        type: array
+        maxItems: 25
+        items:
+          type: object
+          required:
+            - id
+            - name
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+          additionalProperties: false
+      next:
+        type: string
+    additionalProperties: false
+  readSectionRequest:
+    description: Request payload of read_section
+    type: object
+    required:
+      - ref
+    properties:
+      ref:
+        type: string
+        description: A section reference, /ref or doc.md#/ref
+    additionalProperties: false
+  getEntityRequest:
+    description: Request payload of get_entity
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+    additionalProperties: false
+  getViewRequest:
+    description: Request payload of get_view
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+    additionalProperties: false
+  diagnosticsRequest:
+    description: Request payload of diagnostics. Open diagnostics by default
+    type: object
+    properties:
+      lifecycle:
+        type: string
+        enum:
+          - open
+          - resolved
+          - all
+        default: open
+      rule:
+        type: string
+      subject:
+        type: string
+        description: A node id or section reference
+    additionalProperties: false
+  diagnosticsResponse:
+    description: Response of diagnostics
+    type: object
+    required:
+      - diagnostics
+    properties:
+      diagnostics:
+        type: array
+        items:
+          type: object
+          required:
+            - id
+            - rule
+            - severity
+            - lifecycle
+            - subjects
+            - message
+          properties:
+            id:
+              type: string
+            rule:
+              type: string
+            severity:
+              $ref: 'graph.json#/definitions/severity'
+            lifecycle:
+              type: string
+              enum:
+                - open
+                - resolved
+            triage:
+              type:
+                - string
+                - 'null'
+            subjects:
+              type: array
+              items:
+                type: string
+            message:
+              type: string
+            prompted:
+              type: boolean
+              description: Whether the diagnostic carries an unanswered prompt
+          additionalProperties: false
+    additionalProperties: false
+  mention:
+    description: Where an entity is mentioned. 'section' is a section reference
+    type: object
+    required:
+      - section
+      - quote
+    properties:
+      section:
+        type: string
+      quote:
+        type: string
+    additionalProperties: false
+  attributeInput:
+    description: >-
+      One attribute as a write tool carries it. Without its own provenance the attribute
+      takes the quote of the call that carries it
     type: object
     required:
       - name
-      - mention
+    properties:
+      name:
+        type: string
+      type:
+        type: string
+      value:
+        type: string
+      provenance:
+        $ref: 'graph.json#/definitions/provenance'
+    additionalProperties: false
+  upsertResponse:
+    description: Response of upsert_entity, upsert_requirement, and upsert_view
+    type: object
+    required:
+      - id
+      - created
+    properties:
+      id:
+        type: string
+      created:
+        type: boolean
+      updated:
+        type: boolean
+        description: True when the natural key matched an existing node and refreshed it
+      opens:
+        description: The goals this mutation will open at commit (bubbling)
+        type: array
+        items:
+          type: string
+      status:
+        type: string
+        description: The condensed status block
+    additionalProperties: false
+  mutationResponse:
+    description: Response of every other staging write tool
+    type: object
+    properties:
+      staged:
+        type: boolean
+      opens:
+        description: The goals this mutation will open at commit (bubbling)
+        type: array
+        items:
+          type: string
+      status:
+        type: string
+        description: The condensed status block
+    additionalProperties: false
+  upsertEntity:
+    description: >-
+      Request payload of upsert_entity. Keys on name plus scope, and parent when given;
+      a match updates instead of duplicating. Exactly one of mention or provenance
+    type: object
+    required:
+      - name
+    oneOf:
+      - required:
+          - mention
+      - required:
+          - provenance
     properties:
       name:
         type: string
@@ -94,24 +356,29 @@ definitions:
       scope:
         type: string
         default: public
+      stereotype:
+        type: string
+        description: Free-form judged label. Nothing enumerates the allowed values
+      parent:
+        type: string
+        description: Entity id of the containing entity. Must keep the tree acyclic
+      attributes:
+        type: array
+        items:
+          $ref: '#/definitions/attributeInput'
       mention:
-        description: Where the entity is mentioned. 'section' is a full section reference
-        type: object
-        required:
-          - section
-          - quote
-        properties:
-          section:
-            type: string
-          quote:
-            type: string
-        additionalProperties: false
+        $ref: '#/definitions/mention'
+      provenance:
+        description: Derived provenance for an entity the documents do not state
+        $ref: 'graph.json#/definitions/derivedProvenance'
       note:
         type: string
-        description: Required when the name looks like syntax rather than a concept
+        description: >-
+          Required when the name looks like syntax rather than a concept, or to keep a
+          name variant of an existing entity distinct
     additionalProperties: false
   updateEntity:
-    description: Request payload of update_entity. A rename keeps the id
+    description: Request payload of update_entity. A rename keeps the id; attributes upsert by name
     type: object
     required:
       - id
@@ -126,11 +393,19 @@ definitions:
         type: array
         items:
           type: string
+      stereotype:
+        type: string
+      parent:
+        type: string
+      attributes:
+        type: array
+        items:
+          $ref: '#/definitions/attributeInput'
     additionalProperties: false
   deleteEntity:
     description: >-
       Request payload of delete_entity. Rejected while any requirement references the
-      entity
+      entity or any entity names it as parent
     type: object
     required:
       - id
@@ -143,7 +418,7 @@ definitions:
     additionalProperties: false
   mergeEntities:
     description: >-
-      Request payload of merge_entities. The store rewires references and leaves a
+      Request payload of merge_entities. The store rewires every reference and leaves a
       redirect from the absorbed id to the survivor
     type: object
     required:
@@ -163,19 +438,23 @@ definitions:
   upsertRequirement:
     description: >-
       Request payload of upsert_requirement. The store mints the id; a supplied id is
-      ignored. The natural key (section plus punctuation-insensitive statement) makes
-      the call idempotent; a match resolves at stage time and returns the existing id
-      with updated true
+      ignored. Exactly one of section plus quote or a derived provenance. The natural
+      key (section plus punctuation-insensitive statement) makes the call idempotent; a
+      match resolves at stage time and returns the existing id with updated true
     type: object
     required:
-      - ears
+      - statement
       - entities
-      - section
-      - quote
+    oneOf:
+      - required:
+          - section
+          - quote
+      - required:
+          - provenance
     properties:
-      ears:
+      statement:
         type: string
-        description: The EARS statement
+        description: The obligation, free-form. One statement, one obligation
       entities:
         type: array
         minItems: 1
@@ -184,27 +463,37 @@ definitions:
           description: Entity id
       section:
         type: string
-        description: Full section reference the statement comes from
+        description: Section reference the statement comes from
       quote:
         type: string
         description: Verbatim text from the section
+      provenance:
+        description: Derived provenance for a requirement with no sentence behind it yet
+        $ref: 'graph.json#/definitions/derivedProvenance'
       edges:
-        description: Entity pairs the statement ties together
+        description: The relationships this statement causes, directional, among its entities
         type: array
         items:
           $ref: 'graph.json#/definitions/requirementEdge'
+      transition:
+        $ref: 'graph.json#/definitions/transition'
+      facets:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/facet'
     additionalProperties: false
   updateRequirement:
     description: >-
-      Request payload of update_requirement. section plus quote re-anchor the
-      provenance; the quote must locate verbatim in the section
+      Request payload of update_requirement. A field given replaces the stored one
+      whole. section plus quote re-anchor the provenance; the quote must locate
+      verbatim in the section
     type: object
     required:
       - id
     properties:
       id:
         type: string
-      ears:
+      statement:
         type: string
       entities:
         type: array
@@ -215,9 +504,17 @@ definitions:
         type: array
         items:
           $ref: 'graph.json#/definitions/requirementEdge'
+      transition:
+        oneOf:
+          - $ref: 'graph.json#/definitions/transition'
+          - type: 'null'
+      facets:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/facet'
       section:
         type: string
-        description: Full section reference the revised statement comes from
+        description: Section reference the revised statement comes from
       quote:
         type: string
         description: Verbatim text from the section
@@ -236,8 +533,8 @@ definitions:
     additionalProperties: false
   placeAnchor:
     description: >-
-      Request payload of place_anchor. Moves one proposed anchor to a section; the
-      align-doc turn only
+      Request payload of place_anchor. Moves one proposed anchor to a section; a
+      place-anchors session only
     type: object
     required:
       - id
@@ -246,7 +543,7 @@ definitions:
     properties:
       id:
         type: string
-        description: A requirement or entity id named by the work item's proposals
+        description: A requirement or entity id named by the batch's proposals
       section:
         type: string
         description: Target section reference, /ref or doc.md#/ref
@@ -255,7 +552,7 @@ definitions:
         description: Replacement quote; must locate in the target section
       reevaluate:
         type: boolean
-        description: List the anchor as a stale anchor for the target document's reconcile-doc turn
+        description: List the anchor as a stale anchor on the target section's reconcile-section goal
     additionalProperties: false
   orphanAnchor:
     description: Request payload of orphan_anchor. Leaves one proposed anchor homeless
@@ -266,8 +563,20 @@ definitions:
       id:
         type: string
     additionalProperties: false
+  diagnosticRule:
+    description: The judged rules a session or chat may file. The harness files the rest
+    type: string
+    enum:
+      - contradiction
+      - duplicate-entity
+      - duplicate-requirement
+      - missing-link
+      - ambiguity
+      - lint
+      - decision
+      - nonconformant-instance
   reportDiagnostic:
-    description: Request payload of report_diagnostic
+    description: Request payload of report_diagnostic. Keys on rule plus subjects. A decision carries a prompt
     type: object
     required:
       - rule
@@ -277,7 +586,7 @@ definitions:
       - reasoning
     properties:
       rule:
-        type: string
+        $ref: '#/definitions/diagnosticRule'
       severity:
         $ref: 'graph.json#/definitions/severity'
       subjects:
@@ -285,7 +594,7 @@ definitions:
         minItems: 1
         items:
           type: string
-          description: Node id
+          description: Node id or section reference
       message:
         type: string
       reasoning:
@@ -294,7 +603,7 @@ definitions:
         $ref: 'graph.json#/definitions/diagnosticPrompt'
     additionalProperties: false
   updateDiagnostic:
-    description: Request payload of update_diagnostic
+    description: Request payload of update_diagnostic. Replaces the prompt; null removes it
     type: object
     required:
       - id
@@ -305,22 +614,6 @@ definitions:
         oneOf:
           - $ref: 'graph.json#/definitions/diagnosticPrompt'
           - type: 'null'
-    additionalProperties: false
-  answerDiagnostic:
-    description: Request payload of answer_diagnostic (chat toolset)
-    type: object
-    required:
-      - id
-    properties:
-      id:
-        type: string
-      option:
-        description: Option index chosen
-        type: integer
-        minimum: 0
-      text:
-        description: Freeform reply
-        type: string
     additionalProperties: false
   resolveDiagnostic:
     description: Request payload of resolve_diagnostic
@@ -343,26 +636,573 @@ definitions:
     properties:
       section:
         type: string
-        description: Full section reference
+        description: Section reference
       state:
         $ref: 'graph.json#/definitions/coverageState'
       note:
         type: string
         description: Required when state is non-normative
     additionalProperties: false
+  upsertView:
+    description: >-
+      Request payload of upsert_view. Keys on kind plus title. reasoning becomes the
+      view's derived provenance, from the members
+    type: object
+    required:
+      - kind
+      - title
+      - reasoning
+    properties:
+      kind:
+        $ref: 'graph.json#/definitions/viewKind'
+      title:
+        type: string
+      members:
+        description: Ordered node ids. Entities for structural kinds, requirements for flow kinds
+        type: array
+        items:
+          type: string
+      query:
+        $ref: 'graph.json#/definitions/viewQuery'
+      collapse:
+        type: array
+        items:
+          type: string
+      excluded:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/exclusion'
+      reasoning:
+        type: string
+    additionalProperties: false
+  updateView:
+    description: >-
+      Request payload of update_view. members replaces the whole ordered list;
+      add_members and remove_members edit it. On a default view any field given clears
+      its boolean default field; the view is curated from then on
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      title:
+        type: string
+      members:
+        type: array
+        items:
+          type: string
+      add_members:
+        type: array
+        items:
+          type: string
+      remove_members:
+        type: array
+        items:
+          type: string
+      query:
+        oneOf:
+          - $ref: 'graph.json#/definitions/viewQuery'
+          - type: 'null'
+      collapse:
+        type: array
+        items:
+          type: string
+      exclude:
+        $ref: 'graph.json#/definitions/exclusion'
+      reasoning:
+        type: string
+    additionalProperties: false
+  deleteView:
+    description: Request payload of delete_view. Rejected on a default view
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  markGoalDone:
+    description: >-
+      Request payload of mark_goal_done. Validated against the goal kind's gate when
+      staged and again at commit; a false claim is rejected with the gate named
+    type: object
+    required:
+      - goal
+      - justification
+    properties:
+      goal:
+        $ref: 'graph.json#/definitions/goalId'
+      justification:
+        type: string
+        description: One or two sentences of why the goal is complete
+      evidence:
+        type: object
+        description: Kind-specific evidence the gate reads, e.g. a verdict per neighbor for rejudge-pair
+    additionalProperties: false
+  markGoalFailed:
+    description: Request payload of mark_goal_failed. Always accepted
+    type: object
+    required:
+      - goal
+      - reason
+    properties:
+      goal:
+        $ref: 'graph.json#/definitions/goalId'
+      reason:
+        type: string
+    additionalProperties: false
+  loadSkill:
+    description: Request payload of load_skill. Brings one skill into the session, under the per-session cap
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+        enum:
+          - extraction
+          - judgment
+          - flow-views
+          - structural-views
+          - abstraction
+          - conformance
+    additionalProperties: false
   done:
-    description: Request payload of done. Ends the turn and requests commit
+    description: Request payload of done. Ends the session, runs the batch gates, and requests commit
     type: object
     required:
       - summary
     properties:
       summary:
         type: string
+      beginNext:
+        type: boolean
+        default: false
+        description: Over MCP, claim the next ready batch in the same call
+    additionalProperties: false
+  doneResponse:
+    description: Response of done
+    type: object
+    required:
+      - committed
+    properties:
+      committed:
+        type: boolean
+      generation:
+        type: integer
+        minimum: 0
+        description: The generation the commit produced
+      next:
+        type: string
+        description: The next ready batch, named
+      instructions:
+        type: string
+        description: The next batch's assembled prompt, when beginNext claimed it
+      package:
+        type: string
+        description: The next batch's initially loaded set, when beginNext claimed it
+      verdict:
+        description: The build verdict, when the commit left no open goal and the tail ran
+        $ref: 'graph.json#/definitions/verdict'
+      generationReady:
+        description: Entities whose generate goals became ready
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  goalState:
+    description: The state of a goal on the board
+    type: object
+    required:
+      - state
+    properties:
+      state:
+        type: string
+        enum:
+          - open
+          - blocked
+          - parked
+          - failed
+      on:
+        type: string
+        description: What a blocked goal waits on
+      reason:
+        type: string
+        description: Why a failed goal failed
+    additionalProperties: false
+  goal:
+    description: One goal as the board renders it. Derived, never stored
+    type: object
+    required:
+      - id
+      - kind
+      - class
+      - mandatory
+      - target
+      - unit
+      - change
+      - state
+      - readiness
+    properties:
+      id:
+        $ref: 'graph.json#/definitions/goalId'
+      kind:
+        type: string
+      class:
+        type: string
+        enum:
+          - compile
+          - gc
+      mandatory:
+        type: boolean
+      target:
+        type: string
+        description: A node id, a section reference, a document path, or a pair a~b
+      unit:
+        type: string
+        description: What one target is, e.g. document, section, pair, entity, view, requirement, ledger row
+      change:
+        type: object
+        description: The change record the goal derives from; its identity across re-derivations
+      cause:
+        $ref: 'graph.json#/definitions/goalCause'
+      state:
+        $ref: '#/definitions/goalState'
+      readiness:
+        type: string
+        description: ready, or the blocking reason as a sentence
+      hints:
+        type: array
+        items:
+          type: string
+      gated:
+        type: boolean
+        description: Held behind a release under a manual mode
+      claimedBy:
+        type: string
+        description: The worker holding the goal's batch lease, when one does
+    additionalProperties: false
+  goalsResponse:
+    description: >-
+      Response of goals. The board, with the ready goals grouped into the batches the
+      scheduler would form; the verdict instead when no goal is open
+    type: object
+    properties:
+      goals:
+        type: array
+        items:
+          $ref: '#/definitions/goal'
+      batches:
+        description: The ready goals grouped into the batches the scheduler would form, each under its id
+        type: array
+        items:
+          type: object
+          required:
+            - batch
+            - goals
+          properties:
+            batch:
+              $ref: '#/definitions/batchId'
+            goals:
+              type: array
+              minItems: 1
+              items:
+                $ref: 'graph.json#/definitions/goalId'
+            executor:
+              type: string
+              description: The batch's resolved executor
+          additionalProperties: false
+      verdict:
+        $ref: 'graph.json#/definitions/verdict'
+    additionalProperties: false
+  beginGoals:
+    description: >-
+      Request payload of begin_goals. Claims the named batch, or the named goals as one
+      batch, or with neither the next ready batch. batch and goals are exclusive
+    type: object
+    not:
+      required:
+        - batch
+        - goals
+    properties:
+      batch:
+        description: A batch id from the goals reply. One the current board does not hold is refused
+        $ref: '#/definitions/batchId'
+      goals:
+        description: Goals claimed as one batch; they must share a locality and their kinds' executors must agree
+        type: array
+        minItems: 1
+        items:
+          $ref: 'graph.json#/definitions/goalId'
+      full:
+        type: boolean
+        default: false
+        description: Repeat the agent contract and every active skill even if already delivered
+    additionalProperties: false
+  beginGoalsResponse:
+    description: Response of begin_goals
+    type: object
+    required:
+      - batch
+      - goals
+      - instructions
+      - package
+    properties:
+      batch:
+        description: The batch id, the target of the worker protocol line
+        $ref: '#/definitions/batchId'
+      goals:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/goalId'
+      instructions:
+        type: string
+        description: The assembled session prompt
+      package:
+        type: string
+        description: The initially loaded set, rendered as the status block and its items
+      tools:
+        description: The batch's toolset, the union of its goal kinds' slices
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  abandonGoals:
+    description: Request payload of abandon_goals. Drops the staged changeset; the goals return to open
+    type: object
+    required:
+      - reason
+    properties:
+      reason:
+        type: string
+    additionalProperties: false
+  awaitChanges:
+    description: Request payload of await_changes, a long poll
+    type: object
+    properties:
+      timeout_seconds:
+        type: integer
+        minimum: 0
+        default: 300
+        description: 0 waits indefinitely
+    additionalProperties: false
+  awaitChangesResponse:
+    description: Response of await_changes
+    type: object
+    properties:
+      changedDocs:
+        type: array
+        items:
+          type: string
+      graphStale:
+        type: boolean
+        description: Documents changed but not yet reconciled
+      board:
+        type: object
+        description: Board counts
+        properties:
+          open:
+            type: integer
+            minimum: 0
+          blocked:
+            type: integer
+            minimum: 0
+          parked:
+            type: integer
+            minimum: 0
+          failed:
+            type: integer
+            minimum: 0
+          compile:
+            type: integer
+            minimum: 0
+          gc:
+            type: integer
+            minimum: 0
+        additionalProperties: false
+      openDiagnostics:
+        type: object
+        additionalProperties:
+          type: integer
+          minimum: 0
+      generationPending:
+        type: array
+        items:
+          type: string
+      verificationPending:
+        type: object
+        description: Rows needing action, grouped by reason
+        additionalProperties:
+          type: integer
+          minimum: 0
+      modes:
+        type: object
+        description: The workflow modes with their gated counts
+        additionalProperties: true
+    additionalProperties: false
+  reviseRequirement:
+    description: >-
+      Request payload of revise_requirement (chat). Replaces the quote in the prose and
+      updates the requirement in one changeset
+    type: object
+    required:
+      - id
+      - new_text
+    properties:
+      id:
+        type: string
+      new_text:
+        type: string
+      statement:
+        type: string
+    additionalProperties: false
+  addRequirement:
+    description: >-
+      Request payload of add_requirement (chat). Inserts text into the section and
+      creates the requirement sourced from it
+    type: object
+    required:
+      - doc
+      - section
+      - text
+      - statement
+      - entities
+    properties:
+      doc:
+        type: string
+      section:
+        type: string
+      after_quote:
+        type: string
+        description: Insert after this located sentence; at the section's end when absent
+      text:
+        type: string
+      statement:
+        type: string
+      entities:
+        type: array
+        minItems: 1
+        items:
+          type: string
+    additionalProperties: false
+  retractRequirement:
+    description: Request payload of retract_requirement (chat). Removes the sentence and deletes the requirement
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  editFact:
+    description: >-
+      Request payload of edit_fact (chat). A dual write when the fact is quoted and note
+      carries the accepted sentence; a decree otherwise
+    type: object
+    required:
+      - id
+      - field
+      - value
+    properties:
+      id:
+        type: string
+      field:
+        type: string
+        description: >-
+          statement, edges, transition, facets, definition, stereotype, parent,
+          attributes.<name>.type, attributes.<name>.value, or members
+      value:
+        description: The new value, shaped as the field is
+      note:
+        type: string
+        description: The accepted sentence rewrite, or the decree's note
+    additionalProperties: false
+  retractDecree:
+    description: Request payload of retract_decree (chat). Undoes one decree
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+      reason:
+        type: string
+    additionalProperties: false
+  bumpLimit:
+    description: >-
+      Request payload of bump_limit (chat). Sets one node's own threshold above the
+      built-in limit, with decree provenance in the journal
+    type: object
+    required:
+      - id
+      - limit
+      - value
+    properties:
+      id:
+        type: string
+        description: An entity or view id
+      limit:
+        $ref: 'graph.json#/definitions/limitName'
+      value:
+        type: integer
+        minimum: 1
+      note:
+        type: string
+    additionalProperties: false
+  answerDiagnostic:
+    description: Request payload of answer_diagnostic (chat). Records a human answer the agent relays
+    type: object
+    required:
+      - id
+    properties:
+      id:
+        type: string
+      option:
+        description: Option index chosen
+        type: integer
+        minimum: 0
+      text:
+        description: Freeform reply
+        type: string
+    additionalProperties: false
+  initProject:
+    description: Request payload of init_project (chat)
+    type: object
+    properties:
+      dir:
+        type: string
+    additionalProperties: false
+  updateProjectSettings:
+    description: >-
+      Request payload of update_project_settings (chat). Typed edits to jazyk.toml,
+      keyed like the settings file; each key given is rendered as a minimal edit
+    type: object
+    properties:
+      workflow:
+        type: object
+      docs:
+        type: object
+      acp:
+        type: object
+      executors:
+        type: object
+      gen:
+        type: object
+      roots:
+        type: object
     additionalProperties: false
   reportFeedback:
     description: >-
-      Request payload of report_feedback. Feedback about jazyk's own prompts and tools,
-      never about the project's documents
+      Request payload of report_feedback. Feedback about jazyk's own prompts, skills,
+      and tools, never about the project's documents
     type: object
     required:
       - kind
@@ -379,7 +1219,7 @@ definitions:
         description: An unrecognized value is recorded as other
       subject:
         type: string
-        description: What the feedback is about, e.g. a tool name, an argument, an instruction
+        description: What the feedback is about, e.g. a tool name, an argument, an instruction, a skill
       message:
         type: string
         description: What was unclear and what would have helped
@@ -390,7 +1230,7 @@ definitions:
     properties:
       recorded:
         type: boolean
-        description: False when the turn's feedback cap is already spent
+        description: False when the session's feedback cap is already spent
       note:
         type: string
     additionalProperties: false
@@ -416,15 +1256,17 @@ definitions:
       source:
         type: string
         enum:
-          - turn
+          - session
           - mcp
         description: The harness the call came through
-      task:
+      batch:
+        description: The goal ids of the open batch. Absent when no batch is open
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/goalId'
+      serving:
         type: string
-        description: Task type of the turn, or the MCP serving mode
-      target:
-        type: string
-        description: The turn's work item target. Absent for an MCP session, which has none
+        description: The MCP serving mode, for an MCP call
       model:
         type: string
       codec:
@@ -442,4 +1284,303 @@ definitions:
       client:
         type: string
         description: MCP client name reported at initialize
+    additionalProperties: false
+  testRow:
+    description: One test a manifest or binding declares
+    type: object
+    required:
+      - kind
+      - label
+      - artifact
+      - name
+      - run
+    properties:
+      requirement:
+        type: string
+        description: Requirement id. Implied by the row in record_binding
+      kind:
+        type: string
+        enum:
+          - programmatic
+          - llm
+      label:
+        type: string
+      artifact:
+        type: string
+        description: Deliverable-relative path of the test file, or the criteria file for an llm row
+      name:
+        type: string
+      run:
+        type: string
+      cwd:
+        type: string
+    additionalProperties: false
+  buildSpec:
+    description: The one command that produces the deliverable's artifact when its medium must be built
+    type: object
+    required:
+      - run
+      - produces
+    properties:
+      run:
+        type: string
+      cwd:
+        type: string
+      produces:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  generationTasksResponse:
+    description: Response of generation_tasks
+    type: object
+    required:
+      - entities
+    properties:
+      entities:
+        type: array
+        items:
+          type: object
+          required:
+            - entity
+            - reason
+          properties:
+            entity:
+              type: string
+            reason:
+              type: string
+            changed:
+              description: Requirement ids added, removed, or reworded since the last generation
+              type: array
+              items:
+                type: string
+          additionalProperties: false
+    additionalProperties: false
+  beginGeneration:
+    description: Request payload of begin_generation
+    type: object
+    required:
+      - entity
+    properties:
+      entity:
+        type: string
+    additionalProperties: false
+  recordGeneration:
+    description: Request payload of record_generation. The manifest binds the written files to the graph
+    type: object
+    required:
+      - entity
+      - factHash
+      - manifest
+    properties:
+      entity:
+        type: string
+      factHash:
+        type: string
+        description: From the begin_generation package
+      manifest:
+        type: object
+        required:
+          - files
+          - tests
+        properties:
+          files:
+            type: array
+            items:
+              type: string
+          tests:
+            type: array
+            items:
+              $ref: '#/definitions/testRow'
+          build:
+            $ref: '#/definitions/buildSpec'
+        additionalProperties: false
+      choices:
+        description: What the worker had to invent, each recorded as an invented-choice diagnostic graded by scope
+        type: array
+        items:
+          type: object
+          required:
+            - choice
+            - scope
+            - reasoning
+          properties:
+            choice:
+              type: string
+              description: The choice in one sentence
+            scope:
+              type: string
+              enum:
+                - product
+                - behavior
+                - detail
+              description: product is an error, behavior a warning, detail a suppressible info
+            reasoning:
+              type: string
+            requirements:
+              type: array
+              items:
+                type: string
+          additionalProperties: false
+    additionalProperties: false
+  bindingTasksResponse:
+    description: Response of binding_tasks
+    type: object
+    required:
+      - rows
+    properties:
+      rows:
+        type: array
+        items:
+          type: object
+          required:
+            - requirement
+            - reason
+          properties:
+            requirement:
+              type: string
+            reason:
+              type: string
+              enum:
+                - unbound
+                - requirement-changed
+                - artifact-gone
+          additionalProperties: false
+    additionalProperties: false
+  beginBinding:
+    description: Request payload of begin_binding
+    type: object
+    required:
+      - requirement
+    properties:
+      requirement:
+        type: string
+    additionalProperties: false
+  recordBinding:
+    description: Request payload of record_binding. An empty files list is the honest record of an unimplemented requirement
+    type: object
+    required:
+      - requirement
+      - files
+      - test
+      - verdict
+    properties:
+      requirement:
+        type: string
+      files:
+        type: array
+        items:
+          type: string
+      test:
+        $ref: '#/definitions/testRow'
+      verdict:
+        type: string
+        enum:
+          - pass
+          - fail
+      evidence:
+        type: string
+    additionalProperties: false
+  verificationTasks:
+    description: Request payload of verification_tasks
+    type: object
+    properties:
+      filter:
+        type: string
+        description: A reason to narrow to
+      entity:
+        type: string
+    additionalProperties: false
+  verificationTasksResponse:
+    description: Response of verification_tasks
+    type: object
+    required:
+      - rows
+    properties:
+      rows:
+        type: array
+        items:
+          type: object
+          required:
+            - requirement
+            - status
+            - reason
+          properties:
+            requirement:
+              type: string
+            entity:
+              type: string
+            status:
+              type: string
+            reason:
+              type: string
+              enum:
+                - not-generated
+                - artifact-gone
+                - never-run
+                - requirement-changed
+                - test-changed
+                - code-changed
+                - failed
+                - missing
+          additionalProperties: false
+    additionalProperties: false
+  beginVerification:
+    description: Request payload of begin_verification
+    type: object
+    required:
+      - requirement
+    properties:
+      requirement:
+        type: string
+    additionalProperties: false
+  runTests:
+    description: Request payload of run_tests. Every programmatic row when requirements is absent
+    type: object
+    properties:
+      requirements:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  recordVerdict:
+    description: Request payload of record_verdict
+    type: object
+    required:
+      - requirement
+      - verdict
+    properties:
+      requirement:
+        type: string
+      verdict:
+        type: string
+        enum:
+          - pass
+          - fail
+      factHash:
+        type: string
+      evidence:
+        type: string
+    additionalProperties: false
+  beginDecompile:
+    description: Request payload of begin_decompile
+    type: object
+    required:
+      - scope
+    properties:
+      scope:
+        type: string
+    additionalProperties: false
+  submitDraft:
+    description: Request payload of submit_draft. Validates the draft and writes it into the docs tree
+    type: object
+    required:
+      - path
+      - content
+    properties:
+      path:
+        type: string
+        description: Docs-relative path under the docs glob
+      content:
+        type: string
     additionalProperties: false

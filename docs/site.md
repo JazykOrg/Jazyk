@@ -21,22 +21,25 @@ pointed at [jazyk.org](https://jazyk.org).
   unreliable, small well-defined ones are not, so treat documentation as source code.
 - The graph as the build artifact: a persistent [semantic graph](./compiler/model.md)
   edited in place, never regenerated, queryable by tools.
-- A compile trace snippet: a few [trace events](./compiler/turns.md#trace-events) from a
-  real run, showing tool calls and staged mutations round by round.
+- A compile trace snippet: a few [trace events](./compiler/sessions.md#trace-events) from
+  a real run, showing goals resolved, tool calls, and staged mutations round by round.
+- One rendered diagram from the dogfood, with the sentence behind one of its arrows.
 
 ### Compilation (/compilation)
 
 - How reconciliation works, in order:
-  - parse and diff the documents into the [dirty set](./compiler/reconciler.md#dirty-set),
-  - run [turns](./compiler/turns.md) that mutate the graph through
+  - parse and diff the documents into the [dirty set](./compiler/reconciler.md#dirty-set)
+    and derive the [goal board](./compiler/reconciler.md#goal-derivation),
+  - run [sessions](./compiler/sessions.md) that resolve goal batches through
     [tools](./compiler/tools.md),
-  - repeat in [waves](./compiler/compilation.md#waves) until
-    [convergence](./compiler/compilation.md#convergence) at a fixed point.
+  - repeat in [bursts of compile and GC](./compiler/compilation.md#compile-and-garbage-collection)
+    until [convergence](./compiler/compilation.md#convergence) at a fixed point.
 - One diagram of the [build lifecycle](./compiler/compiler.md#build-lifecycle).
 
 ### Graph (/graph)
 
-- What the semantic graph holds: the five [node types](./compiler/model.md#node-types)
-  and the [edge axes](./compiler/model.md#edge-axes).
-- Example YAML of one entity and one requirement, verbatim from the
-  [graph store](./compiler/graph.md#storage-layout).
+- What the semantic graph holds: the [node kinds](./compiler/model.md#node-kinds)
+  and the [edges](./compiler/model.md#edge-summary) between them.
+- Example YAML of one entity, one requirement, and one view, verbatim from the
+  [graph store](./compiler/graph.md#storage-layout), beside the
+  [diagram](./compiler/diagrams.md) the view renders.

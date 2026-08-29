@@ -5,7 +5,7 @@ defines outside-world terms and a roadmap of wishes carry no obligations: the co
 turn marks both sections `non-normative` and mints nothing. The two classic failures
 this case catches, both observed in real runs: the document itself becomes an entity
 (`ent:glossary`), or a glossary term gets extracted as a requirement. See
-[task types](../../compiler/turns.md#task-types).
+[the reconcile-section goal](../../compiler/goals/reconcile-section.md).
 
 ```yaml
 name: turn-navigation

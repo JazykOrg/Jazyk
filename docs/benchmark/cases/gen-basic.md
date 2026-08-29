@@ -36,19 +36,19 @@ given:
             quote: The Greeter is a POSIX shell script named hello.sh.
     requirements:
       req:greeter-1:
-        ears: The Greeter shall be a POSIX shell script named hello.sh.
+        statement: The Greeter shall be a POSIX shell script named hello.sh.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter
           quote: The Greeter is a POSIX shell script named hello.sh.
       req:greeter-2:
-        ears: The Greeter shall print exactly `Hello, Jazyk!` to stdout and exit 0.
+        statement: The Greeter shall print exactly `Hello, Jazyk!` to stdout and exit 0.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter
           quote: Running it prints exactly
       req:greeter-3:
-        ears: When run with `-q`, the Greeter shall print nothing and exit 0.
+        statement: When run with `-q`, the Greeter shall print nothing and exit 0.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter

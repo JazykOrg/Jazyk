@@ -26,7 +26,7 @@ given:
       When the Customer places an order, the system shall create an Order.
 assert:
   - requirementExists:
-      earsPattern: 'places an order'
+      statementPattern: 'places an order'
       entity: ent:customer
   - entityCount:
       max: 2

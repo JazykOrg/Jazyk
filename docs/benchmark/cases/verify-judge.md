@@ -31,7 +31,7 @@ given:
             quote: The MOTD file greets with exactly `Welcome aboard.` on its first line.
     requirements:
       req:motd-1:
-        ears: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
+        statement: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
         entities: [ent:motd]
         source:
           section: docs/motd.md#/motd
@@ -72,7 +72,7 @@ given:
             quote: The MOTD file greets with exactly `Welcome aboard.` on its first line.
     requirements:
       req:motd-1:
-        ears: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
+        statement: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
         entities: [ent:motd]
         source:
           section: docs/motd.md#/motd

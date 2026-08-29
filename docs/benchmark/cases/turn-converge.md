@@ -36,7 +36,7 @@ given:
             quote: When the customer checks out, the system shall empty the Cart.
     requirements:
       req:shop-1:
-        ears: When the customer checks out, the system shall empty the Cart.
+        statement: When the customer checks out, the system shall empty the Cart.
         entities: [ent:customer, ent:cart]
         source:
           section: 'docs/shop.md#/shop/checkout'

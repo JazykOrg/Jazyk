@@ -4,6 +4,9 @@ A directory containing `jazyk.toml` is a Jazyk project. The file marks the proje
 and all globs resolve relative to it. The CLI walks up from the current directory to find
 it. The schema is [`project-settings.schema.yaml`](./project-settings.schema.yaml).
 
+Limits and budgets are not settings: they are built into the binary as the
+[limits registry](./graph.md#limits), and the project file carries none.
+
 ## Redirect
 
 A `jazyk.toml` may contain only a redirect, pointing discovery at a nested directory:
@@ -42,8 +45,8 @@ Some paths are never doc input, regardless of the glob:
 
 - The resolved [output directory](../frontends/cli.md) (default `jazyk-out`, or the
   `--out` override). The compiler never reads its own output as source.
-- Any directory whose name starts with `jazyk-out` (e.g. a local backup of generated
-  output).
+- Any directory whose name starts with `jazyk-out` (e.g. the `jazyk-out.bak` archive
+  the [store version](./graph.md#store-version) check leaves behind).
 - Hidden directories (name starting with `.`), `target`, and `node_modules`.
 
 The [deliverable directory](#generation) is excluded too, but through the glob rather
@@ -51,6 +54,10 @@ than unconditionally: an implicit `!<deliverable>/**` pattern runs before the
 configured patterns, so a later inclusion whitelists paths back in. With the defaults
 (deliverable `.`, glob `docs/**/*.md`) the whole project is excluded as generated
 product and the `docs/` tree is included again as source.
+
+Prompt and skill payloads are excluded from the glob by the project that hosts them:
+they are instructions to a model, not prose about the subject
+([the prompt](./sessions.md#the-prompt)).
 
 ### Handlers
 
@@ -67,9 +74,10 @@ path = "./handlers/drawio.wasm"
 ### Linting
 
 Linting rules are plain English, grouped by the severity they produce. Rules are
-evaluated during [review turns](./turns.md#task-types) and the
-[checks wave](./compilation.md#waves). Findings become
-[diagnostics](./model/diagnostic.md): `warnings` let `jazyk check` pass, `errors` fail it.
+evaluated by [`review-entity`](./goals/review-entity.md) sessions and by the
+[checks](./compilation.md#checks). Findings become
+[diagnostics](./model/diagnostic.md) under the `lint` rule: `warnings` let `jazyk check`
+pass, `errors` fail it.
 
 ```toml
 [docs.linting.rules]
@@ -79,7 +87,8 @@ errors = ["Unimplemented or TODO sections"]
 
 ## LLM
 
-[Turns](./turns.md) call an OpenAI-compatible chat completions endpoint.
+The [embedded agent](../frontends/acp.md#the-embedded-agent) calls an OpenAI-compatible
+chat completions endpoint.
 
 ```toml
 [llm]
@@ -98,7 +107,7 @@ temperature = 0
   deltas, including any `reasoning_content` or `reasoning` deltas, so it carries the
   same fields as a non-streaming reply. Some providers reject reasoning fields echoed
   back in the message history; on such a rejection the client strips them from outgoing
-  messages for the rest of the run. The turn transcript and trace keep the text (see
+  messages for the rest of the run. The session transcript and trace keep the text (see
   [the embedded agent](../frontends/acp.md#the-embedded-agent)).
 - `model`: the model id.
 - `api_key_env`: the environment variable holding the API key. A literal `api_key` may be
@@ -125,8 +134,8 @@ them.
 
 ## ACP
 
-The downstream [ACP agent](../frontends/acp.md#agents) that performs AI work. All
-optional; the default agent is `embedded`.
+The downstream [ACP agent](../frontends/acp.md#agents) that runs
+[sessions](./sessions.md#execution). All optional; the default agent is `embedded`.
 
 ```toml
 [acp]
@@ -147,8 +156,8 @@ args = ["--yes", "@zed-industries/codex-acp"]
   `jazyk agent` with `serve_files = true` and needs no profile.
 - `[acp.agents.<name>]`: one profile per agent. `command` and `args` launch it;
   `env` adds environment variables; `serve_files` (default `false`) makes jazyk
-  serve file and command tools into the agent's sessions, for agents that bring no
-  editor of their own.
+  serve the [file and command tools](./goals/generate.md#file-and-command-tools) into
+  the agent's `generate` sessions, for agents that bring no editor of their own.
 
 Like the LLM settings, agent profiles describe the machine as much as the project:
 the same `[acp]` table in the global config is the machine default, and values
@@ -160,13 +169,61 @@ resolve per field, highest priority first:
 4. Global config: `~/.jazyk/config.toml` (or `~/.jazyk.toml`).
 5. Built-in default: `embedded`.
 
+The `[acp]` agent runs every session unless an [executor](#executors) override names
+another profile for the session's goal kind or class.
+
+## Executors
+
+The `[executors]` table overrides the `[acp]` agent per goal kind or per goal class, so
+extraction can run on a cheap agent while GC judgment runs on the strongest one
+available ([executors](./control-plane.md#executors)). All optional.
+
+```toml
+[acp]
+agent = "embedded"
+
+[executors]
+gc = "claude-code"               # every GC goal kind
+reconcile-section = "embedded"   # one compile goal kind
+```
+
+- A key is a goal kind that runs in a session (`place-anchors`, `reconcile-section`,
+  `rejudge-pair`, `review-entity`, `retrace`, `conform-instance`, `bind`, `generate`,
+  `verify`, `declare-edges`, `dedupe-candidates`, `curate-view`, `split-view`,
+  `abstract-entity`; see [goal derivation](./reconciler.md#goal-derivation)) or a goal class
+  (`compile`, `gc`). Any other key is a settings error naming the accepted keys.
+- A value is a profile name: `embedded`, or a `[acp.agents.<name>]` profile. A value
+  naming no profile is a settings error naming the profiles that exist.
+- `ratify` and `answer` run no session and take no executor.
+
+The executor for one batch resolves in this order, first match wins:
+
+1. CLI flag: `--agent`, one profile for every session of the run.
+2. Environment variable: `JAZYK_ACP_AGENT`.
+3. `[executors].<kind>` for each goal kind in the batch, the project table over the
+   global config's.
+4. `[executors].<class>` for the batch's goal class, the project table over the global
+   config's.
+5. The `[acp]` agent, resolved as [above](#acp).
+
+The same `[executors]` table in `~/.jazyk/config.toml` is the machine default; a project
+key overrides a global key of the same name. A batch holds goals of one class and one
+tier whose kinds all resolve to the same executor; several kinds may share it. The
+choice is unambiguous because the scheduler resolves the executor per kind before it
+batches ([executors](./control-plane.md#executors),
+[batching](./reconciler.md#batching)). Chat sessions, answer sessions, and follow
+sessions always use the `[acp]` agent. The resolved profile is recorded on the session's trace and worker file, and
+per-kind and per-class token costs in `status.yaml` (`costs`) are what make the choice
+informed ([storage layout](./graph.md#storage-layout)). Editing the table is a
+[project tool](../frontends/acp.md#project-tools) in chat too.
+
 ## Roots
 
 `roots.files` is a glob list (matched like [`docs.glob`](#glob)) naming the root
-documents. Roots seed [reconciler scheduling](./reconciler.md#scheduling): the root
-document reconciles first, so the core vocabulary exists before other documents need it.
-Roots also anchor reachability [checks](./compilation.md#waves): an entity unreachable
-from a root is flagged.
+documents. Roots seed [readiness](./reconciler.md#readiness): `reconcile-section` goals
+order by document link level from the roots, so the core vocabulary exists before other
+documents need it. Roots also anchor the reachability [check](./compilation.md#checks):
+an entity unreachable from a root is flagged `unreachable-entity`.
 
 ```toml
 [roots]
@@ -192,8 +249,8 @@ code = ["src/**", "tests/**"]
   ledger, criteria files) always stays in the out directory; only the product lands
   here.
 
-- `worker`: the built-in generation worker. `agentic` (default) runs each entity as a
-  [generation turn](./turns.md#generation-turns) with file and command tools;
+- `worker`: the built-in generation worker. `agentic` (default) runs each
+  [`generate`](./goals/generate.md) goal as a session with file and command tools;
   `pipeline` keeps the fixed file-reply sequence, for models too weak to drive tools.
 
 - `code`: a glob list (matched like [`docs.glob`](#glob), relative to the
@@ -219,9 +276,9 @@ worker = "agent"
 ```
 
 - `compile`, `generate`: `manual` (default) or `auto`. `manual` gates the work
-  behind a [release](./control-plane.md#modes-and-releases): changes queue, nothing
-  acts until approved. `auto` lets a watcher act on changes as they land; it spends
-  LLM budget, so it is opt-in. Explicit commands (`jazyk compile`, `jazyk gen`,
+  behind a [release](./control-plane.md#modes-and-releases): goals wait on the board,
+  nothing acts until approved. `auto` lets a watcher act on changes as they land; it
+  spends LLM budget, so it is opt-in. Explicit commands (`jazyk compile`, `jazyk gen`,
   `jazyk watch`) are their own approval and run under either mode.
 - `worker`: who acts on a GUI release. `internal`, `agent`, or `any` (default).
   See [dispatch](./control-plane.md#dispatch).
@@ -230,47 +287,13 @@ These are defaults; the live values sit in `control.yaml` in the out directory,
 where a GUI toggle or CLI flag changes them at runtime without editing the project
 file. Deleting `control.yaml` returns to the defaults.
 
-## Limits
-
-[Turn and build budgets](./turns.md#budgets). All optional.
-
-```toml
-[limits]
-turn_rounds = 24
-turn_mutations = 64
-context_budget = 24000
-build_turn_factor = 3
-max_section_chars = 6000
-max_doc_sections = 40
-max_entity_requirements = 50
-align_move_similarity = 0.5
-align_split_coverage = 0.6
-```
-
-- `turn_rounds`: maximum message rounds per turn. Default 24.
-- `turn_mutations`: maximum staged mutations per turn. Default 64.
-- `context_budget`: maximum context pack size in characters. Default 24000.
-- `build_turn_factor`: sets the per-build turn cap as
-  `build_turn_factor × (dirty documents + touched entities)`. Default 3. See
-  [convergence](./compilation.md#convergence).
-- `max_section_chars`: a section body over this size draws `section-too-large`.
-  Default 6000.
-- `max_doc_sections`: a document with more sections draws `doc-too-large`. Default 40.
-- `max_entity_requirements`: an entity with more requirements draws `entity-too-dense`,
-  the signal to split the topic into subsections. Default 50. Code generation divides
-  dense entities into parts regardless
-  ([dense entities](../consumers/gen.md#dense-entities-generate-in-parts)).
-- `align_move_similarity`: the shingle similarity at or above which
-  [alignment](./alignment.md#phases) pairs an old and a new section as a move.
-  Default 0.5.
-- `align_split_coverage`: the share of an old section's shingles that two or more new
-  sections must cover together for a split (or the mirror for a merge). Default 0.6.
-
 ## Environment tuning
 
-Run-level knobs are environment variables only, since they tune one run, not the project:
+Run-level knobs are environment variables only, since they tune one run, not the project.
+They bound the endpoint and the process; session and build budgets are
+[registry constants](./sessions.md#budgets), and builds are
+[sequential](./control-plane.md#sequential-builds), so there is no concurrency knob.
 
-- `JAZYK_MAX_CONCURRENCY`: cap on parallel turns within a level (default 6).
 - `JAZYK_MAX_RETRIES`: retries, in addition to the first attempt, for a failed LLM call
   (default 2). A transient transport failure retries after a 5 second pause; a
   rate-limited call waits 20 seconds. Hammering a struggling endpoint only makes it
@@ -293,9 +316,14 @@ Run-level knobs are environment variables only, since they tune one run, not the
 - `JAZYK_CALL_TIMEOUT`: seconds for one whole LLM call (default 600).
   `JAZYK_READ_TIMEOUT` waits for the next byte; this bounds the call even when bytes
   keep arriving, streaming or not. Connecting is bounded separately at 15 seconds.
-  Every layer above adds its own bound: turn round budgets, the ACP idle watchdog
+  Every layer above adds its own bound: session round budgets, the ACP idle watchdog
   (`JAZYK_ACP_IDLE_TIMEOUT`), and lease TTLs, so no single stall can hold a build.
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose
-  [trace events](./turns.md#trace-events) including full context packs and raw payloads.
+  [trace events](./sessions.md#trace-events) including full loaded sets and raw
+  payloads.
 - `JAZYK_ACP_IDLE_TIMEOUT`: seconds a [worker session](../frontends/acp.md#worker-sessions)
-  may go without an update before jazyk cancels its turn (default 600).
+  may go without an update before jazyk cancels it (default 600).
+- `JAZYK_PLANTUML`: path to the official PlantUML native binary, selecting it as the
+  renderer behind the render seam for the process
+  ([the renderer](./diagrams.md#the-renderer)). Unset, the in-process renderer draws
+  every view.

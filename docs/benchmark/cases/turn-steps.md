@@ -4,7 +4,7 @@ Grades code-block extraction: a fenced pseudo-code block is a claim about the sy
 step by step, and each behavioral step yields a requirement quoting that step's own
 line. The real-world gap this samples: a model can score well on prose extraction and
 still stall on a document whose substance sits inside a fence (the sort-utility
-fixture's failure mode). See [ears](../../compiler/concepts/ears.md#code-blocks-state-obligations)
+fixture's failure mode). See [code blocks state obligations](../../compiler/concepts/statements.md#code-blocks-state-obligations)
 and [case format](../cases.md#case-format).
 
 ````yaml
@@ -36,13 +36,13 @@ assert:
   - entityExists:
       name: dedupe utility
   - requirementExists:
-      earsPattern: 'trim|whitespace'
+      statementPattern: 'trim|whitespace'
       entity: dedupe utility
   - requirementExists:
-      earsPattern: 'skip|already seen|duplicate'
+      statementPattern: 'skip|already seen|duplicate'
       entity: dedupe utility
   - requirementExists:
-      earsPattern: 'print|remember'
+      statementPattern: 'print|remember'
       entity: dedupe utility
   - coverageSet:
       section: 'docs/dedupe.md#/dedupe/steps'

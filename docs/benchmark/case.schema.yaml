@@ -147,14 +147,14 @@ definitions:
         minimum: 0
   requirementExists:
     description: >-
-      A requirement exists whose EARS statement matches the pattern and which references
+      A requirement exists whose statement matches the pattern and which references
       the entity
     type: object
-    required: [earsPattern, entity]
+    required: [statementPattern, entity]
     additionalProperties: false
     properties:
-      earsPattern:
-        description: Regular expression tested against the requirement's ears statement
+      statementPattern:
+        description: Regular expression tested against the requirement's statement
         type: string
       entity:
         description: An entity the requirement must reference, by id or exact name

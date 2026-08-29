@@ -28,7 +28,7 @@ given:
       When the customer checks out, the system shall empty the cart.
 assert:
   - requirementExists:
-      earsPattern: 'empt(y|ies|ied)'
+      statementPattern: 'empt(y|ies|ied)'
       entity: ent:shopping-cart
   - mutationCount:
       min: 1

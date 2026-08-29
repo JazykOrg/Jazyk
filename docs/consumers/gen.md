@@ -1,9 +1,10 @@
 # Generation
 
-Generation turns the semantic graph into the end product and the tests that hold it to
+Generation makes the semantic graph into the end product and the tests that hold it to
 its spec, in one workflow. It reads the graph through the
-[context engine](../compiler/context.md) and the [read tools](../compiler/tools.md#read-tools),
-never the raw source files. The graph, not the prose, is the spec.
+[loaded set](../compiler/context.md#the-loaded-set) and the
+[read tools](../compiler/tools.md#read-tools), never the raw source files. The graph, not
+the prose, is the spec.
 
 The end product is called the deliverable. It is usually code, but the workflow does not
 assume software: a book, a schematic, a course. Whatever the requirements describe,
@@ -11,6 +12,12 @@ generation produces it. Tests are the tie between the requirements and the deliv
 and they exist before generation runs: [binding](./bind.md) ties each requirement to
 its files and its test first, and generation is the step that makes `unimplemented`
 bindings pass.
+
+Generation is goal work on the board: a `generate` goal per entity whose facts differ
+from the ledger, ready at the ledger tier after the entity's compile goals settle, resolved
+when `record_generation` lands ([the generate goal](../compiler/goals/generate.md)).
+Anything the deliverable needs that the documents do not state is an ambiguity; generation
+chooses, records the choice, and raises it ([invented choices](#invented-choices)).
 
 ## The deliverable
 
@@ -26,18 +33,21 @@ deliverable = "../project2"
 - `deliverable` resolves relative to the project root. Default `.`. Everything
   generation produces lands under it.
 - The deliverable directory is excluded from doc input; the docs glob whitelists paths
-  back in ([glob](../compiler/project-settings.md#glob)). Generation metadata (the
-  ledger, criteria files) stays in the out directory, never in the deliverable.
+  back in ([docs settings](../compiler/project-settings.md#docs)). Generation metadata
+  (the ledger, criteria files) stays in the out directory, never in the deliverable.
 
-That is the only generation setting. What the deliverable is (a Rust crate, a web app,
-a book, a schematic) is a fact the documents state, so it reaches the generator through
-the graph and the context pack like every other fact. The project file describes where
-things go, never what to build; there are no hints.
+`deliverable` is the only setting that says where things go. The other two keys of
+[`[gen]`](../compiler/project-settings.md#generation) say nothing about the product
+either: `worker` picks the built-in worker's mode, `code` scopes the
+[unclaimed report](./bind.md#the-unclaimed-report). What the deliverable is (a Rust
+crate, a web app, a book, a schematic) is a fact the documents state, so it reaches the
+generator through the graph and the loaded set like every other fact. The project file
+never says what to build; there are no hints.
 
 The generator chooses everything about the deliverable's form: the medium, the layout,
 the file names, and the build files that make its recorded commands executable. What
-binds the layout to the graph is the manifest: every completed task records which
-deliverable files implement which requirements ([the ledger](#the-ledger)).
+binds the layout to the graph is the manifest: every resolved `generate` goal records
+which deliverable files implement which requirements ([the ledger](#the-ledger)).
 
 ## The deliverable is the artifact, never a description of it
 
@@ -66,14 +76,14 @@ failing row, not invented filler.
 ## The medium is decided once, before anything is generated
 
 What the deliverable is made of is one decision for the whole deliverable, not a
-judgment each task repeats. A per-task decision is where the substitution above creeps
-in: asked to write "the About slide", a generator writes prose about a slide, because
-nothing in front of it said the deliverable is a file a tool must produce.
+judgment each session repeats. A per-session decision is where the substitution above
+creeps in: asked to write "the About slide", a generator writes prose about a slide,
+because nothing in front of it said the deliverable is a file a tool must produce.
 
-So the first task that needs the medium decides it first, in its own step, and records
+So the first session that needs the medium decides it first, in its own step, and records
 it in [the ledger](#the-ledger). Usually that is the first generation run; on a
 deliverable that is bound before anything is generated, the first
-[bind task](./bind.md#the-bind-task) makes the same decision the same way, because a
+[bind goal](./bind.md#the-bind-goal) makes the same decision the same way, because a
 test is written in the medium's toolchain:
 
 ```yaml
@@ -85,12 +95,12 @@ medium:
 ```
 
 - The input is the requirements that say what the deliverable is: the same graph every
-  task reads, budgeted like a [context pack](../compiler/context.md).
+  session reads, budgeted like any [loaded set](../compiler/context.md#the-loaded-set).
 - `produced: written` means the generated files are the deliverable. `produced: built`
   means they are the source that produces `artifact`, and [the build](#the-build) runs
   it.
-- Every task package carries the decision, and every task's instructions state it as a
-  fact rather than asking again. A task that generates under `produced: built` writes
+- Every goal package carries the decision, and every goal's instructions state it as a
+  fact rather than asking again. A session that generates under `produced: built` writes
   source, never the artifact itself and never prose about it.
 - The decision is made once and reused, like the toolchain and the build. It is
   re-decided only when nothing is generated: a ledger with no entities decides again,
@@ -117,21 +127,21 @@ build:
 - `produces` lists the artifact paths the command creates, relative to the deliverable.
   They are the deliverable's real output; the ledger keeps them so a reader knows what
   the run was supposed to make.
-- The build is per deliverable, not per entity. The first task that needs one records
-  it; every later task receives it in its package and reuses it, the same way run
+- The build is per deliverable, not per entity. The first session that needs one records
+  it; every later session receives it in its package and reuses it, the same way run
   commands establish one toolchain.
 - What the build runs is a [support file](#file-ownership-and-conventions), never an
   entity's own file. One artifact is assembled from every entity's part, and an entry
   point owned by the entity that happened to generate first would freeze the artifact
-  at that entity's part: no later task may write into it. So the entry belongs to the
-  deliverable, its current content travels in every task package, and each task
+  at that entity's part: no later session may write into it. So the entry belongs to the
+  deliverable, its current content travels in every goal package, and each session
   returns it updated so the artifact includes its part too. The convention the entry
   uses to include a part (a function it calls, a list it reads) is the generator's,
-  visible to every later task in the entry itself.
-- A task that rewrites the entry sees what it is calling. Under a built medium the
+  visible to every later session in the entry itself.
+- A session that rewrites the entry sees what it is calling. Under a built medium the
   package carries the other entities' part files with their content, not just their
   paths and the statements they hold: an entry is a call site, and a call site needs
-  the name of the thing it calls. Without it a task guesses, and the build dies on a
+  the name of the thing it calls. Without it a session guesses, and the build dies on a
   function that does not exist.
 - The entry is checked against the parts, not trusted: every generated file the parts
   live in must be named in it. An entry that re-implements a part instead of calling
@@ -146,11 +156,11 @@ build:
   nothing to verify when the artifact was not produced. See [runners](#runners).
 - A failed build is recorded, not just printed. The ledger keeps the last run's
   outcome under `build.lastRun` (when, whether it succeeded, and the tail of what it
-  said), and every task package carries the failure while it stands, together with
-  which of this entity's own files the failure names. Regenerating is
-  how it gets fixed: the task that owns a file the failure names sees the message and
-  writes source that runs. Without that, a generator repeats the same broken part
-  every round, because nothing ever told it the artifact was never produced.
+  said), and every goal package carries the failure while it stands, together with
+  which of this entity's own files the failure names. Regenerating is how it gets
+  fixed: the session that owns a file the failure names sees the message and writes
+  source that runs. Without that, a generator repeats the same broken part every
+  round, because nothing ever told it the artifact was never produced.
 - A deliverable that is its own output records no build, and nothing runs.
 
 The build is a fact the generator derives from the requirements, like every other
@@ -158,55 +168,93 @@ choice about form. Jazyk holds no list of media and no template per format.
 
 ## The entity is the unit of generation
 
-Each [entity](../compiler/model/entity.md) generates in one bounded task. The task's
-input is the entity's [context pack](../compiler/context.md#request): its `definition`,
-its requirements across all documents, and its relationships. Nothing outside the pack
-leaks in, so each task is small, repeatable, and auditable.
+Each [entity](../compiler/model/entity.md) is one `generate` goal. The goal's loaded set
+is the entity in full: its `definition`, `stereotype`, `attributes`, its `parent` and
+children, its requirements across all documents with their edges, facets, and
+transitions, its derived relationships, and its state machine when one derives
+([the loaded set](../compiler/context.md#the-loaded-set)). Nothing outside the loaded
+set leaks in, so each goal is small, repeatable, and auditable.
 
-The task produces the entity's part of the deliverable. The tests already exist:
+The goal produces the entity's part of the deliverable. The tests already exist:
 [binding](./bind.md) wrote one per requirement before the entity became generation
-work, and the task package carries them. The bound test defines the interface, and the
-product conforms to it. A task that cannot make a bound test pass without changing it
+work, and the goal package carries them. The bound test defines the interface, and the
+product conforms to it. A session that cannot make a bound test pass without changing it
 reports that instead of rewriting the judge; the repair is a re-bind.
+
+### Grouping by component
+
+Where the graph carries containment structure, the session is wider than the goal: a
+component and its subtree generate as one group, in one session, so the parts of one
+component are written together under one set of conventions. The group is derived from
+the graph at batch time, never stored:
+
+- A system is a containment root with at least one child, the same match that derives
+  the default component view `view:component/<system-slug>`
+  ([default views](../compiler/model/view.md#default-views)). A group root is a direct
+  child of a system: the «service»-like tier of the tree, whatever stereotype the
+  documents gave it. A group is its root plus every descendant through `parent`.
+- Every other entity generates alone: the system itself, for the requirements that name
+  it directly, and a parentless entity without children.
+- The `generate` goal stays per entity. The scheduler batches the ready goals of one
+  group into one session under the session budget
+  ([batching](../compiler/reconciler.md#batching)); the session's loaded set is the
+  group. A group that does not fit one session splits in topological order over its
+  members' relationships, and each later session receives the earlier parts as files
+  with what they hold. Members whose facts match the ledger are not regenerated: their
+  files ride in the package as context, the way other entities' parts do.
+- Each member records its own manifest through `record_generation`, so ownership, fact
+  hashes, and incremental regeneration stay per entity.
+
+A flat graph (no `parent` anywhere) has no groups, and the entity is the unit
+throughout. Nothing configures this; the containment the documents state, or an
+`abstract-entity` goal introduced and the owner ratified, is what activates it.
 
 ## Order from relationships
 
-[Relationships](../compiler/model/relationship.md) give structure and order:
+[Relationships](../compiler/model/relationship.md) give structure and order. Each
+contribution is directional (`a` acts on `b`), and the direction says what generates
+first:
 
-- `composition` → ownership and nesting.
-- `association` → references.
-- `dependency` → imports or injection.
+- `composition`, `aggregation` → ownership and nesting; the part before the whole.
+- `association` → references; the referenced entity first.
+- `dependency` → imports or injection; the dependency first.
+- `realization` → an implementation of an «interface»; the interface first.
+- `generalization` → inheritance or specialization; the general entity first.
+- `instantiation` → fixtures and examples; the type first, the instance after.
 
-Generation runs in topological order over the relationship edges: leaf entities (value
-objects) first, then the entities that compose or depend on them. Each task can
-reference already generated files through the manifest.
+Generation runs in topological order over the contributions: leaf entities (value
+objects, interfaces) first, then the entities that compose, depend on, or realize them.
+Between groups the order follows the lifted relationships between their members
+([lifting](../compiler/diagrams.md#lifting-and-collapse)). A cycle breaks at its weakest
+contribution, then by id. Each session can reference already generated files through the
+manifest.
 
 ## File ownership and conventions
 
-- Every deliverable file belongs to the entity whose task wrote it, recorded in
-  [the ledger](#the-ledger). A task never overwrites another entity's files: the
+- Every deliverable file belongs to the entity whose session wrote it, recorded in
+  [the ledger](#the-ledger). A session never overwrites another entity's files: the
   harness rejects a file path already recorded for a different entity and asks the
-  worker for another path (one corrective retry, then the task fails). Using another
+  worker for another path (one corrective retry, then the goal fails). Using another
   entity's files goes through references (imports, includes), never through rewriting
   them.
-- The task package names those files with the statements they carry, not just their
-  paths. A composite deliverable is assembled from parts other tasks wrote, and a path
+- The goal package names those files with the statements they carry, not just their
+  paths. A composite deliverable is assembled from parts other sessions wrote, and a path
   alone says nothing about what is inside; the statements do, and they are what the
   graph already knows. So the entry per entity is its `files` and what each set
-  `holds`, and the task composing them reads or imports those paths knowing what they
+  `holds`, and the session composing them reads or imports those paths knowing what they
   contain.
-- One toolchain per deliverable. The first task establishes it (the language, the test
-  runner, the build files); every later task reuses it. The task package carries the
+- One toolchain per deliverable. The first session establishes it (the language, the test
+  runner, the build files); every later session reuses it. The goal package carries the
   run commands already recorded in the ledger, so a worker sees the established
   conventions and never introduces a second test runner.
 - A recorded run command must execute from the deliverable directory as recorded. When
-  it needs a build or configuration file no task has written yet (a `package.json`, a
-  `Cargo.toml`), the task returns that file as a support file. Recording a command
+  it needs a build or configuration file no session has written yet (a `package.json`, a
+  `Cargo.toml`), the session returns that file as a support file. Recording a command
   that cannot run is a generation defect; verification surfaces it as a failing row.
 - Support files belong to the deliverable, not to an entity. They are what makes the
   recorded commands runnable (a `package.json`, a `Cargo.toml`, the entry point a
-  build runs), and every task may rewrite one: a manifest that lists more parts than
-  the last task saw is exactly why the file exists. The ledger keeps them in their own
+  build runs), and every session may rewrite one: a manifest that lists more parts than
+  the last session saw is exactly why the file exists. The ledger keeps them in their own
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
 - The ledger's file lists are sets: the harness deduplicates them on write.
@@ -219,27 +267,26 @@ reference already generated files through the manifest.
 - A step may return several files, and the contract says so. Nearly a third of
   generated replies carry more than one `FILE:` block, because a part that needs a
   dependency manifest, an entry point, or a second module is a normal thing to write.
-  The first block is the entity's part; the rest are files the task wrote too.
+  The first block is the entity's part; the rest are files the session wrote too.
   Tolerating what the protocol forbade is how a `requirements.txt` header once
   swallowed five files into one.
 - Which of those extra files belongs to the entity is decided by the manifest, not by
   the order they arrived in. A file the manifest lists in `supportFiles`, or names as
-  the build's entry point, belongs to the deliverable; everything else the task wrote
+  the build's entry point, belongs to the deliverable; everything else the session wrote
   belongs to the entity that wrote it. Classifying by arrival would make a second test
-  file deliverable-wide, unowned, and rewritable by any later task.
-- A support file never lands on a file an entity owns, this task's own product and
-  tests included. Support files exist so any task may rewrite them; letting one take
+  file deliverable-wide, unowned, and rewritable by any later session.
+- A support file never lands on a file an entity owns, this goal's own product and
+  tests included. Support files exist so any session may rewrite them; letting one take
   an owned path would let a manifest step quietly overwrite the module the product
   step just wrote.
-- A reply in the wrong shape gets one corrective round before the task fails: a
+- A reply in the wrong shape gets one corrective round before the goal fails: a
   product or tests reply whose `FILE:` line never appears, a manifest that is not
-  valid JSON. The
-  complaint is quoted back with the same request, and the correction shows the shape
-  rather than describing it. A reply that opens with a sentence or a fence and then
-  gives its `FILE:` line is not a shape failure: the preamble is dropped and the file
-  starts at the line. Shape is the harness's contract,
-  and a weak model drops it under a long prompt well before it gets the content wrong;
-  failing the task over a missing brace throws away work that was otherwise fine.
+  valid JSON. The complaint is quoted back with the same request, and the correction
+  shows the shape rather than describing it. A reply that opens with a sentence or a
+  fence and then gives its `FILE:` line is not a shape failure: the preamble is dropped
+  and the file starts at the line. Shape is the harness's contract, and a weak model
+  drops it under a long prompt well before it gets the content wrong; failing the goal
+  over a missing brace throws away work that was otherwise fine.
 - The manifest must agree with the artifacts. The harness scans the tests artifact for
   the suggested test names and hands the found list to the manifest step. A manifest
   that contradicts the artifact (a declared programmatic test whose name is absent
@@ -269,10 +316,13 @@ call has an output ceiling. The generation divides:
   requirements, and returns only additional content to append.
 - Parts concatenate; traceability markers per requirement are unaffected.
 
-The group size defaults to 20 requirements per part. The `entity-too-dense` check warns
-the author when an entity approaches the configured ceiling
-([limits](../compiler/project-settings.md#limits)), so splitting the documentation into
-subsections stays a choice, not an emergency.
+The group size is 20 requirements per part (the `{GROUP}` placeholder of the generation
+contract). The `requirements-per-entity` limit (soft 50, hard 80) opens an
+`abstract-entity` goal on an entity that grows past it
+([the limits registry](../compiler/graph.md#limits),
+[the abstract-entity goal](../compiler/goals/abstract-entity.md)), so splitting the
+entity into a containment subtree, and proposing that structure to the documents, stays
+a choice made in the graph, not an emergency at generation time.
 
 ## Tests tie requirements to the deliverable
 
@@ -281,15 +331,16 @@ requirement id. The test is written when the requirement is [bound](./bind.md), 
 generation runs. A failing test names the requirement it verifies, and a changed
 requirement invalidates exactly the tests keyed to it.
 
-The [EARS](../compiler/concepts/ears.md) pattern of a requirement suggests the test
-shape:
+The requirement's [facets](../compiler/model/requirement.md#facets) and
+[transition](../compiler/model/requirement.md#transition) suggest the test shape:
 
-- event-driven (`When ...`) → a scenario: arrange, trigger the event, assert the
+- `behavior` with a trigger → a scenario: arrange, trigger the event, assert the
   response.
-- ubiquitous (`The <entity> shall ...`) → a property or invariant check.
-- unwanted behavior (`If ..., then ...`) → a negative check.
-- state-driven (`While ...`) → a stateful check: enter the state, assert the behavior
-  holds throughout.
+- `constraint` → a property or invariant check.
+- `failure-mode` → a negative check: provoke the condition, assert the stated handling.
+- a `transition` → a stateful check: enter `from`, fire `trigger` under `guard`, assert
+  `to`.
+- `quality` with a `measure` → a measured check against the stated bound.
 
 There are exactly two test kinds. The generator picks the kind per requirement; unit,
 integration, and cucumber are prompting examples of the first kind, not a taxonomy the
@@ -323,22 +374,24 @@ stand-in assertion is the failure.
 
 ## Traceability
 
-Every requirement carries a verbatim `quote`
-([shared fields](../compiler/model.md#shared-fields)). The trail from deliverable to
-prose has two carriers:
+Every quote-provenanced requirement carries a verbatim `quote`
+([shared fields](../compiler/model.md#shared-fields)); a derived or decreed one carries
+its upstream nodes or its author, and a ratification proposal toward a quote
+([provenance](../compiler/model.md#provenance)). The trail from deliverable to prose has
+two carriers:
 
 - The test name embeds the requirement id and the first 8 hex characters of the hash of
-  its statement: `req_catalog_3_a1b2c3d4`. The name is part of the artifact itself and
+  its `statement`: `req_catalog_3_a1b2c3d4`. The name is part of the artifact itself and
   of the recorded run command, so a reworded requirement mechanically breaks the
   recorded command: even a harness that has never heard of Jazyk fails to find the
   stale test.
 - Anchored sites in [the ledger](#the-ledger). While writing, a worker puts a
   single-line marker comment directly above each implementing site: `req:catalog-3
   hash:a1b2c3d4` in the medium's comment syntax, nothing else on the line. The marker
-  is a wire format, not part of the product: `record_generation` strips every marker line from
-  the written files and records each as a site on the requirement's row: the file, the
-  line, and `head`, the verbatim next significant line. The deliverable carries no
-  Jazyk metadata; the binding lives in the out directory.
+  is a wire format, not part of the product: `record_generation` strips every marker
+  line from the written files and records each as a site on the requirement's row: the
+  file, the line, and `head`, the verbatim next significant line. The deliverable
+  carries no Jazyk metadata; the binding lives in the out directory.
 
 The division of labor: the worker owns localization (it knows where each requirement
 lands while it writes), the harness owns anchoring (recording, locating, healing).
@@ -364,17 +417,18 @@ metadata file. Two maps:
   deliverable and how it is verified. Rows are born by `record_binding` and updated by
   `record_generation` and test runs.
 
-Two more keys sit beside them: `medium`, the deliverable's
+Three more keys sit beside them: `support`, the deliverable-wide files any session may
+rewrite; `medium`, the deliverable's
 [decided form](#the-medium-is-decided-once-before-anything-is-generated), written by
-the first run, and `build`, present only when that medium must be produced by a tool
+the first run; and `build`, present only when that medium must be produced by a tool
 ([the build](#the-build)).
 
 ```yaml
-support:                                  # deliverable-wide files any task may rewrite
+support:                                  # deliverable-wide files any session may rewrite
   - build_deck.py                         # the build's entry point
   - requirements.txt
 
-medium:                                   # decided once, carried by every task package
+medium:                                   # decided once, carried by every goal package
   form: Microsoft PowerPoint deck
   produced: built                         # written | built
   toolchain: python3 with python-pptx
@@ -388,11 +442,16 @@ build:                                    # optional; absent when the files are 
 
 entities:
   catalog:
-    factHash: 9f2ab4c1d0e77a3b            # hash of name, definition, all referencing statements
+    factHash: 9f2ab4c1d0e77a3b            # hash of name, definition, stereotype, attributes,
+                                          # and every referencing statement with its edges
     requirements: [req:catalog-1, req:catalog-2, req:catalog-3]
     files:                                # deliverable-relative files this entity's
       - src/catalog.rs                    # generation produced or touched
       - tests/catalog.rs
+    unattached:                           # the unattached remainder, measured at record time
+      files: 0                            # owned files no requirement row names
+      lines: 14                           # significant lines outside every site's run
+      ratio: 0.11                         # unattached lines over significant lines
 
 requirements:
   req:catalog-3:
@@ -426,10 +485,10 @@ A requirement's verification status is a pure function of the row, the live grap
 the files on disk, recomputed at every read. First match wins:
 
 1. No row, or the test artifact is missing → `missing`. A row whose requirement id is
-   no longer in the graph is also `missing` (reason `requirement-gone`), but it is
+   absent from the graph is also `missing` (reason `requirement-gone`), but it is
    never actionable work: see [deletion](#deletion-prunes-the-ledger).
-2. The live statement hash differs from `hashes.requirement` → `stale-requirement`. The
-   test verifies a sentence that no longer exists. Regeneration is needed;
+2. The live `statement` hash differs from `hashes.requirement` → `stale-requirement`.
+   The test verifies a sentence the graph does not hold. Regeneration is needed;
    `jazyk test` refuses to run the row and points at `jazyk gen`.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
@@ -442,10 +501,17 @@ the files on disk, recomputed at every read. First match wins:
    `runner-failed`, so a broken machine reads as unverified, not as a failing
    deliverable (see [runners](#runners)).
 
-Hashes are written at exactly two moments: generation marks a task done (all three), and
+Hashes are written at exactly two moments: generation resolves a goal (all three), and
 a test run completes (`test` and `files` rebaseline, never `requirement`). Every
 staleness flip is a deterministic hash comparison. The model owns three judgments only:
 the test kind, the test itself, and the verdict of an `llm` run.
+
+Each status that says action is a goal on the board, derived from a `ledger-stale`
+change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
+([when binding runs](./bind.md#when-binding-runs)), a `generate` goal for the entity of
+an `unimplemented` row or an entity whose facts moved, a `verify` goal for `stale-test`,
+`stale-code`, and `unverified` ([the verify goal](../compiler/goals/verify.md)). A
+`failing` row is a diagnostic, never a goal.
 
 ### The cascade
 
@@ -455,27 +521,30 @@ statement and reruns it, and only an `unimplemented` outcome makes the entity
 generation work. Generation then rewrites the implementing files until the bound test
 passes. Hand edits to the deliverable flip exactly the rows whose `files` hash moved
 to `stale-code`. Reruns update verdicts; when the test passes, the requirement is
-`verified`. Nothing in this loop is remembered by a human.
+`verified`. Each arrow is a goal the board derives with its cause on record
+([edit paths](../compiler/compilation.md#edit-paths)); nothing in this loop is
+remembered by a human, and `jazyk ripple` replays it
+([CLI](../frontends/cli.md#jazyk-ripple)).
 
 ### Deletion prunes the ledger
 
 Deleting a requirement ends its obligation, and its ledger row must not outlive it:
 
-- `record_generation` prunes every row whose requirement id is no longer in the graph,
+- `record_generation` prunes every row whose requirement id is absent from the graph,
   whatever entity the call records. The manifest never needs to name a dead
   requirement to bury it; absence from the graph is the signal.
 - Until a record runs, such a row reads `missing` with reason `requirement-gone`, and
-  the verification queue excludes it: it is not work, and no repair applies to it.
+  no `verify` goal derives from it: it is not work, and no repair applies to it.
   `run_tests` skips it the same way.
 
 Without pruning, a compilation that deletes a requirement leaves a row no tool can
-remove: the manifest only adds and updates, reruns skip the row, and the queue keeps
-naming a repair (regenerate) that provably does not clear it.
+remove: the manifest only adds and updates, reruns skip the row, and the board would
+keep deriving a repair (regenerate) that provably does not clear it.
 
 ## Criteria files for llm tests
 
 For `kind: llm` rows, generation writes a criteria file: front matter with the
-requirement id and the full statement hash; body with the statement, the verbatim
+requirement id and the full statement hash; body with the `statement`, the verbatim
 quote, the manifest file paths, the steps to confirm, and the verdict contract (`PASS`
 or `FAIL` plus reasoning). It is the packaged setup for any harness: context, the
 location of the implemented product, and what to confirm. Editing it flips
@@ -502,20 +571,21 @@ would name the wrong culprit.
   The row records the exit code beside the output, so a verdict can be read back
   without rerunning it.
 - `llm`: two harnesses, one contract. `jazyk test` packages the criteria file and the
-  requirement's context in-process and asks the configured model for a verdict. An
-  external agent connected to [`jazyk mcp graph`](../frontends/mcp.md) does the same
-  through the [verification tools](../compiler/tools.md#verification-tools), using its
-  own abilities to inspect or exercise the deliverable. Whichever harness runs, the
-  ledger row comes out the same shape.
+  requirement's loaded set in-process and asks the configured model for a verdict
+  ([the verify goal](../compiler/goals/verify.md)). An external agent connected to
+  [`jazyk mcp graph`](../frontends/mcp.md) does the same through the
+  [verification tools](../compiler/tools.md#verification-tools), using its own
+  abilities to inspect or exercise the deliverable. Whichever harness runs, the ledger
+  row comes out the same shape.
 
 ### A test that could not run says nothing
 
 A command that never executed has not judged the requirement, so the row reads
 `unverified` with reason `runner-failed` and keeps the output as evidence. The run
 clears any previous verdict: it moved the row's `lastRun` and learned nothing, so the
-honest state is unknown, not yesterday's answer restated with today's timestamp. Recording it
-as `failing` would blame the deliverable for a broken machine, and the two are
-indistinguishable in a status table.
+honest state is unknown, not yesterday's answer restated with today's timestamp.
+Recording it as `failing` would blame the deliverable for a broken machine, and the two
+are indistinguishable in a status table.
 
 The harness cannot read a runner's mind, so it uses two signals that need no knowledge
 of the tool:
@@ -541,15 +611,19 @@ outdated statement hash stays `stale-requirement` until regeneration.
 ## Incremental regeneration
 
 A rerun skips entities whose `factHash` is unchanged, so a docs edit regenerates only
-the entities it touched. `--force` regenerates everything. A regeneration replaces the
-entity's recorded file set: files the previous generation recorded that the new
-manifest no longer lists are removed from the deliverable, so a renamed test file does
-not leave its predecessor behind. Entity ids are stable
+the entities it touched; a group session regenerates only the members whose facts moved
+([grouping by component](#grouping-by-component)). `--force` regenerates everything. A
+regeneration overwrites the entity's recorded file set: files the previous generation
+recorded that the new manifest omits are removed from the deliverable, so a test file
+under a new name does not leave its predecessor behind. Entity ids are stable
 ([identifiers](../compiler/model.md#identifiers)):
 
 - A merged entity leaves a redirect ([mutations](../compiler/graph.md#mutations)); the
   generator follows it and folds the absorbed files into the survivor's.
-- A renamed entity keeps its id, so its files migrate in place.
+- An entity whose name changes keeps its id, so its files migrate in place.
+- An entity that gains a `parent` (containment the documents state, or an
+  `abstract-entity` split the owner ratified) keeps its id and its files; only its group
+  changes, and the next session of that group sees the files as parts.
 - A deleted requirement's row is [pruned at the next record](#deletion-prunes-the-ledger);
   the journal holds the deletion, so removals are never silent.
 
@@ -562,56 +636,120 @@ against it. A file the run creates fresh has no baseline.
 ## Command
 
 `jazyk gen [entity...]` runs the built-in generation worker. See
-[CLI](../frontends/cli.md).
+[CLI](../frontends/cli.md#jazyk-gen).
 
-- With no arguments it generates every entity that has at least one requirement, in
-  topological order over the relationship edges.
+- With no arguments it works every `generate` goal on the board, in topological order
+  over the relationship contributions, group by group. Binding runs first: a `bind`
+  goal of a targeted requirement resolves before its entity's `generate` goal.
+- Named entities restrict the run to their goals.
 - `--force` ignores the fact-hash skip.
-- `jazyk codegen` and `jazyk testgen` remain as deprecated aliases that print a pointer
-  to `jazyk gen`.
+- In `manual` mode the command records the generate release
+  ([modes and releases](../compiler/control-plane.md#modes-and-releases)).
+- `jazyk codegen` and `jazyk testgen` are aliases that print a pointer to `jazyk gen`.
 
-`jazyk test [target...]` runs verification. With no arguments it processes every
-runnable row; entity ids select their requirements' rows; requirement ids select rows
-directly. `--kind` filters `programmatic` or `llm`; `--force` also reruns `verified`
-rows; `--list` prints the derived status table without running anything. Exit 0 when
-every targeted row is `verified`, 1 otherwise.
+`jazyk test [target...]` runs verification ([CLI](../frontends/cli.md#jazyk-test)). With
+no arguments it processes every runnable row; entity ids select their requirements'
+rows; requirement ids select rows directly. `--kind` filters `programmatic` or `llm`;
+`--force` also reruns `verified` rows; `--list` prints the derived status table without
+running anything. Exit 0 when every targeted row is `verified`, 1 otherwise.
 
 ## Pluggable workers
 
 Generation and verification are defined by the
 [generation tools](../compiler/tools.md#generation-tools) and
 [verification tools](../compiler/tools.md#verification-tools), not by the built-in
-commands. `jazyk gen` and `jazyk test` are workers: they consume the same task
+commands. `jazyk gen` and `jazyk test` are workers: they consume the same goal
 packages in-process, drive the configured model, and mark results. An external agent
 connected to [`jazyk mcp generate`](../frontends/mcp.md#toolsets) is another worker
-with the same contract: same instructions, same context, same change diffs, same
-ledger.
+with the same contract: same instructions, same loaded set, same change diffs, same
+ledger ([generation over MCP](../frontends/mcp.md#generation-and-verification-over-mcp)).
+The executor per goal kind is a setting
+([executors](../compiler/project-settings.md#executors)).
 
 The two workers hold the same power. The external agent edits files and runs commands
-with its own tools; the built-in worker runs each entity as a
-[generation turn](../compiler/turns.md#generation-turns) whose toolset carries file
+with its own tools; the built-in worker runs each group as a session
+([the generate goal](../compiler/goals/generate.md#tools)) whose toolset carries file
 and command tools sandboxed to the deliverable, so it too writes multiple files, runs
-the build it wrote, reads failures, and repairs its own work before recording. A task
-succeeds when the ledger says so: the harness checks that `record_generation` landed
+the build it wrote, reads failures, and repairs its own work before recording. A goal
+resolves when the ledger says so: the harness checks that `record_generation` landed
 for the entity, not the model's word. What separates the workers is model quality,
 never capability.
 
-## Forced decisions
+## Invented choices
 
-Generation sometimes must choose a value the documents never stated (a default, a limit,
-a format). Each forced decision is recorded as a diagnostic on the entity and fed back to
-the docs by [documentation generation](./docsgen.md), so the spec converges toward
-stating what the product does.
+Anything the deliverable needs that the documents do not state is an ambiguity
+([edit paths](../compiler/compilation.md#edit-paths)). Generation does not stall on one:
+it chooses with best judgment, records the choice, and raises it. The manifest a session
+records through `record_generation` carries every choice it had to invent
+(`choices: [{choice, scope, reasoning, requirements?}]`: the choice in one sentence,
+its `scope` (`product`, `behavior`, or `detail`), the model's reasoning, and the
+requirements it fills in when any exist), and the harness files one `invented-choice`
+[diagnostic](../compiler/model/diagnostic.md) per entry, its subjects the entity and
+those requirements, its `reasoning` the model's. The severity follows the scope of the
+invention:
+
+- `error`: the invention decides what the deliverable or an entity is. A medium no
+  statement names, an entity whose requirements do not say what it does, a whole feature
+  the documents only allude to. "Build me a Facebook" is an error: the invention is the
+  product.
+- `warning`: the invention decides observable behavior a statement leaves open. An
+  unspecified out-of-memory behavior, a default limit, an error response nobody stated.
+- `info`: the invention has no behavioral consequence. A background color, a file name,
+  an internal identifier. A human may suppress it in triage, and a suppressed one stays
+  suppressed across regenerations.
+
+Each diagnostic carries a `prompt` in the shape of a
+[ratification proposal](./docsgen.md#ratification-proposals): the question, an `edit`
+option with the sentence that would make the documents state the choice (targeting the
+requirement's source section when the choice fills in a requirement, otherwise the
+section the proposal's target rule picks for the entity), and an `answer` option to keep
+the choice unstated. An unanswered prompt is a `prompt-unanswered` change, so a blocked
+[`answer` goal](../compiler/goals/answer.md) rides in the verdict's `blocked` count
+until a human decides; the deliverable never waits for it. Accepting the edit writes the
+prose; the next build extracts the statement with quote provenance, the requirement
+binds, and the choice stops being invented. Keeping it unstated records the answer and
+resolves the diagnostic. Re-recording an entity overwrites its invented set: a choice the
+new manifest omits resolves, so a regeneration under better documents clears its own
+debt, and a choice it repeats keeps its diagnostic, so triage and answers survive
+regeneration.
+
+### The unattached remainder
+
+The deliverable itself measures how much was invented. Generated mass attached to no
+requirement is exactly the invented detail, and the ledger already computes attachment
+([traceability](#traceability)). At record time the harness measures each entity's
+unattached remainder over the files it owns (support files excluded):
+
+- `files`: owned files no requirement row names in `files`, the per-entity slice of the
+  [unclaimed report](./bind.md#the-unclaimed-report).
+- `lines`: significant lines (non-blank, non-comment in the medium's comment syntax)
+  that no site's run covers. A site's run starts at its `head` line and ends before the
+  next site in the same file, or at the end of the file; the lines before the first site
+  are unattached.
+- `ratio`: `lines` over the entity's significant lines.
+
+The measure lands on the entity's ledger entry (`unattached`), and the message of every
+`invented-choice` diagnostic on the entity names the ratio, so the grade and the measure
+read together. Three words of documentation show up as an enormous remainder; documents
+written near pseudo-code leave almost none. No threshold fires on the remainder by
+itself: it is evidence beside the graded diagnostics, shown as a line in
+[`jazyk status`](../frontends/cli.md#jazyk-status), in the
+[deliverable viewer](../frontends/gui.md#deliverable-viewer), and in the whole-build
+report ([`jazyk ripple`](../frontends/cli.md#jazyk-ripple)).
 
 ## Coverage as a graph query
 
 Coverage is a query over the graph, not over the deliverable:
 
-- requirements with no [binding](./bind.md); each is actionable work (a
-  `bind-requirement` task), not only a finding,
-- entities with no behavior (no event-driven or state-driven requirement references
-  them).
+- requirements with no [binding](./bind.md): each is a `bind` goal on the board, counted
+  in the verdict, never a silent gap,
+- entities with no behavior: no requirement with a `behavior` facet or a `transition`
+  names them. A purely structural entity is not a defect, so this is a report line in
+  [`jazyk status`](../frontends/cli.md#jazyk-status) and the whole-build report
+  ([`jazyk ripple`](../frontends/cli.md#jazyk-ripple)), not a diagnostic; an entity
+  with no requirement at all is the `unused-entity` check's finding
+  ([checks](../compiler/compilation.md#checks)).
 
-Both findings are ordinary [diagnostics](../compiler/model/diagnostic.md), so they land
-in the same triage queue as everything else. The inverse query, deliverable files no
-binding names, is the [unclaimed report](./bind.md#the-unclaimed-report).
+The inverse query, deliverable files no binding names, is the
+[unclaimed report](./bind.md#the-unclaimed-report), and its per-entity slice is the
+`files` part of the [unattached remainder](#the-unattached-remainder).

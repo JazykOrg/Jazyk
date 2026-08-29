@@ -47,15 +47,32 @@ Imagine a requirements doc and UML diagrams as a programming language.
 ## How it works
 
 The compiler maintains a persistent [semantic graph](./compiler/model.md) reconciled
-against the documentation. Entities, EARS requirements, derived relationships, and
-diagnostics live in the [graph store](./compiler/graph.md), edited in place across builds,
-never regenerated.
+against the documentation. Three authored kinds live in the
+[graph store](./compiler/graph.md): entities, requirements (free-form
+[statements](./compiler/concepts/statements.md), each with a verbatim quote as its
+provenance), and [views](./compiler/model/view.md) (what one diagram includes).
+Relationships, state machines, and default views derive from them on every commit. The
+graph is edited in place across builds, never regenerated. Every fact carries
+[provenance](./compiler/model.md#provenance): a verbatim quote, a derivation from
+upstream facts, or a human decree. A derived or decreed fact carries a proposal for the
+sentence the documents should gain, so the graph converges toward fully quoted.
 
-The graph is the build artifact. Every change to it happens in a [turn](./compiler/turns.md):
-one small, well-defined LLM session over a bounded [context pack](./compiler/context.md),
-scheduled by the deterministic [reconciler](./compiler/reconciler.md). Downstream consumers
-work the same way: they query the graph one entity or one requirement at a time, staying in
-the small-prompt regime where LLMs are reliable.
+The graph is the build artifact, and compilation is a goal board. The deterministic
+[reconciler](./compiler/reconciler.md) derives goals from the documents, the graph, and
+the change records earlier commits left behind. A [session](./compiler/sessions.md), one
+LLM session per goal batch over a bounded [loaded set](./compiler/context.md) of the
+graph, resolves them with tools and justifies each resolution. Goals come in two
+classes. Compile goals bring the graph in line with the documents. Garbage collection
+(GC) goals restructure it (splitting dense entities and views, declaring edges, merging
+lookalikes) once the neighborhood they target has settled. A build interleaves the two
+classes in bursts until it [converges](./compiler/compilation.md#convergence). A
+rebuild with no changes derives zero goals and makes zero LLM calls.
+
+Diagrams are projections. Every UML diagram kind renders from the graph on every commit
+([diagrams](./compiler/diagrams.md)): there are no diagram elements, only facts and
+views, so a picture cannot drift from the documents behind it. Downstream consumers work
+the same way: they query the graph one entity, one requirement, or one view at a time,
+staying in the small-prompt regime where LLMs are reliable.
 
 ## Architecture
 
@@ -63,12 +80,12 @@ the small-prompt regime where LLMs are reliable.
 graph TD;
   Docs[/"Documentation<br/>(natural language)"/];
   Parser["Parser"];
-  Reconciler["Reconciler"];
-  Turns["Turns"];
-  ACP["ACP bridge"];
+  Board["Reconciler<br/>(goal board)"];
+  Scheduler["Scheduler"];
+  Sessions["Sessions"];
   Agent(["ACP agent<br/>(external or embedded)"]);
   Store[("Graph store<br/>(semantic graph)")];
-  Context["Context engine"];
+  Renderer["Renderer<br/>(diagrams)"];
 
   subgraph Frontends
     CLI[CLI];
@@ -81,31 +98,34 @@ graph TD;
   subgraph Consumers
     Gen[Generation];
     PM[Project Management];
-    DocsFeedback[Docs Feedback];
+    Docsgen[Documentation generation];
   end
 
   Docs --> Parser;
-  Parser --> Reconciler;
-  Reconciler <--> Turns;
-  Turns <--> ACP;
-  ACP <--> Agent;
-  Turns -- "tools" --> Store;
-  Store <--> Context;
-  Context --> CLI;
-  Context --> MCP;
-  Context --> LSP;
-  Context --> GUI;
+  Parser --> Board;
+  Board --> Scheduler;
+  Scheduler --> Sessions;
+  Sessions <--> Agent;
+  Sessions -- "tools" --> Store;
+  Store -- "re-derive" --> Board;
+  Store --> Renderer;
+  Store --> CLI;
+  Store --> MCP;
+  Store --> LSP;
   Store --> Viewer;
   Store --> GUI;
+  Renderer --> LSP;
+  Renderer --> Docsgen;
   Store --> Gen;
   Store --> PM;
-  Store --> DocsFeedback;
+  Store --> Docsgen;
 ```
 
 ## Compiler
 
-The compiler reconciles the documentation into the semantic graph and surfaces ambiguity,
-open-endedness, and contradictions as diagnostics along the way.
+The compiler reconciles the documentation into the semantic graph, surfaces ambiguity,
+open-endedness, and contradictions as diagnostics along the way, and draws every view
+as a diagram.
 
 [See more](./compiler/compiler.md)
 
@@ -135,4 +155,4 @@ Consumers work from the graph to do useful work downstream.
 - [Binding](./consumers/bind.md)
 - [Decompilation](./consumers/decompile.md)
 - [Project Management](./consumers/pm.md)
-- [Docs Feedback](./consumers/docsgen.md)
+- [Documentation generation](./consumers/docsgen.md)

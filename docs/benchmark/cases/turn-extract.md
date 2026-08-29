@@ -31,7 +31,7 @@ assert:
   - entityAbsent:
       namePattern: '^--|/|\.md'
   - requirementExists:
-      earsPattern: 'empt(y|ies|ied)'
+      statementPattern: 'empt(y|ies|ied)'
       entity: Cart
   - coverageSet:
       section: 'docs/shop.md#/shop/cart'

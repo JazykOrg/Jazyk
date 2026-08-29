@@ -37,13 +37,13 @@ given:
             quote: When the battery drops below ten percent, the Gadget shall enter low power mode.
     requirements:
       req:gadget-1:
-        ears: The Gadget shall report its battery level.
+        statement: The Gadget shall report its battery level.
         entities: [ent:gadget]
         source:
           section: 'docs/gadget.md#/gadget/overview'
           quote: The Gadget shall report its battery level — the operator reads it hourly.
       req:gadget-2:
-        ears: When the battery drops below ten percent, the Gadget shall enter low power mode.
+        statement: When the battery drops below ten percent, the Gadget shall enter low power mode.
         entities: [ent:gadget]
         source:
           section: 'docs/gadget.md#/gadget/power'

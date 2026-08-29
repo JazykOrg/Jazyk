@@ -3,7 +3,7 @@
 Grades edge declaration. A sub-system list ties each listed sub-system to its parent;
 the requirement carrying that fact must declare the pair in `edges` so the derived
 relationship exists. Items that are links still count: the item's text is a fact of
-this document (see [enumerations](../../compiler/concepts/ears.md#enumerations)). The
+this document (see [enumerations](../../compiler/concepts/statements.md#enumerations)). The
 link targets are also a junk trap: no path or filename may become an entity. See
 [case format](../cases.md#case-format).
 

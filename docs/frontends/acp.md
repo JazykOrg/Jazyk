@@ -3,13 +3,15 @@
 Jazyk speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) and
 sits between ACP clients and ACP agents. An ACP client is an editor or IDE (Zed,
 JetBrains, or jazyk's own [GUI](./gui.md)). An ACP agent is a coding agent (OpenCode,
-Codex through `codex-acp`, or jazyk's [embedded agent](#the-embedded-agent)).
+Claude Code, Codex through `codex-acp`, or jazyk's [embedded agent](#the-embedded-agent)).
 
 ACP is the single AI path. Compilation, [binding](../consumers/bind.md),
 [generation](../consumers/gen.md), verification judgment, and chat all run as ACP
-sessions against the configured agent. Jazyk itself never calls a model endpoint
-outside the embedded agent. [MCP](./mcp.md) stays as the tool delivery mechanism into
-sessions, and as the backwards-compatible serving for agents that connect on their own.
+sessions against a configured agent: the `[acp]` profile, or the
+[executor](#executors) an override names for a goal kind or a goal class. Jazyk itself
+never calls a model endpoint outside the embedded agent. [MCP](./mcp.md) stays as the
+tool delivery mechanism into sessions, and as the serving for agents that connect on
+their own.
 
 ## Roles
 
@@ -18,15 +20,16 @@ Jazyk takes both protocol roles, depending on the direction:
 - Client of the downstream agent. For automated work and for the GUI's chat pane,
   jazyk spawns the configured agent as a subprocess and drives it: it creates
   sessions, sends prompts, and consumes the update stream. ACP agents cannot create
-  sessions or start turns, so the automated path must own the client side.
+  sessions or send prompts, so the automated path must own the client side.
 - Agent toward the IDE. `jazyk acp` is a stdio process an IDE spawns like any other
   ACP agent. It proxies to the downstream agent and adds jazyk on the way through:
   tool injection, doc edit translation, build status. See [the IDE proxy](#the-ide-proxy).
 
-One process that runs builds holds one connection to one downstream agent, with many
-concurrent sessions on it. The [control plane](../compiler/control-plane.md)
-arbitrates between processes as it does today: the build lease and the per-task leases
-make a CLI run beside a GUI harmless.
+One process that runs builds holds one connection per downstream agent it drives, with
+several sessions open on it: one worker session at a time (compilation is
+sequential), chat and follow sessions beside it. The
+[control plane](../compiler/control-plane.md) arbitrates between processes: the build
+lease and the per-batch leases make a CLI run beside a GUI harmless.
 
 ## Agents
 
@@ -36,6 +39,43 @@ jazyk is specific to any agent.
 
 A profile names a command, arguments, extra environment, and whether jazyk must serve
 file tools to it (`serve_files`, for agents that bring no editor of their own).
+
+## Executors
+
+The `[acp]` profile is the executor for every session unless an override names
+another. The [`[executors]` settings](../compiler/project-settings.md#executors) map
+a goal kind or a goal class to a profile, so extraction can run on a cheap agent
+while GC judgment runs on the strongest one available. E.g.:
+
+```toml
+[acp]
+agent = "embedded"
+
+[executors]
+gc = "claude-code"               # every GC goal kind
+reconcile-section = "embedded"   # one compile goal kind
+```
+
+Resolution per goal kind, first match wins: the `--agent` flag, `JAZYK_ACP_AGENT`,
+`[executors].<kind>`, `[executors].<class>` (`compile` or `gc`), `[acp] agent`, the
+built-in default (`embedded`). The flag and the variable name one agent for the whole
+run and outrank the table, so a one-off run on another agent needs no settings edit.
+The [control plane](../compiler/control-plane.md#executors) owns the resolution. The
+rules it obeys:
+
+- A [goal batch](../compiler/reconciler.md#batching) resolves to one executor. The
+  scheduler resolves the executor per kind before it batches and never groups goals
+  whose kinds resolve to different profiles into one batch, so a worker session is
+  created against exactly one agent.
+- A GC goal whose cone settles joins the running session only when its executor is
+  the session's agent. Otherwise it waits for its own session, which the scheduler
+  creates as the next burst.
+- Chat sessions, answer sessions, and follow sessions use the `[acp]` agent. The
+  overrides apply to goal work only.
+- Per-kind and per-class token costs land in `status.yaml` (`costs.by_kind`,
+  `costs.by_class`), so the choice is informed by what each kind spends. The resolved
+  executor is recorded on the session's trace (`batchStart`, `sessionStart`) and on
+  the worker record the control plane writes for the session.
 
 ## The embedded agent
 
@@ -49,13 +89,13 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   send the messages and the MCP tools, dispatch the calls the model makes, append the
   results, repeat until the model stops calling tools. It streams thought chunks,
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
-  usage. A prose reply in a turn that already made tool calls gets one nudge before
-  the turn ends: weak models forget they are mid-task more often than they finish
-  silently, and a purely conversational answer still ends the turn immediately.
+  usage. A prose reply in a prompt that already made tool calls gets one nudge before
+  the prompt ends: weak models forget they are mid-goal more often than they finish
+  silently, and a purely conversational answer still ends the prompt immediately.
   A reply that is empty of both message and calls while carrying reasoning is a
   stall, not an answer: reasoning models narrate the action they intend and stop, as
   if the thinking were visible. The loop answers with a corrective nudge naming that
-  ("reasoning is not shown and does not count as acting"), at most twice per turn,
+  ("reasoning is not shown and does not count as acting"), at most twice per prompt,
   before the empty reply is allowed to end it.
 - On `session/new` it also offers the endpoint's models as a session config option,
   so the person in the IDE picks one (below).
@@ -63,23 +103,23 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
 - `session/close` (advertised in its capabilities) tears the session down: each MCP
   server's input closes and the agent waits for it to exit before answering. An
   ephemeral jazyk serving runs its implicit finish on that end of input, so closing
-  a worker session is what lands a turn whose agent forgot the finishing call.
+  a worker session is what lands a batch whose agent forgot the finishing call.
 
 The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
 calls for one step batched into a single reply) and `text` (tools described in the
 system prompt, one JSON action object per reply, because small models cannot
 reliably emit several). A text reply that reads as a JSON action but does not parse
-is answered with a repair message naming the error, three strikes before the turn
-fails: a dropped brace is a resend, not an answer. The agent probes on the first round: an endpoint that
-rejects the `tools` parameter, or a model that answers prose without calls,
-downgrades the run to `text`, sticky until it ends. The endpoint fallbacks ride
-along too: streaming when the endpoint demands it, dropped `temperature`, stripped
-reasoning fields ([LLM settings](../compiler/project-settings.md#llm)). A reasoning
-model's reasoning is appended back into the history unchanged, so later rounds see
-the reasoning behind earlier calls. No jazyk prompting, no jazyk tool knowledge, no
-shortcut into the store. The same session against OpenCode or the embedded agent
-carries the same prompt and the same injected tools, which is what makes the embedded
-agent a faithful test double for the whole path.
+is answered with a repair message naming the error, three strikes before the prompt
+fails: a dropped brace is a resend, not an answer. The agent probes on the first
+round: an endpoint that rejects the `tools` parameter, or a model that answers prose
+without calls, downgrades the run to `text`, sticky until it ends. The endpoint
+fallbacks ride along too: streaming when the endpoint demands it, dropped
+`temperature`, stripped reasoning fields ([LLM settings](../compiler/project-settings.md#llm)).
+A reasoning model's reasoning is appended back into the history unchanged, so later
+rounds see the reasoning behind earlier calls. No jazyk prompting, no jazyk tool
+knowledge, no shortcut into the store. The same session against OpenCode or the
+embedded agent carries the same prompt and the same injected tools, which is what
+makes the embedded agent a faithful test double for the whole path.
 
 ### Choosing a model
 
@@ -115,13 +155,15 @@ agent behind jazyk exactly as it would without jazyk in the middle.
 
 Three session kinds, all the same protocol:
 
-- Worker sessions: created by jazyk for one unit of automated work. One session per
-  [work item](../compiler/turns.md), so a turn keeps its fresh, focused context and a
-  retry starts clean. Parallel waves run as concurrent sessions on the one connection,
-  bounded by `JAZYK_MAX_CONCURRENCY`.
+- Worker sessions: created by jazyk for one [goal batch](../compiler/reconciler.md#batching).
+  One [session](../compiler/sessions.md) per batch, so the session keeps a fresh,
+  focused context and a retry starts clean. Worker sessions run one at a time:
+  [compilation is sequential](../compiler/compilation.md#a-build), and a GC burst is
+  the next session, not a parallel one.
 - Chat sessions: created by a user in the [GUI chat pane](./gui.md#chat) or from an
-  IDE through the proxy. The agent gets the `chat` toolset: graph reads and writes,
-  the task lifecycle, and the [dual-write requirement tools](#dual-write-tools).
+  IDE through the proxy. The agent gets the `chat` toolset: the read tools, the
+  lifecycle tools, the [dual-write tools](#dual-write-tools), `update_diagnostic`,
+  `answer_diagnostic`, and the [project tools](#project-tools). No raw write tools.
 - Follow sessions: read-only mirrors of worker sessions, so a person can watch
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).
@@ -171,36 +213,51 @@ What the store serves:
 
 ## Worker sessions
 
-The automated path. For each work item the runner:
+The automated path. For each goal batch the runner:
 
-1. Creates a session whose `mcpServers` list one entry: `jazyk mcp` with the task's
-   toolsets and flags (see [MCP into sessions](./mcp.md#mcp-into-acp-sessions)).
-2. Prompts with the task's contract itself: for compilation tasks the instructions
-   and the [context pack](../compiler/context.md) travel as the session prompt (a
-   prompt is what a model reads best), and the serving's `begin_compilation` answers
-   with a short ack (`--packaged`). Binding and generation packages still ride the
-   `begin_*` reply. The prompt source is `task_prompt` either way; only the channel
-   differs.
-3. Reminds once when the turn ends in prose: an agent that answers without tool
-   calls ends its turn by design, so when the turn ends, the task has not committed,
-   and the watchdog did not fire, the runner sends one follow-up prompt in the same
-   session ("the task is not finished; continue with tool calls, finish with
-   `done`"). The agent stays generic; the client owns the reminder. One reminder per
-   item; a second prose ending is a failed turn.
+1. Resolves the batch's [executor](#executors) and creates a session on that agent
+   whose `mcpServers` list one entry: `jazyk mcp` with the batch's toolsets and the
+   spawning flags (`--only <batch>`, `--packaged`, `--ephemeral`, `--build-token`;
+   see [MCP into sessions](./mcp.md#mcp-into-acp-sessions)). The batch id
+   (`b<generation>-<n>`) names the session, its lease, and its trace label. The
+   toolset is the union of what the batch's goal kinds need
+   ([toolsets](../compiler/sessions.md#toolsets)).
+2. Prompts with the batch's contract itself: the
+   [assembled session prompt](../compiler/sessions.md#the-prompt) (the agent
+   contract, the active skills, the project block, the goals block, the
+   [loaded set](../compiler/context.md#the-loaded-set), and the worker protocol line
+   naming the batch) travels as the session prompt (a prompt is what a model reads
+   best), and the serving's `begin_goals` answers with a short ack (`--packaged`).
+   Binding and generation packages ride the `begin_*` reply instead. The prompt
+   source is the same assembly either way; only the channel differs.
+   [`jazyk preview`](../compiler/sessions.md#preview) prints exactly the text this
+   step sends.
+3. Reminds once when the prompt ends in prose: an agent that answers without tool
+   calls ends its prompt by design, so when the prompt ends, the batch has not
+   committed, and the watchdog did not fire, the runner sends one follow-up prompt in
+   the same session ("the goals are not resolved; continue with tool calls, finish
+   with `done`"). The agent stays generic; the client owns the reminder. One reminder
+   per batch; a second prose ending is a failed session.
 4. Consumes the update stream and translates it into
-   [trace events](../compiler/turns.md#trace-events): message and thought chunks
+   [trace events](../compiler/sessions.md#trace-events): message and thought chunks
    become model text, `tool_call` and `tool_call_update` become tool rows, usage
-   updates accumulate into the token count. The trace, the transcript, and the GUI
-   panels do not care which agent ran the turn.
-5. Closes the session and waits for the teardown, so an agent that ended its turn
+   updates accumulate into the token count, and `mark_goal_done` and
+   `mark_goal_failed` calls become `goal` events carrying the justification or the
+   reason. The trace, the transcript, and the GUI panels do not care which agent ran
+   the session.
+5. Closes the session and waits for the teardown, so an agent that ended its prompt
    with staged work but no finishing call still lands it: the serving's implicit
-   finish runs on the teardown, under the same gates the budget path uses.
+   finish runs on the teardown, under the same gates the
+   [budget path](../compiler/sessions.md#budgets) uses.
 6. Reads success from the store, never from the agent's word: the commit happened
    inside the MCP serving under its own gates, so the runner attributes the journal
-   entries between the session's start and end generations to the work item, and a
-   compilation item must have left the queue. A turn whose task did not land is a
-   failed turn, whatever the agent said. A retry is a fresh session; its claim on the
-   same task is re-entrant, so its own earlier attempt never blocks it.
+   entries between the session's start and end generations to the batch, and every
+   goal in the batch must have been resolved (`mark_goal_done` accepted at commit)
+   or failed with a reason. A goal the session neither resolved nor failed parks
+   ([resolving, failing, parking](../compiler/sessions.md#resolving-failing-parking)).
+   A session whose batch did not land is a failed session, whatever the agent said.
+   A retry is a fresh session; its claim on the same batch is re-entrant, so its own
+   earlier attempt never blocks it.
 
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
 default 600 seconds). Cancellation follows the protocol: pending permission requests
@@ -210,23 +267,50 @@ dead agent can hold either way.
 ## Chat sessions
 
 A chat session is an open conversation with the agent about the project. The injected
-`chat` serving carries the read tools, the write tools, the task lifecycle, and the
-project tools, so "tighten this requirement and recompile" is a sentence, not a
-workflow.
+`chat` serving carries the read tools, the lifecycle tools, the
+[dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`, and
+the [project tools](#project-tools), and no raw write tools, so "tighten this
+requirement and recompile" is a sentence, not a workflow.
 
 ### Dual-write tools
 
-A requirement lives in the prose; the graph carries its compiled form and a verbatim
-quote. A chat edit must move both or neither:
+A fact with quote provenance lives in the prose; the graph carries its compiled form
+and the verbatim quote. A chat edit must move both or neither. The four tools are the
+chat form of the [edit paths](../compiler/compilation.md#edit-paths):
 
-- `revise_requirement` takes the requirement id, the new prose, and optionally the
-  new `ears`. It locates the old quote in the document, stages the prose edit and the
-  requirement update as one changeset, and commits them atomically. The document's
-  stored content hash updates in the same commit, so the edit does not dirty the
-  document it just reconciled.
+- `revise_requirement({id, new_text, statement?})`: locates the requirement's quote
+  in the document, stages the prose replacement and the requirement update
+  (`statement` when given, the new sentence as the quote) as one changeset, and
+  commits them atomically. The document's stored content hash updates in the same
+  commit, so the edit does not dirty the document it just reconciled; downstream
+  goals (`rejudge-pair`, `bind`) derive from the graph change instead.
+- `add_requirement({doc, section, after_quote?, text, statement, entities})`:
+  inserts `text` into the section (after the located `after_quote`, or at the
+  section's end) and creates the requirement with `text` as its quote, one changeset.
+  The entities must exist; search before naming them.
+- `retract_requirement({id, reason})`: removes the sentence from the prose and
+  deletes the requirement, one changeset. The deletion writes its
+  [change records](../compiler/graph.md#change-records), so a view or instance that
+  referenced the requirement gets a `retrace` goal on the next build.
+- `edit_fact({id, field, value, note?})`: any authored field on any node (an
+  entity's `definition` or `parent`, an attribute value, a requirement's `edges`, a
+  view's members). When the fact is quote-provenanced, the agent proposes the
+  sentence rewrite in conversation, the person accepts it, and the call carries the
+  accepted sentence as `note`: the serving locates the quote and commits the prose
+  replacement with the graph mutation as one dual write. Without an accepted
+  sentence, or when the fact is `derived` or `decree`, the edit lands graph-only
+  with `decree` provenance (`note` becomes the decree's note) and a
+  [ratification proposal](../compiler/model/diagnostic.md#ratification-proposals)
+  follows. The compiler never rewrites a source document without an accepted
+  sentence. An `edit_fact` that names a default view makes it curated: the view
+  stops being default and survives recomputes
+  ([default views](../compiler/model/view.md#default-views)).
 - The prose edit surfaces to the ACP client as a file write plus a diff on the tool
   call, so an IDE shows it in the buffer and the review UI. See
   [doc edit delegation](#doc-edit-delegation).
+- Every dual write journals a `dual-write` entry, every decree a `decree` entry
+  ([journal](../compiler/graph.md#journal)), so `jazyk ripple` roots the cascade at
+  the chat edit.
 - Direct graph writes without a prose edit are not in the `chat` toolset. That path
   remains only in `jazyk mcp graph --write`, the debugging surface.
 
@@ -241,14 +325,17 @@ Setup and configuration are chat tools too, routed through the same edit delegat
   instructions state which case it is in, so the agent knows whether it is talking
   about a project or about an empty directory without calling anything.
 - `update_project_settings`: typed edits to `jazyk.toml` (workflow modes, docs glob,
-  lint rules, the `[acp]` profile), rendered as minimal edits, never a whole-file
-  rewrite. An uninitialized directory has no settings to edit, so this tool is
-  offered only in a project.
+  lint rules, the `[acp]` profile, the `[executors]` overrides), rendered as minimal
+  edits, never a whole-file rewrite. An uninitialized directory has no settings to
+  edit, so this tool is offered only in a project.
 
 ### Questions in chat
 
 Open diagnostics that carry a [prompt](../compiler/model/diagnostic.md#prompts) are
-the project's standing questions, and a chat session is where they get asked:
+the project's standing questions, and a chat session is where they get asked. Each
+one is a blocked goal on the board (an [`answer`](../compiler/goals/answer.md) goal,
+or a [`ratify`](../compiler/goals/ratify.md) goal for a ratification proposal), so
+the build's verdict counts them until they are answered:
 
 - On session start, when open prompted diagnostics exist, jazyk sends one summary
   message into the session (count and the top questions with their options), so
@@ -257,51 +344,58 @@ the project's standing questions, and a chat session is where they get asked:
 - A person answers in plain chat ("apply the first option on diag:contradiction-2",
   or a freeform reply). The session's agent records it with `answer_diagnostic`:
   - an `edit` option applies deterministically inside the serving (dual write,
-    diagnostic resolved) before the tool returns; no model judgment touches it.
+    diagnostic resolved) before the tool returns; no model judgment touches it. A
+    ratification proposal's `edit` option is this path: the proposed sentence lands
+    in the document and the fact's provenance flips to `quote` in the same
+    changeset, which journals a `ratify` entry and resolves the `ratify` goal.
   - an `answer` option or freeform text is recorded on the node, and the tool's
     reply hands the handling contract to the same agent: act on the reply with the
     session's tools, then `resolve_diagnostic` (or `update_diagnostic` to refine the
-    question and leave it open).
+    question and leave it open). The commit journals an `answer` entry.
 - The agent can also author and edit questions: `report_diagnostic` accepts a
-  `prompt`, and `update_diagnostic` replaces one on an existing finding. A question
-  the agent sharpens in chat is the same question the LSP shows inline in the file.
+  `prompt` (the `decision` rule is the shape for a design choice the documents leave
+  open), and `update_diagnostic` sets a new one on an existing finding. A question the
+  agent sharpens in chat is the same question the LSP shows inline in the file.
 
 ### Answer sessions
 
 Answers arriving outside a chat session (an LSP code action, the GUI panel) still
 need a model when they are not suggested edits. Jazyk spawns one focused session for
 the answer, the same shape as a worker session: the `chat` serving injected, the
-prompt carrying the diagnostic, its subjects' packs, the question, and the human's
-reply, with the contract to act on the reply and then resolve or re-prompt the
-diagnostic. The `answer.status` on the node moves `handling` on spawn and `handled`
-or `failed` when the session lands, so every frontend shows the same progress from
-the store.
+prompt carrying the diagnostic, the loaded set for its subjects, the question, and
+the human's reply, with the contract to act on the reply and then resolve or
+re-prompt the diagnostic. The `answer.status` on the node moves `handling` on spawn
+and `handled` or `failed` when the session lands, so every frontend shows the same
+progress from the store. The `answer` goal resolves when the session lands.
 
 ### Slash commands
 
 Chat sessions advertise commands through `available_commands_update`. ACP has no
 invoke method for commands; they arrive as prompt text. Jazyk matches the prefix
 before the prompt reaches the agent: a matched command runs the real work (the same
-path as the CLI command of that name) and streams its progress into the open turn,
-then ends the turn. Unmatched prompts go to the agent as conversation.
+path as the CLI command of that name) and streams its progress into the open prompt,
+then ends it. Unmatched prompts go to the agent as conversation.
 
 A build command streams the work at full fidelity, not just its boundaries:
 
-- Wave and turn boundaries, and jazyk's own narration (dirty counts, wave summaries),
-  are message text. Narration is not thinking, so it never renders as a thought.
+- Batch and session boundaries, and jazyk's own narration (the board summary line,
+  `gc burst:` lines, the verdict with its counts), are message text. Narration is
+  not thinking, so it never renders as a thought.
 - The worker's reasoning (`modelText` trace events) flows as `agent_thought_chunk`,
-  so the minutes inside a turn are visible thinking, not silence.
+  so the minutes inside a session are visible thinking, not silence.
 - Each graph tool call flows as `tool_call` titled by the decision, not the tool
   name: `add entity store`, `coverage /tiny covered`. When the result settles what
   happened, the completed `tool_call_update` retitles the row (`added entity
   ent:store` against `updated entity ent:store`) and carries the output; a failed
   call carries the violated rule. The raw arguments ride as the row's input. Ids are
-  namespaced per worker (`jazyk:<label>:<n>`), so parallel turns never collide in
-  the client's tool-call table.
-- The lifecycle calls (`begin_compilation`, `done`, `finish_compilation`) get no
-  row: the person asked for the build, so its machinery is not news. What the `done`
-  call says lands where it belongs: the turn's closing line carries the model's own
-  summary of what it did.
+  namespaced per session (`jazyk:<label>:<n>`), so a chat session's own calls never
+  collide with the build's in the client's tool-call table.
+- A `mark_goal_done` call flows as a row titled by the goal (`resolved
+  g:reconcile-section:docs/orders.md#/orders/holds`) with the justification as its
+  output; `mark_goal_failed` the same, titled `failed`, with the reason.
+- The lifecycle calls (`begin_goals`, `done`) get no row: the person asked for the
+  build, so its machinery is not news. What the `done` call says lands where it
+  belongs: the closing line carries the model's own summary of what it did.
 
 A command exists when a person needs an answer jazyk can give exactly, and no model
 should be improvising it: what this project is set to, what state the build is in,
@@ -314,9 +408,11 @@ what setup remains. The catalog:
 | `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
 | `/model` | The models the endpoint serves, the current one marked. With a name, pins it in `jazyk.toml` and applies it to this session where the agent takes the `model` config option. |
 | `/agent` | The agents jazyk can drive (built-in and configured), the current one marked. With a name, records it in `jazyk.toml`; the switch takes effect when the IDE restarts the jazyk agent. |
-| `/status` | The last build: verdict, graph size, open findings. |
+| `/status` | The last build: verdict with its counts, graph size, open findings, board counts. |
+| `/board` | The goal board as `jazyk compile` would derive it now: open goals by class and kind, the batches the scheduler would form, blocked goals with their reasons, parked and failed goals. The verdict when the board is empty. |
+| `/preview` | The next session's prompt, exactly as the model would receive it. With a goal or target (`/preview ent:order`), the batch that goal would join. What [`jazyk preview`](../compiler/sessions.md#preview) prints. |
 | `/questions` | The [standing questions](#questions-in-chat) on open findings. |
-| `/compile` | Reconcile the graph with the documents. |
+| `/compile` | Reconcile the graph with the documents: run the board to convergence. |
 | `/generate` | Bind and generate the deliverable. |
 | `/verify` | Run verification over the ledger. |
 | `/release` | Approve pending work in manual mode. |
@@ -328,7 +424,7 @@ queue and the proxy does not.
 
 The list follows the directory. A session outside a project advertises `/help` and
 `/init` and nothing else: no build command has anything to build yet, and offering
-nine that all answer "not a jazyk project" reads as breakage.
+the rest when every one answers "not a jazyk project" reads as breakage.
 
 Jazyk's names win over the downstream agent's. An agent that advertises its own
 `/init` is shadowed inside a jazyk project, which is the intended trade: in a jazyk
@@ -336,12 +432,18 @@ session, `/init` is the project's own setup.
 
 ## Plans
 
-Build progress is an ACP plan. The runner publishes one plan entry per scheduled work
-item ("reconcile docs/cli.md", "review ent:cart", "generate ent:order", "verify
-req:order-3") and flips each entry `pending` → `in_progress` → `completed` as the
-build advances. Plan updates replace the whole list, per the protocol. The GUI renders
-the plan as a live checklist; an IDE that triggered the build through `/compile` sees
-the same plan inside its turn.
+Build progress is an ACP plan. The runner publishes one plan entry per goal batch,
+keyed by the batch id and titled by the batch's locality and goal kinds ("reconcile
+docs/cli.md (3 sections)", "rejudge req:order-3 ~ req:cart-2", "abstract ent:order",
+"generate ent:order", "verify req:order-3"), and flips each entry `pending` →
+`in_progress` → `completed` as the build advances. The pending entries are the
+batches the scheduler projects from the current board; every commit re-derives the
+board, and the plan is republished whole with the projection re-formed, per the
+protocol's replace semantics. A blocked goal appears as its own pending entry
+carrying the reason ("blocked: awaiting answer on diag:contradiction-2"), so a plan
+that ends with blocked entries is the same statement the verdict makes. The GUI
+renders the plan as a live checklist; an IDE that triggered the build through
+`/compile` sees the same plan inside its prompt.
 
 ## Permissions
 
@@ -352,7 +454,7 @@ Two policies, chosen per session kind:
   rejected. Automated work never blocks on a human.
 - Chat sessions forward permission requests to the user: the GUI shows them in the
   pane, the proxy passes them through to the IDE. An unanswered request cancels with
-  the turn.
+  the prompt.
 
 ## The IDE proxy
 
@@ -367,8 +469,8 @@ the protocol on stdio; downstream it drives the configured agent. In between:
   its own additions use namespaced tool call ids so they never collide with the
   agent's.
 - Slash commands are intercepted as in the GUI: `/compile` runs the build through
-  worker sessions and streams synthetic tool calls and the [plan](#plans) into the
-  open IDE turn.
+  worker sessions (each on its resolved [executor](#executors)) and streams
+  synthetic tool calls and the [plan](#plans) into the open IDE prompt.
 - Outside a jazyk project (no `jazyk.toml` above the session's `cwd`), the proxy is a
   transparent passthrough plus `/help` and `/init`. `/init` scaffolds a project and
   the proxy adopts it immediately: the commands it runs itself work in the open
@@ -391,7 +493,7 @@ An agent cannot hand its client a new session, so background work cannot open a
 window in the IDE. What the protocol does allow:
 
 - The proxy advertises `loadSession` and session listing, and lists worker runs as
-  read-only sessions with descriptive titles ("compile docs/cli.md"). An IDE with a
+  read-only sessions titled by their batch ("reconcile docs/cli.md"). An IDE with a
   session picker attaches through the standard `session/load`, which replays the full
   history (tool calls included) and then streams the live tail. A prompt typed into a
   mirrored run is answered by the proxy with a note that the session is a read-only
@@ -402,17 +504,17 @@ window in the IDE. What the protocol does allow:
   lose nothing.
 - Background builds additionally push the [plan](#plans) and a session info update
   into the most recently active jazyk session, and only that one. Rendering of
-  updates outside a turn varies by IDE; the GUI always renders them.
+  updates outside a prompt varies by IDE; the GUI always renders them.
 
 ### LSP and the proxy
 
 The [LSP](./lsp.md) stays read-only and never compiles. What it knows (stale
-documents, open diagnostics, pending work) reaches the IDE's chat surface through the
+documents, open diagnostics, open goals) reaches the IDE's chat surface through the
 proxy instead: on session start and on every
-[control plane](../compiler/control-plane.md) or queue change, the
-proxy refreshes the advertised commands and the pending-work plan. The queue and the
-leases are files, so the proxy reads them the way every other frontend does, no new
-channel.
+[control plane](../compiler/control-plane.md) or board change, the proxy refreshes
+the advertised commands and the pending-work plan. The board derives from files (the
+documents, the graph, `status.yaml`) and the leases are files, so the proxy computes
+them the way every other frontend does, no new channel.
 
 ## Registration
 
@@ -456,7 +558,8 @@ The internals are modeled on protocol version 2 even while the wire speaks versi
 
 - Tools reach agents only through injected MCP servers. Jazyk never relies on the
   protocol's file system or terminal methods toward agents; version 2 removes them.
-- Turn progress is consumed from the update stream, not the pending prompt response.
+- Progress is consumed from the update stream, not from the pending `session/prompt`
+  response.
 - Tool calls are treated as upserts by id, and unknown enum values are tolerated.
 
 The wire version is negotiated per connection in `initialize`, in both roles. Today's
@@ -468,5 +571,6 @@ one version 1 convenience in use is the upstream file write in
 
 The `[acp]` section of `jazyk.toml`, the global `~/.jazyk/config.toml`, the
 `JAZYK_ACP_AGENT` environment variable, and the `--agent` flag resolve per field like
-the [LLM settings](../compiler/project-settings.md#llm) do. See
+the [LLM settings](../compiler/project-settings.md#llm) do. The `[executors]`
+section overrides the profile per goal kind or class ([executors](#executors)). See
 [project settings](../compiler/project-settings.md#acp).

@@ -5,12 +5,16 @@ description: |-
   Definitions for the graph store files in the out directory:
   - graph/entities.yaml is a map of id to entity
   - graph/requirements.yaml is a map of id to requirement
-  - graph/relationships.yaml is a map of id to relationship (derived, regenerated on commit)
+  - graph/views.yaml is a map of id to view (curated views and the defaults the store derives)
   - graph/diagnostics.yaml is a map of id to diagnostic
   - graph/redirects.yaml is a map of absorbed id to surviving id (plain strings)
+  - graph/relationships.yaml is a map of id to relationship (derived, rewritten on every commit)
+  - graph/state-machines.yaml is a map of id to stateMachine (derived, rewritten on every commit)
   - docs/<mirrored doc path>.yaml is one docRecord per source document
-  - journal/<build>-<seq>.yaml is one journalEntry per committed changeset
+  - journal/g<generation>.yaml is one journalEntry per generation
   - status.yaml is one status object
+  Goals are derived from these files and never stored; goal ids appear only in
+  journal entries and the parked and failed lists of status.yaml.
 definitions:
   severity:
     description: Diagnostic severity. 'none' is a recorded judgment that is not surfaced
@@ -21,7 +25,9 @@ definitions:
       - info
       - none
   relationshipType:
-    description: Relationship type, from strongest to weakest
+    description: >-
+      Relationship type, the UML set. Strength for collapsed and lifted arrows runs in
+      this order, strongest first; instantiation is never promoted
     type: string
     enum:
       - generalization
@@ -30,7 +36,56 @@ definitions:
       - aggregation
       - association
       - dependency
-      - reference
+      - instantiation
+  cardinality:
+    description: Multiplicity on the b side of an edge
+    type: string
+    enum:
+      - '1'
+      - '0..1'
+      - '1..*'
+      - '*'
+  facetName:
+    description: The judged facet of a requirement
+    type: string
+    enum:
+      - behavior
+      - constraint
+      - failure-mode
+      - quality
+  viewKind:
+    description: A renderable view kind from the catalog
+    type: string
+    enum:
+      - class
+      - object
+      - package
+      - component
+      - composite
+      - deployment
+      - use-case
+      - activity
+      - state
+      - sequence
+      - communication
+      - timing
+      - overview
+  limitName:
+    description: A limit from the built-in registry
+    type: string
+    enum:
+      - requirements-per-entity
+      - children-per-entity
+      - members-per-structural-view
+      - edges-per-view
+      - members-per-flow-view
+      - participants-per-sequence-view
+      - instances-per-object-view
+      - states-per-state-machine
+  goalId:
+    description: A derived goal id, g:<kind>:<target>
+    type: string
+    pattern: '^g:[a-z-]+:.+$'
   coverageState:
     description: Coverage state of a reconciled section
     type: string
@@ -40,7 +95,7 @@ definitions:
   sourceRef:
     description: >-
       A located quote. 'doc' is the document path, 'section' the internal reference,
-      'quote' the verbatim text located by string search
+      'quote' the verbatim text located by whitespace-insensitive string search
     type: object
     required:
       - doc
@@ -53,8 +108,101 @@ definitions:
         type: string
       quote:
         type: string
+  quoteProvenance:
+    description: The fact was extracted from prose
+    type: object
+    required:
+      - quote
+    properties:
+      quote:
+        $ref: '#/definitions/sourceRef'
+    additionalProperties: false
+  derivedProvenance:
+    description: >-
+      The fact was synthesized from upstream nodes. Invented until ratified: a
+      ratification proposal stands while this provenance does
+    type: object
+    required:
+      - derived
+    properties:
+      derived:
+        type: object
+        required:
+          - from
+          - reasoning
+        properties:
+          from:
+            description: Upstream node ids, at least one, all live
+            type: array
+            minItems: 1
+            items:
+              type: string
+          reasoning:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+  decreeProvenance:
+    description: >-
+      The fact was written by a human directly on the graph. Outranks derivation, not
+      the documents: a ratification proposal stands until the decree reaches prose or
+      is retracted
+    type: object
+    required:
+      - decree
+    properties:
+      decree:
+        type: object
+        required:
+          - author
+          - at
+        properties:
+          author:
+            type: string
+          at:
+            type: string
+            description: Timestamp of the decree
+          note:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+  provenance:
+    description: Exactly one of the three provenance kinds
+    oneOf:
+      - $ref: '#/definitions/quoteProvenance'
+      - $ref: '#/definitions/derivedProvenance'
+      - $ref: '#/definitions/decreeProvenance'
+  limits:
+    description: >-
+      Per-node bumps of the built-in limits, keyed by limit name. Written by
+      bump_limit with decree provenance recorded in the journal. Entity nodes carry
+      requirements-per-entity, children-per-entity, states-per-state-machine; view
+      nodes carry the view limits
+    type: object
+    propertyNames:
+      $ref: '#/definitions/limitName'
+    additionalProperties:
+      type: integer
+      minimum: 1
+  attribute:
+    description: >-
+      One named attribute of an entity. A type where prose states structure, a value
+      where the entity is an instance. Behavior is never an attribute
+    type: object
+    required:
+      - name
+      - provenance
+    properties:
+      name:
+        type: string
+      type:
+        type: string
+      value:
+        type: string
+      provenance:
+        $ref: '#/definitions/provenance'
+    additionalProperties: false
   requirementEdge:
-    description: An entity pair a requirement ties together
+    description: One relationship a requirement causes. Directional, a acts on b
     type: object
     required:
       - a
@@ -62,45 +210,59 @@ definitions:
     properties:
       a:
         type: string
-        description: Entity id
+        description: Entity id, among the requirement's entities
       b:
         type: string
-        description: Entity id
+        description: Entity id, among the requirement's entities, distinct from a
       type:
-        description: Implied relationship type
+        description: Relationship type. An edge without one contributes dependency
         allOf:
           - $ref: '#/definitions/relationshipType'
-        default: reference
-  workItem:
-    description: One scheduled unit of work, a task type and its target
+        default: dependency
+      cardinality:
+        $ref: '#/definitions/cardinality'
+    additionalProperties: false
+  transition:
+    description: >-
+      The state change a requirement describes. The source of the subject's derived
+      state machine
     type: object
     required:
-      - task
-      - target
+      - subject
+      - from
+      - to
     properties:
-      task:
+      subject:
         type: string
-        enum:
-          - align-doc
-          - reconcile-doc
-          - review-requirement
-          - review-entity
-      target:
+        description: Entity id, among the requirement's entities
+      from:
         type: string
-        description: Document path, entity id, or requirement id
-      dirtySections:
-        type: array
-        items:
-          type: string
-      staleAnchors:
-        type: array
-        items:
-          type: string
-      proposals:
-        description: Anchor ids an align-doc item must decide
-        type: array
-        items:
-          type: string
+        description: State name
+      to:
+        type: string
+        description: State name
+      trigger:
+        type: string
+        description: The event that fires the transition
+      guard:
+        type: string
+        description: The condition under which it fires
+    additionalProperties: false
+  facet:
+    description: One judged facet of a requirement, recorded with reasoning
+    type: object
+    required:
+      - facet
+      - reasoning
+    properties:
+      facet:
+        $ref: '#/definitions/facetName'
+      reasoning:
+        type: string
+      measure:
+        type: string
+        description: The measurable bound. Stated only on a quality facet
+    additionalProperties: false
   entity:
     description: One entry in graph/entities.yaml
     type: object
@@ -120,11 +282,30 @@ definitions:
         type: string
         description: Visibility scope, part of the entity's natural key
         default: public
+      stereotype:
+        type: string
+        description: A free-form judged label. Nothing enumerates the allowed values
+      parent:
+        type: string
+        description: >-
+          The containing entity. One tree, unlimited depth, acyclic. Part of the
+          natural key when the caller supplies it
+      attributes:
+        type: array
+        items:
+          $ref: '#/definitions/attribute'
       mentions:
-        description: The sections that talk about this entity
+        description: The sections that talk about this entity, each a located quote
         type: array
         items:
           $ref: '#/definitions/sourceRef'
+      provenance:
+        description: >-
+          Present on entities with no mention behind them (derived or decreed
+          structure). An entity has at least one mention or a provenance
+        $ref: '#/definitions/provenance'
+      limits:
+        $ref: '#/definitions/limits'
       confidence:
         type: number
         minimum: 0
@@ -133,21 +314,33 @@ definitions:
         type: string
       created:
         type: string
-        description: Build marker set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit
       updated:
         type: string
-        description: Build marker set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit
   requirement:
-    description: One entry in graph/requirements.yaml
+    description: >-
+      One entry in graph/requirements.yaml. Carries exactly one of source (the quote
+      form) or provenance (derived or decree)
     type: object
     required:
-      - ears
+      - statement
       - entities
-      - source
+    oneOf:
+      - required:
+          - source
+        not:
+          required:
+            - provenance
+      - required:
+          - provenance
+        not:
+          required:
+            - source
     properties:
-      ears:
+      statement:
         type: string
-        description: The EARS statement
+        description: One atomic obligation, free-form
       entities:
         type: array
         minItems: 1
@@ -155,11 +348,24 @@ definitions:
           type: string
           description: Entity id
       edges:
+        description: The relationships this one statement causes, plural
         type: array
         items:
           $ref: '#/definitions/requirementEdge'
+      transition:
+        $ref: '#/definitions/transition'
+      facets:
+        type: array
+        items:
+          $ref: '#/definitions/facet'
       source:
+        description: The quote form of provenance on a requirement
         $ref: '#/definitions/sourceRef'
+      provenance:
+        description: Derived or decree provenance. Never the quote form on a requirement
+        oneOf:
+          - $ref: '#/definitions/derivedProvenance'
+          - $ref: '#/definitions/decreeProvenance'
       confidence:
         type: number
         minimum: 0
@@ -168,33 +374,188 @@ definitions:
         type: string
       created:
         type: string
-        description: Build marker set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit
       updated:
         type: string
-        description: Build marker set by the store on commit
-  relationship:
-    description: One entry in graph/relationships.yaml. Derived from requirements on commit
+        description: Generation marker (g<N>) set by the store on commit
+  viewQuery:
+    description: Membership by rule instead of list. Recomputed on every commit
+    type: object
+    properties:
+      scope:
+        type: string
+      parent:
+        type: string
+        description: Entity id. Members are its descendants
+      stereotype:
+        type: string
+      depth:
+        type: integer
+        minimum: 0
+        description: How many containment levels below the root to include
+    additionalProperties: false
+  exclusion:
+    description: A node kept out of a view on purpose
     type: object
     required:
+      - id
+      - note
+    properties:
+      id:
+        type: string
+      note:
+        type: string
+    additionalProperties: false
+  view:
+    description: >-
+      One entry in graph/views.yaml. The stored half of a diagram: what it includes,
+      never how it looks
+    type: object
+    required:
+      - kind
+      - title
+      - provenance
+    properties:
+      kind:
+        $ref: '#/definitions/viewKind'
+      title:
+        type: string
+        description: Part of the natural key with kind
+      members:
+        description: >-
+          Ordered node ids. Entities for structural views, requirements for flow
+          views, mixed where a kind wants both. Order is the flow order
+        type: array
+        items:
+          type: string
+      excluded:
+        type: array
+        items:
+          $ref: '#/definitions/exclusion'
+      query:
+        $ref: '#/definitions/viewQuery'
+      collapse:
+        description: Entity ids shown as one node despite their children
+        type: array
+        items:
+          type: string
+      provenance:
+        $ref: '#/definitions/provenance'
+      default:
+        type: boolean
+        const: true
+        description: >-
+          Set by the store on the default views it recomputes every commit. Absent on
+          curated views. Any mutation that names the view clears it (update_view with
+          any field, edit_fact, a decree, a limit bump). The deriving rule rides in
+          provenance.derived.reasoning
+      limits:
+        $ref: '#/definitions/limits'
+      created:
+        type: string
+        description: Generation marker (g<N>) set by the store on commit
+      updated:
+        type: string
+        description: Generation marker (g<N>) set by the store on commit
+  contribution:
+    description: >-
+      One direction-and-type group of a relationship, with the requirements behind it
+    type: object
+    required:
+      - a
+      - b
       - type
-      - members
       - requirements
     properties:
+      a:
+        type: string
+        description: Entity id, the acting side
+      b:
+        type: string
+        description: Entity id, the acted-on side
       type:
         $ref: '#/definitions/relationshipType'
+      cardinality:
+        description: Present when the contributing edges that state one agree
+        $ref: '#/definitions/cardinality'
+      requirements:
+        description: The requirements whose edges contribute to this group
+        type: array
+        minItems: 1
+        items:
+          type: string
+    additionalProperties: false
+  relationship:
+    description: >-
+      One entry in graph/relationships.yaml. One node per unordered entity pair,
+      derived from requirement edges on commit
+    type: object
+    required:
+      - members
+      - contributions
+    properties:
       members:
-        description: The two entities the edge connects
+        description: The two entities, sorted by id
         type: array
         minItems: 2
         maxItems: 2
         items:
           type: string
-      requirements:
-        description: The requirements this edge is derived from
+      contributions:
+        type: array
+        minItems: 1
+        items:
+          $ref: '#/definitions/contribution'
+  stateTransition:
+    description: One transition of a derived state machine
+    type: object
+    required:
+      - from
+      - to
+      - requirement
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+      trigger:
+        type: string
+      guard:
+        type: string
+      requirement:
+        type: string
+        description: The requirement whose transition this is
+    additionalProperties: false
+  stateMachine:
+    description: >-
+      One entry in graph/state-machines.yaml. One per entity that any transition
+      names as subject, derived on commit
+    type: object
+    required:
+      - subject
+      - states
+      - transitions
+    properties:
+      subject:
+        type: string
+        description: Entity id
+      states:
+        description: >-
+          The union of the names the transitions use, each at its first occurrence in
+          document order
         type: array
         minItems: 1
         items:
           type: string
+      initial:
+        type: string
+        description: >-
+          The one state no transition reaches. Absent when there are none or several
+      transitions:
+        type: array
+        minItems: 1
+        items:
+          $ref: '#/definitions/stateTransition'
   diagnostic:
     description: One entry in graph/diagnostics.yaml. Sticky, reconciled across builds
     type: object
@@ -209,7 +570,7 @@ definitions:
       severity:
         $ref: '#/definitions/severity'
       subjects:
-        description: Node ids this diagnostic is about
+        description: Node ids or full section references (doc.md#/ref) this diagnostic is about
         type: array
         minItems: 1
         items:
@@ -245,8 +606,10 @@ definitions:
           - status
         properties:
           choice:
-            description: Option index answered, absent for a freeform reply
-            type: integer
+            description: Option index answered, null for a freeform reply
+            type:
+              - integer
+              - 'null'
             minimum: 0
           text:
             type: string
@@ -260,10 +623,10 @@ definitions:
         additionalProperties: false
       created:
         type: string
-        description: Build marker set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit
       updated:
         type: string
-        description: Build marker set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit
   diagnosticPrompt:
     description: A question or proposal attached to a diagnostic
     type: object
@@ -297,8 +660,23 @@ definitions:
                   type: string
                 old_text:
                   type: string
+                  description: Empty when the edit inserts a sentence, as a ratification proposal does
                 new_text:
                   type: string
+                link_from:
+                  description: >-
+                    The section that gains a relative link to the document the edit
+                    creates. Present only when doc does not exist yet
+                  type: object
+                  required:
+                    - doc
+                    - section
+                  properties:
+                    doc:
+                      type: string
+                    section:
+                      type: string
+                  additionalProperties: false
               additionalProperties: false
             answer:
               description: A prefilled reply, handled by the model over ACP
@@ -320,6 +698,7 @@ definitions:
       kind:
         type: string
         enum:
+          - preamble
           - root
           - heading
           - list-item
@@ -378,46 +757,318 @@ definitions:
         description: Map of internal reference to coverage
         additionalProperties:
           $ref: '#/definitions/coverage'
-  journalEntry:
-    description: One file under journal/, one per committed changeset
+  changeKind:
+    description: The typed dirtiness a commit caused
+    type: string
+    enum:
+      - section-dirty
+      - section-removed
+      - anchor-stale
+      - alignment-pending
+      - requirement-created
+      - requirement-revised
+      - requirement-deleted
+      - entity-changed
+      - entity-deleted
+      - node-deleted
+      - instance-changed
+      - ledger-stale
+      - prompt-unanswered
+      - provenance-pending
+      - threshold-crossed
+      - view-member-gone
+      - edges-missing
+      - lookalike
+      - query-match
+      - flow-unplaced
+  changeRecord:
+    description: >-
+      One entry in status.yaml changes. Written at commit, read by goal derivation as
+      a goal's change, cleared when the goal resolves
     type: object
+    required:
+      - id
+      - generation
+      - mutation
+      - kind
+      - subject
     properties:
-      build:
+      id:
         type: string
-        description: Build marker
-      workItem:
-        $ref: '#/definitions/workItem'
-      mutations:
-        description: The applied mutations, each an operation name with its arguments
-        type: array
-        items:
-          type: object
-      rounds:
+        description: c<generation>-<mutation>
+        pattern: '^c[0-9]+-[0-9]+$'
+      generation:
         type: integer
         minimum: 0
-        description: Message rounds the turn used
-      tokens:
+      mutation:
         type: integer
         minimum: 0
-        description: Tokens the turn spent
-  status:
-    description: The status.yaml file
+        description: Index in the journal entry, 0 for store-level causes
+      kind:
+        $ref: '#/definitions/changeKind'
+      subject:
+        type: string
+        description: A node id or a full section reference doc.md#/ref
+      via:
+        type: string
+        description: The edge or computation that carried dirtiness to the subject
+      detail:
+        type: object
+        description: Kind-specific evidence. The goal's change
+  goalCause:
+    description: The committed change that spawned a goal
     type: object
+    required:
+      - generation
+      - mutation
+      - via
     properties:
       generation:
         type: integer
         minimum: 0
-        description: Bumped on every commit
-      parked:
-        description: Work items left open when the build budget ran out
+      mutation:
+        type: integer
+        minimum: 0
+      via:
+        type: string
+    additionalProperties: false
+  goalResolution:
+    description: A goal a changeset resolved, with the one-line justification
+    type: object
+    required:
+      - goal
+      - justification
+    properties:
+      goal:
+        $ref: '#/definitions/goalId'
+      justification:
+        type: string
+      evidence:
+        type: object
+        description: Kind-specific evidence the gate checked
+    additionalProperties: false
+  goalOpening:
+    description: A goal a changeset opened, with its cause
+    type: object
+    required:
+      - goal
+      - cause
+    properties:
+      goal:
+        $ref: '#/definitions/goalId'
+      cause:
+        $ref: '#/definitions/goalCause'
+    additionalProperties: false
+  parkedGoal:
+    description: >-
+      A goal left open when a budget ran out, with its change payload so it survives a
+      re-derivation that would otherwise drop it
+    type: object
+    required:
+      - goal
+      - change
+    properties:
+      goal:
+        $ref: '#/definitions/goalId'
+      change:
+        type: object
+        description: The goal's change, kind-specific
+    additionalProperties: false
+  failedGoal:
+    description: >-
+      A goal a session marked failed, with the reason and its change payload so it
+      survives a re-derivation that would otherwise drop it
+    type: object
+    required:
+      - goal
+      - reason
+      - change
+    properties:
+      goal:
+        $ref: '#/definitions/goalId'
+      reason:
+        type: string
+      change:
+        type: object
+        description: The goal's change, kind-specific
+    additionalProperties: false
+  journalKind:
+    description: What kind of changeset the entry records
+    type: string
+    enum:
+      - session
+      - edit
+      - align
+      - gc
+      - settle-diagnostics
+      - checks
+      - decree
+      - dual-write
+      - ratify
+      - triage
+      - answer
+  journalEntry:
+    description: One file under journal/, one per generation
+    type: object
+    required:
+      - build
+      - kind
+    properties:
+      build:
+        type: string
+        description: Generation marker (g<N>) of the generation this entry committed
+      generation:
+        type: integer
+        minimum: 0
+        description: The generation this entry committed
+      kind:
+        $ref: '#/definitions/journalKind'
+      batch:
+        description: The goals the session was given. Session entries only
         type: array
         items:
-          $ref: '#/definitions/workItem'
+          $ref: '#/definitions/goalId'
+      author:
+        type: string
+        description: The human behind a decree, dual-write, ratify, triage, or answer entry
+      note:
+        type: string
+        description: The human's note on a decree, dual-write, ratify, or answer entry
+      dirtied:
+        description: Full section references a human save dirtied or removed. Edit entries only
+        type: array
+        items:
+          type: string
+      mutations:
+        description: >-
+          The applied mutations in order, each an operation name with its arguments.
+          Change records point at them by index, counting from 1. A decree written
+          over a quoted fact records the prior value and source on the mutation,
+          which retract_decree restores
+        type: array
+        items:
+          type: object
+      resolved_goals:
+        type: array
+        items:
+          $ref: '#/definitions/goalResolution'
+      opened_goals:
+        type: array
+        items:
+          $ref: '#/definitions/goalOpening'
+      rounds:
+        type: integer
+        minimum: 0
+        description: Message rounds the session used
+      tokens:
+        type: integer
+        minimum: 0
+        description: Tokens the session spent
+  costLine:
+    description: Sessions and tokens for one slice of the accounting
+    type: object
+    properties:
+      sessions:
+        type: integer
+        minimum: 0
+      tokens:
+        type: integer
+        minimum: 0
+    additionalProperties: false
+  costs:
+    description: Cost accounting for the last build, aggregated by goal kind and class
+    type: object
+    properties:
+      sessions:
+        type: integer
+        minimum: 0
+      tokens:
+        type: integer
+        minimum: 0
+      by_kind:
+        type: object
+        description: Map of goal kind to its line
+        additionalProperties:
+          $ref: '#/definitions/costLine'
+      by_class:
+        type: object
+        properties:
+          compile:
+            $ref: '#/definitions/costLine'
+          gc:
+            $ref: '#/definitions/costLine'
+        additionalProperties: false
+    additionalProperties: false
+  verdict:
+    description: The convergence verdict of the last build with its counts
+    type: object
+    required:
+      - state
+    properties:
+      state:
+        type: string
+        enum:
+          - converged
+          - incomplete
+      open:
+        type: integer
+        minimum: 0
+        description: Open mandatory goals
+      failed:
+        type: integer
+        minimum: 0
+        description: Failed mandatory goals
+      blocked:
+        type: integer
+        minimum: 0
+        description: Goals blocked on a human
+      optional:
+        type: integer
+        minimum: 0
+        description: Open optional goals, standing advice
+    additionalProperties: false
+  status:
+    description: The status.yaml file
+    type: object
+    required:
+      - version
+    properties:
+      version:
+        description: >-
+          The store version. An out directory whose status.yaml lacks it or carries a
+          different one is archived whole and the store starts empty
+        type: integer
+        const: 2
+      generation:
+        type: integer
+        minimum: 0
+        description: Bumped on every commit
+      verdict:
+        $ref: '#/definitions/verdict'
+      changes:
+        description: Open change records, the input of goal derivation
+        type: array
+        items:
+          $ref: '#/definitions/changeRecord'
+      parked:
+        description: >-
+          Goals left open when a budget ran out, each with its change payload. Resumed
+          first next build
+        type: array
+        items:
+          $ref: '#/definitions/parkedGoal'
+      failed:
+        description: Goals a session marked failed, each with its reason and change payload
+        type: array
+        items:
+          $ref: '#/definitions/failedGoal'
+      costs:
+        $ref: '#/definitions/costs'
       spent:
         type: object
         description: Budgets spent in the last build
         properties:
-          turns:
+          sessions:
             type: integer
             minimum: 0
           rounds:
@@ -426,19 +1077,21 @@ definitions:
           tokens:
             type: integer
             minimum: 0
-      verdict:
-        type: string
-        description: Convergence verdict of the last build
-        enum:
-          - converged
-          - incomplete
+      diagnostics:
+        type: object
+        description: Open diagnostic counts by severity, suppressed excluded
+        additionalProperties:
+          type: integer
+          minimum: 0
       alignment:
         description: Pending alignment proposals, one block per target document
         type: array
         items:
           $ref: '#/definitions/docAlignment'
       reevaluate:
-        description: Anchors an align-doc turn placed with reevaluate, listed as stale anchors until addressed
+        description: >-
+          Anchors a place-anchors session placed with reevaluate, listed as stale
+          anchors until addressed
         type: array
         items:
           type: string

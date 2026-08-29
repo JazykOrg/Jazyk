@@ -41,13 +41,13 @@ given:
             quote: The ABC shall have four wheels.
     requirements:
       req:frame-1:
-        ears: The ABC shall have exactly three wheels.
+        statement: The ABC shall have exactly three wheels.
         entities: [ent:abc]
         source:
           section: 'docs/frame.md#/frame/abc'
           quote: The ABC shall have exactly three wheels.
       req:wheels-1:
-        ears: The ABC shall have four wheels.
+        statement: The ABC shall have four wheels.
         entities: [ent:abc]
         source:
           section: 'docs/wheels.md#/wheels/abc'
@@ -91,13 +91,13 @@ given:
             quote: While parked, the XYZ shall engage the parking brake.
     requirements:
       req:xyz-1:
-        ears: The XYZ shall have four wheels.
+        statement: The XYZ shall have four wheels.
         entities: [ent:xyz]
         source:
           section: 'docs/xyz.md#/xyz/wheels'
           quote: The XYZ shall have four wheels.
       req:xyz-2:
-        ears: While parked, the XYZ shall engage the parking brake.
+        statement: While parked, the XYZ shall engage the parking brake.
         entities: [ent:xyz]
         source:
           section: 'docs/xyz.md#/xyz/parking'

@@ -3,7 +3,7 @@
 Grades declarative extraction. The document states obligations in plain declarative
 prose, with no `shall` anywhere. A capable model recognizes the obligations, rephrases
 them into EARS statements, and keeps the verbatim quotes. See
-[declarative prose states obligations](../../compiler/concepts/ears.md#declarative-prose-states-obligations).
+[declarative prose states obligations](../../compiler/concepts/statements.md#declarative-prose-states-obligations).
 
 ```yaml
 name: turn-declarative
@@ -30,10 +30,10 @@ assert:
   - entityExists:
       name: Entry
   - requirementExists:
-      earsPattern: 'shall'
+      statementPattern: 'shall'
       entity: Ledger
   - requirementExists:
-      earsPattern: 'never change|immutable|shall not (change|be changed)'
+      statementPattern: 'never change|immutable|shall not (change|be changed)'
       entity: Entry
   - coverageSet:
       section: 'docs/ledger.md#/ledger/entries'

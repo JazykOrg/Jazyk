@@ -13,7 +13,7 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
   [project settings](./project-settings.md).
 - A file matched by the docs glob with no handler yields an `unsupported-format`
   diagnostic. A handler failure yields `parse-error`. An empty file yields `empty-file`,
-  raised by the [deterministic checks](./compilation.md#waves): with no sections there is
+  raised by the [deterministic checks](./compilation.md#checks): with no sections there is
   nothing for parsing to attach a diagnostic to.
 
 ## Section tree
@@ -24,7 +24,7 @@ diagram. Sections form a tree per document.
 Content before the first heading, and a document with no headings at all, forms a
 `preamble` section referenced `/`, with no title and no parent. No prose is invisible
 to extraction because of where it sits. A file of only blank lines yields no sections
-(that is [`empty-file`](./compilation.md#waves) territory).
+(that is [`empty-file`](./compilation.md#checks) territory).
 
 Each section carries:
 
@@ -59,8 +59,8 @@ by [alignment](./alignment.md). Three outcomes:
   mechanically, and nothing is marked dirty,
 - a section that was edited, moved and edited, split, merged, or removed has its anchors
   relocated to their best candidate as a proposal, decided by the
-  [`align-doc` turn](./turns/align-doc.md); an anchor with no candidate becomes a stale
-  anchor.
+  [`place-anchors` goal](./goals/place-anchors.md); an anchor with no candidate becomes a
+  stale anchor.
 
 The alignment result is the sole source of the [dirty set](./reconciler.md#dirty-set).
 

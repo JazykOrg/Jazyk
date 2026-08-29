@@ -31,13 +31,13 @@ given:
             quote: Order records are kept for seven years.
     requirements:
       req:orders-1:
-        ears: The system shall retain order records for seven years.
+        statement: The system shall retain order records for seven years.
         entities: [ent:order-record]
         source:
           section: 'docs/orders.md#/orders/retention'
           quote: Order records are kept for seven years.
       req:orders-2:
-        ears: Order records shall be preserved by the system for a period of seven years.
+        statement: Order records shall be preserved by the system for a period of seven years.
         entities: [ent:order-record]
         source:
           section: 'docs/orders.md#/orders/retention'

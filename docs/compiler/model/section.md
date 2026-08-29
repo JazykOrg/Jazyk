@@ -3,14 +3,14 @@
 A section is a unit of document structure: a heading and its body, a list item, a code
 block, a blockquote, or a diagram. Sections form a tree per document. They carry no
 semantic meaning. All meaning lives in [entities](./entity.md),
-[requirements](./requirement.md), and [relationships](./relationship.md) extracted from
-section text.
+[requirements](./requirement.md), and [views](./view.md) extracted from section text, and
+in what derives from them.
 
 Sections exist for three purposes:
 
-- Provenance. Entity mentions and requirement sources name a section, and their `quote`
-  is located in the section's `raw` by string search. See
-  [shared fields](../model.md#shared-fields).
+- Provenance. Entity mentions, requirement sources, and attribute quotes name a section,
+  and their `quote` is located in the section's `raw` by whitespace-insensitive string
+  search. See [provenance](../model.md#provenance).
 - Reconstruction. Concatenating `raw` in tree order rebuilds the document. See
   [reconstruction](../parsing.md#reconstruction).
 - Navigation. "Show the documentation around this entity" resolves to its sections.
@@ -20,7 +20,9 @@ Sections exist for three purposes:
 As produced by [parsing](../parsing.md#section-tree):
 
 - `title`: the heading or item text.
-- `kind`: `root`, `heading`, `list-item`, `code-block`, `blockquote`, or `diagram`.
+- `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
+  `diagram`. A `diagram` section holds a PlantUML block found in a source document. It is
+  input, parsed as prose. See [diagrams as input](../diagrams.md#diagrams-as-input).
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent section. The root section has none.
 - `raw`: the verbatim source text.
@@ -41,4 +43,5 @@ E.g. `docs/cli.md#/cli/commands/compile`. See [references](../parsing.md#referen
 
 Every section carries a coverage state in the store (`unprocessed`, `covered`, or
 `non-normative`, with a `note` and `claimedBy`). Coverage is the completeness meter of a
-build. See [coverage](../compilation.md#coverage).
+build. `reconcile-section` sessions set it through `set_coverage`. See
+[coverage](../compilation.md#coverage).

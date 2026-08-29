@@ -273,7 +273,8 @@ so a chat edit moves the prose and the graph together, or not at all:
   `retrace` derives where a view or instance referenced it.
 - `edit_fact({id, field, value, note?})`: set one authored field on one node
   (`statement`, `edges`, `transition`, `facets`, `definition`, `stereotype`, `parent`,
-  an attribute's `type` or `value`, a view's `members`; on a default view the edit
+  an attribute's `type` or `value` as `attributes.<name>.type` or
+  `attributes.<name>.value`, a view's `members`; on a default view the edit
   clears `default`). When the fact is
   quote-provenanced and the person accepted a sentence rewrite in conversation, the
   call carries the accepted sentence as `note`: the serving locates the quote and

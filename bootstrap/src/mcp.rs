@@ -3,7 +3,7 @@
 // graph); compilation holds an open changeset between calls, exactly one at a time.
 // Mirrors docs/frontends/mcp.md.
 use crate::model::WorkItem;
-use crate::store::Store;
+use crate::store::{ProseEdit, Store};
 use crate::tools::{catalog, toolset, ToolSession, WorkScope};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -89,7 +89,12 @@ struct OpenTask {
 
 // The compilation lifecycle: served beside the catalog, implemented on the server
 // because they own the queue and the open changeset.
-const LIFECYCLE: [&str; 4] = ["compilation_tasks", "begin_compilation", "finish_compilation", "abandon_compilation"];
+const LIFECYCLE: [&str; 4] = [
+    "compilation_tasks",
+    "begin_compilation",
+    "finish_compilation",
+    "abandon_compilation",
+];
 
 fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String {
     let mut s = String::from(
@@ -161,7 +166,7 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
             s.push_str(
                 "CHAT SERVING: you are in a conversation about this project. Read the graph with the \
                  read tools. A requirement lives in the prose: change one with revise_requirement (new \
-                 prose, optional new ears), add one with add_requirement, remove one with \
+                 prose, optional new statement), add one with add_requirement, remove one with \
                  retract_requirement; each moves the document and the graph in one atomic commit. \
                  update_project_settings edits jazyk.toml keys. The project is already initialized: \
                  there is no init_project tool and nothing to scaffold. The \
@@ -193,7 +198,12 @@ impl McpServer {
         self.project.root.join("jazyk.toml").exists()
     }
 
-    pub fn new(project: crate::project::Project, out: PathBuf, modes: Vec<String>, write: bool) -> McpServer {
+    pub fn new(
+        project: crate::project::Project,
+        out: PathBuf,
+        modes: Vec<String>,
+        write: bool,
+    ) -> McpServer {
         Self::with_bridge(project, out, modes, write, BridgeFlags::default())
     }
 
@@ -206,8 +216,8 @@ impl McpServer {
     ) -> McpServer {
         let out_for_trace = out.clone();
         McpServer {
-            mutation_limit: project.limits.turn_mutations,
-            context_budget: project.limits.context_budget,
+            mutation_limit: crate::limits::SESSION_MUTATIONS,
+            context_budget: crate::limits::CONTEXT_BUDGET,
             project,
             out,
             modes,
@@ -216,7 +226,8 @@ impl McpServer {
             open: std::sync::Mutex::new(None),
             bench: std::sync::Mutex::new(BenchRun::default()),
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet).with_transcript(&out_for_trace, "mcp"),
+            trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet)
+                .with_transcript(&out_for_trace, "mcp"),
             bridge,
             seen_kinds: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
@@ -228,7 +239,9 @@ impl McpServer {
     // returns because most MCP clients bound a tool call with their own timeout.
     // Mirrors docs/frontends/mcp.md#the-work-loop.
     fn await_changes(&self, params: &Value) -> Value {
-        let timeout = params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300);
+        let timeout = params["arguments"]["timeout_seconds"]
+            .as_u64()
+            .unwrap_or(300);
         let gs = crate::gen::GenSettings::resolve(&self.project);
         let fingerprint = |path: &std::path::Path| -> String {
             std::fs::metadata(path)
@@ -252,11 +265,14 @@ impl McpServer {
             v.dedup();
             v
         };
-        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> =
-            watched(&gs).into_iter().map(|f| (f.clone(), fingerprint(&f))).collect();
+        let snapshot: std::collections::BTreeMap<std::path::PathBuf, String> = watched(&gs)
+            .into_iter()
+            .map(|f| (f.clone(), fingerprint(&f)))
+            .collect();
         let start_gen = Store::load(&self.out).status.generation;
-        let deadline = (timeout > 0)
-            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600)));
+        let deadline = (timeout > 0).then(|| {
+            std::time::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600))
+        });
         let mut changed_docs: Vec<String> = Vec::new();
         let mut changed = false;
         while deadline.is_none_or(|d| std::time::Instant::now() < d) {
@@ -289,8 +305,9 @@ impl McpServer {
             crate::queue::actionable(&q.generate),
             crate::queue::actionable(&q.verify),
         );
-        let gated =
-            crate::queue::gated(&q.compile) + crate::queue::gated(&q.bind) + crate::queue::gated(&q.generate);
+        let gated = crate::queue::gated(&q.compile)
+            + crate::queue::gated(&q.bind)
+            + crate::queue::gated(&q.generate);
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
@@ -341,7 +358,12 @@ impl McpServer {
                     let mut t = toolset("mcp-compile");
                     t.extend(crate::tools::GEN_TOOLS);
                     t.push("run_tests");
-                    t.extend(["benchmark_cases", "begin_case", "finish_case", "benchmark_report"]);
+                    t.extend([
+                        "benchmark_cases",
+                        "begin_case",
+                        "finish_case",
+                        "benchmark_report",
+                    ]);
                     t
                 }
                 "verify" => toolset("mcp-verify"),
@@ -380,7 +402,9 @@ impl McpServer {
             if line.trim().is_empty() {
                 continue;
             }
-            let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(req) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             let method = req["method"].as_str().unwrap_or_default().to_string();
             let id = req["id"].clone();
             if id.is_null() {
@@ -389,7 +413,9 @@ impl McpServer {
             let result = self.handle(&method, &req["params"]);
             let resp = match result {
                 Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
-                Err((code, msg)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}}),
+                Err((code, msg)) => {
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
+                }
             };
             let mut out = stdout.lock();
             writeln!(out, "{}", resp).ok();
@@ -398,7 +424,8 @@ impl McpServer {
         if self.bridge.ephemeral {
             self.eof_finish();
         }
-        self.trace.finish_transcript("done", &json!({"modes": self.modes}));
+        self.trace
+            .finish_transcript("done", &json!({"modes": self.modes}));
     }
 
     fn caller(&self, task: &str, target: &str) -> crate::feedback::Caller {
@@ -435,9 +462,12 @@ impl McpServer {
         // well say so truthfully. A dangling judged diagnostic settles the same way:
         // finalize resolves or re-enqueues it, and the recompute lists the reviews.
         // Mirrors docs/compiler/reconciler.md#the-task-queue.
-        if q.compile_empty() && (q.verdict != "converged" || q.dangling_diags) && self.open.lock().unwrap().is_none() {
+        if q.compile_empty()
+            && (q.verdict != "converged" || q.dangling_diags)
+            && self.open.lock().unwrap().is_none()
+        {
             let mut s = Store::load(&self.out);
-            let parked = s.status.parked.clone();
+            let parked = s.status.parked_items();
             let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
             crate::reconcile::finalize(&mut s, &self.project, &parked, &quiet);
             q = crate::queue::compute(&self.project, &self.out);
@@ -479,7 +509,10 @@ impl McpServer {
         // already released this work and holds the coarse lease itself.
         // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
         if self.bridge.build_token.is_none() {
-            if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["gated"] == true) {
+            if q.compile
+                .iter()
+                .any(|e| e["target"] == item.target.as_str() && e["gated"] == true)
+            {
                 return json!({"error": {"rule": "awaiting-release", "message": format!(
                     "`{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", item.target)}});
             }
@@ -503,7 +536,8 @@ impl McpServer {
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         store.sync_docs(&parsed);
         let gs = crate::gen::GenSettings::resolve(&self.project);
-        let (instructions, pack) = crate::turn::task_prompt(&store, &item, &self.project.limits, &self.project.linting, &gs);
+        let (instructions, pack) =
+            crate::turn::task_prompt(&store, &item, &self.project.linting, &gs);
         let scope = match item.task.as_str() {
             "reconcile-doc" => WorkScope {
                 task: item.task.clone(),
@@ -535,7 +569,11 @@ impl McpServer {
         session.caller = self.caller(&item.task, &item.target);
         let write_tools: Vec<&str> = toolset(&item.task)
             .into_iter()
-            .filter(|t| !crate::tools::READ_TOOLS.contains(t) && *t != "done" && *t != crate::tools::FEEDBACK_TOOL)
+            .filter(|t| {
+                !crate::tools::READ_TOOLS.contains(t)
+                    && *t != "done"
+                    && *t != crate::tools::FEEDBACK_TOOL
+            })
             .collect();
         let reply = if self.bridge.packaged {
             // The bridge already delivered the contract as the session prompt.
@@ -549,7 +587,8 @@ impl McpServer {
             // the reply on review-heavy builds. A client that lost its context asks
             // for it back with full: true.
             let seen = !self.seen_kinds.lock().unwrap().insert(item.task.clone());
-            let instructions_field = if seen && params["arguments"]["full"].as_bool() != Some(true) {
+            let instructions_field = if seen && params["arguments"]["full"].as_bool() != Some(true)
+            {
                 json!(format!(
                     "(same contract as the earlier {} task in this session; unchanged. Lost it? begin again with full: true)",
                     item.task
@@ -571,7 +610,11 @@ impl McpServer {
             })
         };
         let _ = (&instructions, &pack, &write_tools);
-        *self.open.lock().unwrap() = Some(OpenTask { item, session, rounds: 0 });
+        *self.open.lock().unwrap() = Some(OpenTask {
+            item,
+            session,
+            rounds: 0,
+        });
         reply
     }
 
@@ -580,7 +623,10 @@ impl McpServer {
         let Some(mut o) = open.take() else {
             return json!({"error": {"rule": "no-open-task", "message": "no compilation task is open; begin_compilation first"}});
         };
-        let summary = params["arguments"]["summary"].as_str().unwrap_or("").to_string();
+        let summary = params["arguments"]["summary"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         // The same done gates an in-process turn faces: coverage contract, stale anchors.
         if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
             let v = e.to_value();
@@ -594,7 +640,7 @@ impl McpServer {
         let q = crate::queue::compute(&self.project, &self.out);
         if q.compile_empty() {
             let mut s2 = Store::load(&self.out);
-            let parked = s2.status.parked.clone();
+            let parked = s2.status.parked_items();
             let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
             let report = crate::reconcile::finalize(&mut s2, &self.project, &parked, &quiet);
             reply["verdict"] = json!(report.verdict);
@@ -603,7 +649,9 @@ impl McpServer {
             let counts = s2.open_diag_counts();
             if !counts.is_empty() {
                 reply["openDiagnostics"] = json!(counts);
-                reply["diagnosticsNote"] = json!("open diagnostics stand in the graph; the diagnostics read tool lists them");
+                reply["diagnosticsNote"] = json!(
+                    "open diagnostics stand in the graph; the diagnostics read tool lists them"
+                );
             }
             let q2 = crate::queue::compute(&self.project, &self.out);
             if q2.compile_empty() {
@@ -648,21 +696,44 @@ impl McpServer {
         s.sync_docs(&parsed);
         let mut reply = json!({"committed": true, "applied": 0});
         if !staged.is_empty() {
-            let report = s.apply(staged, &o.item, o.rounds, 0);
+            let report = s.apply(staged, &o.item.commit(o.rounds, 0));
             reply["applied"] = json!(report.applied);
             if !report.skipped.is_empty() {
                 reply["skipped"] = json!(report.skipped);
             }
         }
-        if o.item.task.starts_with("review-") {
-            s.complete_review(&o.item.task, &o.item.target);
-            if o.item.task == "review-requirement" {
-                s.complete_pair_mirrors(&o.item.target);
+        // A finished review resolves its goal: the records it stood on clear. A pair
+        // judged from one end covers its mirror: when two changed requirements are
+        // each other's only neighbor, the reverse pair would judge the same pair again.
+        match o.item.task.as_str() {
+            "review-entity" => {
+                let ids = s
+                    .status
+                    .change_ids(&crate::store::ENTITY_REVIEW_KINDS, &o.item.target);
+                s.clear_changes(&ids);
             }
+            "review-requirement" => {
+                let rid = o.item.target.clone();
+                let judged: std::collections::BTreeSet<String> =
+                    s.pair_review_neighbors(&rid).into_iter().collect();
+                let mut ids = s.status.change_ids(&crate::store::REQ_REVIEW_KINDS, &rid);
+                for r in s.status.changed_subjects(&crate::store::REQ_REVIEW_KINDS) {
+                    if r == rid || !judged.contains(&r) {
+                        continue;
+                    }
+                    let nbrs = s.pair_review_neighbors(&r);
+                    if !nbrs.is_empty() && nbrs.iter().all(|n| n == &rid) {
+                        ids.extend(s.status.change_ids(&crate::store::REQ_REVIEW_KINDS, &r));
+                    }
+                }
+                s.clear_changes(&ids);
+            }
+            _ => {}
         }
         // A resumed parked item is no longer parked.
-        if s.status.parked.iter().any(|p| p.target == o.item.target && p.task == o.item.task) {
-            s.status.parked.retain(|p| !(p.target == o.item.target && p.task == o.item.task));
+        let goal_id = o.item.goal_id();
+        if s.status.parked.iter().any(|p| p.id == goal_id) {
+            s.status.parked.retain(|p| p.id != goal_id);
             s.save_status();
         }
         reply
@@ -674,7 +745,9 @@ impl McpServer {
     fn eof_finish(&self) {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else { return };
-        if o.session.finish_implicit("(implicit: the agent session ended)") {
+        if o.session
+            .finish_implicit("(implicit: the agent session ended)")
+        {
             let reply = self.commit_open(&mut o);
             self.trace.event(crate::turn::TraceEvent::TurnDone {
                 label: format!("{} {}", o.item.task, o.item.target),
@@ -705,7 +778,6 @@ impl McpServer {
             "note": "the staged changeset is gone; the task stays in the queue",
         })
     }
-
 
     // ---- the agent-run benchmark ----
     // Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
@@ -752,29 +824,40 @@ impl McpServer {
             return json!({"error": {"rule": "case-open", "message": format!(
                 "case `{}` is already open; finish_case first", cases[o.idx].name)}});
         }
-        let scored: std::collections::BTreeSet<String> =
-            b.scored.iter().filter_map(|e| e["name"].as_str().map(String::from)).collect();
-        let want = params["arguments"]["case"].as_str();
-        let Some((idx, case)) = cases
+        let scored: std::collections::BTreeSet<String> = b
+            .scored
             .iter()
-            .enumerate()
-            .find(|(_, c)| match want {
-                Some(w) => c.name == w,
-                None => !scored.contains(&c.name),
-            })
-        else {
+            .filter_map(|e| e["name"].as_str().map(String::from))
+            .collect();
+        let want = params["arguments"]["case"].as_str();
+        let Some((idx, case)) = cases.iter().enumerate().find(|(_, c)| match want {
+            Some(w) => c.name == w,
+            None => !scored.contains(&c.name),
+        }) else {
             return json!({"error": {"rule": "no-pending-case", "message": "no pending case; benchmark_cases shows the run, benchmark_report closes it"}});
         };
-        let tmp = std::env::temp_dir().join(format!("jazyk-mcp-bench-{}-{}", std::process::id(), case.name));
+        let tmp = std::env::temp_dir().join(format!(
+            "jazyk-mcp-bench-{}-{}",
+            std::process::id(),
+            case.name
+        ));
         std::fs::remove_dir_all(&tmp).ok();
         let store = crate::benchmark::sandbox(case, &tmp);
-        let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into(), code: Vec::new() };
+        let gs = crate::gen::GenSettings {
+            deliverable: tmp.join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
         std::fs::create_dir_all(&gs.deliverable).ok();
         let item = WorkItem {
             task: case.task_type.clone(),
             target: case.target.clone(),
             dirty_sections: match case.task_type.as_str() {
-                "reconcile-doc" => store.docs.get(&case.target).map(|r| r.sections.keys().cloned().collect()).unwrap_or_default(),
+                "reconcile-doc" => store
+                    .docs
+                    .get(&case.target)
+                    .map(|r| r.sections.keys().cloned().collect())
+                    .unwrap_or_default(),
                 _ => Vec::new(),
             },
             stale_anchors: Vec::new(),
@@ -792,14 +875,13 @@ impl McpServer {
                 let r = &store.graph.requirements[&case.target];
                 reply["instructions"] = json!("Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.");
                 reply["package"] = json!({
-                    "statement": r.ears,
-                    "quote": r.source.quote,
+                    "statement": r.statement,
+                    "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
                     "files": case.deliverable.keys().map(|f| gs.deliverable.join(f).to_string_lossy().to_string()).collect::<Vec<_>>(),
                 });
             }
             _ => {
-                let (instructions, pack) =
-                    crate::turn::task_prompt(&store, &item, &self.project.limits, &case.lint, &gs);
+                let (instructions, pack) = crate::turn::task_prompt(&store, &item, &case.lint, &gs);
                 reply["instructions"] = json!(instructions);
                 reply["package"] = json!(pack);
                 if case.task_type == "generate-entity" {
@@ -826,10 +908,23 @@ impl McpServer {
                 proposals: Vec::new(),
             },
         };
-        let mut session = ToolSession::new(store.clone(), scope, self.mutation_limit, self.context_budget);
+        let mut session = ToolSession::new(
+            store.clone(),
+            scope,
+            self.mutation_limit,
+            self.context_budget,
+        );
         session.gen = gs.clone();
         session.caller = self.caller("benchmark", &case.name);
-        b.open = Some(OpenCase { idx, item, store, session, calls: 0, tmp, gs });
+        b.open = Some(OpenCase {
+            idx,
+            item,
+            store,
+            session,
+            calls: 0,
+            tmp,
+            gs,
+        });
         reply
     }
 
@@ -843,7 +938,10 @@ impl McpServer {
         // Turn cases face the same done gates a turn does; a rejection keeps the case
         // open, same contract as finish_compilation.
         if case.task_type == "reconcile-doc" || case.task_type.starts_with("review-") {
-            let summary = params["arguments"]["summary"].as_str().unwrap_or("(finish)").to_string();
+            let summary = params["arguments"]["summary"]
+                .as_str()
+                .unwrap_or("(finish)")
+                .to_string();
             if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
                 let v = e.to_value();
                 b.open = Some(o);
@@ -851,7 +949,7 @@ impl McpServer {
             }
             let staged = std::mem::take(&mut o.session.staged);
             if !staged.is_empty() {
-                o.store.apply(staged, &o.item, o.calls, 0);
+                o.store.apply(staged, &o.item.commit(o.calls, 0));
             }
         }
         if case.task_type == "verify-requirement" {
@@ -861,7 +959,9 @@ impl McpServer {
                 return json!({"error": {"rule": "bad-argument", "message": "finish_case on a verification case needs verdict: pass or fail"}});
             }
             let evidence = params["arguments"]["evidence"].as_str().unwrap_or("");
-            if let Err(e) = crate::verify::mark(&o.store, &case.target, verdict, None, Some(evidence), &o.gs) {
+            if let Err(e) =
+                crate::verify::mark(&o.store, &case.target, verdict, None, Some(evidence), &o.gs)
+            {
                 b.open = Some(o);
                 return json!({"error": {"rule": "bad-argument", "message": e}});
             }
@@ -884,7 +984,11 @@ impl McpServer {
                 }
             }
         }
-        let score = if case.checks.is_empty() { 0.0 } else { passed as f64 / case.checks.len() as f64 };
+        let score = if case.checks.is_empty() {
+            0.0
+        } else {
+            passed as f64 / case.checks.len() as f64
+        };
         let efficiency = (case.par_rounds as f64 / o.calls.max(1) as f64).min(1.0);
         std::fs::remove_dir_all(&o.tmp).ok();
         let entry = json!({
@@ -921,7 +1025,13 @@ impl McpServer {
         let model = params["arguments"]["model"]
             .as_str()
             .map(String::from)
-            .or_else(|| self.client.lock().unwrap().clone().map(|c| format!("{} (agent)", c)))
+            .or_else(|| {
+                self.client
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .map(|c| format!("{} (agent)", c))
+            })
             .unwrap_or_else(|| "unnamed-agent".into());
         let mut tier_sum: std::collections::BTreeMap<&str, (f64, usize)> = Default::default();
         let mut tier_ok: std::collections::BTreeMap<&str, bool> = Default::default();
@@ -936,7 +1046,12 @@ impl McpServer {
                 tier_ok.insert(t, false);
             }
             eff_sum += e["efficiency"].as_f64().unwrap_or(0.0);
-            let parts: Vec<usize> = e["checks"].as_str().unwrap_or("0/0").split('/').filter_map(|x| x.parse().ok()).collect();
+            let parts: Vec<usize> = e["checks"]
+                .as_str()
+                .unwrap_or("0/0")
+                .split('/')
+                .filter_map(|x| x.parse().ok())
+                .collect();
             if parts.len() == 2 {
                 checks_p += parts[0];
                 checks_t += parts[1];
@@ -946,7 +1061,18 @@ impl McpServer {
         // it graded and nothing more.
         let ran = |t: &str| tier_sum.contains_key(t);
         let ok = |t: &str| ran(t) && *tier_ok.get(t).unwrap_or(&true);
-        let ts = |t: &str| tier_sum.get(t).map(|(s, n)| if *n == 0 { 0.0 } else { ((s / *n as f64) * 100.0).round() / 100.0 }).unwrap_or(0.0);
+        let ts = |t: &str| {
+            tier_sum
+                .get(t)
+                .map(|(s, n)| {
+                    if *n == 0 {
+                        0.0
+                    } else {
+                        ((s / *n as f64) * 100.0).round() / 100.0
+                    }
+                })
+                .unwrap_or(0.0)
+        };
         let report = json!({
             "verdicts": {
                 "compilation": if !ran("extraction") { "unmeasured" } else {
@@ -986,9 +1112,16 @@ impl McpServer {
                 // run that already answers for itself, so it never registers. Mirrors
                 // docs/frontends/mcp.md#the-control-plane-over-mcp.
                 if !self.bridge.ephemeral
-                    && self.modes.iter().any(|m| m == "compile" || m == "generate" || m == "verify" || m == "decompile")
+                    && self.modes.iter().any(|m| {
+                        m == "compile" || m == "generate" || m == "verify" || m == "decompile"
+                    })
                 {
-                    let client = self.client.lock().unwrap().clone().unwrap_or_else(|| "agent".into());
+                    let client = self
+                        .client
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_else(|| "agent".into());
                     let mut w = self.worker.lock().unwrap();
                     match w.as_mut() {
                         Some(h) => h.set_client(&client),
@@ -1092,19 +1225,25 @@ impl McpServer {
                 if self.modes.iter().any(|m| m == "chat") {
                     tools.push(json!({
                         "name": "revise_requirement",
-                        "description": "Change one requirement: the new prose replaces the old verbatim quote in its source document, and the graph node updates in the same atomic commit. Optional ears carries the new EARS rephrasing (defaults to keeping the old one).",
-                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "newText": {"type": "string", "description": "the new prose sentence, written into the document"}, "ears": {"type": "string"}}, "required": ["id", "newText"], "additionalProperties": false}
+                        "description": "Change one requirement: the new prose replaces the old verbatim quote in its source document, and the graph node updates in the same atomic commit. Optional statement carries the new statement (defaults to keeping the old one).",
+                        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "new_text": {"type": "string", "description": "the new prose sentence, written into the document"}, "statement": {"type": "string"}}, "required": ["id", "new_text"], "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "add_requirement",
-                        "description": "Add one requirement: the prose sentence is inserted into the named section (after afterQuote when given, else at the section's end) and the requirement lands in the same atomic commit.",
-                        "inputSchema": {"type": "object", "properties": {"doc": {"type": "string"}, "section": {"type": "string"}, "text": {"type": "string", "description": "the prose sentence inserted into the document"}, "ears": {"type": "string"}, "entities": {"type": "array", "items": {"type": "string"}}, "afterQuote": {"type": "string"}}, "required": ["doc", "section", "text", "ears", "entities"], "additionalProperties": false}
+                        "description": "Add one requirement: the prose sentence is inserted into the named section (after after_quote when given, else at the section's end) and the requirement lands in the same atomic commit.",
+                        "inputSchema": {"type": "object", "properties": {"doc": {"type": "string"}, "section": {"type": "string"}, "text": {"type": "string", "description": "the prose sentence inserted into the document"}, "statement": {"type": "string"}, "entities": {"type": "array", "items": {"type": "string"}}, "after_quote": {"type": "string"}}, "required": ["doc", "section", "text", "statement", "entities"], "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "retract_requirement",
-                        "description": "Remove one requirement: its sentence leaves the prose and the node leaves the graph, one atomic commit.",
+                        "description": "Remove one requirement: its sentence leaves the prose and the node leaves the graph, one atomic commit. The deletion writes its change records, so a view or instance that referenced it gets a retrace goal.",
                         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id", "reason"], "additionalProperties": false}
                     }));
+                    if let Some(t) = crate::tools::catalog()
+                        .into_iter()
+                        .find(|t| t.name == "edit_fact")
+                    {
+                        tools.push(json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}));
+                    }
                     tools.push(json!({
                         "name": "answer_diagnostic",
                         "description": "Record a human answer to a diagnostic's prompt, relayed from conversation. Pass option (index) for a chosen option or text for a freeform reply. An edit option applies as a dual write and resolves the finding before this returns; any other answer is recorded and the reply hands the handling contract back to you: act on it with the tools, then resolve_diagnostic.",
@@ -1167,8 +1306,14 @@ impl McpServer {
                     if is_err {
                         self.trace.event(crate::turn::TraceEvent::ToolError {
                             label,
-                            rule: parsed["error"]["rule"].as_str().unwrap_or("error").to_string(),
-                            message: parsed["error"]["message"].as_str().unwrap_or(text).to_string(),
+                            rule: parsed["error"]["rule"]
+                                .as_str()
+                                .unwrap_or("error")
+                                .to_string(),
+                            message: parsed["error"]["message"]
+                                .as_str()
+                                .unwrap_or(text)
+                                .to_string(),
                         });
                     } else {
                         self.trace.event(crate::turn::TraceEvent::ToolResult {
@@ -1198,35 +1343,35 @@ impl McpServer {
                         // Waiting makes no sense mid-task, and on an ephemeral
                         // serving there is no between-task to wait for.
                         if self.bridge.ephemeral {
-                            return Ok(text_result(json!({"error": {"rule": "not-served",
-                                "message": "this serving exists for one task; there is nothing to await. Finish the open task with done."}}), true));
+                            return Ok(text_result(
+                                json!({"error": {"rule": "not-served",
+                                "message": "this serving exists for one task; there is nothing to await. Finish the open task with done."}}),
+                                true,
+                            ));
                         }
                         if self.open.lock().unwrap().is_some() {
-                            return Ok(text_result(json!({"error": {"rule": "task-open",
-                                "message": "a task is open; awaiting changes now is a stall. Finish it with done (or abandon_compilation), then await."}}), true));
+                            return Ok(text_result(
+                                json!({"error": {"rule": "task-open",
+                                "message": "a task is open; awaiting changes now is a stall. Finish it with done (or abandon_compilation), then await."}}),
+                                true,
+                            ));
                         }
                         return Ok(text_result(self.await_changes(params), false));
                     }
                     "compilation_tasks" if self.modes.iter().any(|m| m == "compile") => {
-                        {
                         let v = self.compilation_tasks();
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    }
                     "begin_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        {
                         let v = self.begin_compilation(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    }
                     "finish_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        {
                         let v = self.finish_compilation(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
-                    }
                     }
                     // `done` is what every task's instructions say; on a compile
                     // serving it is the same finish. One verb everywhere.
@@ -1235,18 +1380,14 @@ impl McpServer {
                             && self.bench.lock().unwrap().open.is_none()
                             && self.open.lock().unwrap().is_some() =>
                     {
-                        {
                         let v = self.finish_compilation(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    }
                     "abandon_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        {
                         let v = self.abandon_compilation(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
-                    }
                     }
                     "benchmark_cases" if self.modes.iter().any(|m| m == "benchmark") => {
                         return Ok(text_result(self.benchmark_cases(), false))
@@ -1274,17 +1415,28 @@ impl McpServer {
                     }
                     "begin_decompile" if self.modes.iter().any(|m| m == "decompile") => {
                         let Some(scope) = params["arguments"]["scope"].as_str() else {
-                            return Ok(text_result(json!({"error": {"rule": "missing-argument", "message": "scope is required; decompile_tasks lists the scopes"}}), true));
+                            return Ok(text_result(
+                                json!({"error": {"rule": "missing-argument", "message": "scope is required; decompile_tasks lists the scopes"}}),
+                                true,
+                            ));
                         };
                         let store = Store::load(&self.out);
                         let gs = crate::gen::GenSettings::resolve(&self.project);
                         let control = crate::control::Control::load(&self.project, &self.out);
-                        let released = control.released.decompile.iter().any(|s| s == scope || s == ".");
+                        let released = control
+                            .released
+                            .decompile
+                            .iter()
+                            .any(|s| s == scope || s == ".");
                         if !released {
-                            return Ok(text_result(json!({"error": {"rule": "awaiting-release", "message": format!(
-                                "scope `{}` is not released for decompilation; `jazyk decompile {}` or the GUI's decompile action approves it", scope, scope)}}), true));
+                            return Ok(text_result(
+                                json!({"error": {"rule": "awaiting-release", "message": format!(
+                                "scope `{}` is not released for decompilation; `jazyk decompile {}` or the GUI's decompile action approves it", scope, scope)}}),
+                                true,
+                            ));
                         }
-                        let reply = match crate::decompile::task(&self.project, &store, &gs, scope) {
+                        let reply = match crate::decompile::task(&self.project, &store, &gs, scope)
+                        {
                             Ok(v) => v,
                             Err(e) => json!({"error": {"rule": "unknown-scope", "message": e}}),
                         };
@@ -1303,6 +1455,11 @@ impl McpServer {
                     }
                     "retract_requirement" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.retract_requirement(&params["arguments"]);
+                        let is_err = !r["error"].is_null();
+                        return Ok(text_result(r, is_err));
+                    }
+                    "edit_fact" if self.modes.iter().any(|m| m == "chat") => {
+                        let r = self.edit_fact(&params["arguments"]);
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
@@ -1330,9 +1487,20 @@ impl McpServer {
                         let path = params["arguments"]["path"].as_str().unwrap_or_default();
                         let content = params["arguments"]["content"].as_str().unwrap_or_default();
                         let scope = params["arguments"]["scope"].as_str();
-                        let reply = match crate::decompile::submit(&self.project, &self.out, path, content, scope) {
+                        let reply = match crate::decompile::submit(
+                            &self.project,
+                            &self.out,
+                            path,
+                            content,
+                            scope,
+                        ) {
                             Ok(v) => v,
-                            Err(e) => return Ok(text_result(json!({"error": {"rule": "bad-draft", "message": e}}), true)),
+                            Err(e) => {
+                                return Ok(text_result(
+                                    json!({"error": {"rule": "bad-draft", "message": e}}),
+                                    true,
+                                ))
+                            }
                         };
                         return Ok(text_result(reply, false));
                     }
@@ -1343,8 +1511,8 @@ impl McpServer {
                 if !enabled.contains(&name.as_str()) {
                     return Err((-32602, format!("unknown or disabled tool `{}`", name)));
                 }
-                let is_write =
-                    !crate::tools::READ_TOOLS.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL;
+                let is_write = !crate::tools::READ_TOOLS.contains(&name.as_str())
+                    && name != crate::tools::FEEDBACK_TOOL;
                 let is_graph_write = is_write
                     && !crate::tools::GEN_TOOLS.contains(&name.as_str())
                     && !crate::tools::BIND_TOOLS.contains(&name.as_str())
@@ -1362,7 +1530,8 @@ impl McpServer {
                             t.push("run_tests");
                             t
                         };
-                        if !allowed.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL {
+                        if !allowed.contains(&name.as_str()) && name != crate::tools::FEEDBACK_TOOL
+                        {
                             return Ok(text_result(
                                 json!({"error": {"rule": "wrong-toolset", "message": format!(
                                     "`{}` is not part of a {} case", name, o.item.task)}}),
@@ -1412,7 +1581,9 @@ impl McpServer {
                 if name == "begin_generation" {
                     let c = crate::control::Control::load(&self.project, &self.out);
                     if self.bridge.build_token.is_none() {
-                        if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                        if c.generate == "manual"
+                            && c.released.generate != Store::load(&self.out).status.generation
+                        {
                             return Ok(text_result(
                                 json!({"error": {"rule": "awaiting-release", "message":
                                     "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
@@ -1428,7 +1599,9 @@ impl McpServer {
                         }
                     }
                     if let Some(ent) = args["entity"].as_str() {
-                        if let Err(holder) = crate::control::claim(&self.out, ent, &self.worker_id()) {
+                        if let Err(holder) =
+                            crate::control::claim(&self.out, ent, &self.worker_id())
+                        {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
                                     "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse", ent, holder)}}),
@@ -1449,7 +1622,9 @@ impl McpServer {
                 if name == "begin_binding" {
                     let c = crate::control::Control::load(&self.project, &self.out);
                     if self.bridge.build_token.is_none() {
-                        if c.generate == "manual" && c.released.generate != Store::load(&self.out).status.generation {
+                        if c.generate == "manual"
+                            && c.released.generate != Store::load(&self.out).status.generation
+                        {
                             return Ok(text_result(
                                 json!({"error": {"rule": "awaiting-release", "message":
                                     "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
@@ -1465,7 +1640,9 @@ impl McpServer {
                         }
                     }
                     if let Some(rid) = args["requirement"].as_str() {
-                        if let Err(holder) = crate::control::claim(&self.out, rid, &self.worker_id()) {
+                        if let Err(holder) =
+                            crate::control::claim(&self.out, rid, &self.worker_id())
+                        {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
                                     "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse", rid, holder)}}),
@@ -1481,23 +1658,32 @@ impl McpServer {
                 }
 
                 let store = Store::load(&self.out);
-                if store.docs.is_empty() && store.graph.entities.is_empty() && !self.modes.iter().any(|m| m == "compile") {
+                if store.docs.is_empty()
+                    && store.graph.entities.is_empty()
+                    && !self.modes.iter().any(|m| m == "compile")
+                {
                     return Ok(text_result(
                         json!({"error": {"rule": "no-build", "message": "no graph found; run `jazyk compile` first (or connect a compile serving)"}}),
                         true,
                     ));
                 }
                 let scope = WorkScope {
-                    task: if is_write { "mcp-write".into() } else { "mcp-read".into() },
+                    task: if is_write {
+                        "mcp-write".into()
+                    } else {
+                        "mcp-read".into()
+                    },
                     doc: None,
                     target: String::new(),
                     target_sections: Vec::new(),
                     stale_anchors: Vec::new(),
                     proposals: Vec::new(),
                 };
-                let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
+                let mut session =
+                    ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
-                session.caller = self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
+                session.caller =
+                    self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
                 match session.dispatch(&name, &args) {
                     Ok(v) => {
                         if is_graph_write && !session.staged.is_empty() {
@@ -1510,7 +1696,7 @@ impl McpServer {
                                 stale_anchors: vec![],
                                 proposals: Vec::new(),
                             };
-                            let report = s.apply(session.staged, &wi, 1, 0);
+                            let report = s.apply(session.staged, &wi.commit(1, 0));
                             let mut v = v;
                             v["committed"] = json!(report.applied);
                             if !report.skipped.is_empty() {
@@ -1535,7 +1721,13 @@ impl McpServer {
     // Write a document (or jazyk.toml) edit: through the delegating sink when the
     // spawning proxy listens, straight to disk otherwise.
     // Mirrors docs/frontends/acp.md#doc-edit-delegation.
-    fn write_edit(&self, rel: &str, old_text: &str, new_text: &str, full: &str) -> Result<(), String> {
+    fn write_edit(
+        &self,
+        rel: &str,
+        old_text: &str,
+        new_text: &str,
+        full: &str,
+    ) -> Result<(), String> {
         let path = self.project.root.join(rel);
         if let Some(sink) = &self.bridge.edit_sink {
             if sink_write(sink, &path, old_text, new_text, full).is_ok() {
@@ -1546,24 +1738,25 @@ impl McpServer {
         std::fs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
     }
 
-    // The shared tail of every dual write: run the graph mutation through a real
-    // ToolSession against a snapshot that already absorbed the prose edit (so the
-    // usual gates validate the new quote), write the file, commit both together.
-    fn dual_commit(
+    // A tool session for one chat call over a synced snapshot (the prose edit already
+    // absorbed when one is given, so the usual gates validate the new quote).
+    fn chat_session(
         &self,
-        doc: &str,
-        section: &str,
-        old_text: &str,
-        new_text: &str,
-        full: &str,
-        old_full: &str,
-        graph_call: (&str, Value),
+        parsed: &std::collections::BTreeMap<
+            String,
+            (
+                String,
+                std::collections::BTreeMap<String, crate::model::Section>,
+            ),
+        >,
+        edit: Option<&ProseEdit>,
         target: &str,
-    ) -> Value {
+    ) -> ToolSession {
         let mut snapshot = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        snapshot.sync_docs(&parsed);
-        snapshot.absorb_doc_edit(doc, full);
+        snapshot.sync_docs(parsed);
+        if let Some(e) = edit {
+            snapshot.absorb_doc_edit(&e.doc, &e.full);
+        }
         let scope = WorkScope {
             task: "mcp-write".into(),
             doc: None,
@@ -1572,36 +1765,113 @@ impl McpServer {
             stale_anchors: Vec::new(),
             proposals: Vec::new(),
         };
-        let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
+        let mut session =
+            ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
         session.caller = self.caller("chat", target);
+        session
+    }
+
+    // The shared tail of every dual write: the staged graph mutations commit with
+    // the prose replacement as one changeset through the store, the file written
+    // first (through the delegating sink when the proxy listens) and put back when
+    // the commit skips. Mirrors docs/compiler/compilation.md#edit-paths.
+    fn commit_dual_write(&self, edit: &ProseEdit, ops: Vec<crate::store::Op>, kind: &str) -> Value {
+        if ops.is_empty() {
+            return json!({"error": {"rule": "edit-needs-mutation", "message": "the call staged no graph mutation; a prose edit never lands alone"}});
+        }
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut s = Store::load(&self.out);
+        s.sync_docs(&parsed);
+        let write =
+            |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
+        match s.dual_write(
+            &self.project.root,
+            edit,
+            ops,
+            &crate::store::Commit::store(kind),
+            Some(&write),
+        ) {
+            Ok(report) => json!({"committed": true, "applied": report.applied, "doc": edit.doc,
+                   "note": "the prose and the graph moved together; no recompile is owed for this edit"}),
+            Err(e) => json!({"error": {"rule": "commit-skipped", "message": e}}),
+        }
+    }
+
+    // Validate one graph call through the session gates against a snapshot that
+    // absorbed the edit, then commit the pair.
+    fn dual_commit(&self, edit: ProseEdit, graph_call: (&str, Value), target: &str) -> Value {
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut session = self.chat_session(&parsed, Some(&edit), target);
         let (name, args) = graph_call;
         if let Err(e) = session.dispatch(name, &args) {
             return e.to_value();
         }
-        if let Err(e) = self.write_edit(doc, old_text, new_text, full) {
-            return json!({"error": {"rule": "write-failed", "message": e}});
+        let ops = std::mem::take(&mut session.staged);
+        self.commit_dual_write(&edit, ops, "dual-write")
+    }
+
+    // The section's stored body, for locating a prose edit inside it.
+    fn section_raw(&self, doc: &str, section: &str) -> Option<String> {
+        Store::load(&self.out)
+            .docs
+            .get(doc)
+            .and_then(|d| d.sections.get(section))
+            .map(|s| s.raw.clone())
+    }
+
+    // One authored field on one node: a dual write when the fact is quoted and a
+    // sentence rewrite was accepted, a decree with its ratification proposal
+    // otherwise. Mirrors docs/compiler/tools.md#chat-tools.
+    fn edit_fact(&self, args: &Value) -> Value {
+        let target = args["id"].as_str().unwrap_or_default().to_string();
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut session = self.chat_session(&parsed, None, &target);
+        let reply = match session.dispatch("edit_fact", args) {
+            Ok(v) => v,
+            Err(e) => return e.to_value(),
+        };
+        let ops = std::mem::take(&mut session.staged);
+        if reply["prose"].is_object() {
+            let p = &reply["prose"];
+            let (doc, section) = (
+                p["doc"].as_str().unwrap_or_default().to_string(),
+                p["section"].as_str().unwrap_or_default().to_string(),
+            );
+            let path = self.project.root.join(&doc);
+            let old_full = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
+                }
+            };
+            let edit = match ProseEdit::locate(
+                &doc,
+                &section,
+                self.section_raw(&doc, &section).as_deref(),
+                &old_full,
+                p["old_text"].as_str().unwrap_or_default(),
+                p["new_text"].as_str().unwrap_or_default(),
+            ) {
+                Ok(e) => e,
+                Err(e) => return json!({"error": {"rule": "stale-anchor", "message": e}}),
+            };
+            let mut v = self.commit_dual_write(&edit, ops, "dual-write");
+            if v["error"].is_null() {
+                v["path"] = json!("dual-write");
+            }
+            return v;
         }
-        let mut ops = vec![crate::store::Op::EditDocProse {
-            doc: doc.to_string(),
-            section: section.to_string(),
-            old_text: old_text.to_string(),
-            new_text: new_text.to_string(),
-            text: full.to_string(),
-        }];
-        ops.extend(std::mem::take(&mut session.staged));
         let mut s = Store::load(&self.out);
         s.sync_docs(&parsed);
-        s.absorb_doc_edit(doc, full);
-        let item = WorkItem { task: "chat".into(), target: target.to_string(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
-        let report = s.apply(ops, &item, 1, 0);
+        let report = s.apply(ops, &crate::store::Commit::store("decree"));
         if !report.skipped.is_empty() {
-            // The graph side skipped: put the prose back so neither moved.
-            let _ = self.write_edit(doc, new_text, old_text, old_full);
             return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
         }
-        json!({"committed": true, "applied": report.applied, "doc": doc,
-               "note": "the prose and the graph moved together; no recompile is owed for this edit"})
+        let mut v = reply;
+        v["committed"] = json!(true);
+        v["generation"] = json!(report.generation);
+        v
     }
 
     // Record a human answer relayed from conversation. An edit option is applied by
@@ -1617,7 +1887,8 @@ impl McpServer {
         } else {
             return json!({"error": {"rule": "missing-argument", "message": "pass option (an index into the prompt's options) or text (a freeform reply)"}});
         };
-        let write = |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
+        let write =
+            |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
         match crate::answer::answer(&self.project, &self.out, &id, reply, Some(&write)) {
             Ok(mut v) => {
                 if v["status"] == "handling" {
@@ -1646,7 +1917,8 @@ impl McpServer {
             stale_anchors: Vec::new(),
             proposals: Vec::new(),
         };
-        let mut session = ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
+        let mut session =
+            ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
         session.caller = self.caller("chat", &target);
         if let Err(e) = session.dispatch("update_diagnostic", args) {
@@ -1655,8 +1927,14 @@ impl McpServer {
         let ops = std::mem::take(&mut session.staged);
         let mut s = Store::load(&self.out);
         s.sync_docs(&parsed);
-        let item = crate::model::WorkItem { task: "chat".into(), target, dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
-        let report = s.apply(ops, &item, 1, 0);
+        let item = crate::model::WorkItem {
+            task: "chat".into(),
+            target,
+            dirty_sections: vec![],
+            stale_anchors: vec![],
+            proposals: Vec::new(),
+        };
+        let report = s.apply(ops, &item.commit(1, 0));
         if !report.skipped.is_empty() {
             return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
         }
@@ -1665,83 +1943,117 @@ impl McpServer {
 
     fn revise_requirement(&self, args: &Value) -> Value {
         let rid = args["id"].as_str().unwrap_or_default();
-        let new_text = args["newText"].as_str().unwrap_or_default().trim();
+        let new_text = args["new_text"].as_str().unwrap_or_default().trim();
         if new_text.is_empty() {
-            return json!({"error": {"rule": "missing-argument", "message": "newText is required: the prose sentence that replaces the old quote"}});
+            return json!({"error": {"rule": "missing-argument", "message": "new_text is required: the prose sentence that replaces the old quote"}});
         }
         let store = Store::load(&self.out);
         let rid = store.resolve_id(rid).to_string();
         let Some(r) = store.graph.requirements.get(&rid) else {
             return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
         };
-        let (doc, section, old_quote) = (r.source.doc.clone(), r.source.section.clone(), r.source.quote.clone());
-        let ears = args["ears"].as_str().unwrap_or(&r.ears).to_string();
+        let Some(src) = r.source.as_ref() else {
+            return json!({"error": {"rule": "not-quoted", "message": format!(
+                "{} has no sentence in the documents yet ({}); ratify or retract it instead of revising prose", rid, crate::turn::provenance_line(r))}});
+        };
+        let (doc, section, old_quote) = (src.doc.clone(), src.section.clone(), src.quote.clone());
+        let statement = args["statement"]
+            .as_str()
+            .unwrap_or(&r.statement)
+            .to_string();
+        let section_raw = store
+            .docs
+            .get(&doc)
+            .and_then(|d| d.sections.get(&section))
+            .map(|s| s.raw.clone());
+        drop(store);
         let path = self.project.root.join(&doc);
         let old_full = match std::fs::read_to_string(&path) {
             Ok(t) => t,
-            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
+            Err(e) => {
+                return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
+            }
         };
-        let Some((b, e)) = crate::md::locate_bytes(&old_full, &old_quote) else {
-            return json!({"error": {"rule": "stale-anchor", "message": format!(
-                "the requirement's quote no longer locates in {}; compile first, then revise", doc)}});
-        };
-        let full = format!("{}{}{}", &old_full[..b], new_text, &old_full[e..]);
-        self.dual_commit(
+        let edit = match ProseEdit::locate(
             &doc,
             &section,
+            section_raw.as_deref(),
+            &old_full,
             &old_quote,
             new_text,
-            &full,
-            &old_full,
-            ("update_requirement", json!({"id": rid, "ears": ears, "section": format!("{}#{}", doc, section), "quote": new_text})),
+        ) {
+            Ok(e) => e,
+            Err(_) => {
+                return json!({"error": {"rule": "stale-anchor", "message": format!(
+                    "the requirement's quote no longer locates in {}#{}; compile first, then revise. The section reads:\n{}",
+                    doc, section, section_raw.unwrap_or_default())}})
+            }
+        };
+        self.dual_commit(
+            edit,
+            ("update_requirement", json!({"id": rid, "statement": statement, "section": format!("{}#{}", doc, section), "quote": new_text})),
             &rid,
         )
     }
 
     fn add_requirement(&self, args: &Value) -> Value {
         let doc = args["doc"].as_str().unwrap_or_default().to_string();
-        let section = args["section"].as_str().unwrap_or_default().trim_start_matches(&format!("{}#", doc)).to_string();
+        let section = args["section"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_start_matches(&format!("{}#", doc))
+            .to_string();
         let text = args["text"].as_str().unwrap_or_default().trim().to_string();
-        let ears = args["ears"].as_str().unwrap_or_default();
-        if doc.is_empty() || section.is_empty() || text.is_empty() || ears.is_empty() {
-            return json!({"error": {"rule": "missing-argument", "message": "doc, section, text, ears, and entities are required"}});
+        let statement = args["statement"].as_str().unwrap_or_default();
+        if doc.is_empty() || section.is_empty() || text.is_empty() || statement.is_empty() {
+            return json!({"error": {"rule": "missing-argument", "message": "doc, section, text, statement, and entities are required"}});
         }
-        let store = Store::load(&self.out);
-        let Some(sec_raw) = store.docs.get(&doc).and_then(|d| d.sections.get(&section)).map(|x| x.raw.clone()) else {
+        let Some(sec_raw) = self.section_raw(&doc, &section) else {
             return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; compile first", doc, section)}});
         };
         let path = self.project.root.join(&doc);
         let old_full = match std::fs::read_to_string(&path) {
             Ok(t) => t,
-            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
-        };
-        // The insertion point: after the located quote, or at the section's end.
-        let at = match args["afterQuote"].as_str() {
-            Some(q) => match crate::md::locate_bytes(&old_full, q) {
-                Some((_, e)) => e,
-                None => return json!({"error": {"rule": "stale-anchor", "message": "afterQuote does not locate in the document"}}),
-            },
-            None => {
-                let Some((b, _)) = crate::md::locate_bytes(&old_full, sec_raw.trim()) else {
-                    return json!({"error": {"rule": "stale-anchor", "message": format!(
-                        "section `{}` drifted from the document on disk; compile first", section)}});
-                };
-                b + sec_raw.trim().len()
+            Err(e) => {
+                return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
             }
         };
-        let full = format!("{}\n\n{}{}", &old_full[..at].trim_end_matches(['\n']), text, &old_full[at..]);
+        // The insertion point: after the located quote, or at the section's end.
+        let edit = match args["after_quote"].as_str() {
+            Some(q) => match crate::md::locate_bytes(&old_full, q) {
+                Some((_, at)) => ProseEdit {
+                    doc: doc.clone(),
+                    section: section.clone(),
+                    old_text: String::new(),
+                    new_text: text.clone(),
+                    full: format!(
+                        "{}\n\n{}{}",
+                        &old_full[..at].trim_end_matches('\n'),
+                        text,
+                        &old_full[at..]
+                    ),
+                    old_full,
+                },
+                None => {
+                    return json!({"error": {"rule": "stale-anchor", "message": "after_quote does not locate in the document"}})
+                }
+            },
+            None => match ProseEdit::locate(&doc, &section, Some(&sec_raw), &old_full, "", &text) {
+                Ok(e) => e,
+                Err(e) => return json!({"error": {"rule": "stale-anchor", "message": e}}),
+            },
+        };
         let entities: Vec<String> = args["entities"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         self.dual_commit(
-            &doc,
-            &section,
-            "",
-            &text,
-            &full,
-            &old_full,
-            ("upsert_requirement", json!({"ears": ears, "entities": entities, "section": format!("{}#{}", doc, section), "quote": text})),
+            edit,
+            ("upsert_requirement", json!({"statement": statement, "entities": entities, "section": format!("{}#{}", doc, section), "quote": text})),
             &doc,
         )
     }
@@ -1754,11 +2066,18 @@ impl McpServer {
         let Some(r) = store.graph.requirements.get(&rid) else {
             return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
         };
-        let (doc, section, old_quote) = (r.source.doc.clone(), r.source.section.clone(), r.source.quote.clone());
+        let Some(src) = r.source.as_ref() else {
+            return json!({"error": {"rule": "not-quoted", "message": format!(
+                "{} has no sentence in the documents ({}); retract the decree or derivation instead", rid, crate::turn::provenance_line(r))}});
+        };
+        let (doc, section, old_quote) = (src.doc.clone(), src.section.clone(), src.quote.clone());
+        drop(store);
         let path = self.project.root.join(&doc);
         let old_full = match std::fs::read_to_string(&path) {
             Ok(t) => t,
-            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}}),
+            Err(e) => {
+                return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
+            }
         };
         let Some((b, e)) = crate::md::locate_bytes(&old_full, &old_quote) else {
             return json!({"error": {"rule": "stale-anchor", "message": format!(
@@ -1776,13 +2095,16 @@ impl McpServer {
             end = e + 1;
         }
         let full = format!("{}{}", &old_full[..start], &old_full[end..]);
+        let edit = ProseEdit {
+            doc,
+            section,
+            old_text: old_quote,
+            new_text: String::new(),
+            full,
+            old_full,
+        };
         self.dual_commit(
-            &doc,
-            &section,
-            &old_quote,
-            "",
-            &full,
-            &old_full,
+            edit,
             ("delete_requirement", json!({"id": rid, "reason": reason})),
             &rid,
         )
@@ -1806,8 +2128,14 @@ impl McpServer {
 
     fn update_project_settings(&self, args: &Value) -> Value {
         const KEYS: [&str; 8] = [
-            "workflow.compile", "workflow.generate", "workflow.worker", "acp.agent",
-            "gen.deliverable", "gen.worker", "llm.model", "llm.base_url",
+            "workflow.compile",
+            "workflow.generate",
+            "workflow.worker",
+            "acp.agent",
+            "gen.deliverable",
+            "gen.worker",
+            "llm.model",
+            "llm.base_url",
         ];
         let Some(settings) = args["settings"].as_object() else {
             return json!({"error": {"rule": "missing-argument", "message": "settings is required: a map of key to value"}});
@@ -1842,7 +2170,11 @@ impl McpServer {
 // the section or the key when missing, touching nothing else.
 pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
     let header = format!("[{}]", section);
-    let rendered = format!("{} = \"{}\"", key, value.replace('\\', "\\\\").replace('"', "\\\""));
+    let rendered = format!(
+        "{} = \"{}\"",
+        key,
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    );
     let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     let mut in_section = false;
     let mut section_start: Option<usize> = None;
@@ -1881,7 +2213,13 @@ pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
 
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
 // Mirrors docs/frontends/acp.md#doc-edit-delegation.
-fn sink_write(sink: &str, path: &std::path::Path, old_text: &str, new_text: &str, full: &str) -> Result<(), String> {
+fn sink_write(
+    sink: &str,
+    path: &std::path::Path,
+    old_text: &str,
+    new_text: &str,
+    full: &str,
+) -> Result<(), String> {
     use std::io::{BufRead, BufReader, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(sink).map_err(|e| e.to_string())?;
     stream
@@ -1890,12 +2228,17 @@ fn sink_write(sink: &str, path: &std::path::Path, old_text: &str, new_text: &str
     let line = json!({"path": path.display().to_string(), "oldText": old_text, "newText": new_text, "content": full});
     writeln!(stream, "{}", line).map_err(|e| e.to_string())?;
     let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).map_err(|e| e.to_string())?;
+    BufReader::new(stream)
+        .read_line(&mut reply)
+        .map_err(|e| e.to_string())?;
     let v: Value = serde_json::from_str(reply.trim()).map_err(|e| e.to_string())?;
     if v["ok"].as_bool().unwrap_or(false) {
         Ok(())
     } else {
-        Err(v["error"].as_str().unwrap_or("sink refused the edit").to_string())
+        Err(v["error"]
+            .as_str()
+            .unwrap_or("sink refused the edit")
+            .to_string())
     }
 }
 
@@ -1913,7 +2256,13 @@ mod tests {
     fn chat_server(dir: &std::path::Path) -> McpServer {
         let project = crate::project::Project::load(dir);
         let out = project.out.clone();
-        McpServer::with_bridge(project, out, vec!["chat".to_string()], false, BridgeFlags::default())
+        McpServer::with_bridge(
+            project,
+            out,
+            vec!["chat".to_string()],
+            false,
+            BridgeFlags::default(),
+        )
     }
 
     fn tool_names(s: &McpServer) -> Vec<String> {
@@ -1924,6 +2273,109 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    // A chat dual write moves the prose and the graph in one changeset and absorbs
+    // its own hashes, so a following sync finds nothing dirty; edit_fact without an
+    // accepted sentence lands a decree with its proposal instead.
+    // Mirrors docs/frontends/acp.md#dual-write-tools.
+    #[test]
+    fn revise_requirement_commits_prose_and_graph_without_redirtying() {
+        use crate::model::{Entity, Provenance, Requirement, SourceRef};
+        use crate::store::{Commit, Op};
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("docs/pay.md"),
+            "# Pay\n\nAn Order is paid within 30 days.\n",
+        )
+        .unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let quote = "An Order is paid within 30 days.";
+        s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:order".into(),
+                    entity: Entity {
+                        name: "Order".into(),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "req:pay-1".into(),
+                    requirement: Requirement {
+                        statement: quote.into(),
+                        entities: vec!["ent:order".into()],
+                        source: Some(SourceRef {
+                            doc: "docs/pay.md".into(),
+                            section: "/pay".into(),
+                            quote: quote.into(),
+                        }),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &Commit::store("session"),
+        );
+        let before = s.status.generation;
+        drop(s);
+
+        let server = chat_server(&dir);
+        assert!(tool_names(&server).iter().any(|t| t == "edit_fact"));
+        let new_text = "An Order is paid within 21 days.";
+        let v = server.revise_requirement(
+            &json!({"id": "req:pay-1", "new_text": new_text, "statement": new_text}),
+        );
+        assert_eq!(v["committed"], true, "{}", v);
+        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        assert!(text.contains(new_text), "{}", text);
+        let mut s = Store::load(&out);
+        assert_eq!(s.status.generation, before + 1, "one changeset");
+        let r = &s.graph.requirements["req:pay-1"];
+        assert_eq!(r.source.as_ref().unwrap().quote, new_text);
+        assert_eq!(r.statement, new_text);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        assert_eq!(s.docs["docs/pay.md"].content_hash, parsed["docs/pay.md"].0);
+        let records = s.status.changes.clone();
+        assert!(s.sync_docs(&parsed).is_empty(), "no re-dirtying");
+        assert_eq!(s.status.changes, records);
+        drop(s);
+
+        // A decree through edit_fact lands graph-only with its proposal.
+        let v = server.edit_fact(
+            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}]}),
+        );
+        assert_eq!(v["path"], "decree", "{}", v);
+        let s = Store::load(&out);
+        let r = &s.graph.requirements["req:pay-1"];
+        assert!(r.source.is_none() && matches!(r.provenance, Some(Provenance::Decree { .. })));
+        assert_eq!(r.facets.len(), 1);
+        assert!(s
+            .graph
+            .diagnostics
+            .values()
+            .any(|d| d.rule == "ratification-pending"
+                && d.lifecycle == "open"
+                && d.subjects == vec!["req:pay-1".to_string()]
+                && d.prompt.is_some()));
+        assert!(s
+            .status
+            .has_change(crate::store::CHANGE_PROVENANCE_PENDING, "req:pay-1"));
+        drop(s);
+        // The prose form is refused now that the fact is decreed.
+        let v = server.revise_requirement(&json!({"id": "req:pay-1", "new_text": "x"}));
+        assert_eq!(v["error"]["rule"], "not-quoted");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // A project tool is offered only where it can do something: scaffolding in a bare
@@ -1938,21 +2390,44 @@ mod tests {
         let proj = base.join("proj");
         std::fs::create_dir_all(&bare).unwrap();
         std::fs::create_dir_all(&proj).unwrap();
-        std::fs::write(proj.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        std::fs::write(
+            proj.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
 
         let bare_tools = tool_names(&chat_server(&bare));
-        assert!(bare_tools.iter().any(|t| t == "init_project"), "{:?}", bare_tools);
-        assert!(!bare_tools.iter().any(|t| t == "update_project_settings"), "{:?}", bare_tools);
+        assert!(
+            bare_tools.iter().any(|t| t == "init_project"),
+            "{:?}",
+            bare_tools
+        );
+        assert!(
+            !bare_tools.iter().any(|t| t == "update_project_settings"),
+            "{:?}",
+            bare_tools
+        );
 
         let proj_tools = tool_names(&chat_server(&proj));
-        assert!(!proj_tools.iter().any(|t| t == "init_project"), "{:?}", proj_tools);
-        assert!(proj_tools.iter().any(|t| t == "update_project_settings"), "{:?}", proj_tools);
+        assert!(
+            !proj_tools.iter().any(|t| t == "init_project"),
+            "{:?}",
+            proj_tools
+        );
+        assert!(
+            proj_tools.iter().any(|t| t == "update_project_settings"),
+            "{:?}",
+            proj_tools
+        );
 
         assert!(instructions_for(&["chat".to_string()], false, false).contains("NO PROJECT HERE"));
-        assert!(instructions_for(&["chat".to_string()], false, true).contains("already initialized"));
+        assert!(
+            instructions_for(&["chat".to_string()], false, true).contains("already initialized")
+        );
 
         // The refusal survives as a floor under the listing: settings without a file.
-        let r = chat_server(&bare).update_project_settings(&json!({"settings": {"llm.model": "x"}}));
+        let r =
+            chat_server(&bare).update_project_settings(&json!({"settings": {"llm.model": "x"}}));
         assert_eq!(r["error"]["rule"], "not-a-project");
         std::fs::remove_dir_all(&base).ok();
     }

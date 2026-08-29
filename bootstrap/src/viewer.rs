@@ -26,7 +26,11 @@ fn link(id: &str) -> String {
 }
 
 fn chip(severity: &str) -> String {
-    format!("<span class=\"chip sev-{}\">{}</span>", esc(severity), esc(severity))
+    format!(
+        "<span class=\"chip sev-{}\">{}</span>",
+        esc(severity),
+        esc(severity)
+    )
 }
 
 // Verification status chip. Classes group the seven statuses into four colors.
@@ -149,7 +153,8 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     );
     // Verification summary, when any ledger row exists.
     {
-        let (mut ok, mut bad, mut stale, mut unv, mut not_gen) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        let (mut ok, mut bad, mut stale, mut unv, mut not_gen) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
         for v in vmap.values() {
             match v["status"].as_str().unwrap_or("") {
                 "verified" => ok += 1,
@@ -174,15 +179,29 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     for (id, e) in &g.entities {
         let refs = store.requirements_referencing(id);
         let mut body = String::new();
-        let _ = write!(body, "<h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3>", esc(id), esc(&e.name), esc(id));
+        let _ = write!(
+            body,
+            "<h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3>",
+            esc(id),
+            esc(&e.name),
+            esc(id)
+        );
         if e.scope != "public" {
-            let _ = write!(body, "<p><span class=\"k\">scope</span> {}</p>", esc(&e.scope));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">scope</span> {}</p>",
+                esc(&e.scope)
+            );
         }
         if let Some(d) = &e.definition {
             let _ = write!(body, "<p>{}</p>", esc(d));
         }
         if !e.aliases.is_empty() {
-            let _ = write!(body, "<p><span class=\"k\">aliases</span> {}</p>", esc(&e.aliases.join(", ")));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">aliases</span> {}</p>",
+                esc(&e.aliases.join(", "))
+            );
         }
         for m in &e.mentions {
             let _ = write!(
@@ -195,7 +214,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
         }
         if !refs.is_empty() {
             let links: Vec<String> = refs.iter().map(|r| link(r)).collect();
-            let _ = write!(body, "<p><span class=\"k\">requirements</span> {}</p>", links.join(" "));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">requirements</span> {}</p>",
+                links.join(" ")
+            );
         }
         // Aggregate verification over the entity's requirements: any failing reads
         // red, any stale amber, all verified green, none generated gray.
@@ -214,8 +237,17 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 "agg-none"
             }
         };
-        let s = search_attr(&[id, &e.name, e.definition.as_deref().unwrap_or(""), &e.aliases.join(" ")]);
-        let _ = write!(h, "<div class=\"card {}\" data-s=\"{}\">{}</div>\n", agg, s, body);
+        let s = search_attr(&[
+            id,
+            &e.name,
+            e.definition.as_deref().unwrap_or(""),
+            &e.aliases.join(" "),
+        ]);
+        let _ = write!(
+            h,
+            "<div class=\"card {}\" data-s=\"{}\">{}</div>\n",
+            agg, s, body
+        );
     }
 
     // Requirements.
@@ -223,7 +255,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     for (id, r) in &g.requirements {
         let mut body = String::new();
         let _ = write!(body, "<h3 id=\"n-{}\">{}</h3>", esc(id), esc(id));
-        let _ = write!(body, "<p>{}</p>", esc(&r.ears));
+        let _ = write!(body, "<p>{}</p>", esc(&r.statement));
         if let Some(v) = vmap.get(id) {
             let status = v["status"].as_str().unwrap_or("missing");
             let mut line = vchip(status);
@@ -234,35 +266,66 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 let _ = write!(line, " <span class=\"q\">{}</span>", esc(run));
             }
             if let Some(ev) = v["evidence"].as_str() {
-                let _ = write!(line, "<br><span class=\"q\">{}</span>", esc(&truncate(ev, 140)));
+                let _ = write!(
+                    line,
+                    "<br><span class=\"q\">{}</span>",
+                    esc(&truncate(ev, 140))
+                );
             }
             let _ = write!(body, "<p>{}</p>", line);
         }
         let links: Vec<String> = r.entities.iter().map(|e| link(e)).collect();
-        let _ = write!(body, "<p><span class=\"k\">entities</span> {}</p>", links.join(" "));
         let _ = write!(
             body,
-            "<p class=\"q\">{}#{} \u{201c}{}\u{201d}</p>",
-            esc(&r.source.doc),
-            esc(&r.source.section),
-            esc(&truncate(&r.source.quote, 160))
+            "<p><span class=\"k\">entities</span> {}</p>",
+            links.join(" ")
         );
+        match r.source.as_ref() {
+            Some(src) => {
+                let _ = write!(
+                    body,
+                    "<p class=\"q\">{}#{} \u{201c}{}\u{201d}</p>",
+                    esc(&src.doc),
+                    esc(&src.section),
+                    esc(&truncate(&src.quote, 160))
+                );
+            }
+            None => {
+                let _ = write!(
+                    body,
+                    "<p class=\"q\">{}</p>",
+                    esc(&crate::turn::provenance_line(r))
+                );
+            }
+        }
         if !r.edges.is_empty() {
             let edges: Vec<String> = r
                 .edges
                 .iter()
                 .map(|e| {
                     format!(
-                        "{} ~ {} ({})",
+                        "{} → {} ({})",
                         esc(&e.a),
                         esc(&e.b),
-                        esc(e.rel_type.as_deref().unwrap_or("reference"))
+                        esc(e
+                            .rel_type
+                            .as_deref()
+                            .unwrap_or(crate::model::DEFAULT_REL_TYPE))
                     )
                 })
                 .collect();
-            let _ = write!(body, "<p><span class=\"k\">edges</span> {}</p>", edges.join(", "));
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">edges</span> {}</p>",
+                edges.join(", ")
+            );
         }
-        let s = search_attr(&[id, &r.ears, &r.source.doc]);
+        let doc = r
+            .source
+            .as_ref()
+            .map(|s| s.doc.as_str())
+            .unwrap_or_default();
+        let s = search_attr(&[id, &r.statement, doc]);
         let _ = write!(h, "<div class=\"card\" data-s=\"{}\">{}</div>\n", s, body);
     }
 
@@ -273,15 +336,15 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     }
     for (id, rel) in &g.relationships {
         let members: Vec<String> = rel.members.iter().map(|m| link(m)).collect();
-        let reqs: Vec<String> = rel.requirements.iter().map(|r| link(r)).collect();
-        let s = search_attr(&[id, &rel.rel_type, &rel.members.join(" ")]);
+        let reqs: Vec<String> = rel.requirements().into_iter().map(link).collect();
+        let s = search_attr(&[id, rel.strongest(), &rel.members.join(" ")]);
         let _ = write!(
             h,
             "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3><p><span class=\"k\">members</span> {}</p><p><span class=\"k\">requirements</span> {}</p></div>\n",
             s,
             esc(id),
             esc(id),
-            esc(&rel.rel_type),
+            esc(rel.strongest()),
             members.join(" "),
             reqs.join(" ")
         );
@@ -319,7 +382,11 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
         if let Some(rsn) = &d.reasoning {
             let _ = write!(body, "<p class=\"q\">{}</p>", esc(rsn));
         }
-        let _ = write!(body, "<p><span class=\"k\">subjects</span> {}</p>", subjects.join(" "));
+        let _ = write!(
+            body,
+            "<p><span class=\"k\">subjects</span> {}</p>",
+            subjects.join(" ")
+        );
         let s = search_attr(&[id, &d.rule, &d.severity, &d.message]);
         let _ = write!(h, "<div class=\"card\" data-s=\"{}\">{}</div>\n", s, body);
     }
@@ -376,22 +443,34 @@ mod tests {
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Cart shall hold items.".into(),
+                statement: "The Cart shall hold items.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
-                source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds".into(),
+                }),
+                ..Default::default()
             },
         );
         let text = "# Shop\nbody\n";
         s.docs.insert(
             "shop.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
-        let html = render(&s, &GenSettings { deliverable: std::path::PathBuf::from("/nonexistent"), worker: "agentic".into(), code: Vec::new() });
+        let html = render(
+            &s,
+            &GenSettings {
+                deliverable: std::path::PathBuf::from("/nonexistent"),
+                worker: "agentic".into(),
+                code: Vec::new(),
+            },
+        );
         assert!(html.contains("id=\"n-ent:cart\""));
         assert!(html.contains("Cart &lt;script&gt;"));
         assert!(html.contains("&quot;items&quot; &amp; things"));

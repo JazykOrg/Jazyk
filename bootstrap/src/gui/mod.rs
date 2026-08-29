@@ -36,19 +36,26 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     if st.control().generate == "auto" {
         let store = crate::store::Store::load(&st.out);
         if !crate::gen::pending(&store, &st.gs()).is_empty() {
-            st.jobs.submit(st, jobs::JobKind::Gen { entities: vec![], force: false });
+            st.jobs.submit(
+                st,
+                jobs::JobKind::Gen {
+                    entities: vec![],
+                    force: false,
+                },
+            );
         }
     }
     if st.control().compile != "auto" {
         return;
     }
-    let verdict = crate::store::Store::load(&st.out).status.verdict.clone();
-    if verdict != "incomplete" {
+    let verdict = crate::store::Store::load(&st.out).status.verdict;
+    if verdict.state != "incomplete" {
         st.backoff.store(30, std::sync::atomic::Ordering::Relaxed);
         return;
     }
     let secs = st.backoff.load(std::sync::atomic::Ordering::Relaxed);
-    st.backoff.store((secs * 2).min(300), std::sync::atomic::Ordering::Relaxed);
+    st.backoff
+        .store((secs * 2).min(300), std::sync::atomic::Ordering::Relaxed);
     let st = st.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(secs));
@@ -94,7 +101,11 @@ fn probe_occupant(port: u16, our_root: &std::path::Path) -> String {
     let resp = ureq::get(&format!("http://127.0.0.1:{}/api/ping", port))
         .timeout(std::time::Duration::from_millis(400))
         .call();
-    match resp.ok().and_then(|r| r.into_string().ok()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) {
+    match resp
+        .ok()
+        .and_then(|r| r.into_string().ok())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    {
         Some(v) if v["app"] == "jazyk-gui" => {
             let root = v["root"].as_str().unwrap_or("?");
             if root == our_root.to_string_lossy() {
@@ -114,7 +125,11 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         .clone()
         .or_else(|| std::env::var("JAZYK_GUI_DIST").ok())
         .map(PathBuf::from);
-    let token = if gopts.no_token { None } else { Some(state::mint_token()) };
+    let token = if gopts.no_token {
+        None
+    } else {
+        Some(state::mint_token())
+    };
     let st = Arc::new(AppState {
         root: proj.root.clone(),
         proj: std::sync::RwLock::new(proj),
@@ -140,7 +155,10 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
     jobs::sweep_traces(&st.out);
     let worker = jobs::spawn_worker(st.clone());
 
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("jazyk: gui: cannot start runtime: {}", e);
@@ -163,19 +181,31 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         // bookmark on the default port is explainable at a glance.
         if gopts.port.is_none() && addr.port() != server::DEFAULT_PORT {
             let root = st.proj().root.clone();
-            let occupant = tokio::task::spawn_blocking(move || probe_occupant(server::DEFAULT_PORT, &root))
-                .await
-                .unwrap_or_default();
-            eprintln!("jazyk: gui: port {} is busy: {}", server::DEFAULT_PORT, occupant);
+            let occupant =
+                tokio::task::spawn_blocking(move || probe_occupant(server::DEFAULT_PORT, &root))
+                    .await
+                    .unwrap_or_default();
+            eprintln!(
+                "jazyk: gui: port {} is busy: {}",
+                server::DEFAULT_PORT,
+                occupant
+            );
         }
         let url = match &st.token {
             Some(t) => format!("http://127.0.0.1:{}/#token={}", addr.port(), t),
             None => format!("http://127.0.0.1:{}/", addr.port()),
         };
-        println!("jazyk: gui — serving {} at {}", st.proj().root.display(), url);
+        println!(
+            "jazyk: gui — serving {} at {}",
+            st.proj().root.display(),
+            url
+        );
         if !gopts.no_open {
             if let Err(e) = open::that_detached(&url) {
-                eprintln!("jazyk: gui: cannot open browser: {} (open {} yourself)", e, url);
+                eprintln!(
+                    "jazyk: gui: cannot open browser: {} (open {} yourself)",
+                    e, url
+                );
             }
         }
         let code = match server::serve(listener, st.clone()).await {
@@ -193,7 +223,10 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         let join = tokio::task::spawn_blocking(move || {
             let _ = worker.join();
         });
-        if tokio::time::timeout(std::time::Duration::from_secs(10), join).await.is_err() {
+        if tokio::time::timeout(std::time::Duration::from_secs(10), join)
+            .await
+            .is_err()
+        {
             eprintln!("jazyk: gui: a job is still finishing its current step; exiting anyway");
         }
         code

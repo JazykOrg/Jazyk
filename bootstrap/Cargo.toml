@@ -28,3 +28,8 @@ futures-util = "0.3"
 include_dir = "0.7"
 open = "5"
 jsonc-parser = { version = "0.33.1", features = ["serde", "serde_json"] }
+# Diagram renderer (docs/compiler/diagrams.md): PlantUML reimplemented in Rust, Graphviz
+# linked as a prebuilt static archive fetched by the crate's own opt-in path (see
+# .cargo/config.toml); resvg rasterizes the SVG where a surface needs pixels.
+plantuml-little = { version = "=1.2026.2-4", default-features = false, features = ["metrics-ttf-parser"] }
+resvg = "0.48"

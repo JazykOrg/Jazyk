@@ -29,7 +29,15 @@ impl Lsp {
     pub fn new(root: PathBuf, out: PathBuf, gen: crate::gen::GenSettings) -> Lsp {
         let store = Store::load(&out);
         let generation = store.status.generation;
-        Lsp { root, out, store, generation, gen, overlay: HashMap::new(), next_srv_id: 1 }
+        Lsp {
+            root,
+            out,
+            store,
+            generation,
+            gen,
+            overlay: HashMap::new(),
+            next_srv_id: 1,
+        }
     }
 
     pub fn run(&mut self) {
@@ -77,7 +85,11 @@ impl Lsp {
         if msg.get("method").is_none() {
             return true;
         }
-        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+        let method = msg
+            .get("method")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
         let id = msg.get("id").cloned();
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         // The store is the single source of truth: reload when a compile moved it.
@@ -231,7 +243,13 @@ impl Lsp {
 
     // Range of a quote in a document: exact match first, then the first whole-word
     // occurrence of a fallback name, then the section's first line, then line 0.
-    fn anchor(&self, doc: &str, quote: &str, name: &str, section: Option<&str>) -> (usize, usize, usize, usize) {
+    fn anchor(
+        &self,
+        doc: &str,
+        quote: &str,
+        name: &str,
+        section: Option<&str>,
+    ) -> (usize, usize, usize, usize) {
         let text = self.doc_text(doc);
         if let Some(r) = md::locate(&text, quote) {
             return r;
@@ -316,8 +334,8 @@ impl Lsp {
     fn subject_anchor(&self, subject: &str, doc: &str) -> Option<(usize, usize, usize, usize)> {
         let resolved = self.store.resolve_id(subject).to_string();
         if let Some(r) = self.store.graph.requirements.get(&resolved) {
-            if r.source.doc == doc {
-                return Some(self.anchor(doc, &r.source.quote, "", Some(&r.source.section)));
+            if let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) {
+                return Some(self.anchor(doc, &src.quote, "", Some(&src.section)));
             }
             return None;
         }
@@ -371,17 +389,27 @@ impl Lsp {
     // ---- request handlers ----
 
     fn on_definition(&self, params: &Value) -> Value {
-        let Some((doc, line, ch)) = self.pos(params) else { return Value::Null };
-        let Some((_, e)) = self.entity_at(&doc, line, ch) else { return Value::Null };
+        let Some((doc, line, ch)) = self.pos(params) else {
+            return Value::Null;
+        };
+        let Some((_, e)) = self.entity_at(&doc, line, ch) else {
+            return Value::Null;
+        };
         // The defining mention is the first one recorded.
-        let Some(m) = e.mentions.first() else { return Value::Null };
+        let Some(m) = e.mentions.first() else {
+            return Value::Null;
+        };
         let r = self.anchor(&m.doc, &m.quote, &e.name, Some(&m.section));
         json!({ "uri": self.doc_to_uri(&m.doc), "range": self.range(r) })
     }
 
     fn on_references(&self, params: &Value) -> Value {
-        let Some((doc, line, ch)) = self.pos(params) else { return json!([]) };
-        let Some((_, e)) = self.entity_at(&doc, line, ch) else { return json!([]) };
+        let Some((doc, line, ch)) = self.pos(params) else {
+            return json!([]);
+        };
+        let Some((_, e)) = self.entity_at(&doc, line, ch) else {
+            return json!([]);
+        };
         let mut locs: Vec<Value> = Vec::new();
         let mut seen: BTreeSet<(String, usize)> = BTreeSet::new();
         for m in &e.mentions {
@@ -398,7 +426,9 @@ impl Lsp {
     // quote shows that requirement's own status.
     // Mirrors docs/frontends/lsp.md#capabilities.
     fn on_hover(&self, params: &Value) -> Value {
-        let Some((doc, line, ch)) = self.pos(params) else { return Value::Null };
+        let Some((doc, line, ch)) = self.pos(params) else {
+            return Value::Null;
+        };
         if let Some((id, _)) = self.entity_at(&doc, line, ch) {
             let mut value = match context::assemble(&self.store, &id, &Focus::default(), 4000) {
                 Ok(pack) => pack.pack,
@@ -429,7 +459,11 @@ impl Lsp {
             let value = self.requirement_card(&rid, r);
             let mut hover = json!({ "contents": { "kind": "markdown", "value": value } });
             // The hover range is the located quote, so the whole statement highlights.
-            if let Some(q) = md::locate(&self.doc_text(&doc), &r.source.quote) {
+            if let Some(q) = r
+                .source
+                .as_ref()
+                .and_then(|s| md::locate(&self.doc_text(&doc), &s.quote))
+            {
                 hover["range"] = self.range(q);
             }
             return hover;
@@ -449,7 +483,13 @@ impl Lsp {
             Some(row) => crate::verify::status_of(&self.store, rid, row, &self.gen),
             None => ("missing".to_string(), "not-generated".to_string()),
         };
-        let mut s = format!("**`{}`** · {} {}\n\n{}\n\n", rid, status_glyph(&status), status, r.ears);
+        let mut s = format!(
+            "**`{}`** · {} {}\n\n{}\n\n",
+            rid,
+            status_glyph(&status),
+            status,
+            r.statement
+        );
         if let Some(link) = self.docsgen_link(rid, r) {
             s.push_str(&format!("[the requirement →]({})\n\n", link));
         }
@@ -504,14 +544,20 @@ impl Lsp {
         };
         let t = &row.test;
         let artifact = crate::gen::artifact_path(&self.out, &self.gen, t);
-        let label = if t.label == t.kind { t.kind.clone() } else { format!("{} · {}", t.kind, t.label) };
+        let label = if t.label == t.kind {
+            t.kind.clone()
+        } else {
+            format!("{} · {}", t.kind, t.label)
+        };
         s.push_str(&format!("**test** · {}\n\n", label));
         let line = if t.name.is_empty() {
             None
         } else {
-            std::fs::read_to_string(&artifact)
-                .ok()
-                .and_then(|text| text.lines().position(|l| l.contains(&t.name)).map(|i| i + 1))
+            std::fs::read_to_string(&artifact).ok().and_then(|text| {
+                text.lines()
+                    .position(|l| l.contains(&t.name))
+                    .map(|i| i + 1)
+            })
         };
         // An llm test's criteria are metadata under the out directory, not part of the
         // product: the link carries the id, so a client with no page for the artifact
@@ -530,17 +576,29 @@ impl Lsp {
                 "- [`{}`]({}){}\n",
                 t.artifact,
                 target,
-                if artifact.exists() { "" } else { " · artifact gone" }
+                if artifact.exists() {
+                    ""
+                } else {
+                    " · artifact gone"
+                }
             )),
         }
-        s.push_str(&format!("- {} {} · {}", status_glyph(&status), status, reason));
+        s.push_str(&format!(
+            "- {} {} · {}",
+            status_glyph(&status),
+            status,
+            reason
+        ));
         if let Some(last) = &row.last_run {
             s.push_str(&format!(" · last run {}", last));
         }
         s.push('\n');
         s.push_str(&format!("- run `{}`\n", t.run));
         if let Some(ev) = &row.evidence {
-            s.push_str(&format!("\n> {}\n", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+            s.push_str(&format!(
+                "\n> {}\n",
+                ev.split_whitespace().collect::<Vec<_>>().join(" ")
+            ));
         }
         s
     }
@@ -549,22 +607,36 @@ impl Lsp {
     // the document does not exist, so the card never dangles.
     fn docsgen_link(&self, rid: &str, r: &crate::model::Requirement) -> Option<String> {
         let ent = r.entities.first()?;
-        let slug = self.store.resolve_id(ent).strip_prefix("ent:").unwrap_or(ent).to_string();
+        let slug = self
+            .store
+            .resolve_id(ent)
+            .strip_prefix("ent:")
+            .unwrap_or(ent)
+            .to_string();
         let path = self.out.join("docsgen").join(format!("{}.md", slug));
         let text = std::fs::read_to_string(&path).ok()?;
         let heading = format!("### `{}`", rid);
-        let line = text.lines().position(|l| l.trim() == heading).map(|i| i + 1).unwrap_or(1);
+        let line = text
+            .lines()
+            .position(|l| l.trim() == heading)
+            .map(|i| i + 1)
+            .unwrap_or(1);
         Some(format!("{}?req={}#L{}", path_to_uri(&path), rid, line))
     }
 
     // The requirement whose located quote contains the position, if any.
-    fn requirement_at(&self, doc: &str, line: usize, character: usize) -> Option<(String, &crate::model::Requirement)> {
+    fn requirement_at(
+        &self,
+        doc: &str,
+        line: usize,
+        character: usize,
+    ) -> Option<(String, &crate::model::Requirement)> {
         let text = self.doc_text(doc);
         for (rid, r) in &self.store.graph.requirements {
-            if r.source.doc != doc {
+            let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) else {
                 continue;
-            }
-            if let Some((sl, sc, el, ec)) = md::locate(&text, &r.source.quote) {
+            };
+            if let Some((sl, sc, el, ec)) = md::locate(&text, &src.quote) {
                 let after_start = line > sl || (line == sl && character >= sc);
                 let before_end = line < el || (line == el && character <= ec);
                 if after_start && before_end {
@@ -580,7 +652,9 @@ impl Lsp {
     // target file exists, so they never dangle. Longest name wins on overlaps, like
     // entity_at; at most 200 links per document.
     fn on_document_links(&self, params: &Value) -> Value {
-        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let Some(doc) = self.param_doc(params) else {
+            return json!([]);
+        };
         let text = self.doc_text(&doc);
         struct Cand {
             line: usize,
@@ -592,18 +666,34 @@ impl Lsp {
         let mut cands: Vec<Cand> = Vec::new();
         for (id, e) in &self.store.graph.entities {
             let slug = id.strip_prefix("ent:").unwrap_or(id);
-            if !self.out.join("docsgen").join(format!("{}.md", slug)).exists() {
+            if !self
+                .out
+                .join("docsgen")
+                .join(format!("{}.md", slug))
+                .exists()
+            {
                 continue;
             }
             let mut names = vec![e.name.clone()];
             names.extend(e.aliases.iter().cloned());
             for n in names {
                 for (line, col, len) in occurrences(&text, &n) {
-                    cands.push(Cand { line, col, len, id: id.clone(), name: e.name.clone() });
+                    cands.push(Cand {
+                        line,
+                        col,
+                        len,
+                        id: id.clone(),
+                        name: e.name.clone(),
+                    });
                 }
             }
         }
-        cands.sort_by(|a, b| b.len.cmp(&a.len).then(a.line.cmp(&b.line)).then(a.col.cmp(&b.col)));
+        cands.sort_by(|a, b| {
+            b.len
+                .cmp(&a.len)
+                .then(a.line.cmp(&b.line))
+                .then(a.col.cmp(&b.col))
+        });
         let mut taken: Vec<(usize, usize, usize)> = Vec::new(); // (line, start, end)
         let mut links: Vec<Value> = Vec::new();
         for c in cands {
@@ -611,7 +701,10 @@ impl Lsp {
                 break;
             }
             let end = c.col + c.len;
-            if taken.iter().any(|(l, s, e)| *l == c.line && c.col < *e && *s < end) {
+            if taken
+                .iter()
+                .any(|(l, s, e)| *l == c.line && c.col < *e && *s < end)
+            {
                 continue;
             }
             taken.push((c.line, c.col, end));
@@ -632,15 +725,19 @@ impl Lsp {
     // quote never shows a misplaced lens.
     // Mirrors docs/frontends/lsp.md#capabilities.
     fn on_code_lens(&self, params: &Value) -> Value {
-        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let Some(doc) = self.param_doc(params) else {
+            return json!([]);
+        };
         let text = self.doc_text(&doc);
         let vmap = crate::verify::status_map(&self.store, &self.gen);
         let mut lenses: Vec<(usize, usize, Value)> = Vec::new();
         for (rid, r) in &self.store.graph.requirements {
-            if r.source.doc != doc {
+            let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) else {
                 continue;
-            }
-            let Some((sl, sc, _, _)) = md::locate(&text, &r.source.quote) else { continue };
+            };
+            let Some((sl, sc, _, _)) = md::locate(&text, &src.quote) else {
+                continue;
+            };
             let mut title = rid.clone();
             if let Some(s) = vmap.get(rid.as_str()).and_then(|v| v["status"].as_str()) {
                 title.push_str(&format!(" · {}", s));
@@ -670,7 +767,9 @@ impl Lsp {
     // Freeform needs a client input surface, so base clients get the options only.
     // Mirrors docs/frontends/lsp.md#capabilities.
     fn on_code_action(&self, params: &Value) -> Value {
-        let Some(doc) = self.param_doc(params) else { return json!([]) };
+        let Some(doc) = self.param_doc(params) else {
+            return json!([]);
+        };
         let start = params["range"]["start"]["line"].as_u64().unwrap_or(0) as usize;
         let end = params["range"]["end"]["line"].as_u64().unwrap_or(u64::MAX) as usize;
         let mut actions: Vec<Value> = Vec::new();
@@ -679,7 +778,11 @@ impl Lsp {
                 continue;
             }
             let Some(p) = &d.prompt else { continue };
-            if d.answer.as_ref().map(|a| a.status != "failed").unwrap_or(false) {
+            if d.answer
+                .as_ref()
+                .map(|a| a.status != "failed")
+                .unwrap_or(false)
+            {
                 continue;
             }
             let intersects = d.subjects.iter().any(|s| {
@@ -759,12 +862,25 @@ impl Lsp {
             return Value::Null;
         };
         let resolved = self.store.resolve_id(rid).to_string();
-        let Some(r) = self.store.graph.requirements.get(&resolved) else { return Value::Null };
-        let Some(ent) = r.entities.first() else { return Value::Null };
-        let slug = self.store.resolve_id(ent).strip_prefix("ent:").unwrap_or(ent).to_string();
+        let Some(r) = self.store.graph.requirements.get(&resolved) else {
+            return Value::Null;
+        };
+        let Some(ent) = r.entities.first() else {
+            return Value::Null;
+        };
+        let slug = self
+            .store
+            .resolve_id(ent)
+            .strip_prefix("ent:")
+            .unwrap_or(ent)
+            .to_string();
         let path = self.out.join("docsgen").join(format!("{}.md", slug));
         let Ok(text) = std::fs::read_to_string(&path) else {
-            eprintln!("[jazyk-lsp] {}: no requirements document at {}", resolved, path.display());
+            eprintln!(
+                "[jazyk-lsp] {}: no requirements document at {}",
+                resolved,
+                path.display()
+            );
             return Value::Null;
         };
         let heading = format!("### `{}`", resolved);
@@ -921,7 +1037,11 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
                 lock_seen = lock_now;
                 eprintln!(
                     "[jazyk-build] {}",
-                    if lock_now { "build started (lock acquired)" } else { "build ended (lock released)" }
+                    if lock_now {
+                        "build started (lock acquired)"
+                    } else {
+                        "build ended (lock released)"
+                    }
                 );
             }
             let gen_now = read_generation(&out);
@@ -933,12 +1053,25 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
             }
             for g in (last_gen + 1)..=gen_now {
                 let path = out.join("journal").join(format!("g{}.yaml", g));
-                let Ok(text) = std::fs::read_to_string(&path) else { continue };
-                let Ok(entry) = serde_norway::from_str::<Value>(&text) else { continue };
-                let task = entry["workItem"]["task"].as_str().unwrap_or("?");
-                let target = entry["workItem"]["target"].as_str().unwrap_or("?");
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
+                    continue;
+                };
+                let kind = entry["kind"].as_str().unwrap_or("?");
+                let batch: Vec<&str> = entry["batch"]
+                    .as_array()
+                    .map(|b| b.iter().filter_map(|g| g.as_str()).collect())
+                    .unwrap_or_default();
                 let muts = entry["mutations"].as_array().cloned().unwrap_or_default();
-                eprintln!("[jazyk-build] g{} {} {} ({} mutation(s))", g, task, target, muts.len());
+                eprintln!(
+                    "[jazyk-build] g{} {} {} ({} mutation(s))",
+                    g,
+                    kind,
+                    batch.join(" "),
+                    muts.len()
+                );
                 for m in &muts {
                     eprintln!(
                         "[jazyk-build]   {} {}",
@@ -960,14 +1093,15 @@ mod tests {
 
     fn requirement() -> Requirement {
         Requirement {
-            ears: "The Cart shall hold items.".into(),
+            statement: "The Cart shall hold items.".into(),
             entities: vec!["ent:cart".into()],
             edges: vec![],
-            source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds".into() },
-            confidence: None,
-            reasoning: None,
-            created: None,
-            updated: None,
+            source: Some(SourceRef {
+                doc: "shop.md".into(),
+                section: "/shop".into(),
+                quote: "holds".into(),
+            }),
+            ..Default::default()
         }
     }
 
@@ -985,9 +1119,21 @@ mod tests {
         std::fs::create_dir_all(deliv.join("tests")).unwrap();
         std::fs::create_dir_all(out.join("docsgen")).unwrap();
         // The site anchored at line 1; an inserted header moved it to line 3.
-        std::fs::write(deliv.join("src/cart.rs"), "// header\n\nfn hold(i: Item) {}\n").unwrap();
-        std::fs::write(deliv.join("tests/cart.rs"), "#[test]\nfn req_shop_1_abcd() {}\n").unwrap();
-        std::fs::write(out.join("docsgen").join("cart.md"), "# Cart\n\n### `req:shop-1`\n").unwrap();
+        std::fs::write(
+            deliv.join("src/cart.rs"),
+            "// header\n\nfn hold(i: Item) {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            deliv.join("tests/cart.rs"),
+            "#[test]\nfn req_shop_1_abcd() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            out.join("docsgen").join("cart.md"),
+            "# Cart\n\n### `req:shop-1`\n",
+        )
+        .unwrap();
 
         let mut ledger = Ledger::default();
         ledger.requirements.insert(
@@ -995,7 +1141,11 @@ mod tests {
             ReqRow {
                 entity: "ent:cart".into(),
                 files: vec!["src/cart.rs".into(), "src/checkout.rs".into()],
-                sites: vec![Site { file: "src/cart.rs".into(), line: 1, head: "fn hold(i: Item) {}".into() }],
+                sites: vec![Site {
+                    file: "src/cart.rs".into(),
+                    line: 1,
+                    head: "fn hold(i: Item) {}".into(),
+                }],
                 test: TestRef {
                     kind: "programmatic".into(),
                     label: "unit".into(),
@@ -1014,14 +1164,24 @@ mod tests {
         ledger.save(&out);
 
         let r = requirement();
-        let mut store = Store { out: out.clone(), ..Default::default() };
-        store.graph.requirements.insert("req:shop-1".into(), r.clone());
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        store
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), r.clone());
         let lsp = Lsp {
             root,
             out,
             store,
             generation: 0,
-            gen: GenSettings { deliverable: deliv, worker: "agentic".into(), code: Vec::new() },
+            gen: GenSettings {
+                deliverable: deliv,
+                worker: "agentic".into(),
+                code: Vec::new(),
+            },
             overlay: HashMap::new(),
             next_srv_id: 1,
         };
@@ -1031,7 +1191,11 @@ mod tests {
         assert!(card.contains("The Cart shall hold items."), "{}", card);
         // The requirement link: the docsgen heading, with the id for clients that route
         // to the node itself.
-        assert!(card.contains("docsgen/cart.md?req=req:shop-1#L3"), "{}", card);
+        assert!(
+            card.contains("docsgen/cart.md?req=req:shop-1#L3"),
+            "{}",
+            card
+        );
         // The code: the site relocated from line 1 to line 3, and marked moved. The
         // manifest file with no site links to the file itself.
         assert!(card.contains("[`src/cart.rs:3`]"), "{}", card);
@@ -1041,8 +1205,16 @@ mod tests {
         // (the row's requirement hash is empty, so the statement moved under it).
         assert!(card.contains("[`tests/cart.rs:2`]"), "{}", card);
         assert!(card.contains("`req_shop_1_abcd`"), "{}", card);
-        assert!(card.contains("↻ stale-requirement · requirement-changed"), "{}", card);
-        assert!(card.contains("run `cargo test req_shop_1_abcd`"), "{}", card);
+        assert!(
+            card.contains("↻ stale-requirement · requirement-changed"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("run `cargo test req_shop_1_abcd`"),
+            "{}",
+            card
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -1054,14 +1226,24 @@ mod tests {
         let out = tmp.join("jazyk-out");
         std::fs::create_dir_all(&out).unwrap();
         let r = requirement();
-        let mut store = Store { out: out.clone(), ..Default::default() };
-        store.graph.requirements.insert("req:shop-1".into(), r.clone());
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        store
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), r.clone());
         let lsp = Lsp {
             root: tmp.clone(),
             out,
             store,
             generation: 0,
-            gen: GenSettings { deliverable: tmp.join("product"), worker: "agentic".into(), code: Vec::new() },
+            gen: GenSettings {
+                deliverable: tmp.join("product"),
+                worker: "agentic".into(),
+                code: Vec::new(),
+            },
             overlay: HashMap::new(),
             next_srv_id: 1,
         };
@@ -1083,14 +1265,27 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
         std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(root.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
-        std::fs::write(root.join("docs/pay.md"), "# Pay\n\nAn Order shall be paid within 30 days.\n").unwrap();
+        std::fs::write(
+            root.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("docs/pay.md"),
+            "# Pay\n\nAn Order shall be paid within 30 days.\n",
+        )
+        .unwrap();
         let project = crate::project::Project::load(&root);
         let out = project.out.clone();
         let (parsed, _) = crate::reconcile::parse_all(&project);
         let mut s = Store::load(&out);
         s.sync_docs(&parsed);
-        let sec = s.docs["docs/pay.md"].sections.keys().next().unwrap().clone();
+        let sec = s.docs["docs/pay.md"]
+            .sections
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
         s.apply(
             vec![Op::ReportDiagnostic {
                 id: String::new(),
@@ -1115,7 +1310,11 @@ mod tests {
                                 }),
                                 answer: None,
                             },
-                            PromptOption { label: "30 days is right".into(), edit: None, answer: Some("keep 30".into()) },
+                            PromptOption {
+                                label: "30 days is right".into(),
+                                edit: None,
+                                answer: Some("keep 30".into()),
+                            },
                         ],
                         freeform: true,
                     }),
@@ -1124,14 +1323,23 @@ mod tests {
                     updated: None,
                 },
             }],
-            &crate::model::WorkItem { task: "seed".into(), target: "t".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() },
-            0,
-            0,
+            &crate::model::WorkItem {
+                task: "seed".into(),
+                target: "t".into(),
+                dirty_sections: vec![],
+                stale_anchors: vec![],
+                proposals: Vec::new(),
+            }
+            .commit(0, 0),
         );
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
         drop(s);
 
-        let mut lsp = Lsp::new(root.clone(), out.clone(), crate::gen::GenSettings::resolve(&project));
+        let mut lsp = Lsp::new(
+            root.clone(),
+            out.clone(),
+            crate::gen::GenSettings::resolve(&project),
+        );
         let uri = path_to_uri(&root.join("docs/pay.md"));
         let mut wire: Vec<u8> = Vec::new();
         lsp.handle(
@@ -1140,7 +1348,11 @@ mod tests {
             &mut wire,
         );
         let published = String::from_utf8_lossy(&wire).to_string();
-        assert!(published.contains("Which bound holds?"), "question published inline: {}", published);
+        assert!(
+            published.contains("Which bound holds?"),
+            "question published inline: {}",
+            published
+        );
 
         let mut wire2: Vec<u8> = Vec::new();
         lsp.handle(
@@ -1150,7 +1362,11 @@ mod tests {
             &mut wire2,
         );
         let actions = String::from_utf8_lossy(&wire2).to_string();
-        assert!(actions.contains("Apply: 21 days; fix this file"), "{}", actions);
+        assert!(
+            actions.contains("Apply: 21 days; fix this file"),
+            "{}",
+            actions
+        );
         assert!(actions.contains("Answer: 30 days is right"), "{}", actions);
 
         let mut wire3: Vec<u8> = Vec::new();

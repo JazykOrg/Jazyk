@@ -3,7 +3,7 @@
 // the reconciler for commit. Mirrors docs/compiler/turns.md.
 use crate::llm;
 use crate::model::{split_section_ref, AnchorProposal, WorkItem};
-use crate::project::{Limits, Linting};
+use crate::project::Linting;
 use crate::store::Store;
 use serde_json::{json, Value};
 
@@ -57,34 +57,79 @@ pub enum TraceEvent {
         full: Option<String>,
     },
     #[serde(rename = "toolError")]
-    ToolError { label: String, rule: String, message: String },
+    ToolError {
+        label: String,
+        rule: String,
+        message: String,
+    },
     #[serde(rename = "modelText")]
     ModelText { label: String, text: String },
     // mode: "done" (explicit, with the model's summary), "implicit" (the model went
     // silent with staged work), or "budget" (implicit at the round budget).
     #[serde(rename = "turnDone")]
-    TurnDone { label: String, staged: usize, rounds: u32, mode: String, summary: String },
+    TurnDone {
+        label: String,
+        staged: usize,
+        rounds: u32,
+        mode: String,
+        summary: String,
+    },
     #[serde(rename = "turnFailed")]
-    TurnFailed { label: String, attempt: u32, error: String },
+    TurnFailed {
+        label: String,
+        attempt: u32,
+        error: String,
+    },
     #[serde(rename = "note")]
-    Note { label: String, text: String, verbose: bool },
+    Note {
+        label: String,
+        text: String,
+        verbose: bool,
+    },
     // The turn moved to a section: an accepted tool call named one, and it differs
     // from the last. The sequence is the turn's path through the document.
     #[serde(rename = "section")]
-    Section { label: String, doc: String, section: String, tool: String },
+    Section {
+        label: String,
+        doc: String,
+        section: String,
+        tool: String,
+    },
     // One model call. The request carries the whole outgoing message list, the
     // response the raw assistant message; both are recorded in full in the
     // transcript and elided on the wire (docs/compiler/turns.md#trace-events).
     #[serde(rename = "llmRequest")]
-    LlmRequest { label: String, step: String, model: String, messages: Value, tools: Vec<String> },
+    LlmRequest {
+        label: String,
+        step: String,
+        model: String,
+        messages: Value,
+        tools: Vec<String>,
+    },
     #[serde(rename = "llmResponse")]
-    LlmResponse { label: String, step: String, ms: u64, tokens: u64, message: Value },
+    LlmResponse {
+        label: String,
+        step: String,
+        ms: u64,
+        tokens: u64,
+        message: Value,
+    },
     #[serde(rename = "llmRetry")]
     #[serde(rename_all = "camelCase")]
-    LlmRetry { label: String, step: String, attempt: u32, error: String, wait_ms: u64 },
+    LlmRetry {
+        label: String,
+        step: String,
+        attempt: u32,
+        error: String,
+        wait_ms: u64,
+    },
     // A wave of work items is about to run: what is queued, before any turn starts.
     #[serde(rename = "waveStart")]
-    WaveStart { wave: u32, task: String, items: Vec<String> },
+    WaveStart {
+        wave: u32,
+        task: String,
+        items: Vec<String>,
+    },
     // Generation worker events, one entity per bounded task.
     #[serde(rename = "genEntityStart")]
     GenEntityStart { entity: String },
@@ -94,16 +139,33 @@ pub enum TraceEvent {
     GenEntityDone { entity: String, files: usize },
     // stage: "task" (the task package failed to assemble) or "generate".
     #[serde(rename = "genEntityFailed")]
-    GenEntityFailed { entity: String, stage: String, error: String },
+    GenEntityFailed {
+        entity: String,
+        stage: String,
+        error: String,
+    },
     // Verification worker events, one ledger row at a time.
     #[serde(rename = "verifyRowStart")]
     VerifyRowStart { requirement: String, test: String },
     #[serde(rename = "verifyRowDone")]
-    VerifyRowDone { requirement: String, verdict: String, run: String, evidence: String },
+    VerifyRowDone {
+        requirement: String,
+        verdict: String,
+        run: String,
+        evidence: String,
+    },
     #[serde(rename = "verifyRowStale")]
-    VerifyRowStale { requirement: String, entity: String, status: String, reason: String },
+    VerifyRowStale {
+        requirement: String,
+        entity: String,
+        status: String,
+        reason: String,
+    },
     #[serde(rename = "verifyRowError")]
-    VerifyRowError { requirement: String, message: String },
+    VerifyRowError {
+        requirement: String,
+        message: String,
+    },
 }
 
 // Render an event exactly as the pre-event trace printed it, so `jazyk compile`
@@ -114,22 +176,63 @@ fn is_zero(n: &usize) -> bool {
 
 fn render_stderr(ev: &TraceEvent) {
     match ev {
-        TraceEvent::TurnStart { label, dirty, stale, proposals, .. } if *proposals > 0 => {
+        TraceEvent::TurnStart {
+            label,
+            dirty,
+            stale,
+            proposals,
+            ..
+        } if *proposals > 0 => {
             eprintln!("[{}] turn start ({} proposal(s))", label, proposals)
         }
-        TraceEvent::TurnStart { label, dirty, stale, .. } => {
+        TraceEvent::TurnStart {
+            label,
+            dirty,
+            stale,
+            ..
+        } => {
             eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
         }
-        TraceEvent::ToolCall { label, name, summary, .. } => eprintln!("[{}] → {} {}", label, name, summary),
+        TraceEvent::ToolCall {
+            label,
+            name,
+            summary,
+            ..
+        } => eprintln!("[{}] → {} {}", label, name, summary),
         TraceEvent::ToolResult { label, summary, .. } => eprintln!("[{}] ← {}", label, summary),
-        TraceEvent::ToolError { label, rule, message } => eprintln!("[{}] ✗ {}: {}", label, rule, message),
-        TraceEvent::ModelText { label, text } => eprintln!("[{}] · {}", label, llm::truncate(text, 200)),
-        TraceEvent::TurnDone { label, staged, rounds, mode, summary } => match mode.as_str() {
-            "implicit" => eprintln!("[{}] ✓ implicit done ({} staged, {} rounds)", label, staged, rounds),
-            "budget" => eprintln!("[{}] ✓ implicit done at round budget ({} staged)", label, staged),
-            _ => eprintln!("[{}] ✓ done ({} staged, {} rounds): {}", label, staged, rounds, summary),
+        TraceEvent::ToolError {
+            label,
+            rule,
+            message,
+        } => eprintln!("[{}] ✗ {}: {}", label, rule, message),
+        TraceEvent::ModelText { label, text } => {
+            eprintln!("[{}] · {}", label, llm::truncate(text, 200))
+        }
+        TraceEvent::TurnDone {
+            label,
+            staged,
+            rounds,
+            mode,
+            summary,
+        } => match mode.as_str() {
+            "implicit" => eprintln!(
+                "[{}] ✓ implicit done ({} staged, {} rounds)",
+                label, staged, rounds
+            ),
+            "budget" => eprintln!(
+                "[{}] ✓ implicit done at round budget ({} staged)",
+                label, staged
+            ),
+            _ => eprintln!(
+                "[{}] ✓ done ({} staged, {} rounds): {}",
+                label, staged, rounds, summary
+            ),
         },
-        TraceEvent::TurnFailed { label, attempt, error } => {
+        TraceEvent::TurnFailed {
+            label,
+            attempt,
+            error,
+        } => {
             eprintln!("[{}] turn failed (attempt {}): {}", label, attempt, error)
         }
         TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
@@ -138,13 +241,36 @@ fn render_stderr(ev: &TraceEvent) {
         TraceEvent::Section { .. } => {}
         // Model calls print their arithmetic, never their payload: the verbose context
         // pack note already carries the prompt.
-        TraceEvent::LlmRequest { label, step, messages, .. } => {
-            eprintln!("[{} {}] → llm ({} messages, {} chars)", label, step, messages.as_array().map(|a| a.len()).unwrap_or(0), messages.to_string().len())
+        TraceEvent::LlmRequest {
+            label,
+            step,
+            messages,
+            ..
+        } => {
+            eprintln!(
+                "[{} {}] → llm ({} messages, {} chars)",
+                label,
+                step,
+                messages.as_array().map(|a| a.len()).unwrap_or(0),
+                messages.to_string().len()
+            )
         }
-        TraceEvent::LlmResponse { label, step, ms, tokens, .. } => {
+        TraceEvent::LlmResponse {
+            label,
+            step,
+            ms,
+            tokens,
+            ..
+        } => {
             eprintln!("[{} {}] ← llm ({} ms, {} tokens)", label, step, ms, tokens)
         }
-        TraceEvent::LlmRetry { label, step, attempt, error, wait_ms } => eprintln!(
+        TraceEvent::LlmRetry {
+            label,
+            step,
+            attempt,
+            error,
+            wait_ms,
+        } => eprintln!(
             "[{} {}] retrying in {}s (attempt {}): {}",
             label,
             step,
@@ -158,17 +284,38 @@ fn render_stderr(ev: &TraceEvent) {
         // Worker events reach stderr only outside the CLI wrappers (which render them
         // themselves, on the exact historical format); keep these plain.
         TraceEvent::GenEntityStart { entity } => eprintln!("[gen {}] start", entity),
-        TraceEvent::GenEntitySkipped { entity, reason } => eprintln!("[gen {}] skipped ({})", entity, reason),
-        TraceEvent::GenEntityDone { entity, files } => eprintln!("[gen {}] done ({} file(s))", entity, files),
-        TraceEvent::GenEntityFailed { entity, error, .. } => eprintln!("[gen {}] failed: {}", entity, error),
-        TraceEvent::VerifyRowStart { requirement, test } => eprintln!("[test {}] start ({})", requirement, test),
-        TraceEvent::VerifyRowDone { requirement, verdict, run, .. } => {
+        TraceEvent::GenEntitySkipped { entity, reason } => {
+            eprintln!("[gen {}] skipped ({})", entity, reason)
+        }
+        TraceEvent::GenEntityDone { entity, files } => {
+            eprintln!("[gen {}] done ({} file(s))", entity, files)
+        }
+        TraceEvent::GenEntityFailed { entity, error, .. } => {
+            eprintln!("[gen {}] failed: {}", entity, error)
+        }
+        TraceEvent::VerifyRowStart { requirement, test } => {
+            eprintln!("[test {}] start ({})", requirement, test)
+        }
+        TraceEvent::VerifyRowDone {
+            requirement,
+            verdict,
+            run,
+            ..
+        } => {
             eprintln!("[test {}] {} ({})", requirement, verdict, run)
         }
-        TraceEvent::VerifyRowStale { requirement, status, reason, .. } => {
+        TraceEvent::VerifyRowStale {
+            requirement,
+            status,
+            reason,
+            ..
+        } => {
             eprintln!("[test {}] {} ({})", requirement, status, reason)
         }
-        TraceEvent::VerifyRowError { requirement, message } => eprintln!("[test {}]{}", requirement, message),
+        TraceEvent::VerifyRowError {
+            requirement,
+            message,
+        } => eprintln!("[test {}]{}", requirement, message),
     }
 }
 
@@ -196,14 +343,26 @@ pub struct Trace {
 
 impl Trace {
     pub fn stderr(level: TraceLevel) -> Trace {
-        Trace { level, sink: None, cancel: Default::default(), transcript: None, run: None }
+        Trace {
+            level,
+            sink: None,
+            cancel: Default::default(),
+            transcript: None,
+            run: None,
+        }
     }
     pub fn to_sink(
         level: TraceLevel,
         sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync>,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Trace {
-        Trace { level, sink: Some(sink), cancel, transcript: None, run: None }
+        Trace {
+            level,
+            sink: Some(sink),
+            cancel,
+            transcript: None,
+            run: None,
+        }
     }
     // The transcript name of the run this trace belongs to. A GUI job names its own
     // (it writes the file itself); a CLI build names the one with_transcript opened.
@@ -221,10 +380,15 @@ impl Trace {
         let dir = out.join("trace");
         std::fs::create_dir_all(&dir).ok();
         let started = crate::verify::now_iso();
-        let compact: String = started.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let compact: String = started
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
         let stem = format!("{}-{}-cli{}", compact, kind, std::process::id());
-        if let Ok(mut file) =
-            std::fs::OpenOptions::new().create(true).append(true).open(dir.join(format!("{}.jsonl", stem)))
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(format!("{}.jsonl", stem)))
         {
             // The generation at start and finish brackets the run: the journal
             // entries between the two are the run's changesets (gui.md#jobs).
@@ -232,8 +396,11 @@ impl Trace {
                 "generation": crate::store::read_generation(out)}});
             let _ = writeln!(file, "{}", meta);
             let _ = file.flush();
-            self.transcript =
-                Some(std::sync::Arc::new(std::sync::Mutex::new(Transcript { file, n: 0, out: out.to_path_buf() })));
+            self.transcript = Some(std::sync::Arc::new(std::sync::Mutex::new(Transcript {
+                file,
+                n: 0,
+                out: out.to_path_buf(),
+            })));
             self.run = Some(stem);
         }
         self
@@ -278,7 +445,9 @@ impl Trace {
             None => {
                 let terse = matches!(
                     &ev,
-                    TraceEvent::LlmRequest { .. } | TraceEvent::LlmResponse { .. } | TraceEvent::Section { .. }
+                    TraceEvent::LlmRequest { .. }
+                        | TraceEvent::LlmResponse { .. }
+                        | TraceEvent::Section { .. }
                 );
                 if !terse || self.level == TraceLevel::Verbose {
                     render_stderr(&ev);
@@ -287,10 +456,18 @@ impl Trace {
         }
     }
     pub fn line(&self, prefix: &str, s: &str) {
-        self.event(TraceEvent::Note { label: prefix.into(), text: s.into(), verbose: false });
+        self.event(TraceEvent::Note {
+            label: prefix.into(),
+            text: s.into(),
+            verbose: false,
+        });
     }
     fn verbose(&self, prefix: &str, s: &str) {
-        self.event(TraceEvent::Note { label: prefix.into(), text: s.into(), verbose: true });
+        self.event(TraceEvent::Note {
+            label: prefix.into(),
+            text: s.into(),
+            verbose: true,
+        });
     }
     pub fn is_cancelled(&self) -> bool {
         self.cancel.load(std::sync::atomic::Ordering::Relaxed)
@@ -302,33 +479,29 @@ impl Trace {
 // The feedback contract, high in every turn's system prompt: the model has a channel
 // for jazyk's own defects, and using it is not an excuse to stop working.
 // Mirrors docs/compiler/turns.md#message-loop and docs/compiler/tools.md#feedback-tool.
-const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/turns/prompts/feedback-note.md");
+const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/goals/prompts/feedback-note.md");
 
 // The note rides directly under the role line: the first paragraph says what the turn
 // is, the second how to report that the rest of the prompt failed it.
 pub(crate) fn with_feedback_note(system: &str) -> String {
     match system.split_once("\n\n") {
-        Some((role, rest)) => format!("{}\n\n{}\n\n{}", role, FEEDBACK_NOTE, rest),
-        None => format!("{}\n\n{}", system, FEEDBACK_NOTE),
+        Some((role, rest)) => format!("{}\n\n{}\n\n{}", role.trim_end(), FEEDBACK_NOTE, rest),
+        None => format!("{}\n\n{}", system.trim_end(), FEEDBACK_NOTE),
     }
 }
 
-const ALIGN_SYSTEM: &str = include_str!("../../docs/compiler/turns/prompts/align-doc.md");
+const ALIGN_SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/place-anchors.md");
 
 const RECONCILE_SYSTEM: &str =
-    include_str!("../../docs/compiler/turns/prompts/reconcile-doc.md");
+    include_str!("../../docs/compiler/goals/prompts/reconcile-section.md");
 
-const REVIEW_REQ_SYSTEM: &str =
-    include_str!("../../docs/compiler/turns/prompts/review-requirement.md");
+const REVIEW_REQ_SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/rejudge-pair.md");
 
-const REVIEW_SYSTEM: &str =
-    include_str!("../../docs/compiler/turns/prompts/review-entity.md");
+const REVIEW_SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/review-entity.md");
 
-const GENERATE_SYSTEM: &str =
-    include_str!("../../docs/compiler/turns/prompts/generate-entity.md");
+const GENERATE_SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/generate.md");
 
-const BIND_SYSTEM: &str =
-    include_str!("../../docs/compiler/turns/prompts/bind-requirement.md");
+const BIND_SYSTEM: &str = include_str!("../../docs/compiler/goals/prompts/bind.md");
 
 // ---- initial packs ----
 
@@ -338,17 +511,44 @@ const BIND_SYSTEM: &str =
 pub fn task_prompt(
     store: &Store,
     item: &WorkItem,
-    limits: &Limits,
     lint: &Linting,
     gen: &crate::gen::GenSettings,
 ) -> (&'static str, String) {
+    let budget = crate::limits::CONTEXT_BUDGET;
     match item.task.as_str() {
-        "align-doc" => (ALIGN_SYSTEM, align_pack(store, item, limits.context_budget)),
-        "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(store, item, limits.context_budget)),
-        "review-requirement" => (REVIEW_REQ_SYSTEM, review_requirement_pack(store, &item.target)),
+        "align-doc" => (ALIGN_SYSTEM, align_pack(store, item, budget)),
+        "reconcile-doc" => (RECONCILE_SYSTEM, reconcile_pack(store, item, budget)),
+        "review-requirement" => (
+            REVIEW_REQ_SYSTEM,
+            review_requirement_pack(store, &item.target),
+        ),
         "generate-entity" => (GENERATE_SYSTEM, generate_pack(store, &item.target, gen)),
         "bind-requirement" => (BIND_SYSTEM, bind_pack(store, &item.target, gen)),
-        _ => (REVIEW_SYSTEM, review_pack(store, &item.target, limits.context_budget, lint)),
+        _ => (
+            REVIEW_SYSTEM,
+            review_pack(store, &item.target, budget, lint),
+        ),
+    }
+}
+
+// One line naming a requirement's provenance, whichever kind it carries.
+pub(crate) fn provenance_line(r: &crate::model::Requirement) -> String {
+    match r.provenance() {
+        Some(crate::model::ProvenanceRef::Quote(s)) => {
+            format!("{}#{} \"{}\"", s.doc, s.section, s.quote)
+        }
+        Some(crate::model::ProvenanceRef::Derived { from, reasoning }) => {
+            format!("derived from {} ({})", from.join(", "), reasoning)
+        }
+        Some(crate::model::ProvenanceRef::Decree { author, at, note }) => {
+            format!(
+                "decreed by {} at {}{}",
+                author,
+                at,
+                note.map(|n| format!(" ({})", n)).unwrap_or_default()
+            )
+        }
+        None => "(no provenance)".to_string(),
     }
 }
 
@@ -359,44 +559,83 @@ fn generate_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> S
         Ok(p) => p,
         Err(e) => return format!("# Work item: generate {}\n(package error: {})\n", target, e),
     };
-    let mut s = format!("# Work item: generate entity {} ({})\n", target, pkg["name"].as_str().unwrap_or(""));
-    s.push_str(&format!("deliverable directory: {}\n", pkg["deliverable"].as_str().unwrap_or(".")));
-    s.push_str(&format!("factHash (pass to record_generation): {}\n", pkg["factHash"].as_str().unwrap_or("")));
+    let mut s = format!(
+        "# Work item: generate entity {} ({})\n",
+        target,
+        pkg["name"].as_str().unwrap_or("")
+    );
+    s.push_str(&format!(
+        "deliverable directory: {}\n",
+        pkg["deliverable"].as_str().unwrap_or(".")
+    ));
+    s.push_str(&format!(
+        "factHash (pass to record_generation): {}\n",
+        pkg["factHash"].as_str().unwrap_or("")
+    ));
     if !pkg["medium"].is_null() {
-        s.push_str(&format!("medium (already decided; never re-decide): {}\n", pkg["medium"]));
+        s.push_str(&format!(
+            "medium (already decided; never re-decide): {}\n",
+            pkg["medium"]
+        ));
     }
     if !pkg["build"].is_null() {
-        s.push_str(&format!("recorded build (reuse and extend; never record a second): {}\n", pkg["build"]));
+        s.push_str(&format!(
+            "recorded build (reuse and extend; never record a second): {}\n",
+            pkg["build"]
+        ));
     }
     let run_commands = pkg["runCommands"]
         .as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
         .unwrap_or_default();
     if !run_commands.is_empty() {
-        s.push_str(&format!("recorded run commands (the established toolchain; reuse it): {}\n", run_commands));
+        s.push_str(&format!(
+            "recorded run commands (the established toolchain; reuse it): {}\n",
+            run_commands
+        ));
     }
     s.push_str(&format!(
         "changed since last generation: {}\n",
-        pkg["changed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+        pkg["changed"]
+            .as_array()
+            .map(|a| a
+                .iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(", "))
+            .unwrap_or_default()
     ));
     s.push_str(&format!(
         "other entities' files (never write to them; `holds` says what is inside): {}\n",
         pkg["generatedFiles"]
     ));
-    if pkg["boundTests"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+    if pkg["boundTests"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
         s.push_str(&format!(
             "bound tests (already written by binding; make the unimplemented ones pass, never rewrite them): {}\n",
             pkg["boundTests"]
         ));
     }
     s.push_str("\n## Requirements (one test row each; testName is the required test name)\n");
-    for group in pkg["requirementGroups"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+    for group in pkg["requirementGroups"]
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+    {
         for r in group.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
             s.push_str(&format!(
                 "- {} [{}]: {}\n  quote: {}\n",
                 r["id"].as_str().unwrap_or(""),
                 r["testName"].as_str().unwrap_or(""),
-                r["ears"].as_str().unwrap_or(""),
+                r["statement"].as_str().unwrap_or(""),
                 r["quote"].as_str().unwrap_or("")
             ));
         }
@@ -416,22 +655,52 @@ fn bind_pack(store: &Store, target: &str, gs: &crate::gen::GenSettings) -> Strin
         Ok(p) => p,
         Err(e) => return format!("# Work item: bind {}\n(package error: {})\n", target, e),
     };
-    let mut s = format!("# Work item: bind requirement {} ({})\n", target, pkg["reason"].as_str().unwrap_or(""));
-    s.push_str(&format!("deliverable directory: {}\n", pkg["deliverable"].as_str().unwrap_or(".")));
-    s.push_str(&format!("statement: {}\n", pkg["ears"].as_str().unwrap_or("")));
+    let mut s = format!(
+        "# Work item: bind requirement {} ({})\n",
+        target,
+        pkg["reason"].as_str().unwrap_or("")
+    );
+    s.push_str(&format!(
+        "deliverable directory: {}\n",
+        pkg["deliverable"].as_str().unwrap_or(".")
+    ));
+    s.push_str(&format!(
+        "statement: {}\n",
+        pkg["statement"].as_str().unwrap_or("")
+    ));
     s.push_str(&format!("quote: {}\n", pkg["quote"].as_str().unwrap_or("")));
-    s.push_str(&format!("suggested test name: {}\n", pkg["suggestedTestName"].as_str().unwrap_or("")));
+    s.push_str(&format!(
+        "suggested test name: {}\n",
+        pkg["suggestedTestName"].as_str().unwrap_or("")
+    ));
     if !pkg["medium"].is_null() {
-        s.push_str(&format!("medium (already decided; never re-decide): {}\n", pkg["medium"].as_str().unwrap_or("")));
+        s.push_str(&format!(
+            "medium (already decided; never re-decide): {}\n",
+            pkg["medium"].as_str().unwrap_or("")
+        ));
     }
     if !pkg["build"].is_null() {
         s.push_str(&format!("recorded build: {}\n", pkg["build"]));
     }
-    if pkg["testConventions"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
-        s.push_str(&format!("recorded test conventions (reuse them): {}\n", pkg["testConventions"]));
+    if pkg["testConventions"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
+        s.push_str(&format!(
+            "recorded test conventions (reuse them): {}\n",
+            pkg["testConventions"]
+        ));
     }
-    if pkg["entityFiles"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
-        s.push_str(&format!("the entity's recorded files (start the search here): {}\n", pkg["entityFiles"]));
+    if pkg["entityFiles"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
+        s.push_str(&format!(
+            "the entity's recorded files (start the search here): {}\n",
+            pkg["entityFiles"]
+        ));
     }
     s.push_str("\n## Context\n");
     s.push_str(pkg["context"].as_str().unwrap_or(""));
@@ -447,7 +716,11 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     s.push_str(&format!("# Work item: reconcile document {}\n", doc));
     if let Some(rec) = store.docs.get(doc) {
         let covered = rec.coverage.len();
-        s.push_str(&format!("sections: {} total, {} with coverage\n", rec.sections.len(), covered));
+        s.push_str(&format!(
+            "sections: {} total, {} with coverage\n",
+            rec.sections.len(),
+            covered
+        ));
     }
 
     // Incoming links the graph already resolved: a parent listed this document as one of
@@ -457,7 +730,11 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     let mut subjects: Vec<(String, String)> = Vec::new();
     for (id, e) in &store.graph.entities {
         for m in &e.mentions {
-            if &m.doc != doc && crate::md::doc_links(&m.quote, &m.doc).iter().any(|l| l == doc) {
+            if &m.doc != doc
+                && crate::md::doc_links(&m.quote, &m.doc)
+                    .iter()
+                    .any(|l| l == doc)
+            {
                 incoming.push(format!(
                     "- {}#{} \"{}\" introduced {} ({})",
                     m.doc,
@@ -471,14 +748,21 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         }
     }
     for (id, r) in &store.graph.requirements {
-        if &r.source.doc != doc && crate::md::doc_links(&r.source.quote, &r.source.doc).iter().any(|l| l == doc) {
+        let Some(src) = r.source.as_ref() else {
+            continue;
+        };
+        if &src.doc != doc
+            && crate::md::doc_links(&src.quote, &src.doc)
+                .iter()
+                .any(|l| l == doc)
+        {
             incoming.push(format!(
                 "- {}#{} \"{}\" states {} ({})",
-                r.source.doc,
-                r.source.section,
-                crate::llm::truncate(&r.source.quote, 100),
+                src.doc,
+                src.section,
+                crate::llm::truncate(&src.quote, 100),
                 id,
-                crate::llm::truncate(&r.ears, 100)
+                crate::llm::truncate(&r.statement, 100)
             ));
         }
     }
@@ -499,7 +783,11 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                 id, name
             ));
         } else if !subjects.is_empty() {
-            let list = subjects.iter().map(|(id, name)| format!("{} ({})", id, name)).collect::<Vec<_>>().join(", ");
+            let list = subjects
+                .iter()
+                .map(|(id, name)| format!("{} ({})", id, name))
+                .collect::<Vec<_>>()
+                .join(", ");
             s.push_str(&format!(
                 "\n\ncandidateSubjects: {}. This document details these entities; each statement's own section decides which one it constrains. \"The system\" here means the part being detailed, never the containing application. Do not mint a second entity for any of these concepts.\n",
                 list
@@ -512,17 +800,30 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     let mut listed: Vec<&String> = Vec::new();
     for (id, e) in &store.graph.entities {
         if e.mentions.iter().any(|m| &m.doc == doc) {
-            lines.push(format!("- {} ({}): {}", id, e.name, crate::llm::truncate(e.definition.as_deref().unwrap_or(""), 160)));
+            lines.push(format!(
+                "- {} ({}): {}",
+                id,
+                e.name,
+                crate::llm::truncate(e.definition.as_deref().unwrap_or(""), 160)
+            ));
             listed.push(id);
         }
     }
     for (id, e) in &store.graph.entities {
         if lines.len() >= 40 {
-            lines.push(format!("- (and {} more; use search)", store.graph.entities.len() - lines.len() + 1));
+            lines.push(format!(
+                "- (and {} more; use search)",
+                store.graph.entities.len() - lines.len() + 1
+            ));
             break;
         }
         if !listed.contains(&id) {
-            lines.push(format!("- {} ({}): {}", id, e.name, crate::llm::truncate(e.definition.as_deref().unwrap_or(""), 160)));
+            lines.push(format!(
+                "- {} ({}): {}",
+                id,
+                e.name,
+                crate::llm::truncate(e.definition.as_deref().unwrap_or(""), 160)
+            ));
         }
     }
     if !lines.is_empty() {
@@ -542,17 +843,23 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                 } else {
                     ""
                 };
+                let Some(src) = r.source.as_ref() else {
+                    continue;
+                };
                 s.push_str(&format!(
                     "- {}: {} (in {}#{}; was quoted: \"{}\"{})\n",
                     a,
-                    r.ears,
-                    r.source.doc,
-                    r.source.section,
-                    crate::llm::truncate(&r.source.quote, 100),
+                    r.statement,
+                    src.doc,
+                    src.section,
+                    crate::llm::truncate(&src.quote, 100),
                     flagged
                 ));
             } else if let Some(e) = store.graph.entities.get(a) {
-                s.push_str(&format!("- {} (entity {}): a mention's section changed\n", a, e.name));
+                s.push_str(&format!(
+                    "- {} (entity {}): a mention's section changed\n",
+                    a, e.name
+                ));
             }
         }
     }
@@ -567,12 +874,18 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                     .get(r)
                     .map(|c| c.state.clone())
                     .unwrap_or_else(|| "unprocessed".to_string());
-                s.push_str(&format!("\n### {}#{} ({}) [coverage: {}]\n", doc, r, sec.title, cov));
+                s.push_str(&format!(
+                    "\n### {}#{} ({}) [coverage: {}]\n",
+                    doc, r, sec.title, cov
+                ));
                 if sec.raw.len() <= per_section {
                     s.push_str(&sec.raw);
                 } else {
                     s.push_str(&crate::llm::truncate(&sec.raw, per_section));
-                    s.push_str(&format!("\n(truncated; read_section {}#{} for the rest)", doc, r));
+                    s.push_str(&format!(
+                        "\n(truncated; read_section {}#{} for the rest)",
+                        doc, r
+                    ));
                 }
                 s.push('\n');
                 // What the section already yielded: an unchanged statement is a no-op,
@@ -582,11 +895,13 @@ fn reconcile_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
                     .graph
                     .requirements
                     .iter()
-                    .filter(|(_, q)| &q.source.doc == doc && &q.source.section == r)
-                    .map(|(id, q)| format!("- {}: {}", id, q.ears))
+                    .filter(|(_, q)| q.anchored_at(doc, r))
+                    .map(|(id, q)| format!("- {}: {}", id, q.statement))
                     .collect();
                 if !existing.is_empty() {
-                    s.push_str("Already extracted from this section (leave unchanged statements alone):\n");
+                    s.push_str(
+                        "Already extracted from this section (leave unchanged statements alone):\n",
+                    );
                     s.push_str(&existing.join("\n"));
                     s.push('\n');
                 }
@@ -609,25 +924,40 @@ fn align_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
     if !block.changes.is_empty() {
         s.push_str("\n## Section changes (computed)\n");
         for c in &block.changes {
-            let sim = c.similarity.map(|v| format!(" (similarity {}%)", (v * 100.0).round() as u32)).unwrap_or_default();
+            let sim = c
+                .similarity
+                .map(|v| format!(" (similarity {}%)", (v * 100.0).round() as u32))
+                .unwrap_or_default();
             let line = match c.op.as_str() {
                 "added" => format!("- added: {}", c.to.join(", ")),
                 "deleted" => format!("- deleted: {}", c.from.join(", ")),
                 "edited" => format!("- edited: {}{}", c.to.join(", "), sim),
-                op => format!("- {}: {} → {}{}", op, c.from.join(", "), c.to.join(", "), sim),
+                op => format!(
+                    "- {}: {} → {}{}",
+                    op,
+                    c.from.join(", "),
+                    c.to.join(", "),
+                    sim
+                ),
             };
             s.push_str(&line);
             s.push('\n');
         }
     }
-    let proposals: Vec<&AnchorProposal> =
-        block.proposals.iter().filter(|p| item.proposals.is_empty() || item.proposals.contains(&p.anchor)).collect();
+    let proposals: Vec<&AnchorProposal> = block
+        .proposals
+        .iter()
+        .filter(|p| item.proposals.is_empty() || item.proposals.contains(&p.anchor))
+        .collect();
     s.push_str("\n## Proposals (decide every one)\n");
     let per_proposal = budget.saturating_sub(s.len()) / proposals.len().max(1);
     for p in proposals {
         let mut block = String::new();
-        let head = match (store.graph.requirements.get(&p.anchor), store.graph.entities.get(&p.anchor)) {
-            (Some(r), _) => format!("\n### {}: {}\n", p.anchor, r.ears),
+        let head = match (
+            store.graph.requirements.get(&p.anchor),
+            store.graph.entities.get(&p.anchor),
+        ) {
+            (Some(r), _) => format!("\n### {}: {}\n", p.anchor, r.statement),
             (_, Some(e)) => format!("\n### {} (entity {}), mention\n", p.anchor, e.name),
             _ => format!("\n### {}\n", p.anchor),
         };
@@ -640,7 +970,13 @@ fn align_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
         let per_candidate = per_proposal.saturating_sub(block.len()) / p.candidates.len().max(1);
         for (i, c) in p.candidates.iter().enumerate() {
             let title = split_section_ref(&c.section)
-                .and_then(|(d, r)| store.docs.get(&d).and_then(|rec| rec.sections.get(&r)).map(|sec| sec.title.clone()))
+                .and_then(|(d, r)| {
+                    store
+                        .docs
+                        .get(&d)
+                        .and_then(|rec| rec.sections.get(&r))
+                        .map(|sec| sec.title.clone())
+                })
                 .unwrap_or_default();
             let locates = if c.quote_locates {
                 "quote locates: yes".to_string()
@@ -661,8 +997,14 @@ fn align_pack(store: &Store, item: &WorkItem, budget: usize) -> String {
             if c.excerpt.len() <= per_candidate {
                 block.push_str(&indent(&indent(&c.excerpt)));
             } else {
-                block.push_str(&indent(&indent(&crate::llm::truncate(&c.excerpt, per_candidate))));
-                block.push_str(&format!("     (truncated; read_section {} for the rest)\n", c.section));
+                block.push_str(&indent(&indent(&crate::llm::truncate(
+                    &c.excerpt,
+                    per_candidate,
+                ))));
+                block.push_str(&format!(
+                    "     (truncated; read_section {} for the rest)\n",
+                    c.section
+                ));
             }
         }
         s.push_str(&block);
@@ -685,16 +1027,21 @@ fn indent(text: &str) -> String {
 // used to schedule the turn (docs/compiler/compilation.md#waves).
 fn review_requirement_pack(store: &Store, rid: &str) -> String {
     let mut s = String::new();
-    s.push_str(&format!("# Work item: review changed requirement {} against its neighbors\n", rid));
-    let fmt = |id: &str, r: &crate::model::Requirement| {
-        format!(
-            "- {}\n  ears: {}\n  quote: \"{}\"\n  section: {}#{}\n",
+    s.push_str(&format!(
+        "# Work item: review changed requirement {} against its neighbors\n",
+        rid
+    ));
+    let fmt = |id: &str, r: &crate::model::Requirement| match r.source.as_ref() {
+        Some(src) => format!(
+            "- {}\n  statement: {}\n  quote: \"{}\"\n  section: {}#{}\n",
+            id, r.statement, src.quote, src.doc, src.section
+        ),
+        None => format!(
+            "- {}\n  statement: {}\n  provenance: {}\n",
             id,
-            r.ears,
-            r.source.quote,
-            r.source.doc,
-            r.source.section
-        )
+            r.statement,
+            provenance_line(r)
+        ),
     };
     if let Some(r) = store.graph.requirements.get(rid) {
         s.push_str("\n## The changed requirement\n");
@@ -711,7 +1058,9 @@ fn review_requirement_pack(store: &Store, rid: &str) -> String {
     }
     let open = open_diagnostics_lines(store, &[rid.to_string()]);
     if !open.is_empty() {
-        s.push_str("\n## Open diagnostics naming this requirement (resolve any that no longer hold)\n");
+        s.push_str(
+            "\n## Open diagnostics naming this requirement (resolve any that no longer hold)\n",
+        );
         s.push_str(&open.join("\n"));
         s.push('\n');
     }
@@ -744,7 +1093,14 @@ fn open_diagnostics_lines(store: &Store, ids: &[String]) -> Vec<String> {
                     }
                 })
                 .collect();
-            format!("- {} ({}, {}) subjects: {}: {}", id, d.rule, d.severity, subjects.join(", "), d.message)
+            format!(
+                "- {} ({}, {}) subjects: {}: {}",
+                id,
+                d.rule,
+                d.severity,
+                subjects.join(", "),
+                d.message
+            )
         })
         .collect()
 }
@@ -755,7 +1111,11 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
     match crate::context::assemble(
         store,
         entity_id,
-        &crate::context::Focus { parents: 1, mentions: 1, requirements: 2 },
+        &crate::context::Focus {
+            parents: 1,
+            mentions: 1,
+            requirements: 2,
+        },
         budget.saturating_sub(1200),
     ) {
         Ok(pack) => s.push_str(&pack.pack),
@@ -767,7 +1127,10 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
     // field, part, or role, not an alias.
     if let Some(e) = store.graph.entities.get(entity_id) {
         let tokens = |n: &str| -> std::collections::BTreeSet<String> {
-            n.to_lowercase().split_whitespace().map(|t| t.to_string()).collect()
+            n.to_lowercase()
+                .split_whitespace()
+                .map(|t| t.to_string())
+                .collect()
         };
         let mine = tokens(&e.name);
         let hits = store.search(&e.name);
@@ -775,7 +1138,8 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
         for (id, name, def) in hits.iter().filter(|(id, _, _)| id != entity_id) {
             let theirs = tokens(name);
             let line = format!("- {} ({}): {}", id, name, crate::llm::truncate(def, 160));
-            let extension = (theirs.is_superset(&mine) || mine.is_superset(&theirs)) && theirs != mine;
+            let extension =
+                (theirs.is_superset(&mine) || mine.is_superset(&theirs)) && theirs != mine;
             if extension {
                 related.push(line);
             } else {
@@ -832,7 +1196,7 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
             .iter()
             .filter(|(_, r)| !r.entities.iter().any(|x| store.resolve_id(x) == entity_id))
             .filter(|(_, r)| {
-                let prose = strip_code(&r.ears);
+                let prose = strip_code(&r.statement);
                 if !names.iter().any(|n| contains_word(&prose, n)) {
                     return false;
                 }
@@ -843,15 +1207,19 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
                     .iter()
                     .filter_map(|x| store.graph.entities.get(store.resolve_id(x)))
                     .any(|other| {
-                        std::iter::once(&other.name).chain(other.aliases.iter()).any(|on| {
-                            names.iter().any(|n| {
-                                !on.eq_ignore_ascii_case(n) && contains_word(on, n) && contains_word(&prose, on)
+                        std::iter::once(&other.name)
+                            .chain(other.aliases.iter())
+                            .any(|on| {
+                                names.iter().any(|n| {
+                                    !on.eq_ignore_ascii_case(n)
+                                        && contains_word(on, n)
+                                        && contains_word(&prose, on)
+                                })
                             })
-                        })
                     })
             })
             .take(6)
-            .map(|(rid, r)| format!("- {}: {}", rid, r.ears))
+            .map(|(rid, r)| format!("- {}: {}", rid, r.statement))
             .collect();
         if !unreferenced.is_empty() {
             s.push_str("\n## Statements naming this entity without referencing it (add the reference if the statement is about it)\n");
@@ -884,7 +1252,6 @@ fn review_pack(store: &Store, entity_id: &str, budget: usize, lint: &Linting) ->
     s
 }
 
-
 pub fn condense(v: &Value, n: usize) -> String {
     llm::truncate(&v.to_string(), n)
 }
@@ -905,20 +1272,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn feedback_note_rides_under_the_role_line_of_every_prompt() {
-        for system in [RECONCILE_SYSTEM, REVIEW_REQ_SYSTEM, REVIEW_SYSTEM, GENERATE_SYSTEM, BIND_SYSTEM] {
+    fn feedback_note_rides_under_the_first_paragraph_of_every_contract() {
+        for system in [
+            ALIGN_SYSTEM,
+            RECONCILE_SYSTEM,
+            REVIEW_REQ_SYSTEM,
+            REVIEW_SYSTEM,
+            GENERATE_SYSTEM,
+            BIND_SYSTEM,
+        ] {
+            assert!(
+                system.starts_with("This goal"),
+                "a contract paragraph names its goal first: {}",
+                system
+            );
             let s = with_feedback_note(system);
             let paras: Vec<&str> = s.split("\n\n").collect();
-            assert!(paras[0].starts_with("You are the"), "role line stays first");
+            assert!(
+                paras[0].starts_with("This goal"),
+                "the goal paragraph stays first"
+            );
             assert_eq!(paras[1], FEEDBACK_NOTE, "the note is the second paragraph");
             assert!(s.contains("report_feedback"));
             // Nothing of the original prompt is lost to the insertion.
-            assert!(s.ends_with(system.split_once("\n\n").unwrap().1));
+            let rest = system
+                .split_once("\n\n")
+                .map(|(_, r)| r)
+                .unwrap_or(FEEDBACK_NOTE);
+            assert!(s.ends_with(rest));
         }
     }
-
-
-
-
 }
-

@@ -23,7 +23,10 @@ pub struct ToolError {
 
 impl ToolError {
     pub fn new(rule: &str, message: String) -> ToolError {
-        ToolError { rule: rule.to_string(), message }
+        ToolError {
+            rule: rule.to_string(),
+            message,
+        }
     }
     pub fn to_value(&self) -> Value {
         json!({"error": {"rule": self.rule, "message": self.message}})
@@ -70,28 +73,35 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_entity",
-            description: "Create a domain concept, or update it if the name already exists. mention cites the section and the verbatim quote that talks about it. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context. A name that reads as a variant of an existing entity is rejected unless note names how the concepts differ (a field, part, or state of X is a different concept than X).",
+            description: "Create a domain concept, or update it if the name already exists (name plus scope, and parent when given; several entities under that name need parent to say which). mention cites the section and the verbatim quote that talks about it; provenance.derived {from, reasoning} is the alternative for structure the documents do not state. stereotype is free-form judgment (actor, service, interface, table). parent must exist and keeps the containment tree acyclic. attributes are [{name, type?, value?, provenance?: {section, quote}}], keyed by name; one without its own provenance takes the call's quote. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context. A name that reads as a variant of an existing entity is rejected unless note names how the concepts differ (a field, part, or state of X is a different concept than X).",
             parameters: obj(
                 json!({
                     "name": {"type": "string"},
                     "definition": {"type": "string"},
                     "aliases": {"type": "array", "items": {"type": "string"}},
                     "scope": {"type": "string"},
+                    "stereotype": {"type": "string"},
+                    "parent": {"type": "string"},
+                    "attributes": {"type": "array", "items": attribute_schema()},
                     "mention": {"type": "object", "properties": {"section": {"type": "string"}, "quote": {"type": "string"}}, "required": ["section", "quote"]},
+                    "provenance": derived_schema(),
                     "note": {"type": "string"}
                 }),
-                &["name", "mention"],
+                &["name"],
             ),
         },
         ToolDef {
             name: "update_entity",
-            description: "Update an existing entity. A rename keeps the id.",
+            description: "Update an existing entity. A rename keeps the id. attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
                     "name": {"type": "string"},
                     "definition": {"type": "string"},
-                    "add_aliases": {"type": "array", "items": {"type": "string"}}
+                    "add_aliases": {"type": "array", "items": {"type": "string"}},
+                    "stereotype": {"type": "string"},
+                    "parent": {"type": "string"},
+                    "attributes": {"type": "array", "items": attribute_schema()}
                 }),
                 &["id"],
             ),
@@ -108,27 +118,32 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one EARS requirement (a single testable statement using 'shall'). entities are the entity ids the statement is about. quote is the verbatim source sentence copied from the section. Safe to retry: re-recording the same statement updates it in place. edges optionally tie two of the entities with a relationship type, one of: generalization, realization, composition, aggregation, association, dependency, reference.",
+            description: "Record one requirement: a free-form statement of one atomic obligation (specific, testable, entity-anchored). entities are the entity ids the statement is about. Exactly one of section plus quote (the verbatim source sentence copied from the section) or provenance.derived {from, reasoning} (a statement the documents do not state). Safe to retry: re-recording the same statement updates it in place. edges optionally tie two of the entities directionally (a acts on b) with a relationship type and cardinality. transition {subject, from, to, trigger?, guard?} says the subject (one of the entities) enters a state. facets are [{facet, reasoning, measure?}] with facet one of behavior, constraint, failure-mode, quality; measure only on quality.",
             parameters: obj(
                 json!({
-                    "ears": {"type": "string"},
+                    "statement": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}},
                     "section": {"type": "string"},
                     "quote": {"type": "string"},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string", "enum": ["generalization", "realization", "composition", "aggregation", "association", "dependency", "reference"]}}, "required": ["a", "b"]}}
+                    "provenance": derived_schema(),
+                    "edges": {"type": "array", "items": edge_schema()},
+                    "transition": transition_schema(),
+                    "facets": {"type": "array", "items": facet_schema()}
                 }),
-                &["ears", "entities", "section", "quote"],
+                &["statement", "entities"],
             ),
         },
         ToolDef {
             name: "update_requirement",
-            description: "Update an existing requirement's statement, entities, or edges. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section.",
+            description: "Update an existing requirement's statement, entities, edges, transition, or facets; a field given replaces the stored one whole. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section. Omit both when only the other fields change.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
-                    "ears": {"type": "string"},
+                    "statement": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "type": {"type": "string", "enum": ["generalization", "realization", "composition", "aggregation", "association", "dependency", "reference"]}}, "required": ["a", "b"]}},
+                    "edges": {"type": "array", "items": edge_schema()},
+                    "transition": transition_schema(),
+                    "facets": {"type": "array", "items": facet_schema()},
                     "section": {"type": "string"},
                     "quote": {"type": "string"}
                 }),
@@ -160,10 +175,10 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt optionally attaches a question for the document owner: up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt optionally attaches a question for the document owner: up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
             parameters: obj(
                 json!({
-                    "rule": {"type": "string", "enum": ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"]},
+                    "rule": {"type": "string", "enum": REVIEW_RULES},
                     "severity": {"type": "string", "enum": ["error", "warning", "info"]},
                     "subjects": {"type": "array", "items": {"type": "string"}},
                     "message": {"type": "string"},
@@ -196,6 +211,58 @@ pub fn catalog() -> Vec<ToolDef> {
                     "note": {"type": "string"}
                 }),
                 &["section", "state"],
+            ),
+        },
+        ToolDef {
+            name: "upsert_view",
+            description: "Create a view (the stored half of a diagram: what it includes, never how it looks), or refresh it when a view of that kind and title exists. members are ordered node ids: entities for structural kinds (class, object, package, component, deployment; composite and state take exactly one), requirements for flow kinds (use-case, activity, sequence, communication, overview; order is the flow order), one entity then requirements for timing. query {scope?, parent?, stereotype?, depth?} adds membership by rule at every commit. collapse lists members (or their ancestors) shown as one node despite their children. excluded is [{id, note}]. reasoning says why the view exists; every id must exist.",
+            parameters: obj(
+                json!({
+                    "kind": {"type": "string", "enum": VIEW_KINDS},
+                    "title": {"type": "string"},
+                    "members": {"type": "array", "items": {"type": "string"}},
+                    "query": query_schema(),
+                    "collapse": {"type": "array", "items": {"type": "string"}},
+                    "excluded": {"type": "array", "items": exclusion_schema()},
+                    "reasoning": {"type": "string"}
+                }),
+                &["kind", "title", "reasoning"],
+            ),
+        },
+        ToolDef {
+            name: "update_view",
+            description: "Update a view. members replaces the whole ordered list; add_members and remove_members edit it; exclude adds one {id, note} pair (the member leaves the list and stays out). Any field on a default view makes it curated from then on.",
+            parameters: obj(
+                json!({
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "members": {"type": "array", "items": {"type": "string"}},
+                    "add_members": {"type": "array", "items": {"type": "string"}},
+                    "remove_members": {"type": "array", "items": {"type": "string"}},
+                    "query": query_schema(),
+                    "collapse": {"type": "array", "items": {"type": "string"}},
+                    "exclude": exclusion_schema(),
+                    "reasoning": {"type": "string"}
+                }),
+                &["id"],
+            ),
+        },
+        ToolDef {
+            name: "delete_view",
+            description: "Delete a curated view. Refused on a default view, which the next commit would derive again: exclude its members or collapse them instead.",
+            parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
+        },
+        ToolDef {
+            name: "edit_fact",
+            description: "Set one authored field on one node: a requirement's statement, edges, transition, or facets; an entity's definition, stereotype, parent, or an attribute's type or value (field attributes.<name>.type or attributes.<name>.value); a view's members. On a quote-provenanced fact, note carries the sentence rewrite the person accepted in conversation: the prose replacement and the graph mutation commit as one dual write. Without an accepted sentence, or on a derived or decreed fact, the edit lands graph-only with decree provenance (note becomes the decree's note) and a ratification proposal follows. value is the field's new content: a string, or the array or object the write tools take.",
+            parameters: obj(
+                json!({
+                    "id": {"type": "string"},
+                    "field": {"type": "string"},
+                    "value": {},
+                    "note": {"type": "string"}
+                }),
+                &["id", "field", "value"],
             ),
         },
         ToolDef {
@@ -334,12 +401,45 @@ pub fn catalog() -> Vec<ToolDef> {
     ]
 }
 
-pub const READ_TOOLS: [&str; 6] = ["context", "expand", "search", "read_section", "get_entity", "diagnostics"];
+pub const READ_TOOLS: [&str; 6] = [
+    "context",
+    "expand",
+    "search",
+    "read_section",
+    "get_entity",
+    "diagnostics",
+];
 pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
 pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
-pub const VERIFY_TOOLS: [&str; 4] = ["verification_tasks", "begin_verification", "run_tests", "record_verdict"];
+pub const VERIFY_TOOLS: [&str; 4] = [
+    "verification_tasks",
+    "begin_verification",
+    "run_tests",
+    "record_verdict",
+];
 // In-process only: a generation turn's file and command tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 4] = ["read_text_file", "write_text_file", "list_files", "run_command"];
+pub const FILE_TOOLS: [&str; 4] = [
+    "read_text_file",
+    "write_text_file",
+    "list_files",
+    "run_command",
+];
+// The view tools, served beside the write tools. See docs/compiler/tools.md#view-tools.
+pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
+// The chat serving's human paths, in no session's toolset and never a raw write.
+// See docs/compiler/tools.md#chat-tools.
+pub const CHAT_TOOLS: [&str; 1] = ["edit_fact"];
+// The judged rules a session may file. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
+pub const REVIEW_RULES: [&str; 8] = [
+    "contradiction",
+    "duplicate-entity",
+    "duplicate-requirement",
+    "missing-link",
+    "ambiguity",
+    "lint",
+    "decision",
+    "nonconformant-instance",
+];
 // Feedback about jazyk itself, not about the graph: served in every toolset, read-only
 // MCP included. See docs/compiler/tools.md#feedback-tool.
 pub const FEEDBACK_TOOL: &str = "report_feedback";
@@ -350,19 +450,55 @@ pub const FEEDBACK_LIMIT: usize = 5;
 pub fn toolset(task: &str) -> Vec<&'static str> {
     let mut v = match task {
         "align-doc" => vec![
-            "context", "expand", "search", "read_section", "get_entity", "place_anchor", "orphan_anchor", "done",
+            "context",
+            "expand",
+            "search",
+            "read_section",
+            "get_entity",
+            "place_anchor",
+            "orphan_anchor",
+            "done",
         ],
         "reconcile-doc" => vec![
-            "context", "expand", "search", "read_section", "upsert_entity", "update_entity", "delete_entity",
-            "upsert_requirement", "update_requirement", "delete_requirement", "set_coverage", "done",
+            "context",
+            "expand",
+            "search",
+            "read_section",
+            "upsert_entity",
+            "update_entity",
+            "delete_entity",
+            "upsert_requirement",
+            "update_requirement",
+            "delete_requirement",
+            "set_coverage",
+            "done",
         ],
         "review-requirement" => vec![
-            "context", "expand", "search", "get_entity", "read_section", "diagnostics", "update_requirement",
-            "delete_requirement", "report_diagnostic", "update_diagnostic", "resolve_diagnostic", "done",
+            "context",
+            "expand",
+            "search",
+            "get_entity",
+            "read_section",
+            "diagnostics",
+            "update_requirement",
+            "delete_requirement",
+            "report_diagnostic",
+            "resolve_diagnostic",
+            "done",
         ],
         "review-entity" => vec![
-            "context", "expand", "search", "get_entity", "diagnostics", "update_entity", "merge_entities",
-            "update_requirement", "delete_requirement", "report_diagnostic", "update_diagnostic", "resolve_diagnostic", "done",
+            "context",
+            "expand",
+            "search",
+            "get_entity",
+            "diagnostics",
+            "update_entity",
+            "merge_entities",
+            "update_requirement",
+            "delete_requirement",
+            "report_diagnostic",
+            "resolve_diagnostic",
+            "done",
         ],
         // The in-process generation worker: the read tools, the file and command
         // tools, and the generation lifecycle. Mirrors docs/compiler/turns.md#generation-turns.
@@ -394,16 +530,35 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
             v
         }
         // The compile serving's write surface; the lifecycle tools live in the server.
-        "mcp-compile" => vec![
-            "context", "expand", "search", "read_section", "get_entity", "diagnostics", "upsert_entity",
-            "update_entity", "delete_entity", "merge_entities", "upsert_requirement", "update_requirement",
-            "delete_requirement", "set_coverage", "report_diagnostic", "update_diagnostic", "resolve_diagnostic",
-            "place_anchor", "orphan_anchor",
-        ],
+        "mcp-compile" => {
+            let mut v = vec![
+                "context",
+                "expand",
+                "search",
+                "read_section",
+                "get_entity",
+                "diagnostics",
+                "upsert_entity",
+                "update_entity",
+                "delete_entity",
+                "merge_entities",
+                "upsert_requirement",
+                "update_requirement",
+                "delete_requirement",
+                "set_coverage",
+                "report_diagnostic",
+                "update_diagnostic",
+                "resolve_diagnostic",
+                "place_anchor",
+                "orphan_anchor",
+            ];
+            v.extend(VIEW_TOOLS);
+            v
+        }
         "mcp-write" => catalog()
             .iter()
             .map(|t| t.name)
-            .filter(|n| *n != "done" && !FILE_TOOLS.contains(n))
+            .filter(|n| *n != "done" && !FILE_TOOLS.contains(n) && !CHAT_TOOLS.contains(n))
             .collect(),
         _ => READ_TOOLS.to_vec(),
     };
@@ -413,20 +568,97 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
     v
 }
 
-// A "built with X and Y" style list inside one statement: several atomic facts bundled
-// into one sentence. Returns the offending clause for the repair message.
-fn bundled_tech_list(ears: &str) -> Option<String> {
-    let lower = ears.to_lowercase();
-    for marker in ["built with ", "built using ", "implemented with ", "implemented using ", "written in ", "composed of "] {
-        if let Some(pos) = lower.find(marker) {
-            let tail = &ears[pos..];
-            let clause: String = tail.chars().take_while(|c| *c != '.' && *c != ';').collect();
-            if clause.to_lowercase().contains(" and ") || clause.contains(',') {
-                return Some(clause.trim().to_string());
-            }
+// The JSON schema of one requirement edge: directional, typed from the relationship
+// catalog, with an optional cardinality. Mirrors docs/compiler/model/requirement.md#edges.
+fn edge_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "a": {"type": "string"},
+            "b": {"type": "string"},
+            "type": {"type": "string", "enum": REL_TYPES},
+            "cardinality": {"type": "string", "enum": crate::model::CARDINALITIES}
+        },
+        "required": ["a", "b"]
+    })
+}
+
+// The derived provenance a session may stage: the upstream nodes and the reasoning.
+// Mirrors docs/compiler/model.md#provenance.
+fn derived_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "derived": {"type": "object", "properties": {
+                "from": {"type": "array", "items": {"type": "string"}},
+                "reasoning": {"type": "string"}
+            }, "required": ["from", "reasoning"]}
+        },
+        "required": ["derived"]
+    })
+}
+
+// One attribute of an entity. Mirrors docs/compiler/model/entity.md#fields.
+fn attribute_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+            "value": {"type": "string"},
+            "provenance": {"type": "object", "properties": {"section": {"type": "string"}, "quote": {"type": "string"}}, "required": ["section", "quote"]}
+        },
+        "required": ["name"]
+    })
+}
+
+// The state change a requirement describes. Mirrors docs/compiler/model/requirement.md#transition.
+fn transition_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "subject": {"type": "string"},
+            "from": {"type": "string"},
+            "to": {"type": "string"},
+            "trigger": {"type": "string"},
+            "guard": {"type": "string"}
+        },
+        "required": ["subject", "from", "to"]
+    })
+}
+
+// One judged facet. Mirrors docs/compiler/model/requirement.md#facets.
+fn facet_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "facet": {"type": "string", "enum": FACETS},
+            "reasoning": {"type": "string"},
+            "measure": {"type": "string"}
+        },
+        "required": ["facet", "reasoning"]
+    })
+}
+
+// Membership by rule. Mirrors docs/compiler/model/view.md#fields.
+fn query_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "scope": {"type": "string"},
+            "parent": {"type": "string"},
+            "stereotype": {"type": "string"},
+            "depth": {"type": "integer", "minimum": 0}
         }
-    }
-    None
+    })
+}
+
+fn exclusion_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "note": {"type": "string"}},
+        "required": ["id", "note"]
+    })
 }
 
 // The JSON schema of a diagnostic prompt argument, shared by report_diagnostic and
@@ -451,28 +683,163 @@ pub(crate) fn prompt_schema() -> Value {
     })
 }
 
-// The lenient EARS shape gate, shared by upsert_requirement and update_requirement so a
-// revision cannot land a statement a fresh upsert would reject. Mirrors
-// docs/compiler/concepts/ears.md#shape-check.
-fn ears_shape(ears: &str) -> Result<(), ToolError> {
-    if !ears.to_lowercase().contains("shall") {
+// A statement is free-form; the only shape gate is that it says something.
+fn statement_present(statement: &str) -> Result<(), ToolError> {
+    if statement.trim().is_empty() {
         return Err(ToolError::new(
-            "not-ears",
-            "the statement must be a single testable EARS sentence using 'shall' (e.g. 'When X, the system shall Y.')".into(),
-        ));
-    }
-    if ears.len() > 400 {
-        return Err(ToolError::new("not-ears", "the statement is too long; one testable sentence, not a paragraph".into()));
-    }
-    // Atomicity: a technology list bundled into one statement is several requirements
-    // wearing one sentence.
-    if let Some(bundle) = bundled_tech_list(ears) {
-        return Err(ToolError::new(
-            "not-ears",
-            format!("the statement bundles several facts ({}); record one requirement per fact, all quoting the same source sentence", bundle),
+            "bad-args",
+            "statement is empty; state the one obligation the sentence carries".into(),
         ));
     }
     Ok(())
+}
+
+// Parse the edges argument of a requirement call: directional, typed from the catalog,
+// cardinality one of the four forms. `entities` restricts the ends when given.
+fn parse_edges(
+    session: &ToolSession,
+    arr: &[Value],
+    entities: Option<&[String]>,
+) -> Result<Vec<ReqEdge>, ToolError> {
+    let mut edges = Vec::new();
+    for e in arr {
+        let raw_a = e["a"].as_str().unwrap_or_default();
+        let raw_b = e["b"].as_str().unwrap_or_default();
+        let a = session
+            .canon_entity_id(raw_a)
+            .unwrap_or_else(|| raw_a.to_string());
+        let b = session
+            .canon_entity_id(raw_b)
+            .unwrap_or_else(|| raw_b.to_string());
+        if let Some(listed) = entities {
+            if !listed.contains(&a) || !listed.contains(&b) {
+                return Err(ToolError::new(
+                    "bad-edge",
+                    format!(
+                        "edge {}~{} may only tie entities the requirement itself references",
+                        a, b
+                    ),
+                ));
+            }
+        }
+        let t = e["type"].as_str().map(|s| s.to_string());
+        if let Some(t) = &t {
+            if !REL_TYPES.contains(&t.as_str()) {
+                return Err(ToolError::new(
+                    "bad-edge",
+                    format!(
+                        "unknown relationship type `{}`; one of: {}",
+                        t,
+                        REL_TYPES.join(", ")
+                    ),
+                ));
+            }
+        }
+        let cardinality = e["cardinality"].as_str().map(|s| s.to_string());
+        if let Some(c) = &cardinality {
+            if !crate::model::CARDINALITIES.contains(&c.as_str()) {
+                return Err(ToolError::new(
+                    "bad-cardinality",
+                    format!(
+                        "unknown cardinality `{}`; one of: {}",
+                        c,
+                        crate::model::CARDINALITIES.join(", ")
+                    ),
+                ));
+            }
+        }
+        if a == b {
+            return Err(ToolError::new(
+                "bad-edge",
+                format!(
+                    "edge {}~{} ties an entity to itself; a and b are distinct",
+                    a, b
+                ),
+            ));
+        }
+        // Edges are directional: the same pair in the other direction, or under
+        // another type, is another edge. The same (a, b, type) again is the same one.
+        if edges
+            .iter()
+            .any(|x: &ReqEdge| x.a == a && x.b == b && x.rel_type == t)
+        {
+            continue;
+        }
+        edges.push(ReqEdge {
+            a,
+            b,
+            rel_type: t,
+            cardinality,
+        });
+    }
+    Ok(edges)
+}
+
+// Parse the facets argument: each names a facet from the catalog with its reasoning;
+// `measure` is accepted only on `quality`. Mirrors docs/compiler/model/requirement.md#facets.
+fn parse_facets(v: &Value) -> Result<Vec<Facet>, ToolError> {
+    let Some(arr) = v.as_array() else {
+        return Err(ToolError::new(
+            "bad-facet",
+            "facets is a list of {facet, reasoning, measure?}".into(),
+        ));
+    };
+    let mut out: Vec<Facet> = Vec::new();
+    for f in arr {
+        let facet = f["facet"].as_str().unwrap_or_default().trim().to_string();
+        if !FACETS.contains(&facet.as_str()) {
+            return Err(ToolError::new(
+                "bad-facet",
+                format!("unknown facet `{}`; one of: {}", facet, FACETS.join(", ")),
+            ));
+        }
+        let reasoning = f["reasoning"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if reasoning.is_empty() {
+            return Err(ToolError::new(
+                "bad-facet",
+                format!("facet `{}` needs its reasoning", facet),
+            ));
+        }
+        let measure = f["measure"]
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if measure.is_some() && facet != "quality" {
+            return Err(ToolError::new(
+                "bad-facet",
+                format!(
+                    "measure is stated only on a quality facet, not on `{}`",
+                    facet
+                ),
+            ));
+        }
+        if let Some(mine) = out.iter_mut().find(|x| x.facet == facet) {
+            mine.reasoning = reasoning;
+            mine.measure = measure;
+            continue;
+        }
+        out.push(Facet {
+            facet,
+            reasoning,
+            measure,
+        });
+    }
+    Ok(out)
+}
+
+// The membership rule of a view kind: what its members are.
+// Mirrors docs/compiler/model/view.md#kinds.
+fn member_rule(kind: &str) -> &'static str {
+    match kind {
+        "class" | "object" | "package" | "component" | "deployment" => "entities",
+        "composite" | "state" => "one entity",
+        "timing" => "one entity then requirements",
+        _ => "requirements",
+    }
 }
 
 // Names that look like syntax rather than a concept. Rejected without an explaining note.
@@ -502,8 +869,18 @@ fn junk_name(name: &str) -> Option<&'static str> {
         return Some("looks like a code identifier (an operation or function); operations belong in the requirement statement, not the entity list");
     }
     const MD_TERMS: [&str; 12] = [
-        "heading", "headings", "code block", "code blocks", "blockquote", "blockquotes", "list item",
-        "list items", "markdown", "table", "link", "bullet",
+        "heading",
+        "headings",
+        "code block",
+        "code blocks",
+        "blockquote",
+        "blockquotes",
+        "list item",
+        "list items",
+        "markdown",
+        "table",
+        "link",
+        "bullet",
     ];
     if MD_TERMS.contains(&lower.as_str()) {
         return Some("is a markdown construct, not a domain concept");
@@ -558,6 +935,11 @@ pub struct ToolSession {
     // Staged entities (id -> entity) so lookup-before-create sees this turn's own creates.
     staged_entities: std::collections::BTreeMap<String, Entity>,
     staged_reqs: BTreeSet<String>,
+    // Staged views (id -> view) so a repeated upsert lands on the staged one and
+    // update_view sees this session's own creates.
+    staged_views: std::collections::BTreeMap<String, View>,
+    // Parents this session set on existing entities: the cycle gate reads them.
+    staged_parents: std::collections::BTreeMap<String, String>,
     taken_ids: BTreeSet<String>,
     // True only while finish_implicit drives `done`: the implicit path commits around
     // an unmarked dirty section instead of bouncing (docs/compiler/turns.md#budgets).
@@ -565,7 +947,12 @@ pub struct ToolSession {
 }
 
 impl ToolSession {
-    pub fn new(snapshot: Store, scope: WorkScope, mutation_limit: usize, default_budget: usize) -> ToolSession {
+    pub fn new(
+        snapshot: Store,
+        scope: WorkScope,
+        mutation_limit: usize,
+        default_budget: usize,
+    ) -> ToolSession {
         // Placeholder; sessions that reach the gen tools (MCP, run_turn) overwrite it
         // with the project-resolved settings.
         let gen = crate::gen::GenSettings::from_out(&snapshot.out);
@@ -581,9 +968,433 @@ impl ToolSession {
             default_budget,
             staged_entities: Default::default(),
             staged_reqs: Default::default(),
+            staged_views: Default::default(),
+            staged_parents: Default::default(),
             taken_ids: Default::default(),
             implicit_done: false,
         }
+    }
+
+    // The author a decree records: the MCP client when one is known, else the user.
+    fn decree_author(&self) -> String {
+        self.caller
+            .client
+            .clone()
+            .filter(|c| !c.trim().is_empty())
+            .or_else(|| std::env::var("USER").ok().filter(|u| !u.is_empty()))
+            .unwrap_or_else(|| "human".to_string())
+    }
+
+    fn decree(&self, note: Option<String>) -> Provenance {
+        Provenance::Decree {
+            author: self.decree_author(),
+            at: crate::verify::now_iso(),
+            note,
+        }
+    }
+
+    // The parent of an entity as this session sees it: staged first, then the snapshot.
+    fn parent_of(&self, id: &str) -> Option<String> {
+        if let Some(p) = self.staged_parents.get(id) {
+            return Some(p.clone());
+        }
+        if let Some(e) = self.staged_entities.get(id) {
+            return e.parent.clone();
+        }
+        self.snapshot
+            .graph
+            .entities
+            .get(self.snapshot.resolve_id(id))
+            .and_then(|e| e.parent.clone())
+    }
+
+    // Gate a `parent` argument: it must resolve, and the containment tree stays
+    // acyclic (an entity is never its own ancestor). `child` is the entity being
+    // parented, absent for a create. Mirrors docs/compiler/graph.md#validation-gates.
+    fn check_parent(&self, child: Option<&str>, raw: &str) -> Result<String, ToolError> {
+        let Some(p) = self.canon_entity_id(raw) else {
+            let e = self.unknown_entity_error(raw);
+            return Err(ToolError::new(
+                "unknown-parent",
+                format!("parent {}", e.message),
+            ));
+        };
+        if let Some(c) = child {
+            let mut chain = vec![p.clone()];
+            let mut cur = p.clone();
+            for _ in 0..64 {
+                if cur == c {
+                    return Err(ToolError::new(
+                        "parent-cycle",
+                        format!(
+                            "{} cannot be under {}: the chain {} leads back to it; an entity is never its own ancestor",
+                            c,
+                            p,
+                            chain.join(" > ")
+                        ),
+                    ));
+                }
+                match self.parent_of(&cur) {
+                    Some(next) => {
+                        chain.push(next.clone());
+                        cur = next;
+                    }
+                    None => break,
+                }
+            }
+        }
+        Ok(p)
+    }
+
+    // Parse a transition argument: the subject resolves, is among the requirement's
+    // entities, and the two states are named. Mirrors docs/compiler/model/requirement.md#transition.
+    fn parse_transition(&self, v: &Value, entities: &[String]) -> Result<Transition, ToolError> {
+        if !v.is_object() {
+            return Err(ToolError::new(
+                "bad-transition",
+                "transition is {subject, from, to, trigger?, guard?}".into(),
+            ));
+        }
+        let raw = v["subject"].as_str().unwrap_or_default().trim();
+        let Some(subject) = self.canon_entity_id(raw) else {
+            let e = self.unknown_entity_error(raw);
+            return Err(ToolError::new(
+                "unknown-id",
+                format!("transition subject: {}", e.message),
+            ));
+        };
+        if !entities.contains(&subject) {
+            return Err(ToolError::new(
+                "bad-transition",
+                format!(
+                    "transition subject {} is not among the requirement's entities ({}); list it there",
+                    subject,
+                    entities.join(", ")
+                ),
+            ));
+        }
+        let state = |k: &str| -> Result<String, ToolError> {
+            v[k].as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    ToolError::new(
+                        "bad-transition",
+                        format!("transition.{} names a state; it is empty", k),
+                    )
+                })
+        };
+        let opt = |k: &str| {
+            v[k].as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        };
+        Ok(Transition {
+            subject,
+            from: state("from")?,
+            to: state("to")?,
+            trigger: opt("trigger"),
+            guard: opt("guard"),
+        })
+    }
+
+    // Parse an attributes argument: named, unique by name, each with a located quote
+    // provenance or the call's own. Mirrors docs/compiler/graph.md#validation-gates.
+    fn parse_attributes(
+        &self,
+        v: &Value,
+        default: Option<&SourceRef>,
+    ) -> Result<Vec<Attribute>, ToolError> {
+        let Some(arr) = v.as_array() else {
+            return Err(ToolError::new(
+                "bad-attribute",
+                "attributes is a list of {name, type?, value?, provenance?: {section, quote}}"
+                    .into(),
+            ));
+        };
+        let mut out: Vec<Attribute> = Vec::new();
+        for a in arr {
+            let name = a["name"].as_str().unwrap_or_default().trim().to_string();
+            if name.is_empty() {
+                return Err(ToolError::new(
+                    "bad-attribute",
+                    "an attribute needs a name".into(),
+                ));
+            }
+            if out.iter().any(|x| x.name == name) {
+                return Err(ToolError::new(
+                    "bad-attribute",
+                    format!(
+                        "attribute `{}` is listed twice; attributes are unique by name",
+                        name
+                    ),
+                ));
+            }
+            let opt = |k: &str| {
+                a[k].as_str()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            };
+            let provenance = if a["provenance"].is_object() {
+                let section = a["provenance"]["section"].as_str().unwrap_or_default();
+                let quote = a["provenance"]["quote"].as_str().unwrap_or_default();
+                let (doc, sec) = self.resolve_section(section)?;
+                let quote = self.check_quote(&doc, &sec, quote)?;
+                Provenance::Quote(SourceRef {
+                    doc,
+                    section: sec,
+                    quote,
+                })
+            } else {
+                match default {
+                    Some(src) => Provenance::Quote(src.clone()),
+                    None => {
+                        return Err(ToolError::new(
+                            "bad-attribute",
+                            format!(
+                                "attribute `{}` needs a provenance ({{section, quote}}); the call carries no quote it could take",
+                                name
+                            ),
+                        ))
+                    }
+                }
+            };
+            out.push(Attribute {
+                name,
+                r#type: opt("type"),
+                value: opt("value"),
+                provenance,
+            });
+        }
+        Ok(out)
+    }
+
+    // Parse a provenance argument a session may stage: a derivation naming live nodes
+    // with its reasoning. A decree is refused: only a human path stages one.
+    fn parse_derived(&self, v: &Value) -> Result<Provenance, ToolError> {
+        if v["decree"].is_object() {
+            return Err(ToolError::new(
+                "bad-provenance",
+                "a session never stages a decree; pass provenance.derived {from, reasoning}, or a mention".into(),
+            ));
+        }
+        let d = &v["derived"];
+        if !d.is_object() {
+            return Err(ToolError::new(
+                "bad-provenance",
+                "provenance is {derived: {from: [ids], reasoning}}".into(),
+            ));
+        }
+        let mut from: Vec<String> = Vec::new();
+        for raw in Self::str_list(d, "from") {
+            let Some(id) = self.node_known(&raw) else {
+                return Err(ToolError::new(
+                    "unknown-id",
+                    format!(
+                        "provenance.derived.from names `{}`, which does not exist",
+                        raw
+                    ),
+                ));
+            };
+            if !from.contains(&id) {
+                from.push(id);
+            }
+        }
+        if from.is_empty() {
+            return Err(ToolError::new(
+                "bad-provenance",
+                "provenance.derived.from names at least one live node".into(),
+            ));
+        }
+        let reasoning = d["reasoning"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if reasoning.is_empty() {
+            return Err(ToolError::new(
+                "bad-provenance",
+                "provenance.derived.reasoning says why the fact holds".into(),
+            ));
+        }
+        Ok(Provenance::Derived { from, reasoning })
+    }
+
+    // An entity or requirement id, snapshot or staged, canonicalized.
+    fn node_known(&self, raw: &str) -> Option<String> {
+        if let Some(id) = self.canon_entity_id(raw) {
+            return Some(id);
+        }
+        self.canon_req_id(raw).ok()
+    }
+
+    // A view, snapshot or staged, by id.
+    fn view_known(&self, raw: &str) -> Option<(String, View)> {
+        let id = raw.trim();
+        if let Some(v) = self.staged_views.get(id) {
+            return Some((id.to_string(), v.clone()));
+        }
+        self.snapshot
+            .graph
+            .views
+            .get(id)
+            .map(|v| (id.to_string(), v.clone()))
+    }
+
+    // The staged view a natural key lands on: kind plus normalized title.
+    fn staged_view_by_key(&self, kind: &str, title: &str) -> Option<String> {
+        let norm = |s: &str| {
+            s.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        let want = norm(title);
+        self.staged_views
+            .iter()
+            .find(|(_, v)| v.kind == kind && norm(&v.title) == want)
+            .map(|(id, _)| id.clone())
+    }
+
+    // Canonicalize a list of member ids, each an existing entity or requirement.
+    fn canon_members(&self, raw: &[String], what: &str) -> Result<Vec<String>, ToolError> {
+        let mut out = Vec::new();
+        for r in raw {
+            let Some(id) = self.node_known(r) else {
+                return Err(ToolError::new(
+                    "unknown-id",
+                    format!(
+                        "{} `{}` does not exist; every view member is an existing entity or requirement id",
+                        what, r
+                    ),
+                ));
+            };
+            out.push(id);
+        }
+        Ok(out)
+    }
+
+    fn is_entity_id(&self, id: &str) -> bool {
+        self.known_entity(id)
+    }
+
+    // Gate a view's membership: unique ordered members that follow the kind's rule,
+    // and collapse ids that are members or ancestors of members.
+    // Mirrors docs/compiler/graph.md#validation-gates.
+    fn check_view_members(
+        &self,
+        kind: &str,
+        members: &[String],
+        collapse: &[String],
+    ) -> Result<(), ToolError> {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        for m in members {
+            if !seen.insert(m.as_str()) {
+                return Err(ToolError::new(
+                    "duplicate-member",
+                    format!(
+                        "member {} is listed twice; members are unique and ordered",
+                        m
+                    ),
+                ));
+            }
+        }
+        let entities = members.iter().filter(|m| self.is_entity_id(m)).count();
+        let requirements = members.len() - entities;
+        let rule = member_rule(kind);
+        let ok = match rule {
+            "entities" => requirements == 0,
+            "one entity" => members.is_empty() || (entities == 1 && requirements == 0),
+            "one entity then requirements" => {
+                members.is_empty() || (entities == 1 && self.is_entity_id(&members[0]))
+            }
+            _ => entities == 0,
+        };
+        if !ok {
+            return Err(ToolError::new(
+                "bad-member",
+                format!(
+                    "a {} view's members are {}; got {} entities and {} requirements",
+                    kind, rule, entities, requirements
+                ),
+            ));
+        }
+        for c in collapse {
+            let covers = members.iter().any(|m| {
+                if m == c {
+                    return true;
+                }
+                let mut cur = m.clone();
+                for _ in 0..64 {
+                    match self.parent_of(&cur) {
+                        Some(p) if &p == c => return true,
+                        Some(p) => cur = p,
+                        None => return false,
+                    }
+                }
+                false
+            });
+            if !covers {
+                return Err(ToolError::new(
+                    "bad-collapse",
+                    format!(
+                        "collapse names {}, which is neither a member nor an ancestor of one",
+                        c
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    // Parse a view query argument. Mirrors docs/compiler/model/view.md#fields.
+    fn parse_query(&self, v: &Value) -> Result<ViewQuery, ToolError> {
+        if !v.is_object() {
+            return Err(ToolError::new(
+                "bad-args",
+                "query is {scope?, parent?, stereotype?, depth?}".into(),
+            ));
+        }
+        let parent = match Self::opt_str(v, "parent") {
+            Some(p) => Some(self.canon_entity_id(&p).ok_or_else(|| {
+                let e = self.unknown_entity_error(&p);
+                ToolError::new("unknown-id", format!("query.parent: {}", e.message))
+            })?),
+            None => None,
+        };
+        Ok(ViewQuery {
+            scope: Self::opt_str(v, "scope"),
+            parent,
+            stereotype: Self::opt_str(v, "stereotype"),
+            depth: v["depth"].as_u64().map(|d| d as u32),
+        })
+    }
+
+    fn parse_exclusions(&self, v: &Value) -> Result<Vec<Exclusion>, ToolError> {
+        let items: Vec<&Value> = match v {
+            Value::Array(a) => a.iter().collect(),
+            Value::Object(_) => vec![v],
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for x in items {
+            let raw = x["id"].as_str().unwrap_or_default().trim().to_string();
+            let Some(id) = self.node_known(&raw) else {
+                return Err(ToolError::new(
+                    "unknown-id",
+                    format!("excluded `{}` does not exist", raw),
+                ));
+            };
+            let note = x["note"].as_str().unwrap_or_default().trim().to_string();
+            if note.is_empty() {
+                return Err(ToolError::new(
+                    "bad-args",
+                    format!("excluding {} needs a note saying why it stays out", id),
+                ));
+            }
+            out.push(Exclusion { id, note });
+        }
+        Ok(out)
     }
 
     fn gen_settings(&self) -> crate::gen::GenSettings {
@@ -597,7 +1408,10 @@ impl ToolSession {
         if rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|c| c == "..") {
             return Err(ToolError::new(
                 "bad-path",
-                format!("`{}` must be a relative path under the deliverable directory, without `..`", rel),
+                format!(
+                    "`{}` must be a relative path under the deliverable directory, without `..`",
+                    rel
+                ),
             ));
         }
         Ok(self.gen.deliverable.join(rel))
@@ -608,10 +1422,20 @@ impl ToolSession {
             "read_text_file" => {
                 let rel = Self::str_arg(args, "path")?;
                 let path = self.deliverable_path(&rel)?;
-                let text = std::fs::read_to_string(&path)
-                    .map_err(|e| ToolError::new("not-found", format!("cannot read `{}`: {}; list_files shows what exists", rel, e)))?;
-                let start = args["line"].as_u64().map(|l| (l as usize).saturating_sub(1)).unwrap_or(0);
-                let limit = args["limit"].as_u64().map(|l| l as usize).unwrap_or(usize::MAX);
+                let text = std::fs::read_to_string(&path).map_err(|e| {
+                    ToolError::new(
+                        "not-found",
+                        format!("cannot read `{}`: {}; list_files shows what exists", rel, e),
+                    )
+                })?;
+                let start = args["line"]
+                    .as_u64()
+                    .map(|l| (l as usize).saturating_sub(1))
+                    .unwrap_or(0);
+                let limit = args["limit"]
+                    .as_u64()
+                    .map(|l| l as usize)
+                    .unwrap_or(usize::MAX);
                 let lines: Vec<&str> = text.lines().skip(start).take(limit).collect();
                 let total = text.lines().count();
                 Ok(json!({"content": lines.join("\n"), "totalLines": total}))
@@ -640,20 +1464,32 @@ impl ToolSession {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                std::fs::write(&path, &content).map_err(|e| ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e)))?;
+                std::fs::write(&path, &content).map_err(|e| {
+                    ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e))
+                })?;
                 Ok(json!({"written": rel, "bytes": content.len()}))
             }
             "list_files" => {
                 let rel = Self::opt_str(args, "path").unwrap_or_default();
-                let root = if rel.is_empty() { self.gen.deliverable.clone() } else { self.deliverable_path(&rel)? };
+                let root = if rel.is_empty() {
+                    self.gen.deliverable.clone()
+                } else {
+                    self.deliverable_path(&rel)?
+                };
                 let mut out: Vec<String> = Vec::new();
                 let mut stack = vec![root.clone()];
                 while let Some(dir) = stack.pop() {
-                    let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+                    let Ok(entries) = std::fs::read_dir(&dir) else {
+                        continue;
+                    };
                     for e in entries.flatten() {
                         let p = e.path();
                         let name = e.file_name().to_string_lossy().to_string();
-                        if name.starts_with('.') || name == "target" || name == "node_modules" || name == "jazyk-out" {
+                        if name.starts_with('.')
+                            || name == "target"
+                            || name == "node_modules"
+                            || name == "jazyk-out"
+                        {
                             continue;
                         }
                         if p.is_dir() {
@@ -670,13 +1506,22 @@ impl ToolSession {
             "run_command" => {
                 let command = Self::str_arg(args, "command")?;
                 let cwd_rel = Self::opt_str(args, "cwd").unwrap_or_else(|| ".".into());
-                let cwd = if cwd_rel == "." { self.gen.deliverable.clone() } else { self.deliverable_path(&cwd_rel)? };
+                let cwd = if cwd_rel == "." {
+                    self.gen.deliverable.clone()
+                } else {
+                    self.deliverable_path(&cwd_rel)?
+                };
                 let out = std::process::Command::new("sh")
                     .arg("-c")
                     .arg(&command)
                     .current_dir(&cwd)
                     .output()
-                    .map_err(|e| ToolError::new("io-error", format!("cannot run `{}` in {}: {}", command, cwd.display(), e)))?;
+                    .map_err(|e| {
+                        ToolError::new(
+                            "io-error",
+                            format!("cannot run `{}` in {}: {}", command, cwd.display(), e),
+                        )
+                    })?;
                 let mut text = String::from_utf8_lossy(&out.stdout).to_string();
                 text.push_str(&String::from_utf8_lossy(&out.stderr));
                 let tail: String = {
@@ -713,9 +1558,14 @@ impl ToolSession {
             if ex == cand {
                 return false; // exact natural-key match is the upsert path, not a twin
             }
-            let (small, big) = if ex.len() <= cand.len() { (&ex, &cand) } else { (&cand, &ex) };
+            let (small, big) = if ex.len() <= cand.len() {
+                (&ex, &cand)
+            } else {
+                (&cand, &ex)
+            };
             // Containment of a multi-token name, or of a single specific (long) token.
-            small.is_subset(big) && (small.len() > 1 || small.iter().next().map(|t| t.len() >= 5).unwrap_or(false))
+            small.is_subset(big)
+                && (small.len() > 1 || small.iter().next().map(|t| t.len() >= 5).unwrap_or(false))
         };
         for (id, e) in &self.snapshot.graph.entities {
             if e.scope == scope && check(&e.name) {
@@ -749,23 +1599,44 @@ impl ToolSession {
             if self.known_entity(&prefixed) {
                 return Some(self.snapshot.resolve_id(&prefixed).to_string());
             }
-            let slug = format!("ent:{}", raw.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-"));
+            let slug = format!(
+                "ent:{}",
+                raw.to_lowercase()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join("-")
+            );
             if self.known_entity(&slug) {
                 return Some(self.snapshot.resolve_id(&slug).to_string());
             }
         } else if let Some(rest) = raw.strip_prefix("ent:") {
             // A case or spacing variant of an existing id (`ent:factHash`) resolves to it.
-            let slug = format!("ent:{}", rest.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-"));
+            let slug = format!(
+                "ent:{}",
+                rest.to_lowercase()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join("-")
+            );
             if self.known_entity(&slug) {
                 return Some(self.snapshot.resolve_id(&slug).to_string());
             }
         }
         // Exact display name or alias, snapshot plus staged; unique match only.
-        let want = raw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let want = raw
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
         if want.is_empty() {
             return None;
         }
-        let norm = |n: &str| n.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let norm = |n: &str| {
+            n.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
         let mut hits: Vec<String> = Vec::new();
         let all = self
             .snapshot
@@ -775,7 +1646,9 @@ impl ToolSession {
             .map(|(i, e)| (i.clone(), e))
             .chain(self.staged_entities.iter().map(|(i, e)| (i.clone(), e)));
         for (id, e) in all {
-            if (norm(&e.name) == want || e.aliases.iter().any(|a| norm(a) == want)) && !hits.contains(&id) {
+            if (norm(&e.name) == want || e.aliases.iter().any(|a| norm(a) == want))
+                && !hits.contains(&id)
+            {
                 hits.push(id);
             }
         }
@@ -787,7 +1660,9 @@ impl ToolSession {
 
     // Requirement-id counterpart of canon_entity_id: forgive a missing `req:` prefix.
     fn canon_req_id(&self, raw: &str) -> Result<String, ToolError> {
-        let known = |id: &str| self.snapshot.graph.requirements.contains_key(id) || self.staged_reqs.contains(id);
+        let known = |id: &str| {
+            self.snapshot.graph.requirements.contains_key(id) || self.staged_reqs.contains(id)
+        };
         if known(raw) {
             return Ok(raw.to_string());
         }
@@ -797,7 +1672,10 @@ impl ToolSession {
                 return Ok(prefixed);
             }
         }
-        Err(ToolError::new("unknown-id", format!("unknown requirement id `{}`", raw)))
+        Err(ToolError::new(
+            "unknown-id",
+            format!("unknown requirement id `{}`", raw),
+        ))
     }
 
     fn unknown_entity_error(&self, id: &str) -> ToolError {
@@ -806,14 +1684,19 @@ impl ToolSession {
         let hint = if hits.is_empty() {
             "search for it, or create it with upsert_entity first".to_string()
         } else {
-            format!("nearest existing: {}; use one of those, or create it with upsert_entity first", hits
-                .iter()
-                .take(3)
-                .map(|(id, _, _)| id.as_str())
-                .collect::<Vec<_>>()
-                .join(", "))
+            format!(
+                "nearest existing: {}; use one of those, or create it with upsert_entity first",
+                hits.iter()
+                    .take(3)
+                    .map(|(id, _, _)| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
-        ToolError::new("unknown-id", format!("unknown entity id `{}`; {}", id, hint))
+        ToolError::new(
+            "unknown-id",
+            format!("unknown entity id `{}`; {}", id, hint),
+        )
     }
 
     // Search across the snapshot plus this turn's staged creates.
@@ -822,7 +1705,11 @@ impl ToolSession {
         let q = query.trim().to_lowercase();
         for (id, e) in &self.staged_entities {
             if e.name.to_lowercase().contains(&q) || q.contains(&e.name.to_lowercase()) {
-                hits.push((id.clone(), e.name.clone(), e.definition.clone().unwrap_or_default()));
+                hits.push((
+                    id.clone(),
+                    e.name.clone(),
+                    e.definition.clone().unwrap_or_default(),
+                ));
             }
         }
         hits.extend(self.snapshot.search(query));
@@ -838,7 +1725,10 @@ impl ToolSession {
                 None => {
                     return Err(ToolError::new(
                         "bad-section",
-                        format!("bare section reference `{}` needs a document; use doc.md#{}", section, section),
+                        format!(
+                            "bare section reference `{}` needs a document; use doc.md#{}",
+                            section, section
+                        ),
                     ))
                 }
             }
@@ -853,10 +1743,21 @@ impl ToolSession {
                 let doc = self.scope.doc.as_deref().unwrap_or_default();
                 format!(
                     "; this turn's sections: {}",
-                    self.scope.target_sections.iter().map(|s| format!("{}#{}", doc, s)).collect::<Vec<_>>().join(", ")
+                    self.scope
+                        .target_sections
+                        .iter()
+                        .map(|s| format!("{}#{}", doc, s))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             };
-            ToolError::new("bad-section", format!("bad section reference `{}`; expected doc.md#/ref{}", section, hint))
+            ToolError::new(
+                "bad-section",
+                format!(
+                    "bad section reference `{}`; expected doc.md#/ref{}",
+                    section, hint
+                ),
+            )
         })?;
         if !self
             .snapshot
@@ -865,7 +1766,10 @@ impl ToolSession {
             .map(|d| d.sections.contains_key(&sec))
             .unwrap_or(false)
         {
-            return Err(ToolError::new("unknown-section", format!("unknown section `{}#{}`", doc, sec)));
+            return Err(ToolError::new(
+                "unknown-section",
+                format!("unknown section `{}#{}`", doc, sec),
+            ));
         }
         Ok((doc, sec))
     }
@@ -878,7 +1782,10 @@ impl ToolSession {
     fn check_quote(&self, doc: &str, sec: &str, quote: &str) -> Result<String, ToolError> {
         let q = quote.trim();
         if q.is_empty() {
-            return Err(ToolError::new("bad-quote", "quote is empty; copy the sentence verbatim from the section".into()));
+            return Err(ToolError::new(
+                "bad-quote",
+                "quote is empty; copy the sentence verbatim from the section".into(),
+            ));
         }
         if self.snapshot.quote_locates(doc, sec, q) {
             return Ok(q.to_string());
@@ -900,7 +1807,10 @@ impl ToolSession {
         }
         Err(ToolError::new(
             "quote-not-found",
-            format!("quote not found in {}#{}; copy the sentence verbatim from the section", doc, sec),
+            format!(
+                "quote not found in {}#{}; copy the sentence verbatim from the section",
+                doc, sec
+            ),
         ))
     }
 
@@ -921,20 +1831,28 @@ impl ToolSession {
             .staged
             .iter()
             .filter_map(|o| match o {
-                Op::CreateRequirement { requirement, .. } => {
-                    Some((requirement.source.doc.clone(), requirement.source.section.clone()))
-                }
+                Op::CreateRequirement { requirement, .. } => requirement
+                    .source
+                    .as_ref()
+                    .map(|s| (s.doc.clone(), s.section.clone())),
                 _ => None,
             })
             .collect();
         let snap = &self.snapshot;
         self.staged.retain(|op| match op {
-            Op::SetCoverage { doc, section, state, .. } if state == "covered" => {
+            Op::SetCoverage {
+                doc,
+                section,
+                state,
+                ..
+            } if state == "covered" => {
                 snap.graph
                     .requirements
                     .values()
-                    .any(|r| &r.source.doc == doc && &r.source.section == section)
-                    || staged_req_sources.iter().any(|(d, s)| d == doc && s == section)
+                    .any(|r| r.anchored_at(doc, section))
+                    || staged_req_sources
+                        .iter()
+                        .any(|(d, s)| d == doc && s == section)
             }
             _ => true,
         });
@@ -945,7 +1863,10 @@ impl ToolSession {
         if self.staged.len() >= self.mutation_limit {
             return Err(ToolError::new(
                 "mutation-budget",
-                format!("turn mutation budget ({}) exhausted; call done", self.mutation_limit),
+                format!(
+                    "turn mutation budget ({}) exhausted; call done",
+                    self.mutation_limit
+                ),
             ));
         }
         self.staged.push(op);
@@ -957,17 +1878,29 @@ impl ToolSession {
             .as_str()
             .map(|s| s.to_string())
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| ToolError::new("bad-args", format!("missing required string argument `{}`", key)))
+            .ok_or_else(|| {
+                ToolError::new(
+                    "bad-args",
+                    format!("missing required string argument `{}`", key),
+                )
+            })
     }
 
     fn opt_str(args: &Value, key: &str) -> Option<String> {
-        args[key].as_str().map(|s| s.to_string()).filter(|s| !s.trim().is_empty())
+        args[key]
+            .as_str()
+            .map(|s| s.to_string())
+            .filter(|s| !s.trim().is_empty())
     }
 
     fn str_list(args: &Value, key: &str) -> Vec<String> {
         args[key]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -980,16 +1913,25 @@ impl ToolSession {
             return Ok(None);
         }
         let Some(question) = v["question"].as_str().filter(|s| !s.trim().is_empty()) else {
-            return Err(ToolError::new("bad-prompt", "prompt.question is required: one sentence addressed to a person".into()));
+            return Err(ToolError::new(
+                "bad-prompt",
+                "prompt.question is required: one sentence addressed to a person".into(),
+            ));
         };
         let mut options = Vec::new();
         if let Some(arr) = v["options"].as_array() {
             if arr.len() > 4 {
-                return Err(ToolError::new("bad-prompt", "a prompt carries at most 4 options".into()));
+                return Err(ToolError::new(
+                    "bad-prompt",
+                    "a prompt carries at most 4 options".into(),
+                ));
             }
             for (i, o) in arr.iter().enumerate() {
                 let Some(label) = o["label"].as_str().filter(|s| !s.trim().is_empty()) else {
-                    return Err(ToolError::new("bad-prompt", format!("option {} needs a label", i)));
+                    return Err(ToolError::new(
+                        "bad-prompt",
+                        format!("option {} needs a label", i),
+                    ));
                 };
                 let has_edit = !o["edit"].is_null();
                 let answer = o["answer"].as_str().filter(|s| !s.trim().is_empty());
@@ -1005,7 +1947,12 @@ impl ToolSession {
                         e[k].as_str()
                             .filter(|s| !s.trim().is_empty())
                             .map(|s| s.to_string())
-                            .ok_or_else(|| ToolError::new("bad-prompt", format!("option {}: edit.{} is required", i, k)))
+                            .ok_or_else(|| {
+                                ToolError::new(
+                                    "bad-prompt",
+                                    format!("option {}: edit.{} is required", i, k),
+                                )
+                            })
                     };
                     let (doc, mut section) = (get("doc")?, get("section")?);
                     // Both reference forms are accepted: `/ref` and the full
@@ -1020,24 +1967,43 @@ impl ToolSession {
                             ));
                         }
                     }
-                    let (old_text, new_text) = (get("old_text")?, get("new_text")?);
+                    // An empty old_text appends new_text to the section's body.
+                    let old_text = e["old_text"].as_str().unwrap_or_default().to_string();
+                    let new_text = get("new_text")?;
                     let Some(rec) = self.snapshot.docs.get(&doc) else {
-                        return Err(ToolError::new("bad-prompt", format!("option {}: unknown document `{}`", i, doc)));
+                        return Err(ToolError::new(
+                            "bad-prompt",
+                            format!("option {}: unknown document `{}`", i, doc),
+                        ));
                     };
                     let Some(sec) = rec.sections.get(&section) else {
-                        return Err(ToolError::new("bad-prompt", format!("option {}: unknown section `{}#{}`", i, doc, section)));
+                        return Err(ToolError::new(
+                            "bad-prompt",
+                            format!("option {}: unknown section `{}#{}`", i, doc, section),
+                        ));
                     };
-                    if crate::md::locate_bytes(&sec.raw, &old_text).is_none() {
+                    if !old_text.trim().is_empty()
+                        && crate::md::locate_bytes(&sec.raw, &old_text).is_none()
+                    {
                         return Err(ToolError::new(
                             "bad-prompt",
                             format!("option {}: old_text does not locate in {}#{}; copy it verbatim from the section", i, doc, section),
                         ));
                     }
-                    Some(SuggestedEdit { doc, section, old_text, new_text })
+                    Some(SuggestedEdit {
+                        doc,
+                        section,
+                        old_text,
+                        new_text,
+                    })
                 } else {
                     None
                 };
-                options.push(PromptOption { label: label.to_string(), edit, answer: answer.map(|s| s.to_string()) });
+                options.push(PromptOption {
+                    label: label.to_string(),
+                    edit,
+                    answer: answer.map(|s| s.to_string()),
+                });
             }
         }
         Ok(Some(DiagnosticPrompt {
@@ -1075,14 +2041,20 @@ impl ToolSession {
                 } else {
                     Focus::default()
                 };
-                let budget = args["budget"].as_u64().map(|b| b as usize).unwrap_or(self.default_budget / 2);
+                let budget = args["budget"]
+                    .as_u64()
+                    .map(|b| b as usize)
+                    .unwrap_or(self.default_budget / 2);
                 let pack = context::assemble(&self.snapshot, &target, &focus, budget)
                     .map_err(|e| ToolError::new("bad-target", e))?;
                 Ok(json!({"pack": pack.pack, "handles": pack.handles}))
             }
             "expand" => {
                 let handle = Self::str_arg(args, "handle")?;
-                let budget = args["budget"].as_u64().map(|b| b as usize).unwrap_or(self.default_budget / 2);
+                let budget = args["budget"]
+                    .as_u64()
+                    .map(|b| b as usize)
+                    .unwrap_or(self.default_budget / 2);
                 let pack = context::expand(&self.snapshot, &handle, budget)
                     .map_err(|e| ToolError::new("bad-handle", e))?;
                 Ok(json!({"pack": pack.pack, "handles": pack.handles}))
@@ -1145,7 +2117,9 @@ impl ToolSession {
             }
             "get_entity" => {
                 let id = Self::str_arg(args, "id")?;
-                let rid = self.canon_entity_id(&id).ok_or_else(|| self.unknown_entity_error(&id))?;
+                let rid = self
+                    .canon_entity_id(&id)
+                    .ok_or_else(|| self.unknown_entity_error(&id))?;
                 let e = self
                     .snapshot
                     .graph
@@ -1156,7 +2130,13 @@ impl ToolSession {
                     .snapshot
                     .requirements_referencing(&rid)
                     .iter()
-                    .filter_map(|r| self.snapshot.graph.requirements.get(r).map(|req| json!({"id": r, "ears": req.ears})))
+                    .filter_map(|r| {
+                        self.snapshot
+                            .graph
+                            .requirements
+                            .get(r)
+                            .map(|req| json!({"id": r, "statement": req.statement}))
+                    })
                     .collect();
                 let rels: Vec<Value> = self
                     .snapshot
@@ -1164,7 +2144,7 @@ impl ToolSession {
                     .relationships
                     .iter()
                     .filter(|(_, rel)| rel.members.contains(&rid))
-                    .map(|(id, rel)| json!({"id": id, "type": rel.rel_type, "members": rel.members}))
+                    .map(|(id, rel)| json!({"id": id, "type": rel.strongest(), "members": rel.members, "contributions": rel.contributions}))
                     .collect();
                 let mut v = json!({
                     "id": rid, "name": e.name, "definition": e.definition, "aliases": e.aliases,
@@ -1178,7 +2158,8 @@ impl ToolSession {
                 Ok(v)
             }
             "diagnostics" => {
-                let lifecycle = Self::opt_str(args, "lifecycle").unwrap_or_else(|| "open".to_string());
+                let lifecycle =
+                    Self::opt_str(args, "lifecycle").unwrap_or_else(|| "open".to_string());
                 let rule = Self::opt_str(args, "rule");
                 let subject = Self::opt_str(args, "subject");
                 let list: Vec<Value> = self
@@ -1238,44 +2219,100 @@ impl ToolSession {
                         ));
                     }
                 }
+                // Exactly one provenance: a located mention, or a derivation.
                 let mention = &args["mention"];
-                let section = mention["section"].as_str().unwrap_or_default();
-                let quote = mention["quote"].as_str().unwrap_or_default();
-                let (doc, sec) = self.resolve_section(section)?;
-                if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
-                    if &doc != wd {
-                        return Err(ToolError::new(
-                            "wrong-document",
-                            format!(
-                                "mention cites {} but this turn reconciles {}; quote a sentence from {}'s own sections (text this document merely links to cannot anchor a mention here)",
-                                doc, wd, wd
-                            ),
-                        ));
-                    }
+                let has_mention = mention.is_object();
+                let has_derived = args["provenance"].is_object();
+                if has_mention == has_derived {
+                    return Err(ToolError::new(
+                        if has_mention { "bad-provenance" } else { "provenance-required" },
+                        "an entity enters with exactly one provenance: mention {section, quote} (the sentence that talks about it), or provenance {derived: {from, reasoning}} for structure the documents do not state".into(),
+                    ));
                 }
-                let quote = self.check_quote(&doc, &sec, quote)?;
-                let mention_ref = SourceRef { doc, section: sec, quote };
+                let mention_ref = if has_mention {
+                    let section = mention["section"].as_str().unwrap_or_default();
+                    let quote = mention["quote"].as_str().unwrap_or_default();
+                    let (doc, sec) = self.resolve_section(section)?;
+                    if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str())
+                    {
+                        if &doc != wd {
+                            return Err(ToolError::new(
+                                "wrong-document",
+                                format!(
+                                    "mention cites {} but this turn reconciles {}; quote a sentence from {}'s own sections (text this document merely links to cannot anchor a mention here)",
+                                    doc, wd, wd
+                                ),
+                            ));
+                        }
+                    }
+                    let quote = self.check_quote(&doc, &sec, quote)?;
+                    Some(SourceRef {
+                        doc,
+                        section: sec,
+                        quote,
+                    })
+                } else {
+                    None
+                };
+                let provenance = if has_derived {
+                    Some(self.parse_derived(&args["provenance"])?)
+                } else {
+                    None
+                };
+                let stereotype = Self::opt_str(args, "stereotype");
+                let parent = match Self::opt_str(args, "parent") {
+                    Some(p) => Some(self.check_parent(None, &p)?),
+                    None => None,
+                };
+                let attributes = if args["attributes"].is_null() {
+                    Vec::new()
+                } else {
+                    self.parse_attributes(&args["attributes"], mention_ref.as_ref())?
+                };
 
                 // Lookup before create: the natural key may already exist in the graph or in
                 // this turn's own staged creates.
-                let existing = self
+                let existing = match self
                     .snapshot
-                    .find_natural(&name_arg, &scope)
-                    .or_else(|| {
-                        self.staged_entities
-                            .iter()
-                            .find(|(_, e)| {
-                                e.scope == scope && e.name.trim().to_lowercase() == name_arg.trim().to_lowercase()
-                            })
-                            .map(|(id, _)| id.clone())
-                    });
+                    .find_natural(&name_arg, &scope, parent.as_deref())
+                {
+                    Ok(found) => found,
+                    Err(candidates) => {
+                        return Err(ToolError::new(
+                            "ambiguous-name",
+                            format!(
+                                "`{}` names several entities ({}); pass `parent` to say which one you mean, or update_entity on the id",
+                                name_arg,
+                                candidates.join(", ")
+                            ),
+                        ))
+                    }
+                }
+                .or_else(|| {
+                    self.staged_entities
+                        .iter()
+                        .find(|(_, e)| {
+                            e.scope == scope
+                                && e.name.trim().to_lowercase() == name_arg.trim().to_lowercase()
+                                && parent.as_ref().is_none_or(|p| e.parent.as_ref() == Some(p))
+                        })
+                        .map(|(id, _)| id.clone())
+                });
                 if let Some(id) = existing {
+                    if let Some(p) = &parent {
+                        self.staged_parents.insert(id.clone(), p.clone());
+                    }
                     self.stage(Op::UpdateEntity {
                         id: id.clone(),
                         name: None,
                         definition: Self::opt_str(args, "definition"),
                         add_aliases: Self::str_list(args, "aliases"),
-                        add_mention: Some(mention_ref),
+                        add_mention: mention_ref,
+                        stereotype,
+                        parent,
+                        set_attributes: None,
+                        add_attributes: attributes,
+                        provenance: None,
                     })?;
                     return Ok(json!({"id": id, "created": false}));
                 }
@@ -1286,14 +2323,19 @@ impl ToolSession {
                     aliases: Self::str_list(args, "aliases"),
                     definition: Self::opt_str(args, "definition"),
                     scope,
-                    mentions: vec![mention_ref],
-                    confidence: None,
+                    stereotype,
+                    parent,
+                    attributes,
+                    mentions: mention_ref.into_iter().collect(),
+                    provenance,
                     reasoning: note,
-                    created: None,
-                    updated: None,
+                    ..Default::default()
                 };
                 self.staged_entities.insert(id.clone(), entity.clone());
-                self.stage(Op::CreateEntity { id: id.clone(), entity })?;
+                self.stage(Op::CreateEntity {
+                    id: id.clone(),
+                    entity,
+                })?;
                 Ok(json!({"id": id, "created": true}))
             }
             "update_entity" => {
@@ -1307,12 +2349,41 @@ impl ToolSession {
                         return Err(ToolError::new("junk-name", format!("`{}` {}", n, why)));
                     }
                 }
+                let parent = match Self::opt_str(args, "parent") {
+                    Some(p) => Some(self.check_parent(Some(&rid), &p)?),
+                    None => None,
+                };
+                // An attribute without its own provenance takes the entity's first mention.
+                let first_mention = self
+                    .snapshot
+                    .graph
+                    .entities
+                    .get(&rid)
+                    .and_then(|e| e.mentions.first().cloned())
+                    .or_else(|| {
+                        self.staged_entities
+                            .get(&rid)
+                            .and_then(|e| e.mentions.first().cloned())
+                    });
+                let attributes = if args["attributes"].is_null() {
+                    Vec::new()
+                } else {
+                    self.parse_attributes(&args["attributes"], first_mention.as_ref())?
+                };
+                if let Some(p) = &parent {
+                    self.staged_parents.insert(rid.clone(), p.clone());
+                }
                 self.stage(Op::UpdateEntity {
                     id: rid.clone(),
                     name,
                     definition: Self::opt_str(args, "definition"),
                     add_aliases: Self::str_list(args, "add_aliases"),
                     add_mention: None,
+                    stereotype: Self::opt_str(args, "stereotype"),
+                    parent,
+                    set_attributes: None,
+                    add_attributes: attributes,
+                    provenance: None,
                 })?;
                 Ok(json!({"id": rid, "updated": true}))
             }
@@ -1324,8 +2395,13 @@ impl ToolSession {
                 };
                 let mut refs = self.snapshot.requirements_referencing(&rid);
                 for op in &self.staged {
-                    if let Op::CreateRequirement { id: qid, requirement } = op {
-                        if requirement.entities.contains(&rid) || requirement.entities.contains(&id) {
+                    if let Op::CreateRequirement {
+                        id: qid,
+                        requirement,
+                    } = op
+                    {
+                        if requirement.entities.contains(&rid) || requirement.entities.contains(&id)
+                        {
                             refs.push(qid.clone());
                         }
                     }
@@ -1333,7 +2409,11 @@ impl ToolSession {
                 if !refs.is_empty() {
                     return Err(ToolError::new(
                         "still-referenced",
-                        format!("cannot delete {}; requirements still reference it: {}", rid, refs.join(", ")),
+                        format!(
+                            "cannot delete {}; requirements still reference it: {}",
+                            rid,
+                            refs.join(", ")
+                        ),
                     ));
                 }
                 self.stage(Op::DeleteEntity { id: rid, reason })?;
@@ -1350,14 +2430,33 @@ impl ToolSession {
                     return Err(self.unknown_entity_error(&absorb_arg));
                 };
                 if keep == absorb {
-                    return Err(ToolError::new("bad-merge", "keep and absorb are the same entity".into()));
+                    return Err(ToolError::new(
+                        "bad-merge",
+                        "keep and absorb are the same entity".into(),
+                    ));
                 }
-                self.stage(Op::MergeEntities { keep: keep.clone(), absorb, reason })?;
+                self.stage(Op::MergeEntities {
+                    keep: keep.clone(),
+                    absorb,
+                    reason,
+                })?;
                 Ok(json!({"kept": keep}))
             }
             "upsert_requirement" => {
-                let ears = Self::str_arg(args, "ears")?;
-                ears_shape(&ears)?;
+                let statement = Self::str_arg(args, "statement")?;
+                statement_present(&statement)?;
+                // Exactly one provenance: the source sentence, or a derivation.
+                let has_source = !args["section"].is_null() || !args["quote"].is_null();
+                let has_derived = args["provenance"].is_object();
+                if has_source == has_derived {
+                    return Err(ToolError::new(
+                        if has_source { "bad-provenance" } else { "provenance-required" },
+                        "a requirement enters with exactly one provenance: section plus quote (the verbatim source sentence), or provenance {derived: {from, reasoning}} for a statement the documents do not state".into(),
+                    ));
+                }
+                if has_derived {
+                    return self.upsert_derived_requirement(args, statement);
+                }
                 // Provenance is validated first: a quote that does not locate is the
                 // clearest signal a statement was invented, and it must not be masked
                 // by an entity-id error the model would keep retrying around.
@@ -1378,7 +2477,10 @@ impl ToolSession {
                 let quote = self.check_quote(&doc, &sec, &quote)?;
                 let raw_entities = Self::str_list(args, "entities");
                 if raw_entities.is_empty() {
-                    return Err(ToolError::new("no-entities", "a requirement must reference at least one entity id".into()));
+                    return Err(ToolError::new(
+                        "no-entities",
+                        "a requirement must reference at least one entity id".into(),
+                    ));
                 }
                 let mut entities: Vec<String> = Vec::new();
                 for e in &raw_entities {
@@ -1391,52 +2493,51 @@ impl ToolSession {
                         None => return Err(self.unknown_entity_error(e)),
                     }
                 }
-                let mut edges = Vec::new();
-                if let Some(arr) = args["edges"].as_array() {
-                    for e in arr {
-                        let raw_a = e["a"].as_str().unwrap_or_default();
-                        let raw_b = e["b"].as_str().unwrap_or_default();
-                        let a = self.canon_entity_id(raw_a).unwrap_or_else(|| raw_a.to_string());
-                        let b = self.canon_entity_id(raw_b).unwrap_or_else(|| raw_b.to_string());
-                        if !entities.contains(&a) || !entities.contains(&b) {
-                            return Err(ToolError::new(
-                                "bad-edge",
-                                format!("edge {}~{} may only tie entities the requirement itself references", a, b),
-                            ));
-                        }
-                        let t = e["type"].as_str().map(|s| s.to_string());
-                        if let Some(t) = &t {
-                            if !REL_TYPES.contains(&t.as_str()) {
-                                return Err(ToolError::new(
-                                    "bad-edge",
-                                    format!("unknown relationship type `{}`; one of: {}", t, REL_TYPES.join(", ")),
-                                ));
-                            }
-                        }
-                        edges.push(ReqEdge { a, b, rel_type: t });
-                    }
-                }
-                let source = SourceRef { doc: doc.clone(), section: sec, quote: quote.trim().to_string() };
+                let edges = match args["edges"].as_array() {
+                    Some(arr) => parse_edges(self, arr, Some(&entities))?,
+                    None => Vec::new(),
+                };
+                let transition = if args["transition"].is_null() {
+                    None
+                } else {
+                    Some(self.parse_transition(&args["transition"], &entities)?)
+                };
+                let facets = if args["facets"].is_null() {
+                    Vec::new()
+                } else {
+                    parse_facets(&args["facets"])?
+                };
+                let source = SourceRef {
+                    doc: doc.clone(),
+                    section: sec.clone(),
+                    quote: quote.trim().to_string(),
+                };
                 let requirement = Requirement {
-                    ears,
+                    statement,
                     entities,
                     edges,
-                    source,
-                    confidence: None,
+                    transition,
+                    facets,
+                    source: Some(source.clone()),
                     reasoning: Self::opt_str(args, "reasoning"),
-                    created: None,
-                    updated: None,
+                    ..Default::default()
                 };
                 // Stage-time natural-key resolution: the model sees the resolved id,
                 // never a misleading fresh one. Same predicate as the commit-time fold.
-                let norm_ears = crate::store::normalize_statement(&requirement.ears);
-                let norm_quote = crate::store::normalize_statement(&requirement.source.quote);
+                let norm_statement = crate::store::normalize_statement(&requirement.statement);
+                let norm_quote = crate::store::normalize_statement(&source.quote);
                 let same_key = |r: &Requirement| {
-                    r.source.doc == requirement.source.doc
-                        && r.source.section == requirement.source.section
-                        && (crate::store::normalize_statement(&r.ears) == norm_ears
-                            || (crate::store::normalize_statement(&r.source.quote) == norm_quote
-                                && crate::store::statement_subsumes(&r.ears, &requirement.ears)))
+                    let Some(rs) = r.source.as_ref() else {
+                        return false;
+                    };
+                    rs.doc == source.doc
+                        && rs.section == source.section
+                        && (crate::store::normalize_statement(&r.statement) == norm_statement
+                            || (crate::store::normalize_statement(&rs.quote) == norm_quote
+                                && crate::store::statement_subsumes(
+                                    &r.statement,
+                                    &requirement.statement,
+                                )))
                 };
                 // A statement this turn already staged: refresh that staged call in
                 // place, so a repeated upsert is idempotent within the turn.
@@ -1453,11 +2554,21 @@ impl ToolSession {
                         }
                     }
                     for edge in requirement.edges {
-                        if !r.edges.iter().any(|x| (x.a == edge.a && x.b == edge.b) || (x.a == edge.b && x.b == edge.a)) {
+                        if !r
+                            .edges
+                            .iter()
+                            .any(|x| x.a == edge.a && x.b == edge.b && x.rel_type == edge.rel_type)
+                        {
                             r.edges.push(edge);
                         }
                     }
-                    r.ears = requirement.ears;
+                    if requirement.transition.is_some() {
+                        r.transition = requirement.transition;
+                    }
+                    if !requirement.facets.is_empty() {
+                        r.facets = requirement.facets;
+                    }
+                    r.statement = requirement.statement;
                     r.source = requirement.source;
                     return Ok(json!({"id": id.clone(), "updated": true}));
                 }
@@ -1477,10 +2588,18 @@ impl ToolSession {
                             .iter()
                             .find(|a| {
                                 self.snapshot.graph.requirements.get(*a).is_some_and(|r| {
-                                    r.source.doc == requirement.source.doc
-                                        && r.source.section == requirement.source.section
-                                        && !self.snapshot.quote_locates(&r.source.doc, &r.source.section, &r.source.quote)
-                                        && crate::store::statement_subsumes(&r.ears, &requirement.ears)
+                                    r.source.as_ref().is_some_and(|rs| {
+                                        rs.doc == source.doc
+                                            && rs.section == source.section
+                                            && !self.snapshot.quote_locates(
+                                                &rs.doc,
+                                                &rs.section,
+                                                &rs.quote,
+                                            )
+                                    }) && crate::store::statement_subsumes(
+                                        &r.statement,
+                                        &requirement.statement,
+                                    )
                                 })
                             })
                             .cloned()
@@ -1488,7 +2607,10 @@ impl ToolSession {
                 if let Some(rid) = existing {
                     self.staged_reqs.insert(rid.clone());
                     self.taken_ids.insert(rid.clone());
-                    self.stage(Op::CreateRequirement { id: rid.clone(), requirement })?;
+                    self.stage(Op::CreateRequirement {
+                        id: rid.clone(),
+                        requirement,
+                    })?;
                     return Ok(json!({"id": rid, "updated": true}));
                 }
                 // A new statement: the store mints the id; a supplied id is ignored.
@@ -1497,15 +2619,18 @@ impl ToolSession {
                 let id = self.snapshot.mint_req_id(&doc, &taken);
                 self.staged_reqs.insert(id.clone());
                 self.taken_ids.insert(id.clone());
-                self.stage(Op::CreateRequirement { id: id.clone(), requirement })?;
+                self.stage(Op::CreateRequirement {
+                    id: id.clone(),
+                    requirement,
+                })?;
                 Ok(json!({"id": id, "created": true}))
             }
             "update_requirement" => {
                 let id = self.canon_req_id(&Self::str_arg(args, "id")?)?;
-                let ears = Self::opt_str(args, "ears");
-                if let Some(e) = &ears {
-                    ears_shape(e)?;
+                if let Some(given) = args["statement"].as_str() {
+                    statement_present(given)?;
                 }
+                let statement = Self::opt_str(args, "statement");
                 let entities = match args["entities"].as_array() {
                     Some(_) => {
                         let mut canon: Vec<String> = Vec::new();
@@ -1523,43 +2648,46 @@ impl ToolSession {
                     }
                     None => None,
                 };
-                let mut edges: Option<Vec<ReqEdge>> = None;
-                if let Some(arr) = args["edges"].as_array() {
-                    let mut v = Vec::new();
-                    for e in arr {
-                        let t = e["type"].as_str().map(|s| s.to_string());
-                        if let Some(t) = &t {
-                            if !REL_TYPES.contains(&t.as_str()) {
-                                return Err(ToolError::new(
-                                    "bad-edge",
-                                    format!("unknown relationship type `{}`; one of: {}", t, REL_TYPES.join(", ")),
-                                ));
-                            }
-                        }
-                        let raw_a = e["a"].as_str().unwrap_or_default();
-                        let raw_b = e["b"].as_str().unwrap_or_default();
-                        v.push(ReqEdge {
-                            a: self.canon_entity_id(raw_a).unwrap_or_else(|| raw_a.to_string()),
-                            b: self.canon_entity_id(raw_b).unwrap_or_else(|| raw_b.to_string()),
-                            rel_type: t,
-                        });
-                    }
-                    edges = Some(v);
-                }
+                // The entities the edges and the transition are checked against: the
+                // revised list, or the stored one.
+                let listed: Vec<String> = entities.clone().unwrap_or_else(|| {
+                    self.snapshot
+                        .graph
+                        .requirements
+                        .get(&id)
+                        .map(|r| r.entities.clone())
+                        .unwrap_or_default()
+                });
+                let edges = match args["edges"].as_array() {
+                    Some(arr) => Some(parse_edges(self, arr, Some(&listed))?),
+                    None => None,
+                };
+                let transition = if args["transition"].is_null() {
+                    None
+                } else {
+                    Some(self.parse_transition(&args["transition"], &listed)?)
+                };
+                let facets = if args["facets"].is_null() {
+                    None
+                } else {
+                    Some(parse_facets(&args["facets"])?)
+                };
                 // A revision may re-anchor its provenance: section plus quote, both or
                 // neither. The quote must locate, same gate as a fresh upsert.
                 // The common miscall is passing the statement as the quote while only
                 // meaning to change `entities`; name the existing anchor so the repair
                 // is to drop the two fields, not to guess another sentence.
-                let anchor_hint = || match self.snapshot.graph.requirements.get(&id) {
-                    Some(r) => format!(
-                        "{} is anchored at {}#{} quoting \"{}\". `quote` is the document's own sentence, never the `ears` statement. To change only the entities or edges, omit `section` and `quote`",
+                let anchor_hint = || {
+                    match self.snapshot.graph.requirements.get(&id).and_then(|r| r.source.as_ref()) {
+                    Some(src) => format!(
+                        "{} is anchored at {}#{} quoting \"{}\". `quote` is the document's own sentence, never the statement. To change only the entities or edges, omit `section` and `quote`",
                         id,
-                        r.source.doc,
-                        r.source.section,
-                        crate::llm::truncate(&r.source.quote, 120)
+                        src.doc,
+                        src.section,
+                        crate::llm::truncate(&src.quote, 120)
                     ),
-                    None => "`quote` is the document's own sentence, never the `ears` statement. To change only the entities or edges, omit `section` and `quote`".to_string(),
+                    None => "`quote` is the document's own sentence, never the statement. To change only the entities or edges, omit `section` and `quote`".to_string(),
+                }
                 };
                 let source = match (Self::opt_str(args, "section"), Self::opt_str(args, "quote")) {
                     (Some(section), Some(q)) => {
@@ -1590,7 +2718,16 @@ impl ToolSession {
                         ))
                     }
                 };
-                self.stage(Op::UpdateRequirement { id: id.clone(), ears, entities, edges, source })?;
+                self.stage(Op::UpdateRequirement {
+                    id: id.clone(),
+                    statement,
+                    entities,
+                    edges,
+                    transition,
+                    facets,
+                    source,
+                    provenance: None,
+                })?;
                 Ok(json!({"id": id, "updated": true}))
             }
             "delete_requirement" => {
@@ -1630,23 +2767,34 @@ impl ToolSession {
                     .cloned()
                     .collect();
                 if proposals.is_empty() {
-                    return Err(ToolError::new("unknown-anchor", format!("no pending proposal for `{}`", id)));
+                    return Err(ToolError::new(
+                        "unknown-anchor",
+                        format!("no pending proposal for `{}`", id),
+                    ));
                 }
                 let mut froms: Vec<SourceRef> = Vec::new();
                 for p in &proposals {
-                    let (from_doc, from_sec) = split_section_ref(&p.from)
-                        .ok_or_else(|| ToolError::new("bad-section", format!("bad proposal location `{}`", p.from)))?;
-                    froms.push(SourceRef { doc: from_doc, section: from_sec, quote: p.quote.clone() });
+                    let (from_doc, from_sec) = split_section_ref(&p.from).ok_or_else(|| {
+                        ToolError::new("bad-section", format!("bad proposal location `{}`", p.from))
+                    })?;
+                    froms.push(SourceRef {
+                        doc: from_doc,
+                        section: from_sec,
+                        quote: p.quote.clone(),
+                    });
                 }
                 if name == "orphan_anchor" {
                     for from in froms {
-                        self.stage(Op::OrphanAnchor { id: id.clone(), from })?;
+                        self.stage(Op::OrphanAnchor {
+                            id: id.clone(),
+                            from,
+                        })?;
                     }
                     return Ok(json!({"id": id, "orphaned": true}));
                 }
                 let (doc, sec) = self.resolve_section(&Self::str_arg(args, "section")?)?;
                 let given = match Self::opt_str(args, "quote") {
-                    Some(q) if froms.len() > 1 => {
+                    Some(_) if froms.len() > 1 => {
                         return Err(ToolError::new(
                             "bad-argument",
                             format!(
@@ -1667,7 +2815,11 @@ impl ToolSession {
                     self.stage(Op::PlaceAnchor {
                         id: id.clone(),
                         from,
-                        to: SourceRef { doc: doc.clone(), section: sec.clone(), quote },
+                        to: SourceRef {
+                            doc: doc.clone(),
+                            section: sec.clone(),
+                            quote,
+                        },
                         reevaluate,
                     })?;
                 }
@@ -1680,35 +2832,63 @@ impl ToolSession {
             }
             "report_diagnostic" => {
                 let rule = Self::str_arg(args, "rule")?;
-                const REVIEW_RULES: [&str; 6] =
-                    ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"];
                 if !REVIEW_RULES.contains(&rule.as_str()) {
                     return Err(ToolError::new(
                         "bad-rule",
-                        format!("rule `{}` is not in the catalog; use one of: {}", rule, REVIEW_RULES.join(", ")),
+                        format!(
+                            "rule `{}` is not in the catalog; use one of: {}",
+                            rule,
+                            REVIEW_RULES.join(", ")
+                        ),
                     ));
                 }
                 let severity = Self::str_arg(args, "severity")?;
                 if !["error", "warning", "info", "none"].contains(&severity.as_str()) {
-                    return Err(ToolError::new("bad-severity", format!("severity `{}` must be error, warning, info, or none", severity)));
+                    return Err(ToolError::new(
+                        "bad-severity",
+                        format!(
+                            "severity `{}` must be error, warning, info, or none",
+                            severity
+                        ),
+                    ));
                 }
                 let subjects = Self::str_list(args, "subjects");
                 if subjects.is_empty() {
-                    return Err(ToolError::new("no-subjects", "a diagnostic needs at least one subject node id".into()));
+                    return Err(ToolError::new(
+                        "no-subjects",
+                        "a diagnostic needs at least one subject node id".into(),
+                    ));
                 }
                 for s in &subjects {
                     let ok = self.known_entity(s)
                         || self.snapshot.graph.requirements.contains_key(s)
                         || self.staged_reqs.contains(s)
                         || split_section_ref(s)
-                            .map(|(d, r)| self.snapshot.docs.get(&d).map(|rec| rec.sections.contains_key(&r)).unwrap_or(false))
+                            .map(|(d, r)| {
+                                self.snapshot
+                                    .docs
+                                    .get(&d)
+                                    .map(|rec| rec.sections.contains_key(&r))
+                                    .unwrap_or(false)
+                            })
                             .unwrap_or(false);
                     if !ok {
-                        return Err(ToolError::new("unknown-id", format!("diagnostic subject `{}` does not exist", s)));
+                        return Err(ToolError::new(
+                            "unknown-id",
+                            format!("diagnostic subject `{}` does not exist", s),
+                        ));
                     }
                 }
                 let message = Self::str_arg(args, "message")?;
                 let prompt = self.parse_prompt(&args["prompt"])?;
+                // A decision is a question for the owner: it carries the prompt that
+                // asks it. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
+                if rule == "decision" && prompt.is_none() {
+                    return Err(ToolError::new(
+                        "decision-needs-prompt",
+                        "a decision diagnostic carries a prompt: the question and the options the documents leave open (each a label with an edit or an answer)".into(),
+                    ));
+                }
                 self.stage(Op::ReportDiagnostic {
                     id: String::new(),
                     diagnostic: Diagnostic {
@@ -1730,7 +2910,10 @@ impl ToolSession {
             "update_diagnostic" => {
                 let id = Self::str_arg(args, "id")?;
                 if !self.snapshot.graph.diagnostics.contains_key(&id) {
-                    return Err(ToolError::new("unknown-id", format!("unknown diagnostic id `{}`", id)));
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!("unknown diagnostic id `{}`", id),
+                    ));
                 }
                 let prompt = self.parse_prompt(&args["prompt"])?;
                 self.stage(Op::UpdateDiagnosticPrompt { id, prompt })?;
@@ -1739,29 +2922,59 @@ impl ToolSession {
             "resolve_diagnostic" => {
                 let id = Self::str_arg(args, "id")?;
                 let reason = Self::str_arg(args, "reason")?;
-                if !self.snapshot.graph.diagnostics.contains_key(&id) {
-                    return Err(ToolError::new("unknown-id", format!("unknown diagnostic id `{}`", id)));
+                let Some(d) = self.snapshot.graph.diagnostics.get(&id) else {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!("unknown diagnostic id `{}`", id),
+                    ));
+                };
+                // A ratification proposal closes only through accept or retract.
+                // Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+                if d.rule == "ratification-pending" {
+                    return Err(ToolError::new(
+                        "not-resolvable",
+                        format!(
+                            "{} is a ratification proposal; it resolves when its edit option is applied or the fact is retracted, never through resolve_diagnostic",
+                            id
+                        ),
+                    ));
                 }
                 self.stage(Op::ResolveDiagnostic { id, reason })?;
                 Ok(json!({"resolved": true}))
             }
+            "upsert_view" | "update_view" | "delete_view" => self.view_tool(name, args),
+            "edit_fact" => self.edit_fact(args),
             "set_coverage" => {
                 let section = Self::str_arg(args, "section")?;
                 let state = Self::str_arg(args, "state")?;
                 if !["covered", "non-normative"].contains(&state.as_str()) {
-                    return Err(ToolError::new("bad-state", format!("state `{}` must be covered or non-normative", state)));
+                    return Err(ToolError::new(
+                        "bad-state",
+                        format!("state `{}` must be covered or non-normative", state),
+                    ));
                 }
                 // A placeholder note counts as absent; weak models emit these literally.
-                let note = Self::opt_str(args, "note")
-                    .filter(|n| !matches!(n.trim().to_lowercase().as_str(), "<nil>" | "nil" | "null" | "none" | "n/a" | "na" | "-"));
+                let note = Self::opt_str(args, "note").filter(|n| {
+                    !matches!(
+                        n.trim().to_lowercase().as_str(),
+                        "<nil>" | "nil" | "null" | "none" | "n/a" | "na" | "-"
+                    )
+                });
                 if state == "non-normative" && note.is_none() {
                     return Err(ToolError::new("note-required", "non-normative requires a note saying why the section states no requirements".into()));
                 }
                 let (doc, sec) = self.resolve_section(&section)?;
-                if self.scope.task == "reconcile-doc" && !self.scope.target_sections.is_empty() && !self.scope.target_sections.contains(&sec) {
+                if self.scope.task == "reconcile-doc"
+                    && !self.scope.target_sections.is_empty()
+                    && !self.scope.target_sections.contains(&sec)
+                {
                     return Err(ToolError::new(
                         "wrong-section",
-                        format!("{} is not one of this turn's dirty sections ({})", sec, self.scope.target_sections.join(", ")),
+                        format!(
+                            "{} is not one of this turn's dirty sections ({})",
+                            sec,
+                            self.scope.target_sections.join(", ")
+                        ),
                     ));
                 }
                 // A section that yielded a statement is not non-normative. The two claims
@@ -1773,12 +2986,12 @@ impl ToolSession {
                         .graph
                         .requirements
                         .iter()
-                        .filter(|(_, r)| r.source.doc == doc && r.source.section == sec)
+                        .filter(|(_, r)| r.anchored_at(&doc, &sec))
                         .map(|(id, _)| id.clone())
                         .collect();
                     for op in &self.staged {
                         if let Op::CreateRequirement { id, requirement } = op {
-                            if requirement.source.doc == doc && requirement.source.section == sec {
+                            if requirement.anchored_at(&doc, &sec) {
                                 yielded.push(id.clone());
                             }
                         }
@@ -1801,14 +3014,21 @@ impl ToolSession {
                 // earlier mark instead of journaling contradictory states.
                 self.staged
                     .retain(|op| !matches!(op, Op::SetCoverage { doc: d, section: s, .. } if d == &doc && s == &sec));
-                self.stage(Op::SetCoverage { doc, section: sec, state, note })?;
+                self.stage(Op::SetCoverage {
+                    doc,
+                    section: sec,
+                    state,
+                    note,
+                })?;
                 Ok(json!({"set": true}))
             }
             "generation_tasks" => {
                 let gs = self.gen_settings();
                 let tasks = crate::gen::pending(&self.snapshot, &gs);
                 if tasks.is_empty() {
-                    return Ok(json!({"tasks": [], "note": "generation is current; nothing to do"}));
+                    return Ok(
+                        json!({"tasks": [], "note": "generation is current; nothing to do"}),
+                    );
                 }
                 Ok(json!({"tasks": tasks, "next": "begin_generation on one entity"}))
             }
@@ -1826,7 +3046,8 @@ impl ToolSession {
                 let Some(seen) = Self::opt_str(args, "factHash") else {
                     return Err(ToolError::new(
                         "bad-argument",
-                        "factHash is required; pass the factHash from the begin_generation package".into(),
+                        "factHash is required; pass the factHash from the begin_generation package"
+                            .into(),
                     ));
                 };
                 if !args["manifest"].is_object() {
@@ -1835,21 +3056,30 @@ impl ToolSession {
                         "manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}".into(),
                     ));
                 }
-                crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &args["manifest"], &gs)
-                    .map_err(|e| ToolError::new("bad-manifest", e))
+                crate::gen::mark(
+                    &self.snapshot,
+                    &id,
+                    Some(seen.as_str()),
+                    &args["manifest"],
+                    &gs,
+                )
+                .map_err(|e| ToolError::new("bad-manifest", e))
             }
             "binding_tasks" => {
                 let gs = self.gen_settings();
                 let tasks = crate::bind::pending(&self.snapshot, &gs);
                 if tasks.is_empty() {
-                    return Ok(json!({"tasks": [], "note": "every requirement is bound; generation_tasks lists what binding left unimplemented"}));
+                    return Ok(
+                        json!({"tasks": [], "note": "every requirement is bound; generation_tasks lists what binding left unimplemented"}),
+                    );
                 }
                 Ok(json!({"tasks": tasks, "next": "begin_binding on one requirement"}))
             }
             "begin_binding" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let gs = self.gen_settings();
-                crate::bind::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
+                crate::bind::task(&self.snapshot, &rid, &gs)
+                    .map_err(|e| ToolError::new("unknown-id", e))
             }
             "record_binding" => {
                 let rid = Self::str_arg(args, "requirement")?;
@@ -1863,23 +3093,41 @@ impl ToolSession {
                         "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into(),
                     ));
                 }
-                crate::bind::record(&self.snapshot, &rid, &files, &args["test"], &verdict, evidence.as_deref(), &gs)
-                    .map_err(|e| ToolError::new("bad-binding", e))
+                crate::bind::record(
+                    &self.snapshot,
+                    &rid,
+                    &files,
+                    &args["test"],
+                    &verdict,
+                    evidence.as_deref(),
+                    &gs,
+                )
+                .map_err(|e| ToolError::new("bad-binding", e))
             }
             "verification_tasks" => {
                 let gs = self.gen_settings();
                 let filter = Self::opt_str(args, "filter");
                 let entity = Self::opt_str(args, "entity");
-                let tasks = crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref());
+                let tasks = crate::verify::pending(
+                    &self.snapshot,
+                    &gs,
+                    filter.as_deref(),
+                    entity.as_deref(),
+                );
                 if tasks.is_empty() {
-                    return Ok(json!({"tasks": [], "note": "nothing pending; every targeted row is verified"}));
+                    return Ok(
+                        json!({"tasks": [], "note": "nothing pending; every targeted row is verified"}),
+                    );
                 }
-                Ok(json!({"tasks": tasks, "next": "run_tests for programmatic rows; begin_verification then record_verdict for llm rows"}))
+                Ok(
+                    json!({"tasks": tasks, "next": "run_tests for programmatic rows; begin_verification then record_verdict for llm rows"}),
+                )
             }
             "begin_verification" => {
                 let rid = Self::str_arg(args, "requirement")?;
                 let gs = self.gen_settings();
-                crate::verify::task(&self.snapshot, &rid, &gs).map_err(|e| ToolError::new("unknown-id", e))
+                crate::verify::task(&self.snapshot, &rid, &gs)
+                    .map_err(|e| ToolError::new("unknown-id", e))
             }
             "run_tests" => {
                 let gs = self.gen_settings();
@@ -1893,10 +3141,19 @@ impl ToolSession {
                 let gs = self.gen_settings();
                 let seen = Self::opt_str(args, "factHash");
                 let evidence = Self::opt_str(args, "evidence");
-                crate::verify::mark(&self.snapshot, &rid, &verdict, seen.as_deref(), evidence.as_deref(), &gs)
-                    .map_err(|e| ToolError::new("bad-argument", e))
+                crate::verify::mark(
+                    &self.snapshot,
+                    &rid,
+                    &verdict,
+                    seen.as_deref(),
+                    evidence.as_deref(),
+                    &gs,
+                )
+                .map_err(|e| ToolError::new("bad-argument", e))
             }
-            "read_text_file" | "write_text_file" | "list_files" | "run_command" => self.file_tool(name, args),
+            "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
+                self.file_tool(name, args)
+            }
             // Feedback about jazyk's own prompts and tools. It stages nothing, spends no
             // mutation budget, and passes no gate beyond a non-empty message: a model
             // asking for help is never bounced. Mirrors docs/compiler/tools.md#feedback-tool.
@@ -1921,11 +3178,20 @@ impl ToolSession {
                     &self.snapshot.out,
                     &crate::feedback::Entry {
                         at: crate::verify::now_iso(),
-                        kind: crate::feedback::normalize_kind(&Self::opt_str(args, "kind").unwrap_or_default()),
-                        subject: Self::opt_str(args, "subject").unwrap_or_default().trim().to_string(),
+                        kind: crate::feedback::normalize_kind(
+                            &Self::opt_str(args, "kind").unwrap_or_default(),
+                        ),
+                        subject: Self::opt_str(args, "subject")
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
                         message: crate::llm::truncate(message, 4_000).to_string(),
                         source: c.source,
-                        task: if c.task.is_empty() { self.scope.task.clone() } else { c.task },
+                        task: if c.task.is_empty() {
+                            self.scope.task.clone()
+                        } else {
+                            c.task
+                        },
                         target: c.target,
                         model: c.model,
                         codec: c.codec,
@@ -1969,22 +3235,30 @@ impl ToolSession {
                 // though its quote locates.
                 let mut untouched: Vec<String> = Vec::new();
                 for a in &self.scope.stale_anchors {
-                    let Some(r) = self.snapshot.graph.requirements.get(a) else { continue };
-                    if self.snapshot.quote_locates(&r.source.doc, &r.source.section, &r.source.quote)
+                    let Some(r) = self.snapshot.graph.requirements.get(a) else {
+                        continue;
+                    };
+                    let Some(src) = r.source.as_ref() else {
+                        continue;
+                    };
+                    if self
+                        .snapshot
+                        .quote_locates(&src.doc, &src.section, &src.quote)
                         && !self.snapshot.status.reevaluate.contains(a)
                     {
                         continue;
                     }
                     let addressed = self.staged.iter().any(|o| match o {
-                        Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
+                        Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => {
+                            id == a
+                        }
                         // A staged create that resolved to the anchor carries its id;
                         // the statement-equality fallback covers pre-resolution stages.
                         Op::CreateRequirement { id, requirement } => {
                             id == a
-                                || (requirement.source.doc == r.source.doc
-                                    && requirement.source.section == r.source.section
-                                    && crate::store::normalize_statement(&requirement.ears)
-                                        == crate::store::normalize_statement(&r.ears))
+                                || (requirement.anchored_at(&src.doc, &src.section)
+                                    && crate::store::normalize_statement(&requirement.statement)
+                                        == crate::store::normalize_statement(&r.statement))
                         }
                         _ => false,
                     });
@@ -1996,7 +3270,7 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "stale-anchor",
                         format!(
-                            "stale anchors left untouched: {}; for each: if the document still states the fact, re-record it with upsert_requirement quoting the new sentence verbatim (it resolves to the anchor and updates in place); if the statement changed meaning, revise it with update_requirement carrying the id, the new ears, and the new section plus quote; if the fact is gone, delete_requirement",
+                            "stale anchors left untouched: {}; for each: if the document still states the fact, re-record it with upsert_requirement quoting the new sentence verbatim (it resolves to the anchor and updates in place); if the statement changed meaning, revise it with update_requirement carrying the id, the new statement, and the new section plus quote; if the fact is gone, delete_requirement",
                             untouched.join(", ")
                         ),
                     ));
@@ -2006,7 +3280,8 @@ impl ToolSession {
                 // implicit path commits without one and the section stays unprocessed.
                 // Mirrors docs/compiler/turns.md#commit.
                 if !self.implicit_done {
-                    if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
+                    if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str())
+                    {
                         let unmarked: Vec<String> = self
                             .scope
                             .target_sections
@@ -2042,7 +3317,13 @@ impl ToolSession {
                 // from dropping a rejected requirement and claiming the section anyway,
                 // and from skimming past declarative prose without extracting.
                 for op in &self.staged {
-                    if let Op::SetCoverage { doc, section, state, .. } = op {
+                    if let Op::SetCoverage {
+                        doc,
+                        section,
+                        state,
+                        ..
+                    } = op
+                    {
                         if state != "covered" {
                             continue;
                         }
@@ -2051,10 +3332,10 @@ impl ToolSession {
                             .graph
                             .requirements
                             .values()
-                            .any(|r| &r.source.doc == doc && &r.source.section == section)
+                            .any(|r| r.anchored_at(doc, section))
                             || self.staged.iter().any(|o| match o {
                                 Op::CreateRequirement { requirement, .. } => {
-                                    &requirement.source.doc == doc && &requirement.source.section == section
+                                    requirement.anchored_at(doc, section)
                                 }
                                 _ => false,
                             });
@@ -2062,7 +3343,7 @@ impl ToolSession {
                             return Err(ToolError::new(
                                 "uncovered-claim",
                                 format!(
-                                    "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (rephrase into a shall statement, keep the quote verbatim), or mark the section non-normative with a note",
+                                    "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (state the obligation, keep the quote verbatim), or mark the section non-normative with a note",
                                     doc, section
                                 ),
                             ));
@@ -2073,8 +3354,651 @@ impl ToolSession {
                 self.done = Some(summary);
                 Ok(json!({"ok": true}))
             }
-            other => Err(ToolError::new("unknown-tool", format!("unknown tool `{}`", other))),
+            other => Err(ToolError::new(
+                "unknown-tool",
+                format!("unknown tool `{}`", other),
+            )),
         }
+    }
+}
+
+// The view tools, the derived requirement path, and the chat edit path.
+impl ToolSession {
+    // upsert_requirement with derived provenance: a statement the documents do not
+    // state, keyed on the statement within its `from` set, minted as `req:x-<n>`.
+    // Mirrors docs/compiler/model/requirement.md#identity.
+    fn upsert_derived_requirement(
+        &mut self,
+        args: &Value,
+        statement: String,
+    ) -> Result<Value, ToolError> {
+        let raw_entities = Self::str_list(args, "entities");
+        if raw_entities.is_empty() {
+            return Err(ToolError::new(
+                "no-entities",
+                "a requirement must reference at least one entity id".into(),
+            ));
+        }
+        let mut entities: Vec<String> = Vec::new();
+        for e in &raw_entities {
+            match self.canon_entity_id(e) {
+                Some(id) => {
+                    if !entities.contains(&id) {
+                        entities.push(id);
+                    }
+                }
+                None => return Err(self.unknown_entity_error(e)),
+            }
+        }
+        let edges = match args["edges"].as_array() {
+            Some(arr) => parse_edges(self, arr, Some(&entities))?,
+            None => Vec::new(),
+        };
+        let transition = if args["transition"].is_null() {
+            None
+        } else {
+            Some(self.parse_transition(&args["transition"], &entities)?)
+        };
+        let facets = if args["facets"].is_null() {
+            Vec::new()
+        } else {
+            parse_facets(&args["facets"])?
+        };
+        let provenance = self.parse_derived(&args["provenance"])?;
+        let from_set: BTreeSet<String> = match &provenance {
+            Provenance::Derived { from, .. } => from.iter().cloned().collect(),
+            _ => BTreeSet::new(),
+        };
+        let norm = crate::store::normalize_statement(&statement);
+        let same_key = |r: &Requirement| {
+            r.source.is_none()
+                && matches!(&r.provenance, Some(Provenance::Derived { from, .. })
+                    if from.iter().cloned().collect::<BTreeSet<String>>() == from_set)
+                && crate::store::normalize_statement(&r.statement) == norm
+        };
+        let requirement = Requirement {
+            statement,
+            entities,
+            edges,
+            transition,
+            facets,
+            provenance: Some(provenance),
+            reasoning: Self::opt_str(args, "reasoning"),
+            ..Default::default()
+        };
+        let staged_pos = self.staged.iter().position(
+            |op| matches!(op, Op::CreateRequirement { requirement: r, .. } if same_key(r)),
+        );
+        if let Some(pos) = staged_pos {
+            let Op::CreateRequirement { id, requirement: r } = &mut self.staged[pos] else {
+                unreachable!()
+            };
+            for e in &requirement.entities {
+                if !r.entities.contains(e) {
+                    r.entities.push(e.clone());
+                }
+            }
+            for edge in requirement.edges {
+                if !r
+                    .edges
+                    .iter()
+                    .any(|x| x.a == edge.a && x.b == edge.b && x.rel_type == edge.rel_type)
+                {
+                    r.edges.push(edge);
+                }
+            }
+            if requirement.transition.is_some() {
+                r.transition = requirement.transition;
+            }
+            if !requirement.facets.is_empty() {
+                r.facets = requirement.facets;
+            }
+            r.statement = requirement.statement;
+            return Ok(json!({"id": id.clone(), "updated": true}));
+        }
+        if let Some(rid) = self
+            .snapshot
+            .graph
+            .requirements
+            .iter()
+            .find(|(_, r)| same_key(r))
+            .map(|(rid, _)| rid.clone())
+        {
+            self.staged_reqs.insert(rid.clone());
+            self.taken_ids.insert(rid.clone());
+            self.stage(Op::CreateRequirement {
+                id: rid.clone(),
+                requirement,
+            })?;
+            return Ok(json!({"id": rid, "updated": true}));
+        }
+        let mut taken = self.taken_ids.clone();
+        taken.extend(self.staged_reqs.iter().cloned());
+        let id = self.snapshot.mint_req_id("x", &taken);
+        self.staged_reqs.insert(id.clone());
+        self.taken_ids.insert(id.clone());
+        self.stage(Op::CreateRequirement {
+            id: id.clone(),
+            requirement,
+        })?;
+        Ok(
+            json!({"id": id, "created": true, "note": "a derived statement; a ratification proposal asks the owner to state it in the documents"}),
+        )
+    }
+
+    // upsert_view, update_view, delete_view. Mirrors docs/compiler/tools.md#view-tools.
+    fn view_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        match name {
+            "upsert_view" => {
+                let kind = Self::str_arg(args, "kind")?;
+                if !VIEW_KINDS.contains(&kind.as_str()) {
+                    return Err(ToolError::new(
+                        "bad-kind",
+                        format!(
+                            "unknown view kind `{}`; one of: {}",
+                            kind,
+                            VIEW_KINDS.join(", ")
+                        ),
+                    ));
+                }
+                let title = Self::str_arg(args, "title")?;
+                let reasoning = Self::str_arg(args, "reasoning")?;
+                let members = self.canon_members(&Self::str_list(args, "members"), "member")?;
+                let collapse = self.canon_members(&Self::str_list(args, "collapse"), "collapse")?;
+                let excluded = self.parse_exclusions(&args["excluded"])?;
+                let query = if args["query"].is_object() {
+                    Some(self.parse_query(&args["query"])?)
+                } else {
+                    None
+                };
+                self.check_view_members(&kind, &members, &collapse)?;
+                let mut from: Vec<String> = Vec::new();
+                for id in members
+                    .iter()
+                    .chain(collapse.iter())
+                    .chain(excluded.iter().map(|x| &x.id))
+                    .chain(query.iter().filter_map(|q| q.parent.as_ref()))
+                {
+                    if !from.contains(id) {
+                        from.push(id.clone());
+                    }
+                }
+                let existing = self
+                    .snapshot
+                    .find_view(&kind, &title)
+                    .or_else(|| self.staged_view_by_key(&kind, &title));
+                if let Some(id) = existing {
+                    if let Some(v) = self.staged_views.get_mut(&id) {
+                        if !members.is_empty() {
+                            v.members = members.clone();
+                        }
+                        if !collapse.is_empty() {
+                            v.collapse = collapse.clone();
+                        }
+                    }
+                    self.stage(Op::UpdateView {
+                        id: id.clone(),
+                        title: None,
+                        members: (!members.is_empty()).then(|| members.clone()),
+                        add_members: Vec::new(),
+                        remove_members: Vec::new(),
+                        query,
+                        collapse: (!collapse.is_empty()).then(|| collapse.clone()),
+                        exclude: excluded,
+                        reasoning: Some(reasoning),
+                    })?;
+                    return Ok(json!({"id": id, "created": false}));
+                }
+                let id = self.snapshot.mint_view_id(&kind, &title, &self.taken_ids);
+                self.taken_ids.insert(id.clone());
+                let view = View {
+                    kind,
+                    title,
+                    members,
+                    excluded,
+                    query,
+                    collapse,
+                    provenance: Some(Provenance::Derived { from, reasoning }),
+                    default: false,
+                    ..Default::default()
+                };
+                self.staged_views.insert(id.clone(), view.clone());
+                self.stage(Op::CreateView {
+                    id: id.clone(),
+                    view,
+                })?;
+                Ok(json!({"id": id, "created": true}))
+            }
+            "update_view" => {
+                let raw = Self::str_arg(args, "id")?;
+                let Some((id, current)) = self.view_known(&raw) else {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!(
+                            "unknown view id `{}`; search with kind view, or create it with upsert_view",
+                            raw
+                        ),
+                    ));
+                };
+                let title = Self::opt_str(args, "title");
+                let members = match args["members"].as_array() {
+                    Some(_) => {
+                        Some(self.canon_members(&Self::str_list(args, "members"), "member")?)
+                    }
+                    None => None,
+                };
+                let add_members =
+                    self.canon_members(&Self::str_list(args, "add_members"), "member")?;
+                let remove_members =
+                    self.canon_members(&Self::str_list(args, "remove_members"), "member")?;
+                let collapse = match args["collapse"].as_array() {
+                    Some(_) => {
+                        Some(self.canon_members(&Self::str_list(args, "collapse"), "collapse")?)
+                    }
+                    None => None,
+                };
+                let exclude = self.parse_exclusions(&args["exclude"])?;
+                let query = if args["query"].is_object() {
+                    Some(self.parse_query(&args["query"])?)
+                } else {
+                    None
+                };
+                let reasoning = Self::opt_str(args, "reasoning");
+                // The membership the call leaves behind passes the kind's rule.
+                let mut result = members.clone().unwrap_or_else(|| current.members.clone());
+                for m in &add_members {
+                    if !result.contains(m) {
+                        result.push(m.clone());
+                    }
+                }
+                result
+                    .retain(|m| !remove_members.contains(m) && !exclude.iter().any(|x| &x.id == m));
+                let coll = collapse.clone().unwrap_or_else(|| current.collapse.clone());
+                self.check_view_members(&current.kind, &result, &coll)?;
+                if let Some(v) = self.staged_views.get_mut(&id) {
+                    v.members = result;
+                    v.collapse = coll;
+                    if let Some(t) = &title {
+                        v.title = t.clone();
+                    }
+                }
+                self.stage(Op::UpdateView {
+                    id: id.clone(),
+                    title,
+                    members,
+                    add_members,
+                    remove_members,
+                    query,
+                    collapse,
+                    exclude,
+                    reasoning,
+                })?;
+                Ok(json!({"id": id, "updated": true}))
+            }
+            _ => {
+                let raw = Self::str_arg(args, "id")?;
+                let reason = Self::str_arg(args, "reason")?;
+                let Some((id, current)) = self.view_known(&raw) else {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!("unknown view id `{}`", raw),
+                    ));
+                };
+                if current.default {
+                    return Err(ToolError::new(
+                        "default-view",
+                        format!(
+                            "{} is a default view; the next commit would derive it again. Exclude its members or collapse them (update_view), which makes it curated, then delete",
+                            id
+                        ),
+                    ));
+                }
+                self.staged_views.remove(&id);
+                self.stage(Op::DeleteView { id, reason })?;
+                Ok(json!({"deleted": true}))
+            }
+        }
+    }
+
+    // The chat edit path: one authored field on one committed node. A quoted fact with
+    // an accepted sentence rewrite (`note`) stages the mutation with its re-anchored
+    // quote and reports the prose replacement for the serving to write; anything else
+    // stages a decree with its ratification proposal.
+    // Mirrors docs/compiler/tools.md#chat-tools and docs/compiler/compilation.md#edit-paths.
+    fn edit_fact(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let raw_id = Self::str_arg(args, "id")?;
+        let field = Self::str_arg(args, "field")?;
+        let value = &args["value"];
+        if value.is_null() {
+            return Err(ToolError::new(
+                "bad-args",
+                "value is required: the field's new content".into(),
+            ));
+        }
+        let note = Self::opt_str(args, "note");
+        let text_value = || -> Result<String, ToolError> {
+            value
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    ToolError::new(
+                        "bad-args",
+                        format!("field `{}` takes a non-empty string value", field),
+                    )
+                })
+        };
+        let uncommitted = |id: &str| {
+            ToolError::new(
+                "unknown-id",
+                format!(
+                    "`{}` is staged in this session and not committed; edit_fact works on committed facts",
+                    id
+                ),
+            )
+        };
+        let bad_field = |kind: &str, fields: &str| {
+            ToolError::new(
+                "bad-field",
+                format!(
+                    "field `{}` is not editable on {}; one of: {}. Ids, created, updated, mentions, and provenance itself are never edited directly",
+                    field, kind, fields
+                ),
+            )
+        };
+
+        if let Ok(rid) = self.canon_req_id(&raw_id) {
+            let Some(r) = self.snapshot.graph.requirements.get(&rid).cloned() else {
+                return Err(uncommitted(&rid));
+            };
+            let (mut statement, mut edges, mut transition, mut facets) = (None, None, None, None);
+            match field.as_str() {
+                "statement" => statement = Some(text_value()?),
+                "edges" => {
+                    let Some(arr) = value.as_array() else {
+                        return Err(ToolError::new(
+                            "bad-args",
+                            "edges takes a list of {a, b, type?, cardinality?}".into(),
+                        ));
+                    };
+                    edges = Some(parse_edges(self, arr, Some(&r.entities))?);
+                }
+                "transition" => transition = Some(self.parse_transition(value, &r.entities)?),
+                "facets" => facets = Some(parse_facets(value)?),
+                _ => {
+                    return Err(bad_field(
+                        "a requirement",
+                        "statement, edges, transition, facets",
+                    ))
+                }
+            }
+            let sentence = statement.clone().unwrap_or_else(|| r.statement.clone());
+            return match (r.source.as_ref(), note.as_deref()) {
+                (Some(src), Some(rewrite)) => {
+                    let rewrite = rewrite.trim().to_string();
+                    self.stage(Op::UpdateRequirement {
+                        id: rid.clone(),
+                        statement,
+                        entities: None,
+                        edges,
+                        transition,
+                        facets,
+                        source: Some(SourceRef {
+                            doc: src.doc.clone(),
+                            section: src.section.clone(),
+                            quote: rewrite.clone(),
+                        }),
+                        provenance: None,
+                    })?;
+                    Ok(json!({
+                        "id": rid, "field": field, "path": "dual-write",
+                        "prose": {"doc": src.doc, "section": src.section, "old_text": src.quote, "new_text": rewrite}
+                    }))
+                }
+                _ => {
+                    let decree = self.decree(note);
+                    let proposal = self.snapshot.ratification_proposal(
+                        &rid,
+                        &sentence,
+                        &decree,
+                        r.source.as_ref(),
+                        &r.entities,
+                        None,
+                    );
+                    self.stage(Op::UpdateRequirement {
+                        id: rid.clone(),
+                        statement,
+                        entities: None,
+                        edges,
+                        transition,
+                        facets,
+                        source: None,
+                        provenance: Some(decree),
+                    })?;
+                    let question = proposal.prompt.as_ref().map(|p| p.question.clone());
+                    self.stage(Op::ReportDiagnostic {
+                        id: String::new(),
+                        diagnostic: proposal,
+                    })?;
+                    Ok(json!({
+                        "id": rid, "field": field, "path": "decree", "proposal": question,
+                        "note": "the edit landed graph-only with decree provenance; a ratification proposal asks the owner to state it in the documents"
+                    }))
+                }
+            };
+        }
+
+        if let Some(eid) = self.canon_entity_id(&raw_id) {
+            let Some(e) = self.snapshot.graph.entities.get(&eid).cloned() else {
+                return Err(uncommitted(&eid));
+            };
+            let quoted_mention = if e.provenance.is_none() {
+                e.mentions.first().cloned()
+            } else {
+                None
+            };
+            let (mut definition, mut stereotype, mut parent) = (None, None, None);
+            let mut attribute: Option<Attribute> = None;
+            let (sentence, former): (String, Option<SourceRef>) = match field.as_str() {
+                "definition" => {
+                    let v = text_value()?;
+                    let s = format!("{}: {}", e.name, v);
+                    definition = Some(v);
+                    (s, quoted_mention.clone())
+                }
+                "stereotype" => {
+                    let v = text_value()?;
+                    let s = format!("{} is a {}.", e.name, v);
+                    stereotype = Some(v);
+                    (s, quoted_mention.clone())
+                }
+                "parent" => {
+                    let p = self.check_parent(Some(&eid), &text_value()?)?;
+                    let pname = self
+                        .snapshot
+                        .graph
+                        .entities
+                        .get(&p)
+                        .map(|x| x.name.clone())
+                        .unwrap_or_else(|| p.clone());
+                    let s = format!("{} is part of {}.", e.name, pname);
+                    parent = Some(p);
+                    (s, quoted_mention.clone())
+                }
+                f if f.starts_with("attributes.") => {
+                    let rest = &f["attributes.".len()..];
+                    let Some((aname, sub)) = rest.rsplit_once('.') else {
+                        return Err(bad_field(
+                            "an entity",
+                            "definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value",
+                        ));
+                    };
+                    if sub != "type" && sub != "value" {
+                        return Err(bad_field(
+                            "an entity",
+                            "definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value",
+                        ));
+                    }
+                    let Some(mut a) = e.attributes.iter().find(|a| a.name == aname).cloned() else {
+                        return Err(ToolError::new(
+                            "unknown-attribute",
+                            format!(
+                                "{} has no attribute `{}`; its attributes: {}",
+                                eid,
+                                aname,
+                                e.attributes
+                                    .iter()
+                                    .map(|a| a.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        ));
+                    };
+                    let v = text_value()?;
+                    let s = if sub == "type" {
+                        a.r#type = Some(v.clone());
+                        format!("{} has an attribute {} of type {}.", e.name, aname, v)
+                    } else {
+                        a.value = Some(v.clone());
+                        format!("{}'s {} is {}.", e.name, aname, v)
+                    };
+                    let former = match &a.provenance {
+                        Provenance::Quote(q) => Some(q.clone()),
+                        _ => None,
+                    };
+                    attribute = Some(a);
+                    (s, former)
+                }
+                _ => {
+                    return Err(bad_field(
+                        "an entity",
+                        "definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value",
+                    ))
+                }
+            };
+            if let Some(p) = &parent {
+                self.staged_parents.insert(eid.clone(), p.clone());
+            }
+            return match (former.as_ref(), note.as_deref()) {
+                (Some(src), Some(rewrite)) => {
+                    let to = SourceRef {
+                        doc: src.doc.clone(),
+                        section: src.section.clone(),
+                        quote: rewrite.trim().to_string(),
+                    };
+                    let mut add_attributes = Vec::new();
+                    match attribute {
+                        Some(mut a) => {
+                            a.provenance = Provenance::Quote(to.clone());
+                            add_attributes.push(a);
+                        }
+                        None => self.stage(Op::PlaceAnchor {
+                            id: eid.clone(),
+                            from: src.clone(),
+                            to: to.clone(),
+                            reevaluate: false,
+                        })?,
+                    }
+                    self.stage(Op::UpdateEntity {
+                        id: eid.clone(),
+                        name: None,
+                        definition,
+                        add_aliases: Vec::new(),
+                        add_mention: None,
+                        stereotype,
+                        parent,
+                        set_attributes: None,
+                        add_attributes,
+                        provenance: None,
+                    })?;
+                    Ok(json!({
+                        "id": eid, "field": field, "path": "dual-write",
+                        "prose": {"doc": src.doc, "section": src.section, "old_text": src.quote, "new_text": to.quote}
+                    }))
+                }
+                _ => {
+                    let decree = self.decree(note);
+                    let attr_name = attribute.as_ref().map(|a| a.name.clone());
+                    let proposal = self.snapshot.ratification_proposal(
+                        &eid,
+                        &sentence,
+                        &decree,
+                        former.as_ref(),
+                        &[eid.clone()],
+                        attr_name.as_deref(),
+                    );
+                    let (add_attributes, provenance) = match attribute {
+                        Some(mut a) => {
+                            a.provenance = decree.clone();
+                            (vec![a], None)
+                        }
+                        None => (Vec::new(), Some(decree)),
+                    };
+                    self.stage(Op::UpdateEntity {
+                        id: eid.clone(),
+                        name: None,
+                        definition,
+                        add_aliases: Vec::new(),
+                        add_mention: None,
+                        stereotype,
+                        parent,
+                        set_attributes: None,
+                        add_attributes,
+                        provenance,
+                    })?;
+                    let question = proposal.prompt.as_ref().map(|p| p.question.clone());
+                    self.stage(Op::ReportDiagnostic {
+                        id: String::new(),
+                        diagnostic: proposal,
+                    })?;
+                    Ok(json!({
+                        "id": eid, "field": field, "path": "decree", "proposal": question,
+                        "note": "the edit landed graph-only with decree provenance; a ratification proposal asks the owner to state it in the documents"
+                    }))
+                }
+            };
+        }
+
+        if let Some((vid, v)) = self.view_known(&raw_id) {
+            if field != "members" {
+                return Err(bad_field("a view", "members"));
+            }
+            let Some(arr) = value.as_array() else {
+                return Err(ToolError::new(
+                    "bad-args",
+                    "members takes an ordered list of node ids".into(),
+                ));
+            };
+            let raw: Vec<String> = arr
+                .iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect();
+            let members = self.canon_members(&raw, "member")?;
+            self.check_view_members(&v.kind, &members, &v.collapse)?;
+            self.stage(Op::UpdateView {
+                id: vid.clone(),
+                title: None,
+                members: Some(members),
+                add_members: Vec::new(),
+                remove_members: Vec::new(),
+                query: None,
+                collapse: None,
+                exclude: Vec::new(),
+                reasoning: note,
+            })?;
+            return Ok(json!({
+                "id": vid, "field": "members", "path": "decree",
+                "note": "the view is curated from here on; views carry no ratification proposal"
+            }));
+        }
+
+        Err(ToolError::new(
+            "unknown-id",
+            format!(
+                "unknown id `{}`; edit_fact takes a requirement (req:), entity (ent:), or view (view:) id",
+                raw_id
+            ),
+        ))
     }
 }
 
@@ -2088,11 +4012,19 @@ mod tests {
         let text = "# Shop\nintro text\n\n## Cart\nThe Shopping Cart holds items a Customer intends to buy.\n";
         s.docs.insert(
             "shop.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
         s.graph.entities.insert(
             "ent:customer".into(),
-            Entity { name: "Customer".into(), definition: Some("a person who buys".into()), ..Default::default() },
+            Entity {
+                name: "Customer".into(),
+                definition: Some("a person who buys".into()),
+                ..Default::default()
+            },
         );
         ToolSession::new(
             s,
@@ -2109,6 +4041,459 @@ mod tests {
         )
     }
 
+    fn plain(name: &str) -> Entity {
+        Entity {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    fn under(name: &str, parent: &str) -> Entity {
+        Entity {
+            name: name.into(),
+            parent: Some(parent.into()),
+            ..Default::default()
+        }
+    }
+
+    fn quoted_req(statement: &str, entities: &[&str], quote: &str) -> Requirement {
+        Requirement {
+            statement: statement.into(),
+            entities: entities.iter().map(|e| e.to_string()).collect(),
+            source: Some(SourceRef {
+                doc: "shop.md".into(),
+                section: "/shop/cart".into(),
+                quote: quote.into(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    // Every staging gate names its rule and the repair.
+    // Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn entity_and_requirement_gates_name_their_rules() {
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:order".into(), plain("Order"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:item-2".into(), under("Item", "ent:order"));
+        let mention = json!({"section": "/shop/cart", "quote": "holds items"});
+        let err = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Item", "mention": mention}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "ambiguous-name");
+        assert!(
+            err.message.contains("ent:item-2") && err.message.contains("parent"),
+            "{}",
+            err.message
+        );
+        let v = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Item", "parent": "ent:order", "mention": mention}),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "ent:item-2");
+        assert_eq!(v["created"], false);
+        let err = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Widget", "parent": "ent:nope", "mention": mention}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-parent");
+        let err = t
+            .dispatch(
+                "update_entity",
+                &json!({"id": "ent:cart", "parent": "ent:item"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "parent-cycle");
+        assert!(err.message.contains("ent:item"), "{}", err.message);
+        let err = t
+            .dispatch("upsert_entity", &json!({"name": "Widget"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "provenance-required");
+        let v = t
+            .dispatch("upsert_entity", &json!({"name": "Pricing", "parent": "ent:cart", "stereotype": "module", "provenance": {"derived": {"from": ["ent:cart"], "reasoning": "split out"}}}))
+            .unwrap();
+        assert_eq!(v["created"], true);
+        assert!(matches!(
+            t.staged.last(),
+            Some(Op::CreateEntity { entity, .. })
+                if entity.parent.as_deref() == Some("ent:cart")
+                    && entity.stereotype.as_deref() == Some("module")
+                    && matches!(entity.provenance, Some(Provenance::Derived { .. }))
+        ));
+        // A staged parent counts for the cycle gate: cart under pricing, which is under cart.
+        let err = t
+            .dispatch(
+                "update_entity",
+                &json!({"id": "ent:cart", "parent": "ent:pricing"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "parent-cycle");
+        // Attributes are unique by name and take the call's quote.
+        let err = t
+            .dispatch(
+                "update_entity",
+                &json!({"id": "ent:cart", "attributes": [{"name": "total"}, {"name": "total"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-attribute");
+        t.dispatch("upsert_entity", &json!({"name": "Cart", "mention": mention, "attributes": [{"name": "total", "type": "money"}]}))
+            .unwrap();
+        assert!(matches!(
+            t.staged.last(),
+            Some(Op::UpdateEntity { add_attributes, .. })
+                if add_attributes.len() == 1
+                    && matches!(add_attributes[0].provenance, Provenance::Quote(ref q) if q.quote == "holds items")
+        ));
+
+        let base = json!({"statement": "The Cart holds items.", "entities": ["ent:cart", "ent:order"], "section": "/shop/cart", "quote": "holds items"});
+        let with = |extra: Value| {
+            let mut b = base.clone();
+            for (k, v) in extra.as_object().unwrap() {
+                b[k] = v.clone();
+            }
+            b
+        };
+        let err = t
+            .dispatch(
+                "upsert_requirement",
+                &with(
+                    json!({"transition": {"subject": "ent:ghost", "from": "open", "to": "paid"}}),
+                ),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-id");
+        let err = t
+            .dispatch("upsert_requirement", &with(json!({"transition": {"subject": "ent:customer", "from": "open", "to": "paid"}})))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-transition");
+        let err = t
+            .dispatch(
+                "upsert_requirement",
+                &with(
+                    json!({"edges": [{"a": "ent:cart", "b": "ent:order", "cardinality": "many"}]}),
+                ),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-cardinality");
+        let err = t
+            .dispatch(
+                "upsert_requirement",
+                &with(json!({"facets": [{"facet": "speed", "reasoning": "x"}]})),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-facet");
+        let err = t
+            .dispatch("upsert_requirement", &with(json!({"facets": [{"facet": "behavior", "reasoning": "x", "measure": "2 seconds"}]})))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-facet");
+        let err = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({"statement": "The Cart holds items.", "entities": ["ent:cart"]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "provenance-required");
+        let err = t
+            .dispatch("report_diagnostic", &json!({"rule": "decision", "severity": "warning", "subjects": ["ent:cart"], "message": "which bound?"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "decision-needs-prompt");
+        // The whole shape lands: edges deduplicated on (a, b, type), transition, facets.
+        let v = t
+            .dispatch("upsert_requirement", &with(json!({
+                "edges": [{"a": "ent:cart", "b": "ent:order", "type": "composition", "cardinality": "1..*"}, {"a": "ent:cart", "b": "ent:order", "type": "composition"}],
+                "transition": {"subject": "ent:cart", "from": "open", "to": "paid", "trigger": "payment"},
+                "facets": [{"facet": "quality", "reasoning": "bounded", "measure": "2 seconds"}]
+            })))
+            .unwrap();
+        assert_eq!(v["created"], true);
+        match t.staged.last().unwrap() {
+            Op::CreateRequirement { requirement, .. } => {
+                assert_eq!(requirement.edges.len(), 1);
+                assert_eq!(requirement.edges[0].cardinality.as_deref(), Some("1..*"));
+                assert_eq!(requirement.transition.as_ref().unwrap().subject, "ent:cart");
+                assert_eq!(requirement.facets[0].measure.as_deref(), Some("2 seconds"));
+            }
+            other => panic!("unexpected {:?}", other),
+        }
+        // A derived requirement mints req:x-<n> and keys on the statement within its from set.
+        let derived = |s: &str| json!({"statement": s, "entities": ["ent:cart"], "provenance": {"derived": {"from": ["ent:cart"], "reasoning": "too dense"}}});
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &derived("The Cart is split by category."),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "req:x-1");
+        let again = t
+            .dispatch(
+                "upsert_requirement",
+                &derived("The Cart is split by category"),
+            )
+            .unwrap();
+        assert_eq!(again["id"], "req:x-1");
+        assert_eq!(again["updated"], true);
+    }
+
+    // The view tools gate kind, membership, uniqueness, collapse, and defaults.
+    // Mirrors docs/compiler/tools.md#view-tools.
+    #[test]
+    fn view_gates_name_their_rules() {
+        let mut t = session();
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:cart".into(), plain("Cart"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:item".into(), under("Item", "ent:cart"));
+        t.snapshot.graph.requirements.insert(
+            "req:shop-1".into(),
+            quoted_req("The Cart holds items.", &["ent:cart"], "holds items"),
+        );
+        t.snapshot.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                members: vec!["ent:cart".into()],
+                default: true,
+                ..Default::default()
+            },
+        );
+        let call = |members: Value, collapse: Value| json!({"kind": "class", "title": "Cart parts", "members": members, "collapse": collapse, "reasoning": "the cart's parts"});
+        let err = t
+            .dispatch(
+                "upsert_view",
+                &json!({"kind": "blueprint", "title": "X", "reasoning": "r"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-kind");
+        let err = t
+            .dispatch("upsert_view", &call(json!(["ent:ghost"]), json!([])))
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-id");
+        let err = t
+            .dispatch(
+                "upsert_view",
+                &call(json!(["ent:cart", "ent:cart"]), json!([])),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "duplicate-member");
+        let err = t
+            .dispatch("upsert_view", &call(json!(["req:shop-1"]), json!([])))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-member");
+        let err = t
+            .dispatch(
+                "upsert_view",
+                &call(json!(["ent:item"]), json!(["ent:customer"])),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-collapse");
+        // An ancestor of a member collapses; a repeated upsert lands on the staged view.
+        let v = t
+            .dispatch(
+                "upsert_view",
+                &call(json!(["ent:item"]), json!(["ent:cart"])),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "view:class/cart-parts");
+        assert_eq!(v["created"], true);
+        let again = t
+            .dispatch(
+                "upsert_view",
+                &call(json!(["ent:item"]), json!(["ent:cart"])),
+            )
+            .unwrap();
+        assert_eq!(again["id"], "view:class/cart-parts");
+        assert_eq!(again["created"], false);
+        t.dispatch(
+            "update_view",
+            &json!({"id": "view:class/cart-parts", "add_members": ["ent:cart"]}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "update_view",
+                &json!({"id": "view:class/cart-parts", "add_members": ["req:shop-1"]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-member");
+        let err = t
+            .dispatch(
+                "update_view",
+                &json!({"id": "view:class/nope", "title": "x"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-id");
+        let err = t
+            .dispatch(
+                "delete_view",
+                &json!({"id": "view:class/public", "reason": "noise"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "default-view");
+        // The default's natural key lands on it; the store clears default at commit.
+        let v = t
+            .dispatch("upsert_view", &json!({"kind": "class", "title": "Public", "members": ["ent:cart"], "reasoning": "curated"}))
+            .unwrap();
+        assert_eq!(v["id"], "view:class/public");
+        assert_eq!(v["created"], false);
+        let err = t
+            .dispatch("upsert_view", &json!({"kind": "sequence", "title": "Flow", "members": ["ent:cart"], "reasoning": "r"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-member");
+        let v = t
+            .dispatch("upsert_view", &json!({"kind": "sequence", "title": "Flow", "members": ["req:shop-1"], "excluded": [{"id": "ent:cart", "note": "structure, not flow"}], "reasoning": "r"}))
+            .unwrap();
+        assert_eq!(v["id"], "view:sequence/flow");
+        t.dispatch(
+            "delete_view",
+            &json!({"id": "view:sequence/flow", "reason": "no"}),
+        )
+        .unwrap();
+        assert!(matches!(t.staged.last(), Some(Op::DeleteView { .. })));
+    }
+
+    // edit_fact stages a dual write when the fact is quoted and a sentence rewrite was
+    // accepted, and a decree with its ratification proposal otherwise.
+    // Mirrors docs/compiler/tools.md#chat-tools.
+    #[test]
+    fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
+        let mut t = session();
+        let old = "The Shopping Cart holds items a Customer intends to buy.";
+        t.snapshot
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), quoted_req(old, &["ent:customer"], old));
+        let new = "The Shopping Cart holds items a Customer selected.";
+        let v = t
+            .dispatch(
+                "edit_fact",
+                &json!({"id": "req:shop-1", "field": "statement", "value": new, "note": new}),
+            )
+            .unwrap();
+        assert_eq!(v["path"], "dual-write");
+        assert_eq!(v["prose"]["old_text"], old);
+        assert_eq!(v["prose"]["new_text"], new);
+        assert!(matches!(
+            t.staged.last(),
+            Some(Op::UpdateRequirement { statement: Some(s), source: Some(src), provenance: None, .. })
+                if s == new && src.quote == new
+        ));
+        let v = t
+            .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "facets", "value": [{"facet": "behavior", "reasoning": "a step"}]}))
+            .unwrap();
+        assert_eq!(v["path"], "decree");
+        let n = t.staged.len();
+        assert!(matches!(
+            &t.staged[n - 2],
+            Op::UpdateRequirement { facets: Some(f), source: None, provenance: Some(Provenance::Decree { .. }), .. }
+                if f.len() == 1
+        ));
+        match &t.staged[n - 1] {
+            Op::ReportDiagnostic { diagnostic, .. } => {
+                assert_eq!(diagnostic.rule, "ratification-pending");
+                assert_eq!(diagnostic.subjects, vec!["req:shop-1".to_string()]);
+                let p = diagnostic.prompt.as_ref().unwrap();
+                let e = p.options[0].edit.as_ref().unwrap();
+                assert_eq!(
+                    (e.doc.as_str(), e.section.as_str()),
+                    ("shop.md", "/shop/cart")
+                );
+                assert_eq!(e.old_text, old);
+                assert_eq!(e.new_text, old, "the statement is the proposal");
+                assert_eq!(p.options[1].answer.as_deref(), Some("retract"));
+                assert!(p.freeform);
+            }
+            other => panic!("unexpected {:?}", other),
+        }
+        let err = t
+            .dispatch(
+                "edit_fact",
+                &json!({"id": "req:shop-1", "field": "created", "value": "g9"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-field");
+        let err = t
+            .dispatch(
+                "edit_fact",
+                &json!({"id": "req:nope", "field": "statement", "value": "x"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-id");
+        // An entity's parent by decree, and a view's members.
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:cart".into(), plain("Cart"));
+        let v = t
+            .dispatch(
+                "edit_fact",
+                &json!({"id": "ent:customer", "field": "parent", "value": "ent:cart"}),
+            )
+            .unwrap();
+        assert_eq!(v["path"], "decree");
+        let n = t.staged.len();
+        assert!(matches!(
+            &t.staged[n - 2],
+            Op::UpdateEntity { parent: Some(p), provenance: Some(Provenance::Decree { .. }), .. } if p == "ent:cart"
+        ));
+        t.snapshot.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                members: vec!["ent:customer".into()],
+                default: true,
+                ..Default::default()
+            },
+        );
+        let v = t
+            .dispatch("edit_fact", &json!({"id": "view:class/public", "field": "members", "value": ["ent:customer", "ent:cart"]}))
+            .unwrap();
+        assert_eq!(v["path"], "decree");
+        assert!(matches!(
+            t.staged.last(),
+            Some(Op::UpdateView { members: Some(m), .. }) if m.len() == 2
+        ));
+        // A ratification proposal never closes through resolve_diagnostic.
+        t.snapshot.graph.diagnostics.insert(
+            "diag:ratification-pending-1".into(),
+            Diagnostic {
+                rule: "ratification-pending".into(),
+                severity: "warning".into(),
+                subjects: vec!["req:shop-1".into()],
+                message: "x".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let err = t
+            .dispatch(
+                "resolve_diagnostic",
+                &json!({"id": "diag:ratification-pending-1", "reason": "done"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "not-resolvable");
+    }
+
     // A bare empty list reads as "ask again" and models loop on it; a miss must say what
     // the graph holds and what to do instead. Mirrors docs/compiler/tools.md#read-tools.
     #[test]
@@ -2117,8 +4502,16 @@ mod tests {
         let r = t.dispatch("search", &json!({"query": "slides"})).unwrap();
         assert_eq!(r["hits"].as_array().unwrap().len(), 0);
         assert_eq!(r["entityCount"], 1);
-        assert!(r["entities"][0].as_str().unwrap().contains("ent:customer"), "{}", r);
-        assert!(r["next"].as_str().unwrap().contains("upsert_entity"), "{}", r);
+        assert!(
+            r["entities"][0].as_str().unwrap().contains("ent:customer"),
+            "{}",
+            r
+        );
+        assert!(
+            r["next"].as_str().unwrap().contains("upsert_entity"),
+            "{}",
+            r
+        );
         // A hit answers under the same key, so the caller reads one shape.
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
@@ -2131,7 +4524,7 @@ mod tests {
         t.dispatch(
             "upsert_requirement",
             &json!({
-                "ears": "The Shopping Cart shall hold items a Customer intends to buy.",
+                "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
                 "entities": ["ent:customer"],
                 "section": "/shop/cart",
                 "quote": "The Shopping Cart holds items a Customer intends to buy."
@@ -2139,18 +4532,28 @@ mod tests {
         )
         .unwrap();
         let err = t
-            .dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "non-normative", "note": "just facts"}))
+            .dispatch(
+                "set_coverage",
+                &json!({"section": "/shop/cart", "state": "non-normative", "note": "just facts"}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "contradicts-extraction");
         assert!(err.message.contains("covered"), "{}", err.message);
         // The honest mark still goes through.
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
         // A section that yielded nothing is still free to be non-normative.
-        t.dispatch("set_coverage", &json!({"section": "/shop", "state": "non-normative", "note": "navigation only"}))
-            .unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop", "state": "non-normative", "note": "navigation only"}),
+        )
+        .unwrap();
     }
 
-    // Passing the ears statement as the quote is the common miscall; the rejection has to
+    // Passing the statement statement as the quote is the common miscall; the rejection has to
     // point at the existing anchor, not just repeat that the quote is absent.
     #[test]
     fn reanchor_rejection_names_the_existing_anchor() {
@@ -2159,7 +4562,7 @@ mod tests {
             .dispatch(
                 "upsert_requirement",
                 &json!({
-                    "ears": "The Shopping Cart shall hold items a Customer intends to buy.",
+                    "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
                     "entities": ["ent:customer"],
                     "section": "/shop/cart",
                     "quote": "The Shopping Cart holds items a Customer intends to buy."
@@ -2177,9 +4580,17 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "quote-not-found");
-        assert!(err.message.contains("omit `section` and `quote`"), "{}", err.message);
+        assert!(
+            err.message.contains("omit `section` and `quote`"),
+            "{}",
+            err.message
+        );
         // Only-entities is the call that was meant, and it is accepted.
-        t.dispatch("update_requirement", &json!({"id": id, "entities": ["ent:customer"]})).unwrap();
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": id, "entities": ["ent:customer"]}),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2218,28 +4629,42 @@ mod tests {
     }
 
     #[test]
-    fn requirement_needs_known_entities_and_shall() {
+    fn requirement_needs_a_statement_and_known_entities() {
         let mut t = session();
         let err = t
-            .dispatch("upsert_requirement", &json!({"ears": "The cart is nice.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
+            .dispatch("upsert_requirement", &json!({"statement": "   ", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap_err();
-        assert_eq!(err.rule, "not-ears");
+        assert_eq!(err.rule, "bad-args");
         let err2 = t
-            .dispatch("upsert_requirement", &json!({"ears": "The Cart shall hold items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
+            .dispatch("upsert_requirement", &json!({"statement": "The Cart holds items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap_err();
         assert_eq!(err2.rule, "unknown-id");
-        assert!(err2.message.contains("upsert_entity"), "repair hint: {}", err2.message);
+        assert!(
+            err2.message.contains("upsert_entity"),
+            "repair hint: {}",
+            err2.message
+        );
+        // Free-form statements land: no shape gate stands between prose and the graph.
+        let ok = t
+            .dispatch("upsert_requirement", &json!({"statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
+            .unwrap();
+        assert_eq!(ok["created"], true);
     }
 
     #[test]
     fn prefixed_case_variant_resolves() {
         let mut t = session();
-        let v = t.dispatch("update_entity", &json!({"id": "ent:Customer", "add_aliases": ["Buyer"]})).unwrap();
+        let v = t
+            .dispatch(
+                "update_entity",
+                &json!({"id": "ent:Customer", "add_aliases": ["Buyer"]}),
+            )
+            .unwrap();
         assert_eq!(v["id"], "ent:customer");
     }
 
     #[test]
-    fn update_requirement_runs_the_shape_gate() {
+    fn update_requirement_rejects_an_empty_statement_and_a_bad_cardinality() {
         let mut t = session();
         t.dispatch(
             "upsert_entity",
@@ -2249,15 +4674,22 @@ mod tests {
         let r = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+                &json!({"statement": "The Shopping Cart holds items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
             )
             .unwrap();
         let rid = r["id"].as_str().unwrap().to_string();
-        // A revision is not a side door around the shape gate: junk that upsert would
-        // bounce (the req:tools-15 corruption: an edges JSON array as the statement)
-        // bounces here too.
-        let err = t.dispatch("update_requirement", &json!({"id": rid, "ears": "[{\"a\": \"ent:task-type\"}]"})).unwrap_err();
-        assert_eq!(err.rule, "not-ears");
+        let err = t
+            .dispatch("update_requirement", &json!({"id": rid, "statement": ""}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-args");
+        let err = t
+            .dispatch(
+                "update_requirement",
+                &json!({"id": rid, "entities": ["ent:shopping-cart", "ent:customer"], "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "composition", "cardinality": "many"}]}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-cardinality");
+        assert!(err.message.contains("1..*"), "{}", err.message);
     }
 
     #[test]
@@ -2270,13 +4702,23 @@ mod tests {
         .unwrap();
         // A covered claim with no requirement sourced from the section is dishonest;
         // the explicit done bounces it.
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
         assert!(t.dispatch("done", &json!({"summary": "covered"})).is_err());
         // The implicit done drops the offending mark and commits the rest.
         assert!(t.finish_implicit("(implicit: test)"));
         assert!(t.done.is_some());
-        assert!(t.staged.iter().any(|op| matches!(op, Op::CreateEntity { .. })));
-        assert!(!t.staged.iter().any(|op| matches!(op, Op::SetCoverage { state, .. } if state == "covered")));
+        assert!(t
+            .staged
+            .iter()
+            .any(|op| matches!(op, Op::CreateEntity { .. })));
+        assert!(!t
+            .staged
+            .iter()
+            .any(|op| matches!(op, Op::SetCoverage { state, .. } if state == "covered")));
     }
 
     #[test]
@@ -2289,15 +4731,28 @@ mod tests {
         assert_eq!(id, "ent:shopping-cart");
         t.dispatch(
             "upsert_requirement",
-            &json!({"ears": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
+            &json!({"statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
         )
         .unwrap();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        let err = t.dispatch("set_coverage", &json!({"section": "/nope", "state": "covered"})).unwrap_err();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "set_coverage",
+                &json!({"section": "/nope", "state": "covered"}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "unknown-section");
-        t.dispatch("set_coverage", &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}))
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "reconciled cart"}))
             .unwrap();
-        t.dispatch("done", &json!({"summary": "reconciled cart"})).unwrap();
         assert!(t.done.is_some());
         assert_eq!(t.staged.len(), 4);
     }
@@ -2312,18 +4767,28 @@ mod tests {
         .unwrap();
         t.dispatch(
             "upsert_requirement",
-            &json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+            &json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
         )
         .unwrap();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
         // Extracting from a section and walking away without marking the other dirty
         // section bounces the explicit done.
-        let err = t.dispatch("done", &json!({"summary": "cart only"})).unwrap_err();
+        let err = t
+            .dispatch("done", &json!({"summary": "cart only"}))
+            .unwrap_err();
         assert_eq!(err.rule, "unmarked-section");
         assert!(err.message.contains("/shop"));
-        t.dispatch("set_coverage", &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}))
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "all sections marked"}))
             .unwrap();
-        t.dispatch("done", &json!({"summary": "all sections marked"})).unwrap();
         assert!(t.done.is_some());
     }
 
@@ -2334,7 +4799,7 @@ mod tests {
         let err = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
+                &json!({"statement": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
             )
             .unwrap_err();
         assert_eq!(err.rule, "bad-edge");
@@ -2347,19 +4812,26 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
+                &json!({"statement": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
             )
             .unwrap();
         assert_eq!(v["created"], true);
         let v2 = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
+                &json!({"statement": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
             )
             .unwrap();
         assert_eq!(v2["created"], true);
-        match t.staged.iter().find(|o| matches!(o, Op::CreateRequirement { .. })).unwrap() {
-            Op::CreateRequirement { requirement, .. } => assert_eq!(requirement.entities, vec!["ent:customer".to_string()]),
+        match t
+            .staged
+            .iter()
+            .find(|o| matches!(o, Op::CreateRequirement { .. }))
+            .unwrap()
+        {
+            Op::CreateRequirement { requirement, .. } => {
+                assert_eq!(requirement.entities, vec!["ent:customer".to_string()])
+            }
             _ => unreachable!(),
         }
     }
@@ -2370,12 +4842,22 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
+                &json!({"statement": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
             )
             .unwrap();
         assert_eq!(v["created"], true);
-        match t.staged.iter().find(|o| matches!(o, Op::CreateRequirement { .. })).unwrap() {
-            Op::CreateRequirement { requirement, .. } => assert_eq!(requirement.source.quote, "a Customer intends to buy."),
+        match t
+            .staged
+            .iter()
+            .find(|o| matches!(o, Op::CreateRequirement { .. }))
+            .unwrap()
+        {
+            Op::CreateRequirement { requirement, .. } => {
+                assert_eq!(
+                    requirement.source.as_ref().unwrap().quote,
+                    "a Customer intends to buy."
+                )
+            }
             _ => unreachable!(),
         }
     }
@@ -2383,9 +4865,21 @@ mod tests {
     #[test]
     fn coverage_restage_replaces_earlier_mark() {
         let mut t = session();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "non-normative", "note": "just prose"})).unwrap();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        let marks: Vec<&Op> = t.staged.iter().filter(|o| matches!(o, Op::SetCoverage { .. })).collect();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "non-normative", "note": "just prose"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        let marks: Vec<&Op> = t
+            .staged
+            .iter()
+            .filter(|o| matches!(o, Op::SetCoverage { .. }))
+            .collect();
         assert_eq!(marks.len(), 1);
         match marks[0] {
             Op::SetCoverage { state, .. } => assert_eq!(state, "covered"),
@@ -2397,7 +4891,10 @@ mod tests {
     fn placeholder_note_counts_as_absent() {
         let mut t = session();
         let err = t
-            .dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "non-normative", "note": "<nil>"}))
+            .dispatch(
+                "set_coverage",
+                &json!({"section": "/shop/cart", "state": "non-normative", "note": "<nil>"}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "note-required");
     }
@@ -2409,27 +4906,31 @@ mod tests {
         let text = "# Shop\nintro text\n\n## Cart\nThe Shopping Cart keeps items a Customer intends to buy.\n";
         s.docs.insert(
             "shop.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
         s.graph.entities.insert(
             "ent:shopping-cart".into(),
-            Entity { name: "Shopping Cart".into(), ..Default::default() },
+            Entity {
+                name: "Shopping Cart".into(),
+                ..Default::default()
+            },
         );
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
+                statement: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
                 entities: vec!["ent:shopping-cart".into()],
                 edges: Vec::new(),
-                source: SourceRef {
+                source: Some(SourceRef {
                     doc: "shop.md".into(),
                     section: "/shop/cart".into(),
                     quote: "The Shopping Cart holds items a Customer intends to buy.".into(),
-                },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                }),
+                ..Default::default()
             },
         );
         ToolSession::new(
@@ -2450,18 +4951,37 @@ mod tests {
     #[test]
     fn done_rejects_untouched_stale_anchor() {
         let mut t = session_with_stale_anchor();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        let err = t.dispatch("done", &json!({"summary": "covered around the anchor"})).unwrap_err();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch("done", &json!({"summary": "covered around the anchor"}))
+            .unwrap_err();
         assert_eq!(err.rule, "stale-anchor");
-        assert!(err.message.contains("req:shop-1"), "names the anchor: {}", err.message);
+        assert!(
+            err.message.contains("req:shop-1"),
+            "names the anchor: {}",
+            err.message
+        );
     }
 
     #[test]
     fn stale_anchor_satisfied_by_delete() {
         let mut t = session_with_stale_anchor();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        t.dispatch("delete_requirement", &json!({"id": "req:shop-1", "reason": "the document dropped the statement"})).unwrap();
-        t.dispatch("done", &json!({"summary": "anchor deleted"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "delete_requirement",
+            &json!({"id": "req:shop-1", "reason": "the document dropped the statement"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "anchor deleted"}))
+            .unwrap();
         assert!(t.done.is_some());
     }
 
@@ -2473,13 +4993,18 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+                &json!({"statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
             )
             .unwrap();
         assert_eq!(v["id"], "req:shop-1");
         assert_eq!(v["updated"], true);
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        t.dispatch("done", &json!({"summary": "re-anchored"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "re-anchored"}))
+            .unwrap();
         assert!(t.done.is_some());
     }
 
@@ -2491,14 +5016,20 @@ mod tests {
             &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
         )
         .unwrap();
-        let args = json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
+        let args = json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
         let v1 = t.dispatch("upsert_requirement", &args).unwrap();
         assert_eq!(v1["created"], true);
         // The identical call again is idempotent within the turn: same id, one staged op.
         let v2 = t.dispatch("upsert_requirement", &args).unwrap();
         assert_eq!(v2["updated"], true);
         assert_eq!(v1["id"], v2["id"]);
-        assert_eq!(t.staged.iter().filter(|o| matches!(o, Op::CreateRequirement { .. })).count(), 1);
+        assert_eq!(
+            t.staged
+                .iter()
+                .filter(|o| matches!(o, Op::CreateRequirement { .. }))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -2509,13 +5040,18 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"ears": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+                &json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
             )
             .unwrap();
         assert_eq!(v["id"], "req:shop-1");
         assert_eq!(v["updated"], true);
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        t.dispatch("done", &json!({"summary": "re-anchored reworded"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "re-anchored reworded"}))
+            .unwrap();
         assert!(t.done.is_some());
     }
 
@@ -2523,7 +5059,12 @@ mod tests {
     fn update_requirement_reanchors_with_section_and_quote() {
         let mut t = session_with_stale_anchor();
         // Re-anchoring needs the pair together, and the quote must locate.
-        let err = t.dispatch("update_requirement", &json!({"id": "req:shop-1", "section": "/shop/cart"})).unwrap_err();
+        let err = t
+            .dispatch(
+                "update_requirement",
+                &json!({"id": "req:shop-1", "section": "/shop/cart"}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "bad-argument");
         let err2 = t
             .dispatch("update_requirement", &json!({"id": "req:shop-1", "section": "/shop/cart", "quote": "not in the document"}))
@@ -2531,11 +5072,16 @@ mod tests {
         assert_eq!(err2.rule, "quote-not-found");
         t.dispatch(
             "update_requirement",
-            &json!({"id": "req:shop-1", "ears": "The Shopping Cart shall keep items a Customer intends to buy.", "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            &json!({"id": "req:shop-1", "statement": "The Shopping Cart shall keep items a Customer intends to buy.", "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
         )
         .unwrap();
-        t.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
-        t.dispatch("done", &json!({"summary": "revised and re-anchored"})).unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        t.dispatch("done", &json!({"summary": "revised and re-anchored"}))
+            .unwrap();
         assert!(t.done.is_some());
     }
 
@@ -2568,32 +5114,66 @@ mod tests {
         assert_eq!(logged[0]["run"], "run-1");
 
         // An empty message is the one rejection; an unknown kind is not.
-        let err = t.dispatch("report_feedback", &json!({"kind": "wrong", "message": "  "})).unwrap_err();
+        let err = t
+            .dispatch(
+                "report_feedback",
+                &json!({"kind": "wrong", "message": "  "}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "missing-argument");
-        t.dispatch("report_feedback", &json!({"kind": "puzzled", "message": "second"})).unwrap();
+        t.dispatch(
+            "report_feedback",
+            &json!({"kind": "puzzled", "message": "second"}),
+        )
+        .unwrap();
         assert_eq!(crate::feedback::read(&dir, 10)[0]["kind"], "other");
 
         // The cap holds: further calls are acknowledged without a record.
         for i in 0..5 {
-            t.dispatch("report_feedback", &json!({"kind": "confusing", "message": format!("more {}", i)})).unwrap();
+            t.dispatch(
+                "report_feedback",
+                &json!({"kind": "confusing", "message": format!("more {}", i)}),
+            )
+            .unwrap();
         }
         assert_eq!(crate::feedback::read(&dir, 99).len(), FEEDBACK_LIMIT);
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    // The per-task docs state what the model sees; a toolset change that forgets the
-    // doc would let them drift. Every tool a task carries must appear on its page.
-    // Mirrors docs/compiler/turns.md#task-types.
+    // The per-kind goal pages state what the model sees; a toolset change that forgets
+    // the page would let them drift. Every write tool a kind carries must appear on its
+    // page (the read tools are the loaded-set tools the pages name as `load`).
+    // Mirrors docs/compiler/goals/<kind>.md#tools.
     #[test]
     fn task_docs_name_every_tool() {
         for (task, doc) in [
-            ("align-doc", include_str!("../../docs/compiler/turns/align-doc.md")),
-            ("reconcile-doc", include_str!("../../docs/compiler/turns/reconcile-doc.md")),
-            ("review-requirement", include_str!("../../docs/compiler/turns/review-requirement.md")),
-            ("review-entity", include_str!("../../docs/compiler/turns/review-entity.md")),
+            (
+                "align-doc",
+                include_str!("../../docs/compiler/goals/place-anchors.md"),
+            ),
+            (
+                "reconcile-doc",
+                include_str!("../../docs/compiler/goals/reconcile-section.md"),
+            ),
+            (
+                "review-requirement",
+                include_str!("../../docs/compiler/goals/rejudge-pair.md"),
+            ),
+            (
+                "review-entity",
+                include_str!("../../docs/compiler/goals/review-entity.md"),
+            ),
         ] {
             for tool in toolset(task) {
-                assert!(doc.contains(tool), "the {} page misses tool `{}`", task, tool);
+                if READ_TOOLS.contains(&tool) {
+                    continue;
+                }
+                assert!(
+                    doc.contains(tool),
+                    "the {} page misses tool `{}`",
+                    task,
+                    tool
+                );
             }
         }
     }
@@ -2603,48 +5183,73 @@ mod tests {
         let text = "# Shop\nintro\n\n## Basket\nThe Basket keeps items a Customer intends to buy.\nItems stay until checkout.\n";
         s.docs.insert(
             "shop.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
-        s.graph.entities.insert("ent:basket".into(), Entity { name: "Basket".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:basket".into(),
+            Entity {
+                name: "Basket".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Basket shall keep items until checkout.".into(),
+                statement: "The Basket shall keep items until checkout.".into(),
                 entities: vec!["ent:basket".into()],
                 edges: Vec::new(),
-                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "Items stay until checkout.".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop/cart".into(),
+                    quote: "Items stay until checkout.".into(),
+                }),
+                ..Default::default()
             },
         );
         s.graph.requirements.insert(
             "req:shop-2".into(),
             Requirement {
-                ears: "The Basket shall hold items a Customer intends to buy.".into(),
+                statement: "The Basket shall hold items a Customer intends to buy.".into(),
                 entities: vec!["ent:basket".into()],
                 edges: Vec::new(),
-                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "The Cart holds items a Customer intends to buy.".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop/cart".into(),
+                    quote: "The Cart holds items a Customer intends to buy.".into(),
+                }),
+                ..Default::default()
             },
         );
         let candidate = |locates: bool| crate::model::AnchorCandidate {
             section: "shop.md#/shop/basket".into(),
             similarity: if locates { 1.0 } else { 0.8 },
             quote_locates: locates,
-            nearest: (!locates).then(|| "The Basket keeps items a Customer intends to buy.".to_string()),
+            nearest: (!locates)
+                .then(|| "The Basket keeps items a Customer intends to buy.".to_string()),
             excerpt: String::new(),
         };
         s.status.alignment.push(crate::model::DocAlignment {
             doc: "shop.md".into(),
             changes: vec![],
             proposals: vec![
-                crate::model::AnchorProposal { anchor: "req:shop-1".into(), from: "shop.md#/shop/cart".into(), quote: "Items stay until checkout.".into(), excerpt: String::new(), candidates: vec![candidate(true)] },
-                crate::model::AnchorProposal { anchor: "req:shop-2".into(), from: "shop.md#/shop/cart".into(), quote: "The Cart holds items a Customer intends to buy.".into(), excerpt: String::new(), candidates: vec![candidate(false)] },
+                crate::model::AnchorProposal {
+                    anchor: "req:shop-1".into(),
+                    from: "shop.md#/shop/cart".into(),
+                    quote: "Items stay until checkout.".into(),
+                    excerpt: String::new(),
+                    candidates: vec![candidate(true)],
+                },
+                crate::model::AnchorProposal {
+                    anchor: "req:shop-2".into(),
+                    from: "shop.md#/shop/cart".into(),
+                    quote: "The Cart holds items a Customer intends to buy.".into(),
+                    excerpt: String::new(),
+                    candidates: vec![candidate(false)],
+                },
             ],
         });
         ToolSession::new(
@@ -2665,11 +5270,16 @@ mod tests {
     #[test]
     fn align_done_rejects_an_undecided_proposal() {
         let mut s = align_session();
-        s.dispatch("place_anchor", &json!({"id": "req:shop-1", "section": "/shop/basket", "reevaluate": false})).unwrap();
+        s.dispatch(
+            "place_anchor",
+            &json!({"id": "req:shop-1", "section": "/shop/basket", "reevaluate": false}),
+        )
+        .unwrap();
         let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
         assert_eq!(err.rule, "undecided-proposal");
         assert!(err.message.contains("req:shop-2"));
-        s.dispatch("orphan_anchor", &json!({"id": "req:shop-2"})).unwrap();
+        s.dispatch("orphan_anchor", &json!({"id": "req:shop-2"}))
+            .unwrap();
         assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
         assert_eq!(s.staged.len(), 2);
     }
@@ -2677,16 +5287,31 @@ mod tests {
     #[test]
     fn place_anchor_gates_quote_and_section_and_rejects_strangers() {
         let mut s = align_session();
-        let err = s.dispatch("place_anchor", &json!({"id": "ent:basket", "section": "/shop/basket", "reevaluate": false})).unwrap_err();
+        let err = s
+            .dispatch(
+                "place_anchor",
+                &json!({"id": "ent:basket", "section": "/shop/basket", "reevaluate": false}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "unknown-anchor");
-        let err = s.dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/nowhere", "reevaluate": false})).unwrap_err();
+        let err = s
+            .dispatch(
+                "place_anchor",
+                &json!({"id": "req:shop-2", "section": "/shop/nowhere", "reevaluate": false}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "unknown-section");
         let err = s
             .dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/basket", "quote": "not in the text", "reevaluate": false}))
             .unwrap_err();
         assert_eq!(err.rule, "quote-not-found");
         // Without a quote the old one rides along; the reply says it will not locate.
-        let v = s.dispatch("place_anchor", &json!({"id": "req:shop-2", "section": "/shop/basket", "reevaluate": false})).unwrap();
+        let v = s
+            .dispatch(
+                "place_anchor",
+                &json!({"id": "req:shop-2", "section": "/shop/basket", "reevaluate": false}),
+            )
+            .unwrap();
         assert_eq!(v["reevaluate"], true);
         // With the new sentence verbatim it is a clean relocation.
         let v = s
@@ -2704,23 +5329,32 @@ mod tests {
         s.snapshot.graph.requirements.insert(
             "req:shop-9".into(),
             Requirement {
-                ears: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
+                statement: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
                 entities: vec!["ent:shopping-cart".into()],
                 edges: Vec::new(),
-                source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "The Shopping Cart holds items a Customer intends to buy.".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop/cart".into(),
+                    quote: "The Shopping Cart holds items a Customer intends to buy.".into(),
+                }),
+                ..Default::default()
             },
         );
         s.snapshot.status.reevaluate.push("req:shop-9".into());
         s.scope.stale_anchors.push("req:shop-9".into());
         s.scope.target_sections = vec!["/shop/cart".into()];
-        s.dispatch("set_coverage", &json!({"section": "/shop/cart", "state": "covered"})).unwrap();
+        s.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
         let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
         assert_eq!(err.rule, "stale-anchor");
-        s.dispatch("delete_requirement", &json!({"id": "req:shop-9", "reason": "meaning changed"})).unwrap();
+        s.dispatch(
+            "delete_requirement",
+            &json!({"id": "req:shop-9", "reason": "meaning changed"}),
+        )
+        .unwrap();
         assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
     }
 }

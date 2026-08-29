@@ -13,7 +13,11 @@ pub struct Focus {
 
 impl Default for Focus {
     fn default() -> Self {
-        Focus { parents: 2, mentions: 1, requirements: 2 }
+        Focus {
+            parents: 2,
+            mentions: 1,
+            requirements: 2,
+        }
     }
 }
 
@@ -58,7 +62,11 @@ struct Builder {
 
 impl Builder {
     fn new(budget: usize) -> Builder {
-        Builder { budget: budget.max(400), text: String::new(), handles: Vec::new() }
+        Builder {
+            budget: budget.max(400),
+            text: String::new(),
+            handles: Vec::new(),
+        }
     }
     fn fits(&self, s: &str) -> bool {
         self.text.len() + s.len() <= self.budget
@@ -90,10 +98,14 @@ impl Builder {
         if !self.handles.is_empty() {
             self.text.push_str("\n### More\n");
             for h in &self.handles {
-                self.text.push_str(&format!("- {} ({})\n", h.handle, h.description));
+                self.text
+                    .push_str(&format!("- {} ({})\n", h.handle, h.description));
             }
         }
-        ContextPack { pack: self.text, handles: self.handles }
+        ContextPack {
+            pack: self.text,
+            handles: self.handles,
+        }
     }
 }
 
@@ -127,9 +139,9 @@ fn req_line(store: &Store, rid: &str, anchor_entity: Option<&str>) -> String {
                 .map(|s| s.as_str())
                 .collect();
             if ties.is_empty() {
-                format!("- {}: {}", rid, r.ears)
+                format!("- {}: {}", rid, r.statement)
             } else {
-                format!("- {}: {} (ties: {})", rid, r.ears, ties.join(", "))
+                format!("- {}: {} (ties: {})", rid, r.statement, ties.join(", "))
             }
         }
         None => format!("- {} (unknown)", rid),
@@ -146,7 +158,9 @@ fn reqs_of(store: &Store, entity_id: &str) -> Vec<String> {
 // Parent chain titles for a section, oldest first.
 fn parent_chain(store: &Store, doc: &str, section: &str, hops: u32) -> Vec<String> {
     let mut chain = Vec::new();
-    let Some(rec) = store.docs.get(doc) else { return chain };
+    let Some(rec) = store.docs.get(doc) else {
+        return chain;
+    };
     let mut cur = rec.sections.get(section).and_then(|s| s.parent.clone());
     for _ in 0..hops {
         match cur {
@@ -167,7 +181,12 @@ fn parent_chain(store: &Store, doc: &str, section: &str, hops: u32) -> Vec<Strin
 
 // Assemble a context pack for a target: an entity id, a requirement id, a full section
 // reference ("doc.md#/ref"), or a document path (its root section).
-pub fn assemble(store: &Store, target: &str, focus: &Focus, budget: usize) -> Result<ContextPack, String> {
+pub fn assemble(
+    store: &Store,
+    target: &str,
+    focus: &Focus,
+    budget: usize,
+) -> Result<ContextPack, String> {
     let resolved = store.resolve_id(target).to_string();
     if resolved.starts_with("ent:") {
         return entity_pack(store, &resolved, focus, budget);
@@ -182,7 +201,12 @@ pub fn assemble(store: &Store, target: &str, focus: &Focus, budget: usize) -> Re
         let root = store
             .docs
             .get(&resolved)
-            .and_then(|d| d.sections.iter().find(|(_, s)| s.kind == "root").map(|(r, _)| r.clone()))
+            .and_then(|d| {
+                d.sections
+                    .iter()
+                    .find(|(_, s)| s.kind == "root")
+                    .map(|(r, _)| r.clone())
+            })
             .ok_or_else(|| format!("document {} has no root section", resolved))?;
         return section_pack(store, &resolved, &root, focus, budget);
     }
@@ -192,8 +216,17 @@ pub fn assemble(store: &Store, target: &str, focus: &Focus, budget: usize) -> Re
     ))
 }
 
-fn entity_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<ContextPack, String> {
-    let e = store.graph.entities.get(id).ok_or_else(|| format!("unknown entity {}", id))?;
+fn entity_pack(
+    store: &Store,
+    id: &str,
+    focus: &Focus,
+    budget: usize,
+) -> Result<ContextPack, String> {
+    let e = store
+        .graph
+        .entities
+        .get(id)
+        .ok_or_else(|| format!("unknown entity {}", id))?;
     let mut b = Builder::new(budget);
     b.push(&format!("## Entity {} ({})", id, e.name));
     if let Some(d) = &e.definition {
@@ -211,14 +244,24 @@ fn entity_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<
         let items: Vec<String> = e
             .mentions
             .iter()
-            .map(|m| format!("- {}#{} \"{}\"", m.doc, m.section, crate::llm::truncate(&m.quote, 160)))
+            .map(|m| {
+                format!(
+                    "- {}#{} \"{}\"",
+                    m.doc,
+                    m.section,
+                    crate::llm::truncate(&m.quote, 160)
+                )
+            })
             .collect();
         b.push_items(id, "mentions", 0, &items, "mentions");
         if focus.parents > 0 {
             for m in e.mentions.iter().take(1) {
                 let chain = parent_chain(store, &m.doc, &m.section, focus.parents);
                 if !chain.is_empty() {
-                    b.push(&format!("  (the first mention's section sits under: {})", chain.join(" → ")));
+                    b.push(&format!(
+                        "  (the first mention's section sits under: {})",
+                        chain.join(" → ")
+                    ));
                 }
             }
         }
@@ -256,7 +299,9 @@ fn entity_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<
         .graph
         .diagnostics
         .iter()
-        .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|s| store.resolve_id(s) == id))
+        .filter(|(_, d)| {
+            d.lifecycle == "open" && d.subjects.iter().any(|s| store.resolve_id(s) == id)
+        })
         .map(|(did, d)| format!("- {} [{}] {}: {}", did, d.severity, d.rule, d.message))
         .collect();
     if !diags.is_empty() {
@@ -267,13 +312,33 @@ fn entity_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<
 }
 
 fn req_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<ContextPack, String> {
-    let r = store.graph.requirements.get(id).ok_or_else(|| format!("unknown requirement {}", id))?;
+    let r = store
+        .graph
+        .requirements
+        .get(id)
+        .ok_or_else(|| format!("unknown requirement {}", id))?;
     let mut b = Builder::new(budget);
     b.push(&format!("## Requirement {}", id));
-    b.push(&format!("ears: {}", r.ears));
-    b.push(&format!("source: {}#{} \"{}\"", r.source.doc, r.source.section, crate::llm::truncate(&r.source.quote, 160)));
+    b.push(&format!("statement: {}", r.statement));
+    match r.source.as_ref() {
+        Some(src) => {
+            b.push(&format!(
+                "source: {}#{} \"{}\"",
+                src.doc,
+                src.section,
+                crate::llm::truncate(&src.quote, 160)
+            ));
+        }
+        None => {
+            b.push(&format!("provenance: {}", crate::turn::provenance_line(r)));
+        }
+    }
     b.push("\n### Entities");
-    let items: Vec<String> = r.entities.iter().map(|e| entity_line(store, store.resolve_id(e))).collect();
+    let items: Vec<String> = r
+        .entities
+        .iter()
+        .map(|e| entity_line(store, store.resolve_id(e)))
+        .collect();
     b.push_items(id, "entities", 0, &items, "entities");
     if focus.requirements > 1 {
         let mut sibs: Vec<String> = Vec::new();
@@ -294,9 +359,21 @@ fn req_pack(store: &Store, id: &str, focus: &Focus, budget: usize) -> Result<Con
     Ok(b.finish())
 }
 
-fn section_pack(store: &Store, doc: &str, sec: &str, focus: &Focus, budget: usize) -> Result<ContextPack, String> {
-    let rec = store.docs.get(doc).ok_or_else(|| format!("unknown document {}", doc))?;
-    let s = rec.sections.get(sec).ok_or_else(|| format!("unknown section {}#{}", doc, sec))?;
+fn section_pack(
+    store: &Store,
+    doc: &str,
+    sec: &str,
+    focus: &Focus,
+    budget: usize,
+) -> Result<ContextPack, String> {
+    let rec = store
+        .docs
+        .get(doc)
+        .ok_or_else(|| format!("unknown document {}", doc))?;
+    let s = rec
+        .sections
+        .get(sec)
+        .ok_or_else(|| format!("unknown section {}#{}", doc, sec))?;
     let target = format!("{}#{}", doc, sec);
     let mut b = Builder::new(budget);
     b.push(&format!("## Section {} ({})", target, s.title));
@@ -346,7 +423,7 @@ fn section_pack(store: &Store, doc: &str, sec: &str, focus: &Focus, budget: usiz
         .graph
         .requirements
         .iter()
-        .filter(|(_, r)| r.source.doc == doc && r.source.section == sec)
+        .filter(|(_, r)| r.anchored_at(&doc, &sec))
         .map(|(rid, _)| req_line(store, rid, None))
         .collect();
     if !reqs.is_empty() {
@@ -363,7 +440,10 @@ pub fn expand(store: &Store, handle: &str, budget: usize) -> Result<ContextPack,
         .ok_or_else(|| format!("bad handle `{}`; handles start with h:", handle))?;
     let parts: Vec<&str> = body.split('|').collect();
     if parts.len() != 3 {
-        return Err(format!("bad handle `{}`; expected h:<target>|<axis>|<start>", handle));
+        return Err(format!(
+            "bad handle `{}`; expected h:<target>|<axis>|<start>",
+            handle
+        ));
     }
     let (target, axis, start) = (parts[0], parts[1], parts[2].parse::<usize>().unwrap_or(0));
     let mut b = Builder::new(budget);
@@ -377,7 +457,11 @@ pub fn expand(store: &Store, handle: &str, budget: usize) -> Result<ContextPack,
                 .and_then(|d| d.sections.get(&sec))
                 .map(|s| s.raw.clone())
                 .ok_or_else(|| format!("unknown section {}", target))?;
-            let chunk: String = raw.chars().skip(start).take(budget.saturating_sub(200)).collect();
+            let chunk: String = raw
+                .chars()
+                .skip(start)
+                .take(budget.saturating_sub(200))
+                .collect();
             let consumed = start + chunk.chars().count();
             b.push(&chunk);
             if consumed < raw.chars().count() {
@@ -394,14 +478,28 @@ pub fn expand(store: &Store, handle: &str, budget: usize) -> Result<ContextPack,
 
     let items: Vec<String> = if target.starts_with("ent:") {
         let id = store.resolve_id(target).to_string();
-        let e = store.graph.entities.get(&id).ok_or_else(|| format!("unknown entity {}", id))?;
+        let e = store
+            .graph
+            .entities
+            .get(&id)
+            .ok_or_else(|| format!("unknown entity {}", id))?;
         match axis {
             "mentions" => e
                 .mentions
                 .iter()
-                .map(|m| format!("- {}#{} \"{}\"", m.doc, m.section, crate::llm::truncate(&m.quote, 160)))
+                .map(|m| {
+                    format!(
+                        "- {}#{} \"{}\"",
+                        m.doc,
+                        m.section,
+                        crate::llm::truncate(&m.quote, 160)
+                    )
+                })
                 .collect(),
-            "requirements" => reqs_of(store, &id).iter().map(|r| req_line(store, r, Some(&id))).collect(),
+            "requirements" => reqs_of(store, &id)
+                .iter()
+                .map(|r| req_line(store, r, Some(&id)))
+                .collect(),
             "related" => {
                 let mut related: Vec<String> = Vec::new();
                 for rid in reqs_of(store, &id) {
@@ -421,7 +519,9 @@ pub fn expand(store: &Store, handle: &str, budget: usize) -> Result<ContextPack,
                 .graph
                 .diagnostics
                 .iter()
-                .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|s| store.resolve_id(s) == id))
+                .filter(|(_, d)| {
+                    d.lifecycle == "open" && d.subjects.iter().any(|s| store.resolve_id(s) == id)
+                })
                 .map(|(did, d)| format!("- {} [{}] {}: {}", did, d.severity, d.rule, d.message))
                 .collect(),
             _ => return Err(format!("unknown axis `{}` for entity handles", axis)),
@@ -450,7 +550,7 @@ pub fn expand(store: &Store, handle: &str, budget: usize) -> Result<ContextPack,
                 .graph
                 .requirements
                 .iter()
-                .filter(|(_, r)| r.source.doc == doc && r.source.section == sec)
+                .filter(|(_, r)| r.anchored_at(&doc, &sec))
                 .map(|(rid, _)| req_line(store, rid, None))
                 .collect(),
             _ => return Err(format!("unknown axis `{}` for section handles", axis)),
@@ -473,30 +573,49 @@ mod tests {
         let text = "# Shop\nintro\n\n## Cart\nThe Shopping Cart holds items.\n";
         s.docs.insert(
             "shop.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
         s.graph.entities.insert(
             "ent:shopping-cart".into(),
             Entity {
                 name: "Shopping Cart".into(),
                 definition: Some("holds items a customer intends to buy".into()),
-                mentions: vec![SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "The Shopping Cart holds items.".into() }],
+                mentions: vec![SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop/cart".into(),
+                    quote: "The Shopping Cart holds items.".into(),
+                }],
                 ..Default::default()
             },
         );
         s.graph.entities.insert(
             "ent:customer".into(),
-            Entity { name: "Customer".into(), definition: Some("a person who buys".into()), ..Default::default() },
+            Entity {
+                name: "Customer".into(),
+                definition: Some("a person who buys".into()),
+                ..Default::default()
+            },
         );
         for i in 0..6 {
             s.graph.requirements.insert(
                 format!("req:shop-{}", i + 1),
                 Requirement {
-                    ears: format!("When event {} happens, the system shall update the Shopping Cart.", i + 1),
+                    statement: format!(
+                        "When event {} happens, the system shall update the Shopping Cart.",
+                        i + 1
+                    ),
                     entities: vec!["ent:shopping-cart".into(), "ent:customer".into()],
                     edges: vec![],
-                    source: SourceRef { doc: "shop.md".into(), section: "/shop/cart".into(), quote: "holds items".into() },
-                    confidence: None, reasoning: None, created: None, updated: None,
+                    source: Some(SourceRef {
+                        doc: "shop.md".into(),
+                        section: "/shop/cart".into(),
+                        quote: "holds items".into(),
+                    }),
+                    ..Default::default()
                 },
             );
         }
@@ -509,7 +628,10 @@ mod tests {
         let pack = assemble(&s, "ent:shopping-cart", &Focus::default(), 700).unwrap();
         assert!(pack.pack.len() <= 700 + 400); // handles section may add a little
         assert!(pack.pack.contains("Entity ent:shopping-cart"));
-        assert!(!pack.handles.is_empty(), "small budget should cut requirements into a handle");
+        assert!(
+            !pack.handles.is_empty(),
+            "small budget should cut requirements into a handle"
+        );
         let h = &pack.handles[0];
         let expansion = expand(&s, &h.handle, 4000).unwrap();
         assert!(expansion.pack.contains("req:shop-"));

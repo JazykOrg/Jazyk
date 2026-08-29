@@ -86,7 +86,10 @@ pub fn run_init(opts: &Options) -> i32 {
     let path = cwd.join("jazyk.toml");
     let mut wrote_something = false;
     if path.exists() {
-        eprintln!("jazyk: jazyk.toml already exists in {}; leaving it unchanged", cwd.display());
+        eprintln!(
+            "jazyk: jazyk.toml already exists in {}; leaving it unchanged",
+            cwd.display()
+        );
     } else {
         let previous = project::find_root(&cwd);
         if let Err(e) = std::fs::write(&path, INIT_TOML) {
@@ -141,7 +144,8 @@ pub fn run_init(opts: &Options) -> i32 {
 }
 
 // The starter jazyk.toml `jazyk init` (and the init_project chat tool) writes.
-pub(crate) const INIT_TOML: &str = "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
+pub(crate) const INIT_TOML: &str =
+    "# A directory with jazyk.toml is a Jazyk project. Globs resolve relative to it.\n\n\
 [docs]\nglob = [\"docs/**/*.md\"]\n\n\
 [roots]\nfiles = [\"docs/README.md\"]\n\n\
 [gen]\ndeliverable = \"deliverable\"\n";
@@ -156,7 +160,8 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
     for dir in ["docs", "deliverable"] {
         let path = cwd.join(dir);
         if !path.exists() {
-            std::fs::create_dir(&path).map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
+            std::fs::create_dir(&path)
+                .map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
             made.push(format!("{}/", dir));
         }
     }
@@ -166,7 +171,8 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
                        TODO: describe what this project is and what the deliverable should be. This\n\
                        file is the root document: the compiler reads it first, and every other\n\
                        document under `docs/` should be reachable from it.\n";
-        std::fs::write(&readme, content).map_err(|e| format!("cannot write {}: {}", readme.display(), e))?;
+        std::fs::write(&readme, content)
+            .map_err(|e| format!("cannot write {}: {}", readme.display(), e))?;
         made.push("docs/README.md".to_string());
     }
     Ok(made)
@@ -178,7 +184,12 @@ const MCP_AGENTS: &[(&str, &str, &str, &str)] = &[
     ("claude", "Claude Code", ".mcp.json", "mcpServers"),
     ("cursor", "Cursor", ".cursor/mcp.json", "mcpServers"),
     ("vscode", "VS Code", ".vscode/mcp.json", "servers"),
-    ("gemini", "Gemini CLI", ".gemini/settings.json", "mcpServers"),
+    (
+        "gemini",
+        "Gemini CLI",
+        ".gemini/settings.json",
+        "mcpServers",
+    ),
 ];
 
 // Offer MCP integration: `--mcp` skips the prompt, a non-interactive stdin skips the
@@ -193,7 +204,9 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
                 println!("jazyk: skipping MCP setup (no interactive stdin); rerun with --mcp claude|cursor|vscode|gemini");
                 return Ok(false);
             }
-            println!("\nSet up MCP integration? The agent gets the graph tools over `jazyk mcp graph`.");
+            println!(
+                "\nSet up MCP integration? The agent gets the graph tools over `jazyk mcp graph`."
+            );
             println!("  1) none");
             for (i, (_, name, file, _)) in MCP_AGENTS.iter().enumerate() {
                 println!("  {}) {:<12} ({})", i + 2, name, file);
@@ -210,11 +223,16 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
         }
     };
     let Some((_, name, rel, key)) = MCP_AGENTS.iter().find(|(id, ..)| *id == choice) else {
-        return Err(format!("unknown MCP agent `{}`; one of claude, cursor, vscode, gemini, none", choice));
+        return Err(format!(
+            "unknown MCP agent `{}`; one of claude, cursor, vscode, gemini, none",
+            choice
+        ));
     };
     let path = cwd.join(rel);
     let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{} is not valid JSON: {}", rel, e))?,
+        Ok(text) => {
+            serde_json::from_str(&text).map_err(|e| format!("{} is not valid JSON: {}", rel, e))?
+        }
         Err(_) => serde_json::json!({}),
     };
     if !root.is_object() {
@@ -229,7 +247,10 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
         return Err(format!("{}.{} does not hold a JSON object", rel, key));
     }
     if servers.get("jazyk").is_some() {
-        eprintln!("jazyk: {} already has a `jazyk` server entry; leaving it unchanged", rel);
+        eprintln!(
+            "jazyk: {} already has a `jazyk` server entry; leaving it unchanged",
+            rel
+        );
         return Ok(false);
     }
     // Read-only by default; adding --write to args hands the agent the write tools.
@@ -239,11 +260,15 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
     }
     servers["jazyk"] = entry;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
     }
     let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
     std::fs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
-    println!("jazyk: wrote a read-only `jazyk` MCP server into {} for {}", rel, name);
+    println!(
+        "jazyk: wrote a read-only `jazyk` MCP server into {} for {}",
+        rel, name
+    );
     Ok(true)
 }
 
@@ -354,7 +379,13 @@ pub(crate) fn resolve_llm(
         .or(Some(0.0))
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
-    Llm { base_url, model, api_key, temperature, trace: None }
+    Llm {
+        base_url,
+        model,
+        api_key,
+        temperature,
+        trace: None,
+    }
 }
 
 // The agents init can wire without being told anything else: the built-in one, and
@@ -367,8 +398,18 @@ pub const ACP_AGENTS: &[(&str, &str, &str, &[&str])] = &[
         "",
         &[],
     ),
-    ("codex", "Codex", "npx", &["--yes", "@zed-industries/codex-acp"]),
-    ("claude", "Claude Code", "npx", &["--yes", "@zed-industries/claude-code-acp"]),
+    (
+        "codex",
+        "Codex",
+        "npx",
+        &["--yes", "@zed-industries/codex-acp"],
+    ),
+    (
+        "claude",
+        "Claude Code",
+        "npx",
+        &["--yes", "@zed-industries/claude-code-acp"],
+    ),
     ("opencode", "OpenCode", "opencode", &["acp"]),
 ];
 
@@ -415,7 +456,11 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
         eprintln!(
             "jazyk: unknown agent `{}`; one of {}",
             name,
-            ACP_AGENTS.iter().map(|a| a.0).collect::<Vec<_>>().join(", ")
+            ACP_AGENTS
+                .iter()
+                .map(|a| a.0)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         return false;
     };
@@ -425,7 +470,12 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
     if !agent.2.is_empty() {
         let section = format!("acp.agents.{}", agent.0);
         full = crate::mcp::toml_set(&full, &section, "command", agent.2);
-        let args = agent.3.iter().map(|a| format!("\"{}\"", a)).collect::<Vec<_>>().join(", ");
+        let args = agent
+            .3
+            .iter()
+            .map(|a| format!("\"{}\"", a))
+            .collect::<Vec<_>>()
+            .join(", ");
         full = toml_set_raw(&full, &section, "args", &format!("[{}]", args));
     } else if interactive {
         // The embedded agent prompts a model, so init asks which one. The endpoint is
@@ -450,10 +500,17 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
                 if models.len() > 20 {
                     println!("  ... and {} more; type a name instead", models.len() - 20);
                 }
-                let answer = ask(&format!("choose [1-{}], a model name, or blank to keep `{}`: ",
-                    models.len().min(20), llm.model));
+                let answer = ask(&format!(
+                    "choose [1-{}], a model name, or blank to keep `{}`: ",
+                    models.len().min(20),
+                    llm.model
+                ));
                 let answer = answer.trim().to_string();
-                match answer.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= models.len()) {
+                match answer
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n >= 1 && *n <= models.len())
+                {
                     Some(n) => models[n - 1].clone(),
                     None if answer.is_empty() => String::new(),
                     None => answer,
@@ -484,7 +541,10 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
 // quoting. Kept next to its caller because nothing else needs it.
 fn toml_set_raw(text: &str, section: &str, key: &str, raw: &str) -> String {
     let quoted = crate::mcp::toml_set(text, section, key, "\u{0}");
-    quoted.replace(&format!("{} = \"\u{0}\"", key), &format!("{} = {}", key, raw))
+    quoted.replace(
+        &format!("{} = \"\u{0}\"", key),
+        &format!("{} = {}", key, raw),
+    )
 }
 
 fn ask(prompt: &str) -> String {
@@ -516,7 +576,9 @@ fn init_acp(flag: Option<&str>) -> bool {
             println!("  1) none");
             let cmd = crate::acp::install::spawn_command();
             for (i, id) in ides.iter().enumerate() {
-                let label = crate::acp::install::ide(id, &cmd).map(|i| i.label).unwrap_or(id);
+                let label = crate::acp::install::ide(id, &cmd)
+                    .map(|i| i.label)
+                    .unwrap_or(id);
                 println!("  {}) {}", i + 2, label);
             }
             print!("choose [1-{}] (default 1): ", ides.len() + 1);
@@ -524,7 +586,12 @@ fn init_acp(flag: Option<&str>) -> bool {
             std::io::stdout().flush().ok();
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).ok();
-            match line.trim().parse::<usize>().ok().filter(|n| *n >= 2 && *n <= ides.len() + 1) {
+            match line
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|n| *n >= 2 && *n <= ides.len() + 1)
+            {
                 Some(n) => ides[n - 2].to_string(),
                 None => return false,
             }
@@ -549,7 +616,11 @@ pub fn run_acp_install(ide: Option<&str>) -> i32 {
 }
 
 // Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.
-fn runner_for(proj: &Project, llm: &Llm, out: &std::path::Path) -> Result<crate::acp::runner::AcpRunner, String> {
+fn runner_for(
+    proj: &Project,
+    llm: &Llm,
+    out: &std::path::Path,
+) -> Result<crate::acp::runner::AcpRunner, String> {
     crate::acp::runner::AcpRunner::start(proj, llm, out)
 }
 
@@ -595,9 +666,17 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
     let store = Store::load(&out);
     let mut errors = 0;
     for d in store.graph.diagnostics.values() {
-        if d.lifecycle == "open" && d.severity == "error" && d.triage.as_deref() != Some("suppressed") {
+        if d.lifecycle == "open"
+            && d.severity == "error"
+            && d.triage.as_deref() != Some("suppressed")
+        {
             errors += 1;
-            eprintln!("error[{}]: {} ({})", d.rule, d.message, d.subjects.join(", "));
+            eprintln!(
+                "error[{}]: {} ({})",
+                d.rule,
+                d.message,
+                d.subjects.join(", ")
+            );
         }
     }
     if errors > 0 || report.verdict != "converged" {
@@ -656,7 +735,12 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         files.dedup();
         for f in files {
             if let Ok(md) = std::fs::metadata(&f) {
-                s.push_str(&format!("{}:{}:{:?};", f.display(), md.len(), md.modified().ok()));
+                s.push_str(&format!(
+                    "{}:{}:{:?};",
+                    f.display(),
+                    md.len(),
+                    md.modified().ok()
+                ));
             }
         }
         s
@@ -688,8 +772,17 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
             if !q.compile.is_empty() {
                 let gated = crate::queue::gated(&q.compile);
                 let act = crate::queue::actionable(&q.compile);
-                s.push_str(&format!("jazyk: {} compilation task(s), {} actionable\n", q.compile.len(), act));
-                for t in q.compile.iter().filter(|t| t["ready"] == true && t["gated"] != true).take(5) {
+                s.push_str(&format!(
+                    "jazyk: {} compilation task(s), {} actionable\n",
+                    q.compile.len(),
+                    act
+                ));
+                for t in q
+                    .compile
+                    .iter()
+                    .filter(|t| t["ready"] == true && t["gated"] != true)
+                    .take(5)
+                {
                     let secs = t["dirtySections"].as_array().map(|a| a.len()).unwrap_or(0);
                     let anchors = t["staleAnchors"].as_array().map(|a| a.len()).unwrap_or(0);
                     match t["kind"].as_str().unwrap_or("") {
@@ -699,7 +792,9 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                             secs,
                             anchors
                         )),
-                        k => s.push_str(&format!("  {} {}\n", k, t["target"].as_str().unwrap_or(""))),
+                        k => {
+                            s.push_str(&format!("  {} {}\n", k, t["target"].as_str().unwrap_or("")))
+                        }
                     }
                 }
                 if gated > 0 {
@@ -758,7 +853,10 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                     s.push_str("  → call generation_tasks on the jazyk MCP server to begin\n");
                 }
             } else if !q.verify.is_empty() {
-                s.push_str(&format!("jazyk: {} verification task(s) ready\n", q.verify.len()));
+                s.push_str(&format!(
+                    "jazyk: {} verification task(s) ready\n",
+                    q.verify.len()
+                ));
                 s.push_str("  → call verification_tasks on the jazyk MCP server (run_tests covers programmatic rows)\n");
             } else {
                 s.push_str("jazyk: nothing to do\n");
@@ -782,27 +880,28 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     }
     use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-        if res.is_ok() {
-            tx.send(()).ok();
-        }
-    }) {
-        Ok(w) => w,
-        Err(_) => {
-            // Polling fallback.
-            let mut last_fp = fingerprint(&proj);
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let fp = fingerprint(&proj);
-                if fp != last_fp {
-                    last_fp = fp;
-                    if notice(&mut last_notice) && once {
-                        return 0;
+    let mut watcher =
+        match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if res.is_ok() {
+                tx.send(()).ok();
+            }
+        }) {
+            Ok(w) => w,
+            Err(_) => {
+                // Polling fallback.
+                let mut last_fp = fingerprint(&proj);
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let fp = fingerprint(&proj);
+                    if fp != last_fp {
+                        last_fp = fp;
+                        if notice(&mut last_notice) && once {
+                            return 0;
+                        }
                     }
                 }
             }
-        }
-    };
+        };
     if let Err(e) = watcher.watch(&proj.root, notify::RecursiveMode::Recursive) {
         eprintln!("jazyk: cannot watch {}: {}", proj.root.display(), e);
         return 1;
@@ -810,7 +909,9 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     // The out directory can live outside the root (--out); watch it too so releases
     // fire events. Best effort: inside the root it is already covered.
     if !out.starts_with(&proj.root) {
-        watcher.watch(&out, notify::RecursiveMode::NonRecursive).ok();
+        watcher
+            .watch(&out, notify::RecursiveMode::NonRecursive)
+            .ok();
     }
     let mut last_fp = fingerprint(&proj);
     loop {
@@ -852,25 +953,29 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     // the out directory's own writes never trigger one.
     use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-        if res.is_ok() {
-            tx.send(()).ok();
-        }
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("jazyk: file watcher unavailable ({}); falling back to polling", e);
-            let mut last = String::new();
-            loop {
-                let fp = fingerprint(&proj);
-                if fp != last {
-                    last = fp;
-                    run_compile(paths, opts);
-                }
-                std::thread::sleep(std::time::Duration::from_secs(2));
+    let mut watcher =
+        match notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            if res.is_ok() {
+                tx.send(()).ok();
             }
-        }
-    };
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!(
+                    "jazyk: file watcher unavailable ({}); falling back to polling",
+                    e
+                );
+                let mut last = String::new();
+                loop {
+                    let fp = fingerprint(&proj);
+                    if fp != last {
+                        last = fp;
+                        run_compile(paths, opts);
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        };
     if let Err(e) = watcher.watch(&proj.root, notify::RecursiveMode::Recursive) {
         eprintln!("jazyk: cannot watch {}: {}", proj.root.display(), e);
         return 1;
@@ -880,14 +985,18 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     // its own with backoff instead of idling until the next edit. Unfinished work is
     // never silent, and watch is the loop that owns resuming it. Mirrors
     // docs/frontends/cli.md#jazyk-watch.
-    let incomplete = |out: &std::path::Path| -> bool { Store::load(out).status.verdict == "incomplete" };
+    let incomplete =
+        |out: &std::path::Path| -> bool { Store::load(out).status.verdict.state == "incomplete" };
     let mut backoff = std::time::Duration::from_secs(30);
     let max_backoff = std::time::Duration::from_secs(300);
     let mut last = fingerprint(&proj);
     run_compile(paths, opts);
     loop {
         let retry_due = if incomplete(&out) {
-            eprintln!("jazyk: build incomplete; retrying parked work in {}s", backoff.as_secs());
+            eprintln!(
+                "jazyk: build incomplete; retrying parked work in {}s",
+                backoff.as_secs()
+            );
             match rx.recv_timeout(backoff) {
                 Ok(()) => false,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
@@ -923,7 +1032,7 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
     let store = Store::load(&out);
     let s = &store.status;
     println!("generation: {}", s.generation);
-    println!("verdict:    {}", if s.verdict.is_empty() { "(no build yet)" } else { &s.verdict });
+    println!("verdict:    {}", s.verdict);
     println!(
         "graph:      {} entities, {} requirements, {} relationships",
         store.graph.entities.len(),
@@ -954,17 +1063,21 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         if by_sev.is_empty() {
             "none".to_string()
         } else {
-            by_sev.iter().map(|(k, v)| format!("{} {}", v, k)).collect::<Vec<_>>().join(", ")
+            by_sev
+                .iter()
+                .map(|(k, v)| format!("{} {}", v, k))
+                .collect::<Vec<_>>()
+                .join(", ")
         }
     );
     println!(
-        "spent:      {} turns, {} rounds, {} tokens",
-        s.spent.turns, s.spent.rounds, s.spent.tokens
+        "spent:      {} sessions, {} rounds, {} tokens",
+        s.spent.sessions, s.spent.rounds, s.spent.tokens
     );
     if !s.parked.is_empty() {
         println!("parked:");
         for p in &s.parked {
-            println!("  - {} {}", p.task, p.target);
+            println!("  - {}", p.id);
         }
     }
     // The unclaimed report: deliverable files no binding names, the decompilation
@@ -972,7 +1085,10 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
     let gs = crate::gen::GenSettings::resolve(&_proj);
     let un = crate::bind::unclaimed(&_proj, &store, &gs);
     if !un.is_empty() {
-        println!("unclaimed:  {} file(s) no binding names (`jazyk decompile` drafts docs for them)", un.len());
+        println!(
+            "unclaimed:  {} file(s) no binding names (`jazyk decompile` drafts docs for them)",
+            un.len()
+        );
         for f in un.iter().take(8) {
             println!("  - {}", f);
         }
@@ -1052,7 +1168,11 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
                 "jazyk: decompile done — {} drafted, {} failure(s); drafts carry `unratified` until edited, `jazyk compile` extracts them",
                 sum["drafted"], sum["failures"]
             );
-            if sum["failures"].as_u64().unwrap_or(0) > 0 { 1 } else { 0 }
+            if sum["failures"].as_u64().unwrap_or(0) > 0 {
+                1
+            } else {
+                0
+            }
         }
         Err(e) => {
             eprintln!("jazyk: {}", e);
@@ -1122,21 +1242,34 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
     use crate::turn::TraceEvent;
-    let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> = std::sync::Arc::new(|ev| match ev {
-        TraceEvent::GenEntityDone { entity, files } => println!("jazyk: generated {} ({} file(s))", entity, files),
-        TraceEvent::GenEntityFailed { entity, stage, error } if stage == "task" => {
-            eprintln!("jazyk: {}: {}", entity, error)
-        }
-        TraceEvent::GenEntityFailed { entity, error, .. } => eprintln!("jazyk: {} failed: {}", entity, error),
-        _ => {}
-    });
-    let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "gen");
+    let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> =
+        std::sync::Arc::new(|ev| match ev {
+            TraceEvent::GenEntityDone { entity, files } => {
+                println!("jazyk: generated {} ({} file(s))", entity, files)
+            }
+            TraceEvent::GenEntityFailed {
+                entity,
+                stage,
+                error,
+            } if stage == "task" => {
+                eprintln!("jazyk: {}: {}", entity, error)
+            }
+            TraceEvent::GenEntityFailed { entity, error, .. } => {
+                eprintln!("jazyk: {} failed: {}", entity, error)
+            }
+            _ => {}
+        });
+    let trace =
+        Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "gen");
     // Binding first: owed bind tasks classify each requirement before any entity
     // regenerates, and the bound tests become generation's acceptance gates.
     // Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
-    match crate::bind::run_all(&store, &runner, &gs, entities, &proj.limits, &proj.linting, &trace) {
+    match crate::bind::run_all(&store, &runner, &gs, entities, &trace) {
         Ok(b) => {
-            let (bound, bfail) = (b["bound"].as_u64().unwrap_or(0), b["failures"].as_u64().unwrap_or(0));
+            let (bound, bfail) = (
+                b["bound"].as_u64().unwrap_or(0),
+                b["failures"].as_u64().unwrap_or(0),
+            );
             if bound + bfail > 0 {
                 println!("jazyk: bind — {} bound, {} failure(s)", bound, bfail);
             }
@@ -1145,7 +1278,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             eprintln!("jazyk: bind: {}", e);
         }
     }
-    let result = crate::gen::run_all(&store, &runner, &gs, entities, opts.force, &proj.limits, &proj.linting, &trace);
+    let result = crate::gen::run_all(&store, &runner, &gs, entities, opts.force, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),
@@ -1190,7 +1323,8 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
         return 0;
     }
     if opts.list {
-        let selected = crate::verify::select_rows(&store, &gs, targets, opts.kind.as_deref(), opts.force);
+        let selected =
+            crate::verify::select_rows(&store, &gs, targets, opts.kind.as_deref(), opts.force);
         for r in &selected {
             println!(
                 "{:24} {:18} {:13} {} ({})",
@@ -1206,21 +1340,40 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
     }
     // Render the worker events on the historical CLI output format.
     use crate::turn::TraceEvent;
-    let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> = std::sync::Arc::new(|ev| match ev {
-        TraceEvent::VerifyRowDone { requirement, verdict, run, .. } => println!(
-            "jazyk: {} {} ({})",
-            requirement,
-            if verdict == "pass" { "verified" } else { "FAILING" },
-            run
-        ),
-        TraceEvent::VerifyRowStale { requirement, entity, status, reason } => eprintln!(
-            "jazyk: {} is {} ({}); generate with `jazyk gen {}`",
-            requirement, status, reason, entity
-        ),
-        TraceEvent::VerifyRowError { requirement, message } => eprintln!("jazyk: {}{}", requirement, message),
-        _ => {}
-    });
-    let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default()).with_transcript(&out, "verify");
+    let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> =
+        std::sync::Arc::new(|ev| match ev {
+            TraceEvent::VerifyRowDone {
+                requirement,
+                verdict,
+                run,
+                ..
+            } => println!(
+                "jazyk: {} {} ({})",
+                requirement,
+                if verdict == "pass" {
+                    "verified"
+                } else {
+                    "FAILING"
+                },
+                run
+            ),
+            TraceEvent::VerifyRowStale {
+                requirement,
+                entity,
+                status,
+                reason,
+            } => eprintln!(
+                "jazyk: {} is {} ({}); generate with `jazyk gen {}`",
+                requirement, status, reason, entity
+            ),
+            TraceEvent::VerifyRowError {
+                requirement,
+                message,
+            } => eprintln!("jazyk: {}{}", requirement, message),
+            _ => {}
+        });
+    let trace = Trace::to_sink(TraceLevel::Normal, sink, Default::default())
+        .with_transcript(&out, "verify");
     let runner = match runner_for(&proj, &llm, &out) {
         Ok(r) => r,
         Err(e) => {
@@ -1228,7 +1381,15 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
             return 2;
         }
     };
-    let result = crate::verify::run_all(&store, &runner, &gs, targets, opts.kind.as_deref(), opts.force, &trace);
+    let result = crate::verify::run_all(
+        &store,
+        &runner,
+        &gs,
+        targets,
+        opts.kind.as_deref(),
+        opts.force,
+        &trace,
+    );
     match &result {
         Ok(v) => trace.finish_transcript("done", v),
         Err(e) => trace.finish_transcript("failed", &serde_json::json!({"error": e})),
@@ -1353,7 +1514,12 @@ mod tests {
         assert_eq!(r.model, "flag-model");
 
         // Nothing set anywhere: built-in defaults.
-        let r = resolve_llm(&Options::default(), &LlmSettings::default(), &GlobalLlm::default(), no_env);
+        let r = resolve_llm(
+            &Options::default(),
+            &LlmSettings::default(),
+            &GlobalLlm::default(),
+            no_env,
+        );
         assert_eq!(r.model, "llama3.1");
         assert_eq!(r.base_url, "http://localhost:11434/v1");
         assert_eq!(r.temperature, Some(0.0));

@@ -6,7 +6,7 @@
 // docs/benchmark/cases/*.md are embedded at compile time, one source of truth.
 use crate::llm::{self, Llm};
 use crate::model::*;
-use crate::project::{Limits, Linting};
+use crate::project::Linting;
 use crate::store::Store;
 use crate::turn::{Trace, TraceLevel};
 use serde_json::Value;
@@ -102,7 +102,11 @@ pub fn parse_cases() -> Vec<Case> {
             };
             let strs = |x: &Value| -> Vec<String> {
                 x.as_array()
-                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default()
             };
             let tier = v["tier"].as_str().unwrap_or("extraction").to_string();
@@ -156,7 +160,10 @@ pub fn parse_cases() -> Vec<Case> {
     // loudly instead of grading it silently.
     for c in &cases {
         if c.checks.is_empty() {
-            eprintln!("jazyk: case `{}` has no checks; its yaml block is broken (inner fence?)", c.name);
+            eprintln!(
+                "jazyk: case `{}` has no checks; its yaml block is broken (inner fence?)",
+                c.name
+            );
         }
     }
     cases.retain(|c| !c.checks.is_empty());
@@ -166,22 +173,40 @@ pub fn parse_cases() -> Vec<Case> {
 fn source_ref(v: &Value) -> Option<SourceRef> {
     let full = v["section"].as_str()?;
     let (doc, section) = split_section_ref(full)?;
-    Some(SourceRef { doc, section, quote: v["quote"].as_str().unwrap_or_default().to_string() })
+    Some(SourceRef {
+        doc,
+        section,
+        quote: v["quote"].as_str().unwrap_or_default().to_string(),
+    })
 }
 
 // Seed a sandbox store from a case fixture. The sandbox writes to a throwaway out dir.
 pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
-    let mut s = Store { out: tmp.to_path_buf(), ..Default::default() };
+    let mut s = Store {
+        out: tmp.to_path_buf(),
+        ..Default::default()
+    };
     for (doc, text) in &case.docs {
         s.docs.insert(
             doc.clone(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
     }
     for (full, state) in &case.coverage {
         if let Some((doc, section)) = split_section_ref(full) {
             if let Some(rec) = s.docs.get_mut(&doc) {
-                rec.coverage.insert(section, Coverage { state: state.clone(), note: None, claimed_by: None });
+                rec.coverage.insert(
+                    section,
+                    Coverage {
+                        state: state.clone(),
+                        note: None,
+                        claimed_by: None,
+                    },
+                );
             }
         }
     }
@@ -192,7 +217,11 @@ pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
                 name: e["name"].as_str().unwrap_or_default().to_string(),
                 aliases: e["aliases"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 definition: e["definition"].as_str().map(String::from),
                 mentions: e["mentions"]
@@ -204,25 +233,27 @@ pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
         );
     }
     for (id, r) in &case.requirements {
-        let Some(source) = source_ref(&r["source"]) else { continue };
+        let Some(source) = source_ref(&r["source"]) else {
+            continue;
+        };
         s.graph.requirements.insert(
             id.clone(),
             Requirement {
-                ears: r["ears"].as_str().unwrap_or_default().to_string(),
+                statement: r["statement"].as_str().unwrap_or_default().to_string(),
                 entities: r["entities"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                edges: Vec::new(),
-                source,
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(source),
+                ..Default::default()
             },
         );
     }
-    s.recompute_relationships();
+    crate::derive::recompute_relationships(&mut s);
     s
 }
 
@@ -240,25 +271,39 @@ fn find_entity(store: &Store, ident: &str) -> Option<String> {
     if store.graph.entities.contains_key(ident) {
         return Some(ident.to_string());
     }
-    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let norm = |s: &str| {
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
     store
         .graph
         .entities
         .iter()
-        .find(|(_, e)| norm(&e.name) == norm(ident) || e.aliases.iter().any(|a| norm(a) == norm(ident)))
+        .find(|(_, e)| {
+            norm(&e.name) == norm(ident) || e.aliases.iter().any(|a| norm(a) == norm(ident))
+        })
         .map(|(id, _)| id.clone())
 }
 
 // Evaluate one check against the resulting store and the staged-mutation count.
 // Returns None on pass, or a short failure description.
 pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Option<String> {
-    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    let norm = |s: &str| {
+        s.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
     match kind {
         "entityExists" => {
             let want = norm(arg["name"].as_str().unwrap_or_default());
-            let found = store.graph.entities.values().any(|e| {
-                norm(&e.name) == want || e.aliases.iter().any(|a| norm(a) == want)
-            });
+            let found = store
+                .graph
+                .entities
+                .values()
+                .any(|e| norm(&e.name) == want || e.aliases.iter().any(|a| norm(a) == want));
             (!found).then(|| format!("no entity named {}", arg["name"]))
         }
         "entityAbsent" => {
@@ -289,7 +334,7 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             None
         }
         "requirementExists" => {
-            let pat = arg["earsPattern"].as_str().unwrap_or_default();
+            let pat = arg["statementPattern"].as_str().unwrap_or_default();
             let ent = arg["entity"].as_str().unwrap_or_default();
             let re = match compile(pat) {
                 Ok(re) => re,
@@ -299,7 +344,8 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                 return Some(format!("entity {} not found", ent));
             };
             let found = store.graph.requirements.values().any(|r| {
-                re.is_match(&r.ears) && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
+                re.is_match(&r.statement)
+                    && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
             });
             (!found).then(|| format!("no requirement matching `{}` on {}", pat, ent_id))
         }
@@ -341,10 +387,16 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             };
             let want_type = arg["type"].as_str();
             let found = store.graph.relationships.values().any(|r| {
-                let members: Vec<String> = r.members.iter().map(|m| store.resolve_id(m).to_string()).collect();
+                let members: Vec<String> = r
+                    .members
+                    .iter()
+                    .map(|m| store.resolve_id(m).to_string())
+                    .collect();
                 members.contains(&a_id)
                     && members.contains(&b_id)
-                    && want_type.map(|t| r.rel_type == t).unwrap_or(true)
+                    && want_type
+                        .map(|t| r.contributions.iter().any(|c| c.r#type == t))
+                        .unwrap_or(true)
             });
             (!found).then(|| {
                 format!(
@@ -375,10 +427,20 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                 d.lifecycle == "open"
                     && d.rule == rule
                     && subject
-                        .map(|want| d.subjects.iter().any(|s| store.resolve_id(s) == store.resolve_id(want)))
+                        .map(|want| {
+                            d.subjects
+                                .iter()
+                                .any(|s| store.resolve_id(s) == store.resolve_id(want))
+                        })
                         .unwrap_or(true)
             });
-            (!found).then(|| format!("no open {} diagnostic on {}", rule, subject.unwrap_or("any subject")))
+            (!found).then(|| {
+                format!(
+                    "no open {} diagnostic on {}",
+                    rule,
+                    subject.unwrap_or("any subject")
+                )
+            })
         }
         "diagnosticAbsent" => {
             let rule = arg["rule"].as_str().unwrap_or_default();
@@ -387,7 +449,13 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                 .diagnostics
                 .values()
                 .find(|d| d.lifecycle == "open" && d.rule == rule)
-                .map(|d| format!("unexpected {} diagnostic: {}", rule, llm::truncate(&d.message, 60)))
+                .map(|d| {
+                    format!(
+                        "unexpected {} diagnostic: {}",
+                        rule,
+                        llm::truncate(&d.message, 60)
+                    )
+                })
         }
         "coverageSet" => {
             let full = arg["section"].as_str().unwrap_or_default();
@@ -407,7 +475,6 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
     }
 }
 
-
 // Tiers with unknown names grade as extraction, the strictest default.
 pub fn tier_key(t: &str) -> &'static str {
     match t {
@@ -421,8 +488,13 @@ pub fn tier_key(t: &str) -> &'static str {
 // Generation and verification checks: deterministic code over the ledger, the files on
 // disk, and the exit codes of recorded commands. Mirrors
 // docs/benchmark/benchmark.md#deterministic-grading.
-pub const WORKFLOW_CHECKS: [&str; 5] =
-    ["generationRecorded", "rowPerRequirement", "testsPass", "testFalsifiable", "verdictIs"];
+pub const WORKFLOW_CHECKS: [&str; 5] = [
+    "generationRecorded",
+    "rowPerRequirement",
+    "testsPass",
+    "testFalsifiable",
+    "verdictIs",
+];
 
 pub fn eval_workflow_check(
     kind: &str,
@@ -489,7 +561,11 @@ pub fn eval_workflow_check(
             // Break the product (never the test), rerun, restore. A test that still
             // passes with the mandated value gone verifies nothing.
             let slug = crate::gen::slug_of(target);
-            let files = ledger.entities.get(&slug).map(|e| e.files.clone()).unwrap_or_default();
+            let files = ledger
+                .entities
+                .get(&slug)
+                .map(|e| e.files.clone())
+                .unwrap_or_default();
             let mut touched: Vec<(std::path::PathBuf, String)> = Vec::new();
             for f in &files {
                 if *f == row.test.artifact {
@@ -504,14 +580,20 @@ pub fn eval_workflow_check(
                 }
             }
             if touched.is_empty() {
-                return Some(format!("the mandated value `{}` appears in no product file", needle));
+                return Some(format!(
+                    "the mandated value `{}` appears in no product file",
+                    needle
+                ));
             }
             let verdict = crate::verify::run_programmatic(store, rid, gs);
             for (p, text) in &touched {
                 std::fs::write(p, text).ok();
             }
             match verdict {
-                Ok(r) if r.pass => Some(format!("{}'s test still passes with the product broken; not falsifiable", rid)),
+                Ok(r) if r.pass => Some(format!(
+                    "{}'s test still passes with the product broken; not falsifiable",
+                    rid
+                )),
                 Ok(_) => None,
                 Err(e) => Some(format!("broken-product rerun errored: {}", e)),
             }
@@ -531,9 +613,17 @@ pub fn eval_workflow_check(
 
 // Seed the llm-judge fixture for a verify-requirement case: the implementing files
 // under the temp deliverable, the criteria file, and the ledger row the judge reads.
-pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSettings) -> Result<(), String> {
+pub fn seed_verification(
+    case: &Case,
+    store: &Store,
+    gs: &crate::gen::GenSettings,
+) -> Result<(), String> {
     let rid = &case.target;
-    let r = store.graph.requirements.get(rid).ok_or_else(|| format!("fixture has no requirement {}", rid))?;
+    let r = store
+        .graph
+        .requirements
+        .get(rid)
+        .ok_or_else(|| format!("fixture has no requirement {}", rid))?;
     for (f, text) in &case.deliverable {
         let p = gs.deliverable.join(f);
         if let Some(parent) = p.parent() {
@@ -546,10 +636,10 @@ pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSetting
     let criteria = format!(
         "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n{}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
         rid,
-        hash_hex(&r.ears),
+        hash_hex(&r.statement),
         rid,
-        r.ears,
-        r.source.quote,
+        r.statement,
+        r.source.as_ref().map(|s| s.quote.as_str()).unwrap_or_default(),
         files.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")
     );
     let crit_path = store.out.join("gen").join(&artifact);
@@ -561,7 +651,7 @@ pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSetting
         kind: "llm".into(),
         label: "judge".into(),
         artifact,
-        name: crate::gen::test_name(rid, &r.ears),
+        name: crate::gen::test_name(rid, &r.statement),
         run: format!("jazyk test {}", rid),
         cwd: ".".into(),
     };
@@ -573,7 +663,7 @@ pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSetting
             files: files.clone(),
             sites: Vec::new(),
             hashes: crate::gen::RowHashes {
-                requirement: hash_hex(&r.ears),
+                requirement: hash_hex(&r.statement),
                 test: crate::gen::hash_file(&crate::gen::artifact_path(&store.out, gs, &test)),
                 files: crate::gen::hash_files(gs, &files),
             },
@@ -588,7 +678,6 @@ pub fn seed_verification(case: &Case, store: &Store, gs: &crate::gen::GenSetting
     Ok(())
 }
 
-
 // One case as a turn on the generic loop: the same codecs the embedded agent runs,
 // dispatching into a ToolSession over the sandbox. What run_turn used to be, scoped
 // to grading. Mirrors docs/benchmark/benchmark.md#runs.
@@ -596,7 +685,6 @@ fn run_case_turn(
     llm: &Llm,
     snapshot: Store,
     item: &crate::model::WorkItem,
-    limits: &Limits,
     lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     transcript: Option<&std::path::Path>,
@@ -622,7 +710,7 @@ fn run_case_turn(
             proposals: Vec::new(),
         },
     };
-    let (system, pack) = crate::turn::task_prompt(&snapshot, item, limits, lint, gs);
+    let (system, pack) = crate::turn::task_prompt(&snapshot, item, lint, gs);
     let names = toolset(&item.task);
     let tools: Vec<GenericTool> = catalog()
         .iter()
@@ -634,12 +722,22 @@ fn run_case_turn(
         })
         .collect();
     let session = std::cell::RefCell::new({
-        let mut s = ToolSession::new(snapshot, scope, limits.turn_mutations, limits.context_budget);
+        let mut s = ToolSession::new(
+            snapshot,
+            scope,
+            crate::limits::SESSION_MUTATIONS,
+            crate::limits::CONTEXT_BUDGET,
+        );
         s.gen = gs.clone();
-        s.caller = crate::feedback::Caller { source: "benchmark".into(), target: item.target.clone(), ..Default::default() };
+        s.caller = crate::feedback::Caller {
+            source: "benchmark".into(),
+            target: item.target.clone(),
+            ..Default::default()
+        };
         s
     });
-    let mut history = vec![serde_json::json!({"role": "user", "content": format!("{}\n\n{}", system, pack)})];
+    let mut history =
+        vec![serde_json::json!({"role": "user", "content": format!("{}\n\n{}", system, pack)})];
     let rounds = std::cell::Cell::new(0u32);
     let mut dispatch = |name: &str, args: &serde_json::Value| -> Result<String, String> {
         match session.borrow_mut().dispatch(name, args) {
@@ -652,7 +750,8 @@ fn run_case_turn(
             rounds.set(rounds.get() + 1);
         }
     };
-    let round_budget = limits.turn_rounds.max(item.dirty_sections.len() as u32 * 8);
+    let round_budget = crate::limits::SESSION_ROUNDS
+        .max(item.dirty_sections.len() as u32 * crate::limits::ROUNDS_PER_SECTION);
     let mut stop = agent_loop::run_loop(LoopArgs {
         llm,
         history: &mut history,
@@ -706,7 +805,11 @@ fn run_case_turn(
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).ok();
         }
-        std::fs::write(path, serde_json::to_string_pretty(&history).unwrap_or_default()).ok();
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&history).unwrap_or_default(),
+        )
+        .ok();
     }
     (std::mem::take(&mut s.staged), rounds.get(), failed)
 }
@@ -728,7 +831,12 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
     run_traced_filtered(llm, out, progress, &[])
 }
 
-fn run_traced_filtered(llm: &Llm, out: &std::path::Path, progress: &Trace, filter: &[String]) -> i32 {
+fn run_traced_filtered(
+    llm: &Llm,
+    out: &std::path::Path,
+    progress: &Trace,
+    filter: &[String],
+) -> i32 {
     let mut cases = parse_cases();
     if cases.is_empty() {
         eprintln!("jazyk: no benchmark cases parsed");
@@ -738,20 +846,31 @@ fn run_traced_filtered(llm: &Llm, out: &std::path::Path, progress: &Trace, filte
         let known: Vec<String> = cases.iter().map(|c| c.name.clone()).collect();
         for f in filter {
             if !known.contains(f) {
-                eprintln!("jazyk: unknown case `{}`; available: {}", f, known.join(", "));
+                eprintln!(
+                    "jazyk: unknown case `{}`; available: {}",
+                    f,
+                    known.join(", ")
+                );
                 return 2;
             }
         }
         cases.retain(|c| filter.contains(&c.name));
     }
-    let limits = Limits::default();
     let trace = Trace::stderr(TraceLevel::Quiet);
     println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
     // One tiny completion before grading: a dead or misrouted endpoint fails one
     // probe, not every case under both codecs.
-    if let Err(e) = llm.chat("Reply with the single word: ok", "ok?", "bench preflight", "preflight") {
-        println!("
-verdict: unmeasured  the endpoint never produced a completion ({})", e);
+    if let Err(e) = llm.chat(
+        "Reply with the single word: ok",
+        "ok?",
+        "bench preflight",
+        "preflight",
+    ) {
+        println!(
+            "
+verdict: unmeasured  the endpoint never produced a completion ({})",
+            e
+        );
         return 2;
     }
     let mut any_usable = false;
@@ -776,7 +895,11 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
 
         for case in &cases {
             llm::set_tools_mode(mode);
-            let tmp = std::env::temp_dir().join(format!("jazyk-bench-{}-{}", std::process::id(), case.name));
+            let tmp = std::env::temp_dir().join(format!(
+                "jazyk-bench-{}-{}",
+                std::process::id(),
+                case.name
+            ));
             std::fs::remove_dir_all(&tmp).ok();
             let mut store = sandbox(case, &tmp);
             let dirty: Vec<String> = match case.task_type.as_str() {
@@ -797,7 +920,11 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
             let case_start = std::time::Instant::now();
             let case_tokens_before = llm::tokens_spent();
             // The generation turn writes into a temp deliverable beside the sandbox.
-            let gs = crate::gen::GenSettings { deliverable: tmp.join("deliverable"), worker: "agentic".into(), code: Vec::new() };
+            let gs = crate::gen::GenSettings {
+                deliverable: tmp.join("deliverable"),
+                worker: "agentic".into(),
+                code: Vec::new(),
+            };
             std::fs::create_dir_all(&gs.deliverable).ok();
             let mut fail: Option<String> = None;
             let mut aborted = false;
@@ -813,7 +940,15 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                         };
                         match crate::acp::runner::AcpRunner::start(&sandbox_proj, llm, &store.out) {
                             Ok(runner) => {
-                                if let Err(e) = crate::verify::run_all(&store, &runner, &gs, std::slice::from_ref(&case.target), None, true, &trace) {
+                                if let Err(e) = crate::verify::run_all(
+                                    &store,
+                                    &runner,
+                                    &gs,
+                                    std::slice::from_ref(&case.target),
+                                    None,
+                                    true,
+                                    &trace,
+                                ) {
                                     fail = Some(format!("judge run failed: {}", e));
                                 }
                             }
@@ -824,16 +959,18 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                 }
                 (1u32, 0usize)
             } else {
-                let (staged_ops, rounds_n, failed) =
-                    run_case_turn(
-                        llm,
-                        store.clone(),
-                        &item,
-                        &limits,
-                        &case.lint,
-                        &gs,
-                        Some(&out.join("benchmark").join("trace").join(format!("{}-{}.json", codec_name, case.name))),
-                    );
+                let (staged_ops, rounds_n, failed) = run_case_turn(
+                    llm,
+                    store.clone(),
+                    &item,
+                    &case.lint,
+                    &gs,
+                    Some(
+                        &out.join("benchmark")
+                            .join("trace")
+                            .join(format!("{}-{}.json", codec_name, case.name)),
+                    ),
+                );
                 let staged = staged_ops.len();
                 // An aborted turn fails the case with the abort reason. Its checks are
                 // skipped and count as failed: an untouched fixture satisfying a check
@@ -850,7 +987,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                         fail = Some("endpoint or model rejected native tool calls".into());
                     }
                     if staged > 0 {
-                        store.apply(staged_ops, &item, rounds_n, 0);
+                        store.apply(staged_ops, &item.commit(rounds_n, 0));
                     }
                 }
                 (rounds_n, staged)
@@ -880,8 +1017,16 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                 }
             }
             // The scale: this case's score, and its efficiency against par.
-            let case_score = if case.checks.is_empty() { 0.0 } else { case_passed as f64 / case.checks.len() as f64 };
-            let efficiency = if aborted { 0.0 } else { (case.par_rounds as f64 / rounds.max(1) as f64).min(1.0) };
+            let case_score = if case.checks.is_empty() {
+                0.0
+            } else {
+                case_passed as f64 / case.checks.len() as f64
+            };
+            let efficiency = if aborted {
+                0.0
+            } else {
+                (case.par_rounds as f64 / rounds.max(1) as f64).min(1.0)
+            };
             if !aborted {
                 eff_sum += efficiency;
                 eff_n += 1;
@@ -912,7 +1057,13 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                         case_tokens,
                         case_start.elapsed().as_secs_f32()
                     );
-                    progress.line("benchmark", &format!("{} {} 1.00 ({} rounds, {} tok)", codec_name, case.name, rounds, case_tokens));
+                    progress.line(
+                        "benchmark",
+                        &format!(
+                            "{} {} 1.00 ({} rounds, {} tok)",
+                            codec_name, case.name, rounds, case_tokens
+                        ),
+                    );
                 }
                 Some(why) => {
                     *tier_ok.entry(tier_key(&case.tier)).or_insert(true) = false;
@@ -924,7 +1075,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
                         rounds,
                         case_start.elapsed().as_secs_f32()
                     );
-                    progress.line("benchmark", &format!("{} {} {:.2} {}", codec_name, case.name, case_score, why));
+                    progress.line(
+                        "benchmark",
+                        &format!("{} {} {:.2} {}", codec_name, case.name, case_score, why),
+                    );
                 }
             }
         }
@@ -969,20 +1123,41 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
         any_usable |= ok("extraction");
         let secs = started.elapsed().as_secs_f64();
         let tokens = llm::tokens_spent() - tokens_before;
-        let throughput = if secs > 0.0 { tokens as f64 / secs } else { 0.0 };
-        let tier_score = |t: &str| -> f64 {
-            tier_sum.get(t).map(|(sum, n)| if *n == 0 { 0.0 } else { sum / *n as f64 }).unwrap_or(0.0)
+        let throughput = if secs > 0.0 {
+            tokens as f64 / secs
+        } else {
+            0.0
         };
-        let efficiency = if eff_n == 0 { 0.0 } else { eff_sum / eff_n as f64 };
+        let tier_score = |t: &str| -> f64 {
+            tier_sum
+                .get(t)
+                .map(|(sum, n)| if *n == 0 { 0.0 } else { sum / *n as f64 })
+                .unwrap_or(0.0)
+        };
+        let efficiency = if eff_n == 0 {
+            0.0
+        } else {
+            eff_sum / eff_n as f64
+        };
         println!(
             "  verdicts: compilation {}  generation {}  verification {}",
             compilation, generation, verification
         );
-        let score_str = |t: &str| if measured(t) { format!("{:.2}", tier_score(t)) } else { "-".to_string() };
+        let score_str = |t: &str| {
+            if measured(t) {
+                format!("{:.2}", tier_score(t))
+            } else {
+                "-".to_string()
+            }
+        };
         println!(
             "  scores: extraction {}  review {}  generation {}  verification {}  ({}/{} checks)",
-            score_str("extraction"), score_str("review"), score_str("generation"), score_str("verification"),
-            checks_passed, checks_total
+            score_str("extraction"),
+            score_str("review"),
+            score_str("generation"),
+            score_str("verification"),
+            checks_passed,
+            checks_total
         );
         println!(
             "  efficiency {:.2} (rounds vs par)  tokens {}  throughput ~{:.0} tok/s",
@@ -1030,13 +1205,20 @@ verdict: unmeasured  the endpoint never produced a completion ({})", e);
 const KNOWN_RESULTS: &str = include_str!("../../docs/benchmark/known-results.yaml");
 
 fn home_history_path() -> Option<std::path::PathBuf> {
-    std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".jazyk").join("benchmarks").join("history.yaml"))
+    std::env::var("HOME").ok().map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".jazyk")
+            .join("benchmarks")
+            .join("history.yaml")
+    })
 }
 
 // Append one run to the machine-wide history: grades outlive the project that
 // produced them. Mirrors docs/benchmark/benchmark.md#machine-wide-history.
 pub fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Value)]) {
-    let Some(path) = home_history_path() else { return };
+    let Some(path) = home_history_path() else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
@@ -1069,19 +1251,24 @@ pub fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Val
 pub fn all_results(out: &std::path::Path) -> Value {
     let current_hash = case_set_hash();
     let mut rows: Vec<Value> = Vec::new();
-    let mut push = |model: &str, base_url: &str, graded_at: u64, hash: &str, codecs: &Value, source: &str| {
-        rows.push(serde_json::json!({
-            "model": model,
-            "baseUrl": base_url,
-            "gradedAt": graded_at,
-            "caseSetHash": hash,
-            "current": hash == current_hash,
-            "codecs": codecs,
-            "source": source,
-        }));
-    };
+    let mut push =
+        |model: &str, base_url: &str, graded_at: u64, hash: &str, codecs: &Value, source: &str| {
+            rows.push(serde_json::json!({
+                "model": model,
+                "baseUrl": base_url,
+                "gradedAt": graded_at,
+                "caseSetHash": hash,
+                "current": hash == current_hash,
+                "codecs": codecs,
+                "source": source,
+            }));
+        };
     if let Ok(known) = serde_norway::from_str::<Value>(KNOWN_RESULTS) {
-        for e in known["results"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        for e in known["results"]
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
+        {
             push(
                 e["model"].as_str().unwrap_or("?"),
                 e["baseUrl"].as_str().unwrap_or(""),
@@ -1093,7 +1280,10 @@ pub fn all_results(out: &std::path::Path) -> Value {
         }
     }
     if let Some(path) = home_history_path() {
-        if let Some(hist) = std::fs::read_to_string(&path).ok().and_then(|s| serde_norway::from_str::<Value>(&s).ok()) {
+        if let Some(hist) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_norway::from_str::<Value>(&s).ok())
+        {
             // Latest per (model, caseSetHash): history is append-only, the table shows tips.
             let mut latest: BTreeMap<(String, String), &Value> = BTreeMap::new();
             for e in hist["runs"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
@@ -1101,7 +1291,10 @@ pub fn all_results(out: &std::path::Path) -> Value {
                     e["model"].as_str().unwrap_or("?").to_string(),
                     e["caseSetHash"].as_str().unwrap_or("").to_string(),
                 );
-                let newer = latest.get(&key).map(|p| p["gradedAt"].as_u64() <= e["gradedAt"].as_u64()).unwrap_or(true);
+                let newer = latest
+                    .get(&key)
+                    .map(|p| p["gradedAt"].as_u64() <= e["gradedAt"].as_u64())
+                    .unwrap_or(true);
                 if newer {
                     latest.insert(key, e);
                 }
@@ -1119,7 +1312,10 @@ pub fn all_results(out: &std::path::Path) -> Value {
         }
     }
     let project = out.join("benchmark").join("results.yaml");
-    if let Some(v) = std::fs::read_to_string(&project).ok().and_then(|s| serde_norway::from_str::<Value>(&s).ok()) {
+    if let Some(v) = std::fs::read_to_string(&project)
+        .ok()
+        .and_then(|s| serde_norway::from_str::<Value>(&s).ok())
+    {
         if let Some(map) = v.as_object() {
             for (model, e) in map {
                 push(
@@ -1189,17 +1385,23 @@ mod tests {
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
         assert_eq!(cases.len(), 17); // fifteen files; turn-review and verify-judge hold two blocks each
-        // The new tiers parse with their pars and fixtures.
+                                     // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
         assert_eq!(gen.task_type, "generate-entity");
         assert_eq!(gen.par_rounds, 10);
         let steps = cases.iter().find(|c| c.name == "turn-steps").unwrap();
         assert_eq!(steps.checks.len(), 5); // an inner fence must not sever the asserts
-        assert!(steps.docs["docs/dedupe.md"].contains("remember the line"), "fixture doc truncated");
+        assert!(
+            steps.docs["docs/dedupe.md"].contains("remember the line"),
+            "fixture doc truncated"
+        );
         let vj = cases.iter().filter(|c| c.tier == "verification").count();
         assert_eq!(vj, 2);
-        let vp = cases.iter().find(|c| c.name == "verify-judge-pass").unwrap();
+        let vp = cases
+            .iter()
+            .find(|c| c.name == "verify-judge-pass")
+            .unwrap();
         assert!(!vp.deliverable.is_empty());
         assert!(cases.iter().any(|c| c.name == "turn-declarative"));
         assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
@@ -1216,7 +1418,7 @@ mod tests {
             for (kind, arg) in &case.checks {
                 let pat = match kind.as_str() {
                     "entityAbsent" => arg["namePattern"].as_str(),
-                    "requirementExists" => arg["earsPattern"].as_str(),
+                    "requirementExists" => arg["statementPattern"].as_str(),
                     _ => None,
                 };
                 if let Some(pat) = pat {
@@ -1230,9 +1432,24 @@ mod tests {
     fn results_file_updates_in_place_per_model() {
         let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", std::process::id()));
         std::fs::remove_dir_all(&tmp).ok();
-        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "review"}))]);
-        write_results(&tmp, "model-b", &[("text".into(), serde_json::json!({"verdict": "extraction"}))]);
-        write_results(&tmp, "model-a", &[("native".into(), serde_json::json!({"verdict": "extraction"}))]);
+        write_results(
+            &tmp,
+            "model-a",
+            &[("native".into(), serde_json::json!({"verdict": "review"}))],
+        );
+        write_results(
+            &tmp,
+            "model-b",
+            &[("text".into(), serde_json::json!({"verdict": "extraction"}))],
+        );
+        write_results(
+            &tmp,
+            "model-a",
+            &[(
+                "native".into(),
+                serde_json::json!({"verdict": "extraction"}),
+            )],
+        );
         let s = std::fs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
         let all: BTreeMap<String, Value> = serde_norway::from_str(&s).unwrap();
         assert_eq!(all.len(), 2);
@@ -1264,9 +1481,16 @@ mod tests {
         let s = sandbox(converge, &tmp);
         assert!(s.graph.entities.contains_key("ent:cart"));
         assert!(s.graph.requirements.contains_key("req:shop-1"));
-        assert_eq!(s.docs["docs/shop.md"].coverage["/shop/checkout"].state, "covered");
+        assert_eq!(
+            s.docs["docs/shop.md"].coverage["/shop/checkout"].state,
+            "covered"
+        );
         // The fixture's quote must locate in the parsed section, or the case is unwinnable.
         let r = &s.graph.requirements["req:shop-1"];
-        assert!(s.quote_locates(&r.source.doc, &r.source.section, &r.source.quote));
+        assert!(s.quote_locates(
+            &r.source.as_ref().unwrap().doc,
+            &r.source.as_ref().unwrap().section,
+            &r.source.as_ref().unwrap().quote
+        ));
     }
 }

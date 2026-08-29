@@ -6,7 +6,7 @@ use crate::model::*;
 use crate::store::text_contains;
 use std::collections::{BTreeMap, BTreeSet};
 
-// The [limits] knobs alignment reads. Defaults per docs/compiler/project-settings.md#limits.
+// The alignment thresholds, registry constants (docs/compiler/graph.md#budgets-and-thresholds).
 #[derive(Clone, Debug)]
 pub struct Thresholds {
     pub move_similarity: f64,
@@ -15,7 +15,10 @@ pub struct Thresholds {
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { move_similarity: 0.5, split_coverage: 0.6 }
+        Thresholds {
+            move_similarity: crate::limits::ALIGN_MOVE_SIMILARITY,
+            split_coverage: crate::limits::ALIGN_SPLIT_COVERAGE,
+        }
     }
 }
 
@@ -38,7 +41,10 @@ pub struct Full {
 
 impl Full {
     pub fn new(doc: &str, section: &str) -> Full {
-        Full { doc: doc.to_string(), section: section.to_string() }
+        Full {
+            doc: doc.to_string(),
+            section: section.to_string(),
+        }
     }
     pub fn render(&self) -> String {
         format!("{}#{}", self.doc, self.section)
@@ -78,7 +84,10 @@ struct Print {
 }
 
 fn normalize_word(w: &str) -> String {
-    w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+    w.chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase()
 }
 
 // The words of a text, as written, and the normalized token of each (empty tokens are
@@ -133,9 +142,18 @@ fn print(full: Full, sec: &Section) -> Print {
     let (words, tokens) = tokenize(&body);
     let shingles = shingles(&tokens);
     let normalized = sec.raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let identity = format!("{}\n{}", sec.title.trim(), body.split_whitespace().collect::<Vec<_>>().join(" "));
+    let identity = format!(
+        "{}\n{}",
+        sec.title.trim(),
+        body.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
     Print {
-        slug: full.section.rsplit('/').next().unwrap_or_default().to_string(),
+        slug: full
+            .section
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
         full,
         identity,
         parent: sec.parent.clone(),
@@ -235,8 +253,17 @@ fn score_candidate(p: &Print, quote: &str) -> Option<Candidate> {
         return None;
     }
     let nearest = span.map(|(a, b)| p.words[a..=b].join(" "));
-    let excerpt = nearest.as_deref().map(|n| excerpt_around(&p.raw, n)).unwrap_or_default();
-    Some(Candidate { full: p.full.clone(), similarity, quote_locates: false, nearest, excerpt })
+    let excerpt = nearest
+        .as_deref()
+        .map(|n| excerpt_around(&p.raw, n))
+        .unwrap_or_default();
+    Some(Candidate {
+        full: p.full.clone(),
+        similarity,
+        quote_locates: false,
+        nearest,
+        excerpt,
+    })
 }
 
 // Every anchor sourced from one old section: requirement ids by source, entity ids by
@@ -247,9 +274,12 @@ fn anchors_in(graph: &Graph, at: &Full) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut sources: BTreeSet<&str> = BTreeSet::new();
     for (id, r) in &graph.requirements {
-        if r.source.doc == at.doc && r.source.section == at.section {
-            out.push((id.clone(), r.source.quote.clone()));
-            sources.insert(r.source.quote.as_str());
+        let Some(src) = r.source.as_ref() else {
+            continue;
+        };
+        if src.doc == at.doc && src.section == at.section {
+            out.push((id.clone(), src.quote.clone()));
+            sources.insert(src.quote.as_str());
         }
     }
     for (id, e) in &graph.entities {
@@ -274,7 +304,12 @@ pub fn align(
     let mut plan = AlignPlan::default();
     let changed: BTreeSet<String> = old
         .iter()
-        .filter(|(d, rec)| parsed.get(*d).map(|(h, _)| h != &rec.content_hash).unwrap_or(true))
+        .filter(|(d, rec)| {
+            parsed
+                .get(*d)
+                .map(|(h, _)| h != &rec.content_hash)
+                .unwrap_or(true)
+        })
         .map(|(d, _)| d.clone())
         .chain(parsed.keys().filter(|d| !old.contains_key(*d)).cloned())
         .collect();
@@ -313,7 +348,10 @@ pub fn align(
     // Phase 1: exact. Same reference and hash is unchanged; same hash elsewhere is a
     // move, paired one to one preferring the same document, parent, and position.
     for (i, o) in old_pool.iter().enumerate() {
-        if let Some(j) = new_pool.iter().position(|n| n.full == o.full && n.identity == o.identity) {
+        if let Some(j) = new_pool
+            .iter()
+            .position(|n| n.full == o.full && n.identity == o.identity)
+        {
             old_free[i] = false;
             new_free[j] = false;
             plan.unchanged.insert(o.full.clone());
@@ -345,7 +383,8 @@ pub fn align(
             old_free[i] = false;
             new_free[j] = false;
             matched_old.insert(i, ("moved-exact".into(), vec![j], 1.0));
-            plan.exact_moves.push((old_pool[i].full.clone(), new_pool[j].full.clone()));
+            plan.exact_moves
+                .push((old_pool[i].full.clone(), new_pool[j].full.clone()));
         }
     }
 
@@ -383,12 +422,17 @@ pub fn align(
     };
     // Parts of a whole: candidates sorted by containment, kept while each adds enough
     // of the whole that the earlier parts did not cover.
-    let assemble = |whole: &BTreeSet<String>, mut parts: Vec<(f64, usize, &BTreeSet<String>)>| -> (Vec<usize>, f64) {
+    let assemble = |whole: &BTreeSet<String>,
+                    mut parts: Vec<(f64, usize, &BTreeSet<String>)>|
+     -> (Vec<usize>, f64) {
         parts.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
         let mut covered: BTreeSet<String> = BTreeSet::new();
         let mut kept: Vec<usize> = Vec::new();
         for (_, idx, sh) in parts {
-            let gain = whole.iter().filter(|x| sh.contains(*x) && !covered.contains(*x)).count() as f64
+            let gain = whole
+                .iter()
+                .filter(|x| sh.contains(*x) && !covered.contains(*x))
+                .count() as f64
                 / whole.len().max(1) as f64;
             if kept.is_empty() || gain >= PART_MARGIN {
                 covered.extend(whole.iter().filter(|x| sh.contains(*x)).cloned());
@@ -398,33 +442,39 @@ pub fn align(
         let coverage = covered.len() as f64 / whole.len().max(1) as f64;
         (kept, coverage)
     };
-    let take_moves = |old_free: &mut Vec<bool>,
-                      new_free: &mut Vec<bool>,
-                      matched_old: &mut BTreeMap<usize, (String, Vec<usize>, f64)>| {
-        let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
-        for (i, o) in old_pool.iter().enumerate() {
-            if !old_free[i] {
-                continue;
-            }
-            for (j, n) in new_pool.iter().enumerate() {
-                if !new_free[j] {
+    let take_moves =
+        |old_free: &mut Vec<bool>,
+         new_free: &mut Vec<bool>,
+         matched_old: &mut BTreeMap<usize, (String, Vec<usize>, f64)>| {
+            let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
+            for (i, o) in old_pool.iter().enumerate() {
+                if !old_free[i] {
                     continue;
                 }
-                let s = score(o, n);
-                if s >= th.move_similarity {
-                    pairs.push((s, i, j));
+                for (j, n) in new_pool.iter().enumerate() {
+                    if !new_free[j] {
+                        continue;
+                    }
+                    let s = score(o, n);
+                    if s >= th.move_similarity {
+                        pairs.push((s, i, j));
+                    }
                 }
             }
-        }
-        pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-        for (s, i, j) in pairs {
-            if old_free[i] && new_free[j] {
-                old_free[i] = false;
-                new_free[j] = false;
-                matched_old.insert(i, ("moved".into(), vec![j], s));
+            pairs.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0)
+                    .unwrap()
+                    .then(a.1.cmp(&b.1))
+                    .then(a.2.cmp(&b.2))
+            });
+            for (s, i, j) in pairs {
+                if old_free[i] && new_free[j] {
+                    old_free[i] = false;
+                    new_free[j] = false;
+                    matched_old.insert(i, ("moved".into(), vec![j], s));
+                }
             }
-        }
-    };
+        };
     // Splits: one old section covered by two or more new sections. The old may be
     // free, or `edited` in place: the common split keeps the original heading for one
     // half and gives the rest a new one, and that half must count as a part.
@@ -443,7 +493,10 @@ pub fn align(
             .filter(|(c, _, _)| *c >= PART_FLOOR)
             .collect();
         let (js, coverage) = assemble(&o.shingles, parts);
-        if js.len() >= 2 && coverage >= th.split_coverage && own.map(|j| js.contains(&j)).unwrap_or(true) {
+        if js.len() >= 2
+            && coverage >= th.split_coverage
+            && own.map(|j| js.contains(&j)).unwrap_or(true)
+        {
             old_free[i] = false;
             for j in &js {
                 new_free[*j] = false;
@@ -484,7 +537,11 @@ pub fn align(
             continue;
         }
         plan.ops.push(SectionOp {
-            op: if op == "moved-exact" { "moved".into() } else { op.clone() },
+            op: if op == "moved-exact" {
+                "moved".into()
+            } else {
+                op.clone()
+            },
             from: vec![old_pool[*i].full.render()],
             to: js.iter().map(|j| new_pool[*j].full.render()).collect(),
             similarity: Some(pct(*sim)),
@@ -500,12 +557,22 @@ pub fn align(
     }
     for (i, o) in old_pool.iter().enumerate() {
         if old_free[i] {
-            plan.ops.push(SectionOp { op: "deleted".into(), from: vec![o.full.render()], to: vec![], similarity: None });
+            plan.ops.push(SectionOp {
+                op: "deleted".into(),
+                from: vec![o.full.render()],
+                to: vec![],
+                similarity: None,
+            });
         }
     }
     for (j, n) in new_pool.iter().enumerate() {
         if new_free[j] {
-            plan.ops.push(SectionOp { op: "added".into(), from: vec![], to: vec![n.full.render()], similarity: None });
+            plan.ops.push(SectionOp {
+                op: "added".into(),
+                from: vec![],
+                to: vec![n.full.render()],
+                similarity: None,
+            });
         }
     }
 
@@ -535,7 +602,11 @@ pub fn align(
             pool.extend(new_pool.iter().filter(|n| n.full.doc == o.full.doc));
             // Elsewhere, only a verbatim hit counts: a fuzzy window in an unrelated
             // document is noise, and scoring every section of every document is not.
-            pool.extend(all_new.iter().filter(|n| n.full.doc != o.full.doc && text_contains(&n.normalized, &quote)));
+            pool.extend(
+                all_new
+                    .iter()
+                    .filter(|n| n.full.doc != o.full.doc && text_contains(&n.normalized, &quote)),
+            );
             for p in pool {
                 if seen.insert(p.full.clone()) {
                     if let Some(c) = score_candidate(p, &quote) {
@@ -544,7 +615,10 @@ pub fn align(
                 }
             }
             cands.sort_by(|a, b| {
-                b.similarity.partial_cmp(&a.similarity).unwrap().then(a.full.cmp(&b.full))
+                b.similarity
+                    .partial_cmp(&a.similarity)
+                    .unwrap()
+                    .then(a.full.cmp(&b.full))
             });
             cands.truncate(MAX_CANDIDATES);
             if cands.is_empty() {
@@ -587,33 +661,51 @@ mod tests {
     use crate::md::parse_sections;
 
     fn docs(files: &[(&str, &str)]) -> BTreeMap<String, (String, BTreeMap<String, Section>)> {
-        files.iter().map(|(d, t)| (d.to_string(), (hash_hex(t), parse_sections(t)))).collect()
+        files
+            .iter()
+            .map(|(d, t)| (d.to_string(), (hash_hex(t), parse_sections(t))))
+            .collect()
     }
 
-    fn stored(parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>) -> BTreeMap<String, DocRecord> {
+    fn stored(
+        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    ) -> BTreeMap<String, DocRecord> {
         parsed
             .iter()
             .map(|(d, (h, s))| {
-                (d.clone(), DocRecord { content_hash: h.clone(), sections: s.clone(), coverage: BTreeMap::new() })
+                (
+                    d.clone(),
+                    DocRecord {
+                        content_hash: h.clone(),
+                        sections: s.clone(),
+                        coverage: BTreeMap::new(),
+                    },
+                )
             })
             .collect()
     }
 
     fn graph_with(reqs: &[(&str, &str, &str, &str)]) -> Graph {
         let mut g = Graph::default();
-        g.entities.insert("ent:x".into(), Entity { name: "X".into(), ..Default::default() });
+        g.entities.insert(
+            "ent:x".into(),
+            Entity {
+                name: "X".into(),
+                ..Default::default()
+            },
+        );
         for (id, doc, sec, quote) in reqs {
             g.requirements.insert(
                 id.to_string(),
                 Requirement {
-                    ears: format!("The system shall {}.", quote),
+                    statement: format!("The system shall {}.", quote),
                     entities: vec!["ent:x".into()],
-                    edges: vec![],
-                    source: SourceRef { doc: doc.to_string(), section: sec.to_string(), quote: quote.to_string() },
-                    confidence: None,
-                    reasoning: None,
-                    created: None,
-                    updated: None,
+                    source: Some(SourceRef {
+                        doc: doc.to_string(),
+                        section: sec.to_string(),
+                        quote: quote.to_string(),
+                    }),
+                    ..Default::default()
                 },
             );
         }
@@ -630,29 +722,60 @@ mod tests {
     #[test]
     fn no_change_is_empty() {
         let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n", BODY_A))]);
-        let plan = align(&stored(&before), &before, &Graph::default(), &Thresholds::default());
+        let plan = align(
+            &stored(&before),
+            &before,
+            &Graph::default(),
+            &Thresholds::default(),
+        );
         assert!(plan.ops.is_empty() && plan.proposals.is_empty() && plan.exact_moves.is_empty());
     }
 
     #[test]
     fn byte_identical_move_is_exact_and_mechanical() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Group\n\n### Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!(
+                "# T\n\n## Group\n\n### Cart\n{}\n\n## Orders\n{}\n",
+                BODY_A, BODY_B
+            ),
+        )]);
         let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
-        assert_eq!(plan.exact_moves, vec![(Full::new("a.md", "/t/cart"), Full::new("a.md", "/t/group/cart"))]);
+        assert_eq!(
+            plan.exact_moves,
+            vec![(
+                Full::new("a.md", "/t/cart"),
+                Full::new("a.md", "/t/group/cart")
+            )]
+        );
         assert!(plan.proposals.is_empty(), "{:?}", plan.proposals);
         assert_eq!(op(&plan, "added").len(), 1);
     }
 
     #[test]
     fn moved_and_edited_is_a_fuzzy_move_with_a_proposal() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
         let edited = BODY_A.replace("fifty", "sixty");
-        let after = docs(&[("a.md", &format!("# T\n\n## Orders\n{}\n\n## Basket\n{}\n", BODY_B, edited))]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Orders\n{}\n\n## Basket\n{}\n", BODY_B, edited),
+        )]);
         let g = graph_with(&[
             ("req:1", "a.md", "/t/cart", "Items stay until checkout."),
-            ("req:2", "a.md", "/t/cart", "A cart may hold up to fifty items at once."),
+            (
+                "req:2",
+                "a.md",
+                "/t/cart",
+                "A cart may hold up to fifty items at once.",
+            ),
         ]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         let moved = op(&plan, "moved");
@@ -665,24 +788,45 @@ mod tests {
         assert_eq!(p1.candidates[0].section, "a.md#/t/basket");
         let p2 = plan.proposals.iter().find(|p| p.anchor == "req:2").unwrap();
         assert!(!p2.candidates[0].quote_locates);
-        assert!(p2.candidates[0].nearest.as_deref().unwrap().contains("sixty"));
+        assert!(p2.candidates[0]
+            .nearest
+            .as_deref()
+            .unwrap()
+            .contains("sixty"));
         assert!(p2.candidates[0].similarity > 0.8);
     }
 
     #[test]
     fn parent_rename_moves_children_exactly() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Group\nintro\n\n### Cart\n{}\n", BODY_A))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Bunch\nintro\n\n### Cart\n{}\n", BODY_A))]);
-        let g = graph_with(&[("req:1", "a.md", "/t/group/cart", "Items stay until checkout.")]);
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Group\nintro\n\n### Cart\n{}\n", BODY_A),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Bunch\nintro\n\n### Cart\n{}\n", BODY_A),
+        )]);
+        let g = graph_with(&[(
+            "req:1",
+            "a.md",
+            "/t/group/cart",
+            "Items stay until checkout.",
+        )]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
-        assert!(plan.exact_moves.contains(&(Full::new("a.md", "/t/group/cart"), Full::new("a.md", "/t/bunch/cart"))));
+        assert!(plan.exact_moves.contains(&(
+            Full::new("a.md", "/t/group/cart"),
+            Full::new("a.md", "/t/bunch/cart")
+        )));
         assert!(plan.proposals.is_empty());
     }
 
     #[test]
     fn split_sends_each_anchor_to_its_half() {
         let before = docs(&[("a.md", &format!("# T\n\n## Both\n{}\n{}\n", BODY_A, BODY_B))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
         let g = graph_with(&[
             ("req:1", "a.md", "/t/both", "Items stay until checkout."),
             ("req:2", "a.md", "/t/both", "Payment is taken at placement."),
@@ -700,7 +844,10 @@ mod tests {
     #[test]
     fn split_that_keeps_the_original_heading_is_still_a_split() {
         let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n{}\n", BODY_A, BODY_B))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
         let g = graph_with(&[
             ("req:1", "a.md", "/t/cart", "Items stay until checkout."),
             ("req:2", "a.md", "/t/cart", "Payment is taken at placement."),
@@ -708,7 +855,10 @@ mod tests {
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         let split = op(&plan, "split");
         assert_eq!(split.len(), 1, "{:?}", plan.ops);
-        assert!(split[0].to.contains(&"a.md#/t/cart".to_string()) && split[0].to.contains(&"a.md#/t/orders".to_string()));
+        assert!(
+            split[0].to.contains(&"a.md#/t/cart".to_string())
+                && split[0].to.contains(&"a.md#/t/orders".to_string())
+        );
         assert!(op(&plan, "edited").is_empty() && op(&plan, "added").is_empty());
         // The anchor whose sentence stayed in place still locates there: no proposal.
         assert_eq!(plan.proposals.len(), 1);
@@ -718,24 +868,44 @@ mod tests {
 
     #[test]
     fn merge_pulls_both_anchors_into_one() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
         let after = docs(&[("a.md", &format!("# T\n\n## Both\n{}\n{}\n", BODY_A, BODY_B))]);
         let g = graph_with(&[
             ("req:1", "a.md", "/t/cart", "Items stay until checkout."),
-            ("req:2", "a.md", "/t/orders", "Payment is taken at placement."),
+            (
+                "req:2",
+                "a.md",
+                "/t/orders",
+                "Payment is taken at placement.",
+            ),
         ]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         let merged = op(&plan, "merged");
         assert_eq!(merged.len(), 1, "{:?}", plan.ops);
         assert_eq!(merged[0].from.len(), 2);
         assert_eq!(plan.proposals.len(), 2);
-        assert!(plan.proposals.iter().all(|p| p.candidates[0].section == "a.md#/t/both" && p.candidates[0].quote_locates));
+        assert!(plan
+            .proposals
+            .iter()
+            .all(|p| p.candidates[0].section == "a.md#/t/both" && p.candidates[0].quote_locates));
     }
 
     #[test]
     fn cross_document_move_from_a_deleted_file() {
-        let before = docs(&[("a.md", &format!("# A\n\n## Cart\n{}\n", BODY_A)), ("b.md", "# B\nhello\n")]);
-        let after = docs(&[("b.md", &format!("# B\nhello\n\n## Cart\n{}\n", BODY_A.replace("fifty", "sixty")))]);
+        let before = docs(&[
+            ("a.md", &format!("# A\n\n## Cart\n{}\n", BODY_A)),
+            ("b.md", "# B\nhello\n"),
+        ]);
+        let after = docs(&[(
+            "b.md",
+            &format!(
+                "# B\nhello\n\n## Cart\n{}\n",
+                BODY_A.replace("fifty", "sixty")
+            ),
+        )]);
         let g = graph_with(&[("req:1", "a.md", "/a/cart", "Items stay until checkout.")]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         let moved = op(&plan, "moved");
@@ -748,19 +918,51 @@ mod tests {
 
     #[test]
     fn identical_twins_pair_one_to_one() {
-        let before = docs(&[("a.md", &format!("# T\n\n## P\n\n### Item\n{}\n\n## Q\n\n### Item\n{}\n", BODY_A, BODY_A))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## R\n\n### Item\n{}\n\n## S\n\n### Item\n{}\n", BODY_A, BODY_A))]);
-        let plan = align(&stored(&before), &after, &Graph::default(), &Thresholds::default());
+        let before = docs(&[(
+            "a.md",
+            &format!(
+                "# T\n\n## P\n\n### Item\n{}\n\n## Q\n\n### Item\n{}\n",
+                BODY_A, BODY_A
+            ),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!(
+                "# T\n\n## R\n\n### Item\n{}\n\n## S\n\n### Item\n{}\n",
+                BODY_A, BODY_A
+            ),
+        )]);
+        let plan = align(
+            &stored(&before),
+            &after,
+            &Graph::default(),
+            &Thresholds::default(),
+        );
         assert_eq!(plan.exact_moves.len(), 2);
-        let targets: BTreeSet<String> = plan.exact_moves.iter().map(|(_, t)| t.section.clone()).collect();
+        let targets: BTreeSet<String> = plan
+            .exact_moves
+            .iter()
+            .map(|(_, t)| t.section.clone())
+            .collect();
         assert_eq!(targets.len(), 2);
     }
 
     #[test]
     fn reordered_siblings_are_unchanged() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Orders\n{}\n\n## Cart\n{}\n", BODY_B, BODY_A))]);
-        let plan = align(&stored(&before), &after, &Graph::default(), &Thresholds::default());
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Orders\n{}\n\n## Cart\n{}\n", BODY_B, BODY_A),
+        )]);
+        let plan = align(
+            &stored(&before),
+            &after,
+            &Graph::default(),
+            &Thresholds::default(),
+        );
         assert!(plan.unchanged.contains(&Full::new("a.md", "/t/cart")));
         assert!(plan.ops.is_empty());
     }
@@ -768,10 +970,18 @@ mod tests {
     #[test]
     fn edited_in_place_keeps_locating_quotes_and_proposes_the_rest() {
         let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n", BODY_A))]);
-        let after = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n", BODY_A.replace("fifty", "sixty")))]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n", BODY_A.replace("fifty", "sixty")),
+        )]);
         let g = graph_with(&[
             ("req:1", "a.md", "/t/cart", "Items stay until checkout."),
-            ("req:2", "a.md", "/t/cart", "A cart may hold up to fifty items at once."),
+            (
+                "req:2",
+                "a.md",
+                "/t/cart",
+                "A cart may hold up to fifty items at once.",
+            ),
         ]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         assert_eq!(op(&plan, "edited").len(), 1);
@@ -782,12 +992,18 @@ mod tests {
 
     #[test]
     fn deleted_without_a_candidate_is_homeless() {
-        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B))]);
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
         let after = docs(&[("a.md", &format!("# T\n\n## Orders\n{}\n", BODY_B))]);
         let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
         let plan = align(&stored(&before), &after, &g, &Thresholds::default());
         assert_eq!(op(&plan, "deleted").len(), 1);
         assert!(plan.proposals.is_empty());
-        assert_eq!(plan.homeless, vec![("req:1".to_string(), Full::new("a.md", "/t/cart"))]);
+        assert_eq!(
+            plan.homeless,
+            vec![("req:1".to_string(), Full::new("a.md", "/t/cart"))]
+        );
     }
 }

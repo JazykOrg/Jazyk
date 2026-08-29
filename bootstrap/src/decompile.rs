@@ -13,7 +13,7 @@ use std::path::Path;
 // The drafting contract, served as begin_decompile instructions and as the internal
 // worker's system prompt. Mirrors docs/consumers/decompile.md#draft-tasks.
 pub fn instructions() -> String {
-    include_str!("../../docs/compiler/turns/prompts/decompile-contract.md").into()
+    include_str!("../../docs/compiler/goals/prompts/decompile-contract.md").into()
 }
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,13 @@ fn record_draft(out: &Path, doc: &str, hash: &str) {
 pub fn unratified(store: &Store) -> Vec<String> {
     drafts(&store.out)
         .iter()
-        .filter(|(doc, hash)| store.docs.get(*doc).map(|rec| &rec.content_hash == *hash).unwrap_or(false))
+        .filter(|(doc, hash)| {
+            store
+                .docs
+                .get(*doc)
+                .map(|rec| &rec.content_hash == *hash)
+                .unwrap_or(false)
+        })
         .map(|(doc, _)| doc.clone())
         .collect()
 }
@@ -58,20 +64,34 @@ pub fn unratified(store: &Store) -> Vec<String> {
 pub fn scopes(proj: &Project, store: &Store, gs: &GenSettings) -> BTreeMap<String, Vec<String>> {
     let mut by_scope: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in crate::bind::unclaimed(proj, store, gs) {
-        let scope = f.split('/').next().filter(|_| f.contains('/')).unwrap_or(".").to_string();
+        let scope = f
+            .split('/')
+            .next()
+            .filter(|_| f.contains('/'))
+            .unwrap_or(".")
+            .to_string();
         by_scope.entry(scope).or_default().push(f);
     }
     by_scope
 }
 
 fn scope_released(control: &crate::control::Control, scope: &str) -> bool {
-    control.released.decompile.iter().any(|s| s == scope || s == "." || scope.starts_with(&format!("{}/", s)))
+    control
+        .released
+        .decompile
+        .iter()
+        .any(|s| s == scope || s == "." || scope.starts_with(&format!("{}/", s)))
 }
 
 // Draft tasks, derived from the unclaimed report. Always gated until a decompile
 // release names the scope; there is no auto mode.
 // Mirrors docs/compiler/reconciler.md#the-task-queue.
-pub fn pending(proj: &Project, store: &Store, gs: &GenSettings, control: &crate::control::Control) -> Vec<Value> {
+pub fn pending(
+    proj: &Project,
+    store: &Store,
+    gs: &GenSettings,
+    control: &crate::control::Control,
+) -> Vec<Value> {
     scopes(proj, store, gs)
         .into_iter()
         .map(|(scope, files)| {
@@ -85,7 +105,8 @@ pub fn pending(proj: &Project, store: &Store, gs: &GenSettings, control: &crate:
             });
             if !released {
                 t["gated"] = json!(true);
-                t["blockedBy"] = json!("awaiting a decompile release (`jazyk decompile` or the GUI)");
+                t["blockedBy"] =
+                    json!("awaiting a decompile release (`jazyk decompile` or the GUI)");
             }
             t
         })
@@ -125,7 +146,11 @@ pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Res
             break;
         }
     }
-    let slug = if scope == "." { "root".to_string() } else { scope.replace('/', "-") };
+    let slug = if scope == "." {
+        "root".to_string()
+    } else {
+        scope.replace('/', "-")
+    };
     let mut lint: Vec<String> = proj.linting.warnings.clone();
     lint.extend(proj.linting.errors.iter().cloned());
     Ok(json!({
@@ -142,7 +167,13 @@ pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Res
 // Validate and land a draft in the docs tree, record its hash for ratification, and
 // consume the scope's release. The compiler picks the file up like any hand-written
 // document. Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
-pub fn submit(proj: &Project, out: &Path, path: &str, content: &str, scope: Option<&str>) -> Result<Value, String> {
+pub fn submit(
+    proj: &Project,
+    out: &Path,
+    path: &str,
+    content: &str,
+    scope: Option<&str>,
+) -> Result<Value, String> {
     let path = path.trim().trim_start_matches("./");
     if path.is_empty() || path.contains("..") {
         return Err("path must be a project-relative documentation path".into());
@@ -204,7 +235,6 @@ pub fn run_all(
     scopes_wanted: &[String],
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
-
     let control = crate::control::Control::load(proj, &store.out);
     let all = pending(proj, store, gs, &control);
     let targets: Vec<String> = all
@@ -243,9 +273,18 @@ pub fn run_all(
             let prompt = if attempt == 0 || last_err.is_empty() {
                 user.clone()
             } else {
-                format!("{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.", user, last_err)
+                format!(
+                    "{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.",
+                    user, last_err
+                )
             };
-            let reply = match runner.ask_traced(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }, Some(trace)) {
+            let reply = match runner.ask_traced(
+                &system,
+                &prompt,
+                &format!("decompile {}", scope),
+                if attempt == 0 { "draft" } else { "draft retry" },
+                Some(trace),
+            ) {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = e;
@@ -261,7 +300,10 @@ pub fn run_all(
             };
             match submit(proj, &store.out, &path, &content, Some(scope)) {
                 Ok(v) => {
-                    trace.line("decompile", &format!("drafted {}", v["written"].as_str().unwrap_or("")));
+                    trace.line(
+                        "decompile",
+                        &format!("drafted {}", v["written"].as_str().unwrap_or("")),
+                    );
                     ok = true;
                     break;
                 }
@@ -271,7 +313,10 @@ pub fn run_all(
         if ok {
             drafted += 1;
         } else {
-            trace.line("decompile", &format!("scope {} failed: {}", scope, last_err));
+            trace.line(
+                "decompile",
+                &format!("scope {} failed: {}", scope, last_err),
+            );
             failures += 1;
         }
     }
@@ -285,14 +330,22 @@ mod tests {
     fn tmp() -> (Project, Store, GenSettings) {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let root = std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", std::process::id(), n));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", std::process::id(), n));
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(&root).unwrap();
         let mut proj = Project::default();
         proj.root = root.clone();
         proj.out = root.join("jazyk-out");
-        let store = Store { out: proj.out.clone(), ..Default::default() };
-        let gs = GenSettings { deliverable: root.clone(), worker: "agentic".into(), code: Vec::new() };
+        let store = Store {
+            out: proj.out.clone(),
+            ..Default::default()
+        };
+        let gs = GenSettings {
+            deliverable: root.clone(),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
         (proj, store, gs)
     }
 
@@ -318,7 +371,14 @@ mod tests {
         std::fs::create_dir_all(proj.root.join("src")).unwrap();
         std::fs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
         crate::control::release_decompile(&proj, &store.out, &["src".into()]);
-        let v = submit(&proj, &store.out, "docs/src.md", "# Src\n\nThe `lib.sh` script prints hi (observed: none, inferred: `src/lib.sh`).", Some("src")).unwrap();
+        let v = submit(
+            &proj,
+            &store.out,
+            "docs/src.md",
+            "# Src\n\nThe `lib.sh` script prints hi (observed: none, inferred: `src/lib.sh`).",
+            Some("src"),
+        )
+        .unwrap();
         assert_eq!(v["written"], "docs/src.md");
         assert!(proj.root.join("docs/src.md").exists());
         assert_eq!(drafts(&store.out).len(), 1);
@@ -336,6 +396,13 @@ mod tests {
     #[test]
     fn an_em_dash_is_rejected() {
         let (proj, store, _gs) = tmp();
-        assert!(submit(&proj, &store.out, "docs/x.md", "# X\n\nBody \u{2014} with a dash.", None).is_err());
+        assert!(submit(
+            &proj,
+            &store.out,
+            "docs/x.md",
+            "# X\n\nBody \u{2014} with a dash.",
+            None
+        )
+        .is_err());
     }
 }

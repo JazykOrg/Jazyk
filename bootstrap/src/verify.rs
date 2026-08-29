@@ -19,7 +19,7 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if !artifact.exists() {
         return ("missing".into(), "artifact-gone".into());
     }
-    if hash_hex(&r.ears) != row.hashes.requirement {
+    if hash_hex(&r.statement) != row.hashes.requirement {
         return ("stale-requirement".into(), "requirement-changed".into());
     }
     if hash_file(&artifact) != row.hashes.test {
@@ -46,7 +46,12 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
 // Rows needing action, with derived status and reason. Requirements the graph holds
 // but the ledger does not appear as `missing`, so ungenerated work is never silent.
 // Deterministic; no model.
-pub fn pending(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Option<&str>) -> Vec<Value> {
+pub fn pending(
+    store: &Store,
+    gs: &GenSettings,
+    filter: Option<&str>,
+    entity: Option<&str>,
+) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = Vec::new();
     for (rid, row) in &ledger.requirements {
@@ -88,7 +93,11 @@ pub fn pending(store: &Store, gs: &GenSettings, filter: Option<&str>, entity: Op
         if ledger.requirements.contains_key(rid) {
             continue;
         }
-        let owner = r.entities.first().map(|e| store.resolve_id(e).to_string()).unwrap_or_default();
+        let owner = r
+            .entities
+            .first()
+            .map(|e| store.resolve_id(e).to_string())
+            .unwrap_or_default();
         if let Some(ent) = entity {
             if owner != store.resolve_id(ent) {
                 continue;
@@ -141,7 +150,9 @@ pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap
 pub fn pending_counts(store: &Store, gs: &GenSettings) -> Value {
     let mut counts: std::collections::BTreeMap<String, u64> = Default::default();
     for p in pending(store, gs, Some("stale"), None) {
-        *counts.entry(p["reason"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+        *counts
+            .entry(p["reason"].as_str().unwrap_or("?").to_string())
+            .or_default() += 1;
     }
     json!(counts)
 }
@@ -166,7 +177,11 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     let pack = crate::context::assemble(
         store,
         &rid,
-        &crate::context::Focus { parents: 1, mentions: 1, requirements: 2 },
+        &crate::context::Focus {
+            parents: 1,
+            mentions: 1,
+            requirements: 2,
+        },
         8_000,
     )
     .map(|p| p.pack)
@@ -180,9 +195,10 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     Ok(json!({
         "requirement": rid,
         "entity": row.entity,
-        "ears": r.ears,
-        "quote": r.source.quote,
-        "factHash": hash_hex(&r.ears),
+        "statement": r.statement,
+        "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
+        "provenance": crate::turn::provenance_line(r),
+        "factHash": hash_hex(&r.statement),
         "status": status,
         "reason": reason,
         "deliverable": gs.deliverable.to_string_lossy(),
@@ -199,7 +215,6 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     }))
 }
 
-
 // The judge's verdict. The contract asks for a verdict line first, so a first line
 // that LEADS with PASS or FAIL (bare, bolded, or after "Verdict:") is the answer.
 // Anything else is a reasoning-first reply and is read from its conclusion: the
@@ -207,8 +222,15 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 // never flips the verdict.
 // Mirrors docs/compiler/turns/verify-requirement.md.
 fn parse_verdict(reply: &str) -> Option<bool> {
-    let first = reply.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_uppercase();
-    let strip = |s: &str| s.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()).to_string();
+    let first = reply
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .to_uppercase();
+    let strip = |s: &str| {
+        s.trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+            .to_string()
+    };
     let head = strip(&first);
     let head = head.strip_prefix("VERDICT").map(strip).unwrap_or(head);
     if head.starts_with("PASS") {
@@ -228,9 +250,19 @@ fn parse_verdict(reply: &str) -> Option<bool> {
 
 // Record a verdict. Rebaselines the test and files hashes, never the requirement hash;
 // a stale factHash is recorded but the row stays pending by derivation.
-pub fn mark(store: &Store, rid: &str, verdict: &str, fact_hash_seen: Option<&str>, evidence: Option<&str>, gs: &GenSettings) -> Result<Value, String> {
+pub fn mark(
+    store: &Store,
+    rid: &str,
+    verdict: &str,
+    fact_hash_seen: Option<&str>,
+    evidence: Option<&str>,
+    gs: &GenSettings,
+) -> Result<Value, String> {
     if verdict != "pass" && verdict != "fail" {
-        return Err(format!("verdict must be `pass` or `fail`, got `{}`", verdict));
+        return Err(format!(
+            "verdict must be `pass` or `fail`, got `{}`",
+            verdict
+        ));
     }
     let rid = store.resolve_id(rid).to_string();
     let mut ledger = Ledger::load(&store.out);
@@ -244,9 +276,12 @@ pub fn mark(store: &Store, rid: &str, verdict: &str, fact_hash_seen: Option<&str
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
     row.hashes.files = hash_files(gs, &row.files);
     let stale = match fact_hash_seen {
-        Some(h) => {
-            store.graph.requirements.get(&rid).map(|r| hash_hex(&r.ears) != h).unwrap_or(true)
-        }
+        Some(h) => store
+            .graph
+            .requirements
+            .get(&rid)
+            .map(|r| hash_hex(&r.statement) != h)
+            .unwrap_or(true),
         None => false,
     };
     let (status, _) = status_of(store, &rid, ledger.requirements.get(&rid).unwrap(), gs);
@@ -301,7 +336,14 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
         .arg(&row.test.run)
         .current_dir(&cwd)
         .output()
-        .map_err(|e| format!("failed to run `{}` in {}: {}", row.test.run, cwd.display(), e))?;
+        .map_err(|e| {
+            format!(
+                "failed to run `{}` in {}: {}",
+                row.test.run,
+                cwd.display(),
+                e
+            )
+        })?;
     let pass = out.status.success();
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
@@ -329,7 +371,8 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
 // Mirrors docs/compiler/tools.md#verification-tools.
 pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
     let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
-    crate::gen::run_build(&store.out, gs, &quiet, "run_tests").map_err(|e| format!("{}; nothing was verified", e))?;
+    crate::gen::run_build(&store.out, gs, &quiet, "run_tests")
+        .map_err(|e| format!("{}; nothing was verified", e))?;
     let ledger = Ledger::load(&store.out);
     // Explicit targets (requirement or entity ids), or every non-verified row.
     let selected: Vec<String> = if targets.is_empty() {
@@ -362,7 +405,9 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             continue;
         };
         if row.test.kind != "programmatic" {
-            skipped.push(json!({"requirement": rid, "reason": "llm row; judge it and record_verdict"}));
+            skipped.push(
+                json!({"requirement": rid, "reason": "llm row; judge it and record_verdict"}),
+            );
             continue;
         }
         let (status, reason) = status_of(store, rid, row, gs);
@@ -473,7 +518,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         };
         let artifact = artifact_path(&store.out, gs, &row.test);
         let content = std::fs::read_to_string(&artifact).unwrap_or_default();
-        if content.contains(&crate::gen::test_name(&rid, &r.ears)) {
+        if content.contains(&crate::gen::test_name(&rid, &r.statement)) {
             let row = ledger.requirements.get_mut(&rid).unwrap();
             row.hashes.test = hash_file(&artifact);
             row.hashes.files = hash_files(gs, &row.files);
@@ -496,17 +541,29 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         if ledger.requirements.contains_key(rid) {
             continue;
         }
-        let name = crate::gen::test_name(rid, &r.ears);
+        let name = crate::gen::test_name(rid, &r.statement);
         for (path, is_criteria) in &scan {
-            let Ok(content) = std::fs::read_to_string(path) else { continue };
+            let Ok(content) = std::fs::read_to_string(path) else {
+                continue;
+            };
             if !content.contains(&name) {
                 continue;
             }
-            let owner = r.entities.first().map(|e| store.resolve_id(e).to_string()).unwrap_or_default();
+            let owner = r
+                .entities
+                .first()
+                .map(|e| store.resolve_id(e).to_string())
+                .unwrap_or_default();
             let artifact_rel = if *is_criteria {
-                path.strip_prefix(store.out.join("gen")).unwrap_or(path).to_string_lossy().to_string()
+                path.strip_prefix(store.out.join("gen"))
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string()
             } else {
-                path.strip_prefix(&gs.deliverable).unwrap_or(path).to_string_lossy().to_string()
+                path.strip_prefix(&gs.deliverable)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string()
             };
             let files = ledger
                 .entities
@@ -514,19 +571,31 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 .map(|e| e.files.clone())
                 .unwrap_or_default();
             let test = crate::gen::TestRef {
-                kind: if *is_criteria { "llm".into() } else { "programmatic".into() },
-                label: if *is_criteria { "llm".into() } else { "audit".into() },
+                kind: if *is_criteria {
+                    "llm".into()
+                } else {
+                    "programmatic".into()
+                },
+                label: if *is_criteria {
+                    "llm".into()
+                } else {
+                    "audit".into()
+                },
                 artifact: artifact_rel,
                 name: name.clone(),
                 // A rebuilt programmatic row has no trustworthy command; the harness
                 // never invents one. Regeneration records the real runner.
-                run: if *is_criteria { format!("jazyk test {}", rid) } else { String::new() },
+                run: if *is_criteria {
+                    format!("jazyk test {}", rid)
+                } else {
+                    String::new()
+                },
                 cwd: ".".into(),
             };
             // The artifact carries the live statement hash in the test name, so the
             // requirement baseline is honest here.
             let hashes = crate::gen::RowHashes {
-                requirement: hash_hex(&r.ears),
+                requirement: hash_hex(&r.statement),
                 test: hash_file(path),
                 files: hash_files(gs, &files),
             };
@@ -539,7 +608,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                     test,
                     hashes,
                     verdict: "none".into(),
-                        last_run: None,
+                    last_run: None,
                     exit_code: None,
                     evidence: None,
                 },
@@ -554,15 +623,22 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
 
 // Files under a root, skipping build and VCS directories, bounded to text-sized files.
 fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criteria: bool) {
-    let Ok(rd) = std::fs::read_dir(root) else { return };
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
     for e in rd.flatten() {
         let path = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if !matches!(name.as_str(), "target" | "node_modules" | ".git") && !name.starts_with("jazyk-out") {
+            if !matches!(name.as_str(), "target" | "node_modules" | ".git")
+                && !name.starts_with("jazyk-out")
+            {
                 collect_files(&path, v, is_criteria);
             }
-        } else if std::fs::metadata(&path).map(|m| m.len() <= 512 * 1024).unwrap_or(false) {
+        } else if std::fs::metadata(&path)
+            .map(|m| m.len() <= 512 * 1024)
+            .unwrap_or(false)
+        {
             v.push((path, is_criteria));
         }
     }
@@ -598,17 +674,34 @@ mod tests {
     #[test]
     fn verdict_parse_reads_the_verdict_line_then_the_conclusion() {
         assert_eq!(parse_verdict("PASS\nAll criteria met."), Some(true));
-        assert_eq!(parse_verdict("FAIL\nThe criteria says PASS only when the color is set."), Some(false));
+        assert_eq!(
+            parse_verdict("FAIL\nThe criteria says PASS only when the color is set."),
+            Some(false)
+        );
         // Reasoning first, quoting the criteria, conclusion last: the old
         // first-occurrence parse read this as a fail.
         assert_eq!(
-            parse_verdict("The criteria says FAIL when the title is missing. It is present.\nTherefore: PASS"),
+            parse_verdict(
+                "The criteria says FAIL when the title is missing. It is present.\nTherefore: PASS"
+            ),
             Some(true)
         );
-        assert_eq!(parse_verdict("Checked everything. The row does not hold. FAIL"), Some(false));
-        assert_eq!(parse_verdict("PASS. Note the criteria would FAIL a missing title."), Some(true));
-        assert_eq!(parse_verdict("**PASS**\n\nEvery criterion holds."), Some(true));
-        assert_eq!(parse_verdict("Verdict: FAIL\nThe title is absent."), Some(false));
+        assert_eq!(
+            parse_verdict("Checked everything. The row does not hold. FAIL"),
+            Some(false)
+        );
+        assert_eq!(
+            parse_verdict("PASS. Note the criteria would FAIL a missing title."),
+            Some(true)
+        );
+        assert_eq!(
+            parse_verdict("**PASS**\n\nEvery criterion holds."),
+            Some(true)
+        );
+        assert_eq!(
+            parse_verdict("Verdict: FAIL\nThe title is absent."),
+            Some(false)
+        );
         assert_eq!(parse_verdict("no verdict words here"), None);
         assert_eq!(parse_verdict(""), None);
     }
@@ -618,22 +711,36 @@ mod tests {
     use crate::model::*;
 
     fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
-        let mut s = Store { out: out.to_path_buf(), ..Default::default() };
-        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
+        let mut s = Store {
+            out: out.to_path_buf(),
+            ..Default::default()
+        };
+        s.graph.entities.insert(
+            "ent:cart".into(),
+            Entity {
+                name: "Cart".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Cart shall hold items.".into(),
+                statement: "The Cart shall hold items.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
-                source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds".into(),
+                }),
+                ..Default::default()
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into(), code: Vec::new() };
+        let gs = GenSettings {
+            deliverable: out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
         std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
         std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
@@ -724,18 +831,32 @@ mod tests {
 
         // Editing the test artifact flips stale-test.
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("// changed\nfn {}() {{}}\n", name)).unwrap();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("// changed\nfn {}() {{}}\n", name),
+        )
+        .unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-test");
         mark(&s, "req:shop-1", "pass", None, None, &gs).unwrap();
 
         // Rewording the requirement flips stale-requirement; task refuses; test refuses.
-        s.graph.requirements.get_mut("req:shop-1").unwrap().ears = "The Cart shall hold many items.".into();
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .statement = "The Cart shall hold many items.".into();
         let p = pending(&s, &gs, None, None);
         assert_eq!(p[0]["status"], "stale-requirement");
-        assert!(task(&s, "req:shop-1", &gs).unwrap_err().contains("stale-requirement"));
+        assert!(task(&s, "req:shop-1", &gs)
+            .unwrap_err()
+            .contains("stale-requirement"));
 
         // A fail verdict surfaces as failing.
-        s.graph.requirements.get_mut("req:shop-1").unwrap().ears = "The Cart shall hold items.".into();
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .statement = "The Cart shall hold items.".into();
         mark(&s, "req:shop-1", "fail", None, Some("boom"), &gs).unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "failing");
 
@@ -751,11 +872,21 @@ mod tests {
         let (mut s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, None, &gs).unwrap();
         // Reword the requirement: stale-requirement.
-        s.graph.requirements.get_mut("req:shop-1").unwrap().ears = "The Cart shall hold many items.".into();
-        assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-requirement");
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .statement = "The Cart shall hold many items.".into();
+        assert_eq!(
+            pending(&s, &gs, None, None)[0]["status"],
+            "stale-requirement"
+        );
         // Audit must not launder it into verified: the artifact carries the OLD name.
         audit(&s, &gs);
-        assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-requirement");
+        assert_eq!(
+            pending(&s, &gs, None, None)[0]["status"],
+            "stale-requirement"
+        );
     }
 
     #[test]
@@ -809,7 +940,8 @@ pub fn select_rows(
             }
             targets.iter().any(|t| {
                 let t = store.resolve_id(t);
-                r["requirement"].as_str() == Some(t) || store.resolve_id(r["entity"].as_str().unwrap_or("")) == t
+                r["requirement"].as_str() == Some(t)
+                    || store.resolve_id(r["entity"].as_str().unwrap_or("")) == t
             })
         })
         .filter(|r| match kind {
@@ -837,13 +969,17 @@ pub fn run_all(
 
     let selected = select_rows(store, gs, targets, kind, force);
     if !targets.is_empty() && selected.is_empty() {
-        return Err("no ledger rows match the given target(s); run `jazyk gen` first or check the ids".into());
+        return Err(
+            "no ledger rows match the given target(s); run `jazyk gen` first or check the ids"
+                .into(),
+        );
     }
     // The build runs once, before any row. A row cannot say anything true about an
     // artifact that was never produced, so a broken build stops the run instead of
     // failing every requirement and naming the wrong culprit.
     // Mirrors docs/consumers/gen.md#runners.
-    crate::gen::run_build(&store.out, gs, trace, "verify").map_err(|e| format!("{}; nothing was verified", e))?;
+    crate::gen::run_build(&store.out, gs, trace, "verify")
+        .map_err(|e| format!("{}; nothing was verified", e))?;
     let (mut verified, mut failing, mut stale, mut skipped) = (0u64, 0u64, 0u64, 0u64);
     // Failed programmatic runs, judged together at the end of the run.
     let mut held: Vec<(String, ProgRun, String)> = Vec::new();
@@ -864,7 +1000,10 @@ pub fn run_all(
             continue;
         }
         let row_kind = r["test"]["kind"].as_str().unwrap_or("programmatic");
-        trace.event(TraceEvent::VerifyRowStart { requirement: rid.clone(), test: row_kind.to_string() });
+        trace.event(TraceEvent::VerifyRowStart {
+            requirement: rid.clone(),
+            test: row_kind.to_string(),
+        });
         let verdict = if row_kind == "llm" {
             match task(store, &rid, gs) {
                 Ok(task_pkg) => {
@@ -872,8 +1011,11 @@ pub fn run_all(
                     for f in task_pkg["files"].as_array().cloned().unwrap_or_default() {
                         if let Some(f) = f.as_str() {
                             if let Ok(content) = std::fs::read_to_string(gs.deliverable.join(f)) {
-                                evidence_input
-                                    .push_str(&format!("\n=== {} ===\n{}", f, crate::llm::truncate(&content, 12_000)));
+                                evidence_input.push_str(&format!(
+                                    "\n=== {} ===\n{}",
+                                    f,
+                                    crate::llm::truncate(&content, 12_000)
+                                ));
                             }
                         }
                     }
@@ -883,19 +1025,26 @@ pub fn run_all(
                         task_pkg["context"].as_str().unwrap_or_default(),
                         evidence_input
                     );
-                    match runner.ask_traced(task_pkg["instructions"].as_str().unwrap_or_default(), &user, &format!("verify {}", rid), "judge", Some(trace)) {
-                        Ok(reply) => {
-                            match parse_verdict(&reply) {
-                                Some(pass) => Some((pass, crate::llm::truncate(reply.trim(), 300).to_string())),
-                                None => {
-                                    trace.event(TraceEvent::VerifyRowError {
-                                        requirement: rid.clone(),
-                                        message: " verdict unparseable (no PASS or FAIL in reply)".into(),
-                                    });
-                                    None
-                                }
+                    match runner.ask_traced(
+                        task_pkg["instructions"].as_str().unwrap_or_default(),
+                        &user,
+                        &format!("verify {}", rid),
+                        "judge",
+                        Some(trace),
+                    ) {
+                        Ok(reply) => match parse_verdict(&reply) {
+                            Some(pass) => {
+                                Some((pass, crate::llm::truncate(reply.trim(), 300).to_string()))
                             }
-                        }
+                            None => {
+                                trace.event(TraceEvent::VerifyRowError {
+                                    requirement: rid.clone(),
+                                    message: " verdict unparseable (no PASS or FAIL in reply)"
+                                        .into(),
+                                });
+                                None
+                            }
+                        },
                         Err(e) => {
                             trace.event(TraceEvent::VerifyRowError {
                                 requirement: rid.clone(),
@@ -906,7 +1055,10 @@ pub fn run_all(
                     }
                 }
                 Err(e) => {
-                    trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: format!(": {}", e) });
+                    trace.event(TraceEvent::VerifyRowError {
+                        requirement: rid.clone(),
+                        message: format!(": {}", e),
+                    });
                     None
                 }
             }
@@ -917,11 +1069,18 @@ pub fn run_all(
                 // decided once, when the run knows how the other rows went
                 // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
                 Ok(run) => {
-                    held.push((rid.clone(), run, r["test"]["run"].as_str().unwrap_or("").to_string()));
+                    held.push((
+                        rid.clone(),
+                        run,
+                        r["test"]["run"].as_str().unwrap_or("").to_string(),
+                    ));
                     None
                 }
                 Err(e) => {
-                    trace.event(TraceEvent::VerifyRowError { requirement: rid.clone(), message: format!(": {}", e) });
+                    trace.event(TraceEvent::VerifyRowError {
+                        requirement: rid.clone(),
+                        message: format!(": {}", e),
+                    });
                     None
                 }
             }
@@ -948,9 +1107,8 @@ pub fn run_all(
     // One broken runner says the same thing to every row it touched; unmet requirements
     // do not agree with each other. When nothing passed and every failure carries the
     // identical output, the machine is what failed, and no row learned anything.
-    let identical = held.len() > 1
-        && verified == 0
-        && held.windows(2).all(|w| w[0].1.tail == w[1].1.tail);
+    let identical =
+        held.len() > 1 && verified == 0 && held.windows(2).all(|w| w[0].1.tail == w[1].1.tail);
     let mut runner_failed = 0u64;
     skipped = skipped.saturating_sub(held.len() as u64);
     for (rid, run, cmd) in held {

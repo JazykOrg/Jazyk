@@ -39,12 +39,13 @@ pub async fn project(State(st): State<SharedState>) -> Json<Value> {
         "docsGlob": p.docs_glob,
         "roots": p.roots,
         "deliverable": st.gs().deliverable.to_string_lossy(),
-        "limits": {
-            "turnRounds": p.limits.turn_rounds,
-            "turnMutations": p.limits.turn_mutations,
-            "contextBudget": p.limits.context_budget,
-            "buildTurnFactor": p.limits.build_turn_factor,
+        "budgets": {
+            "sessionRounds": crate::limits::SESSION_ROUNDS,
+            "sessionMutations": crate::limits::SESSION_MUTATIONS,
+            "contextBudget": crate::limits::CONTEXT_BUDGET,
+            "buildSessionFactor": crate::limits::BUILD_SESSION_FACTOR,
         },
+        "executors": p.executors.by_kind,
         // Never the api key.
         "llm": { "model": st.llm().model, "baseUrl": st.llm().base_url },
         "version": env!("CARGO_PKG_VERSION"),
@@ -100,7 +101,11 @@ pub async fn shutdown(State(st): State<SharedState>) -> Json<Value> {
 // the file hash for the conditional write. Mirrors docs/frontends/gui.md#api.
 pub async fn settings_get(State(st): State<SharedState>) -> Json<Value> {
     let root = st.root.clone();
-    Json(tokio::task::spawn_blocking(move || crate::project::settings_read(&root)).await.expect("settings read"))
+    Json(
+        tokio::task::spawn_blocking(move || crate::project::settings_read(&root))
+            .await
+            .expect("settings read"),
+    )
 }
 
 // Rewrite jazyk.toml from the form values and apply live: the running server reloads
@@ -179,7 +184,10 @@ pub async fn answer_question(
     } else if let Some(t) = body["text"].as_str() {
         crate::answer::Reply::Text(t.to_string())
     } else {
-        return err(StatusCode::BAD_REQUEST, "pass option (an index) or text (a freeform reply)");
+        return err(
+            StatusCode::BAD_REQUEST,
+            "pass option (an index) or text (a freeform reply)",
+        );
     };
     let out = st.out.clone();
     let project = st.proj.read().unwrap().clone();
@@ -231,7 +239,13 @@ pub async fn triage(
             stale_anchors: vec![],
             proposals: vec![],
         };
-        store.apply(vec![crate::store::Op::TriageDiagnostic { id: rid.clone(), triage }], &item, 0, 0);
+        store.apply(
+            vec![crate::store::Op::TriageDiagnostic {
+                id: rid.clone(),
+                triage,
+            }],
+            &item.commit(0, 0),
+        );
         Ok(json!({ "id": rid, "diagnostic": store.graph.diagnostics.get(&rid) }))
     })
     .await
@@ -267,7 +281,12 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
     if let Some(m) = body["compile"].as_str().or(match body["mode"].as_str() {
         Some("watch") => Some("auto"),
         Some("queue") | Some("off") => Some("manual"),
-        Some(_) => return err(StatusCode::BAD_REQUEST, "mode must be queue or watch (compile: manual or auto)"),
+        Some(_) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "mode must be queue or watch (compile: manual or auto)",
+            )
+        }
         None => None,
     }) {
         if !["manual", "auto"].contains(&m) {
@@ -285,7 +304,10 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
     }
     if let Some(w) = body["worker"].as_str() {
         if !["internal", "agent", "any"].contains(&w) {
-            return err(StatusCode::BAD_REQUEST, "worker must be internal, agent, or any");
+            return err(
+                StatusCode::BAD_REQUEST,
+                "worker must be internal, agent, or any",
+            );
         }
         c.worker = w.to_string();
     }
@@ -334,7 +356,10 @@ pub async fn release(State(st): State<SharedState>, Json(body): Json<Value>) -> 
     let stage = body["stage"].as_str();
     if let Some(s) = stage {
         if s != "compile" && s != "generate" {
-            return err(StatusCode::BAD_REQUEST, "stage must be compile or generate (or absent for both)");
+            return err(
+                StatusCode::BAD_REQUEST,
+                "stage must be compile or generate (or absent for both)",
+            );
         }
     }
     crate::control::release(&st.proj(), &st.out, stage);
@@ -365,8 +390,10 @@ pub async fn entity(State(st): State<SharedState>, UrlPath(id): UrlPath<String>)
         return err(StatusCode::NOT_FOUND, format!("no entity {}", id));
     };
     let req_ids = store.requirements_referencing(&id);
-    let requirements: BTreeMap<&String, &crate::model::Requirement> =
-        req_ids.iter().filter_map(|r| store.graph.requirements.get(r).map(|q| (r, q))).collect();
+    let requirements: BTreeMap<&String, &crate::model::Requirement> = req_ids
+        .iter()
+        .filter_map(|r| store.graph.requirements.get(r).map(|q| (r, q)))
+        .collect();
     let relationships: BTreeMap<&String, &crate::model::Relationship> = store
         .graph
         .relationships
@@ -374,8 +401,10 @@ pub async fn entity(State(st): State<SharedState>, UrlPath(id): UrlPath<String>)
         .filter(|(_, rel)| rel.members.contains(&id))
         .collect();
     let statuses = crate::verify::status_map(&store, &st.gs());
-    let verify: BTreeMap<&String, &Value> =
-        req_ids.iter().filter_map(|r| statuses.get(r).map(|v| (r, v))).collect();
+    let verify: BTreeMap<&String, &Value> = req_ids
+        .iter()
+        .filter_map(|r| statuses.get(r).map(|v| (r, v)))
+        .collect();
     Json(json!({
         "id": id,
         "entity": ent,
@@ -420,8 +449,12 @@ pub struct ContextQ {
 
 pub async fn context(State(st): State<SharedState>, Query(p): Query<ContextQ>) -> Response {
     let store = load_store(&st).await;
-    let focus = p.focus.as_deref().map(crate::context::Focus::parse).unwrap_or_default();
-    let budget = p.budget.unwrap_or(st.proj().limits.context_budget);
+    let focus = p
+        .focus
+        .as_deref()
+        .map(crate::context::Focus::parse)
+        .unwrap_or_default();
+    let budget = p.budget.unwrap_or(crate::limits::CONTEXT_BUDGET);
     let result = if p.target.starts_with("h:") {
         crate::context::expand(&store, &p.target, budget)
     } else {
@@ -536,7 +569,9 @@ fn diag_counts_by_doc(store: &Store) -> BTreeMap<String, BTreeMap<&'static str, 
         for subject in &d.subjects {
             let resolved = store.resolve_id(subject).to_string();
             if let Some(r) = store.graph.requirements.get(&resolved) {
-                docs_hit.insert(r.source.doc.clone());
+                if let Some(src) = r.source.as_ref() {
+                    docs_hit.insert(src.doc.clone());
+                }
             } else if let Some(e) = store.graph.entities.get(&resolved) {
                 for m in &e.mentions {
                     docs_hit.insert(m.doc.clone());
@@ -582,14 +617,20 @@ pub struct DocQ {
 
 pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
     let Some(abs) = super::docs::safe_doc_path(&st.proj(), &p.path) else {
-        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
+        return err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid document path {}", p.path),
+        );
     };
     match std::fs::read_to_string(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
             Json(json!({ "path": p.path, "text": text, "hash": hash })).into_response()
         }
-        Err(e) => err(StatusCode::NOT_FOUND, format!("cannot read {}: {}", p.path, e)),
+        Err(e) => err(
+            StatusCode::NOT_FOUND,
+            format!("cannot read {}: {}", p.path, e),
+        ),
     }
 }
 
@@ -600,7 +641,10 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
 pub async fn doc_baseline(State(st): State<SharedState>, Query(p): Query<DocQ>) -> Response {
     let store = load_store(&st).await;
     let Some(rec) = store.docs.get(&p.path) else {
-        return err(StatusCode::NOT_FOUND, format!("{} has never reconciled", p.path));
+        return err(
+            StatusCode::NOT_FOUND,
+            format!("{} has never reconciled", p.path),
+        );
     };
     let mut secs: Vec<&crate::model::Section> = rec.sections.values().collect();
     secs.sort_by_key(|s| s.lines[0]);
@@ -642,7 +686,8 @@ pub async fn verify_pending(
     Query(p): Query<VerifyPendingQ>,
 ) -> Json<Value> {
     let store = load_store(&st).await;
-    let pending = crate::verify::pending(&store, &st.gs(), p.filter.as_deref(), p.entity.as_deref());
+    let pending =
+        crate::verify::pending(&store, &st.gs(), p.filter.as_deref(), p.entity.as_deref());
     Json(json!({ "pending": pending, "counts": crate::verify::pending_counts(&store, &st.gs()) }))
 }
 
@@ -675,10 +720,16 @@ pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<Strin
     if slug.contains('/') || slug.contains("..") || slug.contains('\\') {
         return err(StatusCode::BAD_REQUEST, format!("invalid slug {}", slug));
     }
-    let f = st.out.join("docsgen").join(format!("{}.md", slug.trim_end_matches(".md")));
+    let f = st
+        .out
+        .join("docsgen")
+        .join(format!("{}.md", slug.trim_end_matches(".md")));
     match std::fs::read_to_string(&f) {
         Ok(text) => Json(json!({ "slug": slug, "text": text })).into_response(),
-        Err(_) => err(StatusCode::NOT_FOUND, format!("no requirements document for {}", slug)),
+        Err(_) => err(
+            StatusCode::NOT_FOUND,
+            format!("no requirements document for {}", slug),
+        ),
     }
 }
 
@@ -697,10 +748,16 @@ pub struct ModelsQ {
 
 // The endpoint's own model listing, for the run form's picker. A free-form model name
 // works without this; an unreachable endpoint answers with the error, not a 500.
-pub async fn benchmark_models(State(st): State<SharedState>, Query(p): Query<ModelsQ>) -> Json<Value> {
+pub async fn benchmark_models(
+    State(st): State<SharedState>,
+    Query(p): Query<ModelsQ>,
+) -> Json<Value> {
     let base = p.base_url.unwrap_or_else(|| st.llm().base_url.clone());
     let api_key = st.llm().api_key.clone();
-    let url = format!("{}/v1/models", base.trim_end_matches('/').trim_end_matches("/v1"));
+    let url = format!(
+        "{}/v1/models",
+        base.trim_end_matches('/').trim_end_matches("/v1")
+    );
     let listing = tokio::task::spawn_blocking(move || {
         let mut req = ureq::get(&url);
         if !api_key.is_empty() {
@@ -709,7 +766,8 @@ pub async fn benchmark_models(State(st): State<SharedState>, Query(p): Query<Mod
         req.timeout(std::time::Duration::from_secs(5))
             .call()
             .map_err(|e| e.to_string())
-            .and_then(|r| r.into_string().map_err(|e| e.to_string())).and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
+            .and_then(|r| r.into_string().map_err(|e| e.to_string()))
+            .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string()))
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()));
@@ -717,7 +775,11 @@ pub async fn benchmark_models(State(st): State<SharedState>, Query(p): Query<Mod
         Ok(v) => {
             let models: Vec<String> = v["data"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m["id"].as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             Json(serde_json::json!({"baseUrl": base, "models": models}))
         }

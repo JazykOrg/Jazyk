@@ -7,11 +7,13 @@ mod cli;
 mod context;
 mod control;
 mod decompile;
+mod derive;
 mod docsgen;
 mod feedback;
 mod gen;
 mod gui;
 mod jsonrpc;
+mod limits;
 mod llm;
 mod lsp;
 mod mcp;
@@ -60,7 +62,9 @@ fn top_usage() -> String {
     s.push_str("usage:\n");
     s.push_str("  jazyk init                     scaffold a project (jazyk.toml, docs/, deliverable/) here\n");
     s.push_str("  jazyk compile [path...]        reconcile the graph with the documents\n");
-    s.push_str("  jazyk check [path...]          compile, exit non-zero on error diagnostics (CI)\n");
+    s.push_str(
+        "  jazyk check [path...]          compile, exit non-zero on error diagnostics (CI)\n",
+    );
     s.push_str("  jazyk watch [path...]          recompile on change\n");
     s.push_str("  jazyk status                   summarize the last build\n");
     s.push_str("  jazyk context <target>         print a context pack (ent:…, req:…, doc.md#/ref, or h:… handle)\n");
@@ -68,9 +72,13 @@ fn top_usage() -> String {
     s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--force)\n");
     s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
     s.push_str("  jazyk decompile [path...]      draft docs describing what unclaimed code does\n");
-    s.push_str("  jazyk docsgen                  render per-entity requirements documents on demand\n");
+    s.push_str(
+        "  jazyk docsgen                  render per-entity requirements documents on demand\n",
+    );
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
-    s.push_str("  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n");
+    s.push_str(
+        "  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n",
+    );
     s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n  jazyk release [compile|generate]  approve pending changes in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
@@ -400,8 +408,20 @@ fn main() {
         "mcp" => match positional.first().map(|s| s.as_str()) {
             Some(arg) => {
                 // The toolsets served, comma separated: compile, generate, verify, graph.
-                let modes: Vec<String> = arg.split(',').map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
-                let known = ["compile", "generate", "verify", "decompile", "benchmark", "graph", "chat"];
+                let modes: Vec<String> = arg
+                    .split(',')
+                    .map(|m| m.trim().to_string())
+                    .filter(|m| !m.is_empty())
+                    .collect();
+                let known = [
+                    "compile",
+                    "generate",
+                    "verify",
+                    "decompile",
+                    "benchmark",
+                    "graph",
+                    "chat",
+                ];
                 if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
                     eprintln!("{}", cmd_usage("mcp").unwrap());
                     2
@@ -440,7 +460,11 @@ fn main() {
             let (proj, _llm, out) = cli::resolve(&[], &opts);
             let store = store::Store::load(&out);
             let n = docsgen::write_all(&store, &gen::GenSettings::resolve(&proj));
-            println!("jazyk: docsgen — {} requirements document(s) in {}", n, out.join("docsgen").display());
+            println!(
+                "jazyk: docsgen — {} requirements document(s) in {}",
+                n,
+                out.join("docsgen").display()
+            );
             0
         }
         "viewer" => cli::run_viewer(&opts),
@@ -462,7 +486,10 @@ fn main() {
         // Mirrors docs/frontends/cli.md#jazyk-acp.
         "acp" => match positional.first().map(|s| s.as_str()) {
             Some("install") => cli::run_acp_install(
-                positional.get(1).map(|s| s.as_str()).or(opts.acp_ide.as_deref()),
+                positional
+                    .get(1)
+                    .map(|s| s.as_str())
+                    .or(opts.acp_ide.as_deref()),
             ),
             _ => acp::proxy::run(&opts),
         },

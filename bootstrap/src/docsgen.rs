@@ -47,14 +47,19 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         if !rids.is_empty() {
             s.push_str("## Requirements\n\n");
             for rid in &rids {
-                let Some(r) = store.graph.requirements.get(rid) else { continue };
-                s.push_str(&format!("### `{}`\n\n{}\n\n", rid, r.ears));
-                s.push_str(&format!(
-                    "> {}\n\nSource: `{}#{}`",
-                    r.source.quote.split_whitespace().collect::<Vec<_>>().join(" "),
-                    r.source.doc,
-                    r.source.section
-                ));
+                let Some(r) = store.graph.requirements.get(rid) else {
+                    continue;
+                };
+                s.push_str(&format!("### `{}`\n\n{}\n\n", rid, r.statement));
+                match r.source.as_ref() {
+                    Some(src) => s.push_str(&format!(
+                        "> {}\n\nSource: `{}#{}`",
+                        src.quote.split_whitespace().collect::<Vec<_>>().join(" "),
+                        src.doc,
+                        src.section
+                    )),
+                    None => s.push_str(&format!("Provenance: {}", crate::turn::provenance_line(r))),
+                }
                 let others: Vec<&str> = r
                     .entities
                     .iter()
@@ -69,13 +74,20 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     let status = v["status"].as_str().unwrap_or("missing");
                     let mut line = format!("Verification: `{}`", status);
                     if let Some(name) = v["name"].as_str() {
-                        line.push_str(&format!(" by `{}` ({})", name, v["kind"].as_str().unwrap_or("?")));
+                        line.push_str(&format!(
+                            " by `{}` ({})",
+                            name,
+                            v["kind"].as_str().unwrap_or("?")
+                        ));
                     }
                     if let Some(t) = v["lastRun"].as_str() {
                         line.push_str(&format!(", last run {}", t));
                     }
                     if let Some(ev) = v["evidence"].as_str() {
-                        line.push_str(&format!("\n\n> {}", ev.split_whitespace().collect::<Vec<_>>().join(" ")));
+                        line.push_str(&format!(
+                            "\n\n> {}",
+                            ev.split_whitespace().collect::<Vec<_>>().join(" ")
+                        ));
                     }
                     s.push_str(&line);
                     s.push_str("\n\n");
@@ -89,8 +101,22 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             .iter()
             .filter(|(_, rel)| rel.members.contains(id))
             .map(|(rid, rel)| {
-                let other = rel.members.iter().find(|m| *m != id).cloned().unwrap_or_default();
-                format!("- `{}` {} `{}` (from {})", rid, rel.rel_type, other, rel.requirements.join(", "))
+                let other = rel
+                    .members
+                    .iter()
+                    .find(|m| *m != id)
+                    .cloned()
+                    .unwrap_or_default();
+                format!(
+                    "- `{}` {} `{}` (from {})",
+                    rid,
+                    rel.strongest(),
+                    other,
+                    rel.requirements()
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             })
             .collect();
         if !rels.is_empty() {
@@ -104,7 +130,10 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             .diagnostics
             .iter()
             .filter(|(_, d)| {
-                d.lifecycle == "open" && d.subjects.iter().any(|sj| store.resolve_id(sj) == id.as_str())
+                d.lifecycle == "open"
+                    && d.subjects
+                        .iter()
+                        .any(|sj| store.resolve_id(sj) == id.as_str())
             })
             .map(|(did, d)| format!("- `{}` [{}] {}: {}", did, d.severity, d.rule, d.message))
             .collect();
@@ -158,8 +187,9 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                             idx.push_str(&format!("    {}[\"{}\"]\n", mid(m), name));
                         }
                     }
-                    if edges.insert((a.clone(), b.clone(), rel.rel_type.clone())) {
-                        idx.push_str(&format!("    {} -->|{}| {}\n", mid(&a), rel.rel_type, mid(&b)));
+                    let kind = rel.strongest().to_string();
+                    if edges.insert((a.clone(), b.clone(), kind.clone())) {
+                        idx.push_str(&format!("    {} -->|{}| {}\n", mid(&a), kind, mid(&b)));
                     }
                 }
                 idx.push_str("```\n");
@@ -179,38 +209,57 @@ mod tests {
     fn renders_and_prunes() {
         let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", std::process::id()));
         std::fs::remove_dir_all(&out).ok();
-        let mut s = Store { out: out.clone(), ..Default::default() };
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
         s.graph.entities.insert(
             "ent:cart".into(),
             Entity {
                 name: "Cart".into(),
                 definition: Some("holds items".into()),
-                mentions: vec![SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "the Cart".into() }],
+                mentions: vec![SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "the Cart".into(),
+                }],
                 ..Default::default()
             },
         );
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Cart shall hold items.".into(),
+                statement: "The Cart shall hold items.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
-                source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds\nitems".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds\nitems".into(),
+                }),
+                ..Default::default()
             },
         );
         // A stale file for an entity that no longer exists must be pruned.
         std::fs::create_dir_all(out.join("docsgen")).ok();
         std::fs::write(out.join("docsgen/ghost.md"), "old").ok();
-        let n = write_all(&s, &GenSettings { deliverable: out.join("product"), worker: "agentic".into(), code: Vec::new() });
+        let n = write_all(
+            &s,
+            &GenSettings {
+                deliverable: out.join("product"),
+                worker: "agentic".into(),
+                code: Vec::new(),
+            },
+        );
         assert_eq!(n, 1);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));
         assert!(doc.contains("req:shop-1"));
-        assert!(doc.contains("> holds items"), "quote is whitespace-normalized: {}", doc);
+        assert!(
+            doc.contains("> holds items"),
+            "quote is whitespace-normalized: {}",
+            doc
+        );
         assert!(!out.join("docsgen/ghost.md").exists());
     }
 }

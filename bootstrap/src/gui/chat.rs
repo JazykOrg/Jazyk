@@ -40,7 +40,11 @@ pub struct ChatManager {
 
 impl Default for ChatManager {
     fn default() -> Self {
-        ChatManager { host: Mutex::new(None), sessions: Mutex::new(BTreeMap::new()), seq: AtomicU64::new(0) }
+        ChatManager {
+            host: Mutex::new(None),
+            sessions: Mutex::new(BTreeMap::new()),
+            seq: AtomicU64::new(0),
+        }
     }
 }
 
@@ -52,9 +56,10 @@ impl ChatManager {
             return Ok(());
         }
         let proj = st.proj();
-        let agent = config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
-            std::env::var(n).ok()
-        })?;
+        let agent =
+            config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
+                std::env::var(n).ok()
+            })?;
         let llm = st.llm();
         let extra_env = if agent.name == EMBEDDED {
             let mut v = vec![
@@ -139,7 +144,11 @@ impl ChatManager {
             let next_n = ring.back().map(|(n, _)| n + 1).unwrap_or(0);
             // A number a later append cannot collide with, whatever was trimmed.
             let seq = self.seq.load(Ordering::Relaxed);
-            let n = meta.id.strip_prefix("chat-").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let n = meta
+                .id
+                .strip_prefix("chat-")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
             if n > seq {
                 self.seq.store(n, Ordering::Relaxed);
             }
@@ -180,7 +189,10 @@ fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, update: Value) {
         ),
         _ => crate::acp::sessions::record_update(&st.out, &id, &update),
     }
-    st.events.emit("chat.update", json!({"sessionId": id, "n": n, "update": elided}));
+    st.events.emit(
+        "chat.update",
+        json!({"sessionId": id, "n": n, "update": elided}),
+    );
 }
 
 fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
@@ -188,7 +200,8 @@ fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
         let mut s = sess.lock().unwrap();
         s.state = state.to_string();
     }
-    st.events.emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    st.events
+        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
 }
 
 // ---- handlers ----
@@ -206,8 +219,13 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         pending: Vec::new(),
     };
     crate::acp::sessions::open(&st.out, &id, &st.proj().root, "gui");
-    st.chat.sessions.lock().unwrap().insert(id.clone(), Arc::new(Mutex::new(session)));
-    st.events.emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    st.chat
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id.clone(), Arc::new(Mutex::new(session)));
+    st.events
+        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
     Json(json!({"id": id})).into_response()
 }
 
@@ -262,13 +280,21 @@ pub async fn post_prompt(
         return (StatusCode::CONFLICT, "a turn is already running").into_response();
     }
     // The user's side of the transcript.
-    append(&st, &sess, json!({"sessionUpdate": "user_message", "text": text}));
+    append(
+        &st,
+        &sess,
+        json!({"sessionUpdate": "user_message", "text": text}),
+    );
 
     // Slash commands arrive as prompt text, per the protocol; jazyk matches the
     // prefix and runs the real work instead of prompting the agent.
     // Mirrors docs/frontends/acp.md#slash-commands.
     if let Some(reply) = run_command(&st, &text).await {
-        append(&st, &sess, json!({"sessionUpdate": "agent_message", "text": reply}));
+        append(
+            &st,
+            &sess,
+            json!({"sessionUpdate": "agent_message", "text": reply}),
+        );
         return (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response();
     }
 
@@ -322,11 +348,19 @@ pub async fn post_prompt(
         }
         match outcome {
             Ok(o) => {
-                append(&st2, &sess2, json!({"sessionUpdate": "turn_end", "stop": o.stop, "idled": o.idled}));
+                append(
+                    &st2,
+                    &sess2,
+                    json!({"sessionUpdate": "turn_end", "stop": o.stop, "idled": o.idled}),
+                );
                 set_state(&st2, &sess2, "idle");
             }
             Err(e) => {
-                append(&st2, &sess2, json!({"sessionUpdate": "turn_end", "stop": "error", "error": e}));
+                append(
+                    &st2,
+                    &sess2,
+                    json!({"sessionUpdate": "turn_end", "stop": "error", "error": e}),
+                );
                 set_state(&st2, &sess2, "failed");
             }
         }
@@ -364,7 +398,8 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
             match handle {
                 Some(h) => {
                     h.answer_permission(ask, option);
-                    st.events.emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+                    st.events
+                        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
                     (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
                 }
                 None => (StatusCode::CONFLICT, "no open agent session").into_response(),

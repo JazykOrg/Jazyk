@@ -91,7 +91,11 @@ impl AcpRunner {
                 self.extra_env.clone(),
             )?);
         }
-        h.as_ref().unwrap().new_session(&self.project.root, mcp, super::policy::PermissionPolicy::Auto)
+        h.as_ref().unwrap().new_session(
+            &self.project.root,
+            mcp,
+            super::policy::PermissionPolicy::Auto,
+        )
     }
 
     // Mark this runner as part of a running internal build: its servings carry the
@@ -156,7 +160,12 @@ impl AcpRunner {
         if modes == "generate" && self.agent.serve_files {
             args.push("--serve-files".to_string());
         }
-        McpSpec { name: "jazyk".to_string(), command: exe, args, env: Vec::new() }
+        McpSpec {
+            name: "jazyk".to_string(),
+            command: exe,
+            args,
+            env: Vec::new(),
+        }
     }
 
     // The prompt for one work item. Compilation tasks carry their full contract (the
@@ -170,21 +179,24 @@ impl AcpRunner {
             let (parsed, _) = crate::reconcile::parse_all(&self.project);
             store.sync_docs(&parsed);
             let gs = crate::gen::GenSettings::resolve(&self.project);
-            let (system, pack) =
-                crate::turn::task_prompt(&store, item, &self.project.limits, &self.project.linting, &gs);
+            let (system, pack) = crate::turn::task_prompt(&store, item, &self.project.linting, &gs);
             return format!(
                 "{}\n\n{}\n\n{}",
                 crate::turn::with_feedback_note(system),
                 pack,
-                include_str!("../../../docs/compiler/turns/prompts/worker-protocol.md")
+                include_str!("../../../docs/compiler/goals/prompts/worker-protocol.md")
                     .replace("{target}", &item.target)
             );
         }
         match item.task.as_str() {
-            "bind-requirement" => include_str!("../../../docs/compiler/turns/prompts/bind-pointer.md")
-                .replace("{target}", &item.target),
-            "generate-entity" => include_str!("../../../docs/compiler/turns/prompts/generate-pointer.md")
-                .replace("{target}", &item.target),
+            "bind-requirement" => {
+                include_str!("../../../docs/compiler/goals/prompts/bind-pointer.md")
+                    .replace("{target}", &item.target)
+            }
+            "generate-entity" => {
+                include_str!("../../../docs/compiler/goals/prompts/generate-pointer.md")
+                    .replace("{target}", &item.target)
+            }
             _ => unreachable!("compilation prompts are packaged above"),
         }
     }
@@ -197,7 +209,8 @@ impl AcpRunner {
             label: label.clone(),
             task: item.task.clone(),
             target: item.target.clone(),
-            doc: matches!(item.task.as_str(), "reconcile-doc" | "align-doc").then(|| item.target.clone()),
+            doc: matches!(item.task.as_str(), "reconcile-doc" | "align-doc")
+                .then(|| item.target.clone()),
             sections: item.dirty_sections.clone(),
             dirty: item.dirty_sections.len(),
             stale: item.stale_anchors.len(),
@@ -224,7 +237,10 @@ impl AcpRunner {
         let cb_calls = calls.clone();
         let on_update: super::host::OnUpdate = Arc::new(move |ev| {
             if let super::host::HostEvent::Update(u) = ev {
-                if matches!(u, agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)) {
+                if matches!(
+                    u,
+                    agent_client_protocol::schema::v1::SessionUpdate::ToolCall(_)
+                ) {
                     cb_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 cb_translator.lock().unwrap().on_update(u, &cb_trace);
@@ -241,7 +257,10 @@ impl AcpRunner {
                 if o.stop == "end_turn" && !o.idled {
                     let q = crate::queue::compute(&self.project, &self.out);
                     let kind = crate::queue::kind_of(&item.task);
-                    if q.compile.iter().any(|e| e["target"] == item.target.as_str() && e["kind"] == kind) {
+                    if q.compile
+                        .iter()
+                        .any(|e| e["target"] == item.target.as_str() && e["kind"] == kind)
+                    {
                         outcome = session.prompt(
                             &format!(
                                 "The task is not finished: `{} {}` has not committed. Continue with the tool calls the instructions name, then finish with done.",
@@ -284,19 +303,27 @@ impl AcpRunner {
             "bind-requirement" | "generate-entity" => None,
             _ => {
                 let q = crate::queue::compute(&self.project, &self.out);
-                let still_listed = q.compile.iter().any(|e| e["target"] == item.target.as_str());
+                let still_listed = q
+                    .compile
+                    .iter()
+                    .any(|e| e["target"] == item.target.as_str());
                 if still_listed {
                     Some(format!(
                         "the task did not land (session stopped: {}{})",
                         stop.stop,
-                        if stop.idled { ", idle watchdog fired" } else { "" }
+                        if stop.idled {
+                            ", idle watchdog fired"
+                        } else {
+                            ""
+                        }
                     ))
                 } else {
                     None
                 }
             }
         };
-        if failed.is_none() && !matches!(item.task.as_str(), "bind-requirement" | "generate-entity") {
+        if failed.is_none() && !matches!(item.task.as_str(), "bind-requirement" | "generate-entity")
+        {
             trace.event(TraceEvent::TurnDone {
                 label,
                 staged: applied,
@@ -305,7 +332,14 @@ impl AcpRunner {
                 summary: String::new(),
             });
         }
-        TurnReport { applied, touched, changed, rounds, tokens, failed }
+        TurnReport {
+            applied,
+            touched,
+            changed,
+            rounds,
+            tokens,
+            failed,
+        }
     }
 
     // One-shot prose completion through a bare session (no tools): the ACP form of
@@ -325,9 +359,14 @@ impl AcpRunner {
         trace: Option<&Trace>,
     ) -> Result<String, String> {
         if let Some(t) = trace {
-            t.line(label, &format!("→ ask {} ({} chars)", step, system.len() + user.len()));
+            t.line(
+                label,
+                &format!("→ ask {} ({} chars)", step, system.len() + user.len()),
+            );
         }
-        let session = self.session(Vec::new()).map_err(|e| format!("session: {}", e))?;
+        let session = self
+            .session(Vec::new())
+            .map_err(|e| format!("session: {}", e))?;
         let text: Arc<Mutex<String>> = Default::default();
         let sink = text.clone();
         let prompt = format!("{}\n\n{}", system, user);
@@ -348,7 +387,10 @@ impl AcpRunner {
         let outcome = outcome?;
         let text = text.lock().unwrap().clone();
         if text.trim().is_empty() {
-            return Err(format!("empty reply (session stopped: {}) for {}", outcome.stop, label));
+            return Err(format!(
+                "empty reply (session stopped: {}) for {}",
+                outcome.stop, label
+            ));
         }
         if let Some(t) = trace {
             t.event(crate::turn::TraceEvent::ModelText {
@@ -374,9 +416,13 @@ fn journal_diff(
     let mut changed = BTreeSet::new();
     for g in (from + 1)..=to {
         let path = out.join("journal").join(format!("g{}.yaml", g));
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(entry) = serde_norway::from_str::<crate::model::JournalEntry>(&text) else { continue };
-        if entry.work_item.task != item.task || entry.work_item.target != item.target {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(entry) = serde_norway::from_str::<crate::model::JournalEntry>(&text) else {
+            continue;
+        };
+        if entry.kind != "session" || !entry.batch.iter().any(|g| *g == item.goal_id()) {
             continue;
         }
         applied += entry.mutations.len();
@@ -394,15 +440,21 @@ fn journal_diff(
                     "CreateRequirement" => {
                         changed.extend(id(&body["id"]));
                         if let Some(ents) = body["requirement"]["entities"].as_array() {
-                            touched.extend(ents.iter().filter_map(|e| e.as_str().map(|s| s.to_string())));
+                            touched.extend(
+                                ents.iter()
+                                    .filter_map(|e| e.as_str().map(|s| s.to_string())),
+                            );
                         }
                     }
                     "UpdateRequirement" => {
-                        if !body["ears"].is_null() {
+                        if !body["statement"].is_null() {
                             changed.extend(id(&body["id"]));
                         }
                         if let Some(ents) = body["entities"].as_array() {
-                            touched.extend(ents.iter().filter_map(|e| e.as_str().map(|s| s.to_string())));
+                            touched.extend(
+                                ents.iter()
+                                    .filter_map(|e| e.as_str().map(|s| s.to_string())),
+                            );
                         }
                     }
                     _ => {}

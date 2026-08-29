@@ -45,7 +45,11 @@ impl GenSettings {
     // Placeholder for sessions with no project (benchmark cases). Gen tools are absent
     // from those toolsets, so the path is never read.
     pub fn from_out(out: &Path) -> GenSettings {
-        GenSettings { deliverable: out.join("gen").join("deliverable"), worker: "agentic".into(), code: Vec::new() }
+        GenSettings {
+            deliverable: out.join("gen").join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        }
     }
 }
 
@@ -101,7 +105,10 @@ impl Medium {
                 self.form, self.toolchain, self.artifact
             )
         } else {
-            format!("{} written directly ({}). The files you write ARE the deliverable.", self.form, self.toolchain)
+            format!(
+                "{} written directly ({}). The files you write ARE the deliverable.",
+                self.form, self.toolchain
+            )
         }
     }
 }
@@ -120,7 +127,12 @@ pub struct Build {
     // generation task must see, or it writes the same broken part again
     // (docs/consumers/gen.md#the-build). The alias reads a ledger written before the
     // key took its documented spelling.
-    #[serde(default, rename = "lastRun", alias = "last_run", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "lastRun",
+        alias = "last_run",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub last_run: Option<BuildRun>,
 }
 
@@ -136,8 +148,15 @@ pub struct BuildRun {
 // Run the deliverable's build once and record what happened. Ok(()) when there is no
 // build to run or it produced everything it promised; the error is what a reader
 // needs to see. Mirrors docs/consumers/gen.md#the-build.
-pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::turn::Trace, label: &str) -> Result<(), String> {
-    let Some(b) = Ledger::load(out).build.clone() else { return Ok(()) };
+pub fn run_build(
+    out: &Path,
+    gs: &GenSettings,
+    trace: &crate::turn::Trace,
+    label: &str,
+) -> Result<(), String> {
+    let Some(b) = Ledger::load(out).build.clone() else {
+        return Ok(());
+    };
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
     let done = std::process::Command::new("sh")
@@ -145,7 +164,14 @@ pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::turn::Trace, label
         .arg(&b.run)
         .current_dir(&cwd)
         .output()
-        .map_err(|e| format!("build `{}` could not start in {}: {}", b.run, cwd.display(), e))?;
+        .map_err(|e| {
+            format!(
+                "build `{}` could not start in {}: {}",
+                b.run,
+                cwd.display(),
+                e
+            )
+        })?;
     if !done.status.success() {
         let mut evidence = String::from_utf8_lossy(&done.stdout).to_string();
         evidence.push_str(&String::from_utf8_lossy(&done.stderr));
@@ -159,11 +185,26 @@ pub fn run_build(out: &Path, gs: &GenSettings, trace: &crate::turn::Trace, label
             crate::llm::truncate(evidence.trim(), 2000)
         ));
     }
-    let missing: Vec<&String> = b.produces.iter().filter(|p| !gs.deliverable.join(p).exists()).collect();
+    let missing: Vec<&String> = b
+        .produces
+        .iter()
+        .filter(|p| !gs.deliverable.join(p).exists())
+        .collect();
     if !missing.is_empty() {
-        let names = missing.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ");
-        record_build_run(out, false, &format!("exited 0 but did not produce {}", names));
-        return Err(format!("build `{}` exited 0 but did not produce {}", b.run, names));
+        let names = missing
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        record_build_run(
+            out,
+            false,
+            &format!("exited 0 but did not produce {}", names),
+        );
+        return Err(format!(
+            "build `{}` exited 0 but did not produce {}",
+            b.run, names
+        ));
     }
     record_build_run(out, true, "");
     Ok(())
@@ -266,7 +307,8 @@ pub struct RawSite {
 // carrying other alphanumeric content is left alone: the harness never mangles code.
 // Mirrors docs/consumers/gen.md#traceability.
 pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
-    let re = regex::Regex::new(r"req:([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})").unwrap();
+    let re =
+        regex::Regex::new(r"req:([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})").unwrap();
     let mut clean: Vec<&str> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
     let mut sites: Vec<RawSite> = Vec::new();
@@ -282,7 +324,11 @@ pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
         if !pending.is_empty() && !line.trim().is_empty() {
             let lineno = clean.len();
             for rid in pending.drain(..) {
-                sites.push(RawSite { rid, line: lineno, head: line.to_string() });
+                sites.push(RawSite {
+                    rid,
+                    line: lineno,
+                    head: line.to_string(),
+                });
             }
         }
     }
@@ -363,7 +409,9 @@ pub fn artifact_path(out: &Path, gs: &GenSettings, test: &TestRef) -> PathBuf {
 }
 
 pub fn hash_file(path: &Path) -> String {
-    std::fs::read(path).map(|b| hash_hex(&String::from_utf8_lossy(&b))).unwrap_or_default()
+    std::fs::read(path)
+        .map(|b| hash_hex(&String::from_utf8_lossy(&b)))
+        .unwrap_or_default()
 }
 
 // Hash over a row's manifest files, sorted, concatenated. Deliverable-relative paths.
@@ -382,7 +430,10 @@ pub fn hash_files(gs: &GenSettings, files: &[String]) -> String {
 
 fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
-    files.into_iter().filter(|f| seen.insert(f.clone())).collect()
+    files
+        .into_iter()
+        .filter(|f| seen.insert(f.clone()))
+        .collect()
 }
 
 pub fn slug_of(id: &str) -> String {
@@ -395,12 +446,18 @@ pub fn req_slug(id: &str) -> String {
 
 // The suggested test name: requirement id + hash prefix, sanitized. A reworded
 // requirement mechanically breaks the recorded run filter.
-pub fn test_name(rid: &str, ears: &str) -> String {
+pub fn test_name(rid: &str, statement: &str) -> String {
     let sanitized: String = req_slug(rid)
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
-    format!("req_{}_{}", sanitized, &hash_hex(ears)[..8])
+    format!("req_{}_{}", sanitized, &hash_hex(statement)[..8])
 }
 
 pub fn reqs_of_sorted(store: &Store, id: &str) -> Vec<String> {
@@ -414,7 +471,7 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
     let mut facts = format!("{}|{}|", e.name, e.definition.as_deref().unwrap_or(""));
     for rid in reqs_of_sorted(store, id) {
         if let Some(r) = store.graph.requirements.get(&rid) {
-            facts.push_str(&r.ears);
+            facts.push_str(&r.statement);
             facts.push('|');
         }
     }
@@ -425,14 +482,17 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
 // answer is recorded in the ledger and stated as a fact to every later task, so no
 // per-entity task has to work it out again.
 // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
-pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> Result<Medium, String> {
+pub fn decide_medium(
+    store: &Store,
+    runner: &crate::acp::runner::AcpRunner,
+) -> Result<Medium, String> {
     // Every statement in the graph, capped: the medium is stated somewhere in the
     // documents, and which statement says it is exactly what the model must find.
     let mut statements: Vec<String> = store
         .graph
         .requirements
         .iter()
-        .map(|(rid, r)| format!("- {}: {}", rid, r.ears))
+        .map(|(rid, r)| format!("- {}: {}", rid, r.statement))
         .collect();
     statements.sort();
     let mut body = String::new();
@@ -443,8 +503,15 @@ pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> R
         body.push_str(&s);
         body.push('\n');
     }
-    let entities: Vec<&str> = store.graph.entities.values().map(|e| e.name.as_str()).take(40).collect();
-    let system = "You decide what a deliverable is made of. Answer with one JSON object and nothing else.";
+    let entities: Vec<&str> = store
+        .graph
+        .entities
+        .values()
+        .map(|e| e.name.as_str())
+        .take(40)
+        .collect();
+    let system =
+        "You decide what a deliverable is made of. Answer with one JSON object and nothing else.";
     let user = format!(
         "These statements are the whole specification of one deliverable.\n\n{}\n\nEntities: {}\n\n\
          Decide the deliverable's medium from the statements alone.\n\
@@ -462,9 +529,21 @@ pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> R
         let ask = if attempt == 0 {
             user.clone()
         } else {
-            format!("{}\n\nYour previous answer was rejected: {}. Reply with the JSON object only.", user, last)
+            format!(
+                "{}\n\nYour previous answer was rejected: {}. Reply with the JSON object only.",
+                user, last
+            )
         };
-        let reply = runner.ask(system, &ask, "gen medium", if attempt == 0 { "decide" } else { "decide retry" })?;
+        let reply = runner.ask(
+            system,
+            &ask,
+            "gen medium",
+            if attempt == 0 {
+                "decide"
+            } else {
+                "decide retry"
+            },
+        )?;
         let raw = crate::llm::extract_json_object(&reply).unwrap_or(reply);
         let v: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
@@ -473,12 +552,21 @@ pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> R
                 continue;
             }
         };
-        let produced = v["produced"].as_str().unwrap_or_default().trim().to_lowercase();
+        let produced = v["produced"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
         if produced != "written" && produced != "built" {
             last = format!("`produced` was `{}`, not `written` or `built`", produced);
             continue;
         }
-        let artifact = v["artifact"].as_str().unwrap_or_default().trim().trim_start_matches("./").to_string();
+        let artifact = v["artifact"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches("./")
+            .to_string();
         if produced == "built" && artifact.is_empty() {
             last = "`built` needs an `artifact` path".into();
             continue;
@@ -491,25 +579,35 @@ pub fn decide_medium(store: &Store, runner: &crate::acp::runner::AcpRunner) -> R
         return Ok(Medium {
             form,
             produced,
-            toolchain: v["toolchain"].as_str().unwrap_or_default().trim().to_string(),
+            toolchain: v["toolchain"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             artifact,
         });
     }
-    Err(format!("could not decide the deliverable's medium: {}", last))
+    Err(format!(
+        "could not decide the deliverable's medium: {}",
+        last
+    ))
 }
 
 // The generation contract, identical for every worker. It never names a medium: what
 // the deliverable is (a language, a format, a genre) is a fact the documents state,
 // carried by the context pack.
 pub fn instructions() -> String {
-    include_str!("../../docs/compiler/turns/prompts/generate-contract.md")
+    include_str!("../../docs/compiler/goals/prompts/generate-contract.md")
         .replace("{GROUP}", &GROUP.to_string())
 }
 
 // The change diff for one entity versus the ledger.
 fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<String>) {
     match ledger.entities.get(slug) {
-        None => ("new".to_string(), current.iter().map(|r| format!("{} (added)", r)).collect()),
+        None => (
+            "new".to_string(),
+            current.iter().map(|r| format!("{} (added)", r)).collect(),
+        ),
         Some(e) => {
             let mut changed: Vec<String> = Vec::new();
             for r in current {
@@ -523,7 +621,10 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
                 }
             }
             if changed.is_empty() {
-                changed.push("(reworded: same requirement set, changed statements or definition)".to_string());
+                changed.push(
+                    "(reworded: same requirement set, changed statements or definition)"
+                        .to_string(),
+                );
             }
             ("changed".to_string(), changed)
         }
@@ -554,7 +655,9 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             })
             .collect();
         let current = ledger.entities.get(&slug).map(|e| {
-            e.fact_hash == hash && !e.files.is_empty() && e.files.iter().all(|f| gs.deliverable.join(f).exists())
+            e.fact_hash == hash
+                && !e.files.is_empty()
+                && e.files.iter().all(|f| gs.deliverable.join(f).exists())
         });
         if current == Some(true) && unimplemented.is_empty() {
             continue;
@@ -579,7 +682,9 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
 // an argument, so the entry is the first token that exists under the deliverable.
 // Mirrors docs/consumers/gen.md#the-build.
 fn build_entry(ledger: &Ledger, gs: &GenSettings) -> Value {
-    let Some(b) = &ledger.build else { return Value::Null };
+    let Some(b) = &ledger.build else {
+        return Value::Null;
+    };
     let dir = gs.deliverable.join(&b.cwd);
     for token in b.run.split_whitespace() {
         let token = token.trim_matches(|c| c == '"' || c == '\'');
@@ -588,7 +693,9 @@ fn build_entry(ledger: &Ledger, gs: &GenSettings) -> Value {
         }
         let candidate = dir.join(token);
         if candidate.is_file() {
-            let rel = norm_rel(&pathdiff(&candidate, &gs.deliverable).unwrap_or_else(|| token.to_string()));
+            let rel = norm_rel(
+                &pathdiff(&candidate, &gs.deliverable).unwrap_or_else(|| token.to_string()),
+            );
             let content = std::fs::read_to_string(&candidate).unwrap_or_default();
             return json!({"path": rel, "content": crate::llm::truncate(&content, 12_000)});
         }
@@ -601,7 +708,12 @@ fn build_entry(ledger: &Ledger, gs: &GenSettings) -> Value {
 fn entry_from_run(run: &str) -> Option<String> {
     run.split_whitespace()
         .map(|t| t.trim_matches(|c| c == '"' || c == '\''))
-        .find(|t| !t.starts_with('-') && t.contains('.') && !t.ends_with("python") && !t.ends_with("python3"))
+        .find(|t| {
+            !t.starts_with('-')
+                && t.contains('.')
+                && !t.ends_with("python")
+                && !t.ends_with("python3")
+        })
         .map(String::from)
 }
 
@@ -614,7 +726,9 @@ fn norm_rel(p: &str) -> String {
 
 // A deliverable-relative path, lexically.
 fn pathdiff(path: &Path, base: &Path) -> Option<String> {
-    path.strip_prefix(base).ok().map(|p| p.to_string_lossy().replace('\\', "/"))
+    path.strip_prefix(base)
+        .ok()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
 pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, String> {
@@ -635,10 +749,11 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                     store.graph.requirements.get(rid).map(|r| {
                         json!({
                             "id": rid,
-                            "ears": r.ears,
-                            "quote": r.source.quote,
-                            "hash": hash_hex(&r.ears),
-                            "testName": test_name(rid, &r.ears),
+                            "statement": r.statement,
+                            "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
+                            "provenance": crate::turn::provenance_line(r),
+                            "hash": hash_hex(&r.statement),
+                            "testName": test_name(rid, &r.statement),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
                         })
                     })
@@ -654,15 +769,24 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         .map(|rel| {
             format!(
                 "{} {}",
-                rel.rel_type,
-                rel.members.iter().filter(|m| *m != id).cloned().collect::<Vec<_>>().join(", ")
+                rel.strongest(),
+                rel.members
+                    .iter()
+                    .filter(|m| *m != id)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         })
         .collect();
     let pack = crate::context::assemble(
         store,
         id,
-        &crate::context::Focus { parents: 1, mentions: 1, requirements: 2 },
+        &crate::context::Focus {
+            parents: 1,
+            mentions: 1,
+            requirements: 2,
+        },
         16_000,
     )
     .map(|p| p.pack)
@@ -678,13 +802,23 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
             let holds: Vec<String> = v
                 .requirements
                 .iter()
-                .filter_map(|rid| store.graph.requirements.get(rid).map(|r| r.ears.clone()))
+                .filter_map(|rid| {
+                    store
+                        .graph
+                        .requirements
+                        .get(rid)
+                        .map(|r| r.statement.clone())
+                })
                 .collect();
             // Under a built medium the entry this task rewrites has to call into
             // these files, so their content travels with them: a path and a
             // statement do not say what a part is called
             // (docs/consumers/gen.md#the-build).
-            let show = ledger.medium.as_ref().map(|m| m.is_built()).unwrap_or(false);
+            let show = ledger
+                .medium
+                .as_ref()
+                .map(|m| m.is_built())
+                .unwrap_or(false);
             let contents: BTreeMap<String, String> = if show {
                 v.files
                     .iter()
@@ -698,7 +832,10 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
             } else {
                 BTreeMap::new()
             };
-            (k, json!({"files": v.files, "holds": holds, "contents": contents}))
+            (
+                k,
+                json!({"files": v.files, "holds": holds, "contents": contents}),
+            )
         })
         .collect();
     // The established conventions: run commands other tasks already recorded. One
@@ -772,7 +909,13 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
 
 // Record a task done. The manifest binds the worker's files to the graph and seeds the
 // verification rows. Mirrors docs/compiler/tools.md#generation-tools (gen_mark).
-pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Value, gs: &GenSettings) -> Result<Value, String> {
+pub fn mark(
+    store: &Store,
+    id: &str,
+    fact_hash_seen: Option<&str>,
+    manifest: &Value,
+    gs: &GenSettings,
+) -> Result<Value, String> {
     if !store.graph.entities.contains_key(id) {
         return Err(format!("unknown entity `{}`", id));
     }
@@ -781,7 +924,11 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
     let files: Vec<String> = dedup_keep_order(
         manifest["files"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
     );
     // Support files are the deliverable's, recorded once and rewritable by any later
@@ -790,7 +937,11 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         .as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|x| x.as_str().map(String::from).or_else(|| x["path"].as_str().map(String::from)))
+                .filter_map(|x| {
+                    x.as_str()
+                        .map(String::from)
+                        .or_else(|| x["path"].as_str().map(String::from))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -825,7 +976,9 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
     let mut sites_by_rid: BTreeMap<String, Vec<Site>> = BTreeMap::new();
     for f in &files {
         let path = gs.deliverable.join(f);
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let (clean, raw) = strip_markers(&text);
         if raw.is_empty() {
             continue;
@@ -833,7 +986,11 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
         std::fs::write(&path, clean).map_err(|e| e.to_string())?;
         for s in raw {
             let rid = store.resolve_id(&s.rid).to_string();
-            sites_by_rid.entry(rid).or_default().push(Site { file: f.clone(), line: s.line, head: s.head });
+            sites_by_rid.entry(rid).or_default().push(Site {
+                file: f.clone(),
+                line: s.line,
+                head: s.head,
+            });
         }
     }
     let mut ledger = Ledger::load(&store.out);
@@ -849,16 +1006,27 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
     // tasks receive it in their package and reuse it.
     // Mirrors docs/consumers/gen.md#the-build.
     if ledger.build.is_none() {
-        match manifest["build"]["run"].as_str().map(str::trim).filter(|r| !r.is_empty()) {
+        match manifest["build"]["run"]
+            .as_str()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
             Some(run) => {
                 let mut produces: Vec<String> = manifest["build"]["produces"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 // A built medium names its artifact; a build that forgets to list it
                 // would pass its own check while producing nothing.
                 if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
-                    if !produces.iter().any(|p| p.trim_start_matches("./") == m.artifact) {
+                    if !produces
+                        .iter()
+                        .any(|p| p.trim_start_matches("./") == m.artifact)
+                    {
                         produces.push(m.artifact.clone());
                     }
                 }
@@ -890,7 +1058,9 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
     ledger.entities.insert(
         slug,
         EntityGen {
-            fact_hash: fact_hash_seen.map(String::from).unwrap_or_else(|| fact_hash(store, id)),
+            fact_hash: fact_hash_seen
+                .map(String::from)
+                .unwrap_or_else(|| fact_hash(store, id)),
             requirements: reqs_of_sorted(store, id),
             files: files.clone(),
         },
@@ -898,7 +1068,9 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
     let mut seeded = 0;
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
-            let Some(rid) = t["requirement"].as_str() else { continue };
+            let Some(rid) = t["requirement"].as_str() else {
+                continue;
+            };
             let rid = store.resolve_id(rid).to_string();
             let Some(r) = store.graph.requirements.get(&rid) else {
                 return Err(format!("unknown requirement `{}` in manifest", rid));
@@ -907,7 +1079,10 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
                 kind: t["kind"].as_str().unwrap_or("programmatic").to_string(),
                 label: t["label"].as_str().unwrap_or("test").to_string(),
                 artifact: t["artifact"].as_str().unwrap_or_default().to_string(),
-                name: t["name"].as_str().unwrap_or(&test_name(&rid, &r.ears)).to_string(),
+                name: t["name"]
+                    .as_str()
+                    .unwrap_or(&test_name(&rid, &r.statement))
+                    .to_string(),
                 run: t["run"].as_str().unwrap_or_default().to_string(),
                 cwd: t["cwd"].as_str().unwrap_or(".").to_string(),
             };
@@ -931,12 +1106,16 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
             let row_files: Vec<String> = dedup_keep_order(
                 t["files"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .filter(|v: &Vec<String>| !v.is_empty())
                     .unwrap_or_else(|| files.clone()),
             );
             let hashes = RowHashes {
-                requirement: hash_hex(&r.ears),
+                requirement: hash_hex(&r.statement),
                 test: hash_file(&artifact_path(&store.out, gs, &test)),
                 files: hash_files(gs, &row_files),
             };
@@ -948,9 +1127,17 @@ pub fn mark(store: &Store, id: &str, fact_hash_seen: Option<&str>, manifest: &Va
             // A re-record that changes nothing keeps its verdict: the hashes say the
             // requirement, the test, and the files are the very state the last run
             // judged, and discarding that judgment would punish an idempotent call.
-            let prior = ledger.requirements.get(&rid).filter(|row| row.hashes == hashes);
+            let prior = ledger
+                .requirements
+                .get(&rid)
+                .filter(|row| row.hashes == hashes);
             let (verdict, last_run, exit_code, evidence) = match prior {
-                Some(row) => (row.verdict.clone(), row.last_run.clone(), row.exit_code, row.evidence.clone()),
+                Some(row) => (
+                    row.verdict.clone(),
+                    row.last_run.clone(),
+                    row.exit_code,
+                    row.evidence.clone(),
+                ),
                 None => ("none".into(), None, None, None),
             };
             ledger.requirements.insert(
@@ -985,22 +1172,36 @@ mod tests {
     use crate::model::*;
 
     fn fixture(out: &std::path::Path) -> (Store, GenSettings) {
-        let mut s = Store { out: out.to_path_buf(), ..Default::default() };
-        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
+        let mut s = Store {
+            out: out.to_path_buf(),
+            ..Default::default()
+        };
+        s.graph.entities.insert(
+            "ent:cart".into(),
+            Entity {
+                name: "Cart".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:shop-1".into(),
             Requirement {
-                ears: "The Cart shall hold items.".into(),
+                statement: "The Cart shall hold items.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
-                source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "holds".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds".into(),
+                }),
+                ..Default::default()
             },
         );
-        let gs = GenSettings { deliverable: out.join("product"), worker: "agentic".into(), code: Vec::new() };
+        let gs = GenSettings {
+            deliverable: out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
         (s, gs)
     }
 
@@ -1099,7 +1300,10 @@ mod tests {
         assert_eq!(b.run, "python build_deck.py");
         assert_eq!(b.produces, vec!["deck.pptx".to_string()]);
         // The next task sees it and a second recording does not take.
-        assert_eq!(task_package(&s, "ent:cart", &gs).unwrap()["build"]["run"], "python build_deck.py");
+        assert_eq!(
+            task_package(&s, "ent:cart", &gs).unwrap()["build"]["run"],
+            "python build_deck.py"
+        );
         mark(
             &s,
             "ent:cart",
@@ -1108,7 +1312,10 @@ mod tests {
             &gs,
         )
         .unwrap();
-        assert_eq!(Ledger::load(&out).build.unwrap().run, "python build_deck.py");
+        assert_eq!(
+            Ledger::load(&out).build.unwrap().run,
+            "python build_deck.py"
+        );
         std::fs::remove_dir_all(&out).ok();
     }
 
@@ -1128,7 +1335,9 @@ mod tests {
         let fenced = parse_file_replies("FILE: src/a.py\n```python\nprint(1)\n```\n").unwrap();
         assert_eq!(fenced[0].1.trim(), "print(1)");
 
-        let two = parse_file_replies("FILE: src/a.py\nprint(1)\n\nFILE: build.py\nimport a\na.go()\n").unwrap();
+        let two =
+            parse_file_replies("FILE: src/a.py\nprint(1)\n\nFILE: build.py\nimport a\na.go()\n")
+                .unwrap();
         assert_eq!(two.len(), 2);
         assert_eq!(two[0].0, "src/a.py");
         assert_eq!(two[0].1.trim(), "print(1)");
@@ -1234,7 +1443,11 @@ mod tests {
         std::fs::create_dir_all(gs.deliverable.join("src")).ok();
         std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
         std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), "// req:shop-1\nfn t() {}").ok();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "// req:shop-1\nfn t() {}",
+        )
+        .ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
         let manifest = serde_json::json!({
             "files": ["src/cart.rs", "tests/cart.rs"],
@@ -1250,21 +1463,25 @@ mod tests {
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.verdict, "none");
-        assert_eq!(row.hashes.requirement, hash_hex("The Cart shall hold items."));
+        assert_eq!(
+            row.hashes.requirement,
+            hash_hex("The Cart shall hold items.")
+        );
 
         // A new requirement reappears as a precise diff.
         let mut s2 = s.clone();
         s2.graph.requirements.insert(
             "req:shop-2".into(),
             Requirement {
-                ears: "The Cart shall empty on checkout.".into(),
+                statement: "The Cart shall empty on checkout.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
-                source: SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "empty".into() },
-                confidence: None,
-                reasoning: None,
-                created: None,
-                updated: None,
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "empty".into(),
+                }),
+                ..Default::default()
             },
         );
         let p2 = pending(&s2, &gs);
@@ -1276,7 +1493,10 @@ mod tests {
         assert!(pkg["instructions"].as_str().unwrap().contains("manifest"));
         let g0 = pkg["requirementGroups"][0].as_array().unwrap();
         assert_eq!(g0.len(), 2);
-        assert!(g0[0]["testName"].as_str().unwrap().starts_with("req_shop_1_"));
+        assert!(g0[0]["testName"]
+            .as_str()
+            .unwrap()
+            .starts_with("req_shop_1_"));
     }
 
     // The example-sort livelock: rows for deleted requirements had no legal removal.
@@ -1287,7 +1507,11 @@ mod tests {
         std::fs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), "// req:shop-1\nfn t() {}").ok();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            "// req:shop-1\nfn t() {}",
+        )
+        .ok();
         // A leftover row for a requirement the graph no longer holds.
         let mut ledger = Ledger::load(&out);
         let gone: ReqRow = serde_json::from_value(serde_json::json!({
@@ -1329,8 +1553,6 @@ pub fn run_all(
     gs: &GenSettings,
     entities: &[String],
     force: bool,
-    _limits: &crate::project::Limits,
-    _lint: &crate::project::Linting,
     trace: &crate::turn::Trace,
 ) -> Result<Value, String> {
     use crate::turn::TraceEvent;
@@ -1396,8 +1618,10 @@ pub fn run_all(
     }
 
     std::fs::create_dir_all(&gs.deliverable).ok();
-    let pending_set: std::collections::BTreeSet<String> =
-        pending(store, gs).iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
+    let pending_set: std::collections::BTreeSet<String> = pending(store, gs)
+        .iter()
+        .filter_map(|p| p["entity"].as_str().map(String::from))
+        .collect();
     let (mut regenerated, mut skipped, mut failures) = (0u64, 0u64, 0u64);
     for id in &ordered {
         if trace.is_cancelled() {
@@ -1405,14 +1629,21 @@ pub fn run_all(
         }
         if !force && !pending_set.contains(id) {
             skipped += 1;
-            trace.event(TraceEvent::GenEntitySkipped { entity: id.clone(), reason: "unchanged".into() });
+            trace.event(TraceEvent::GenEntitySkipped {
+                entity: id.clone(),
+                reason: "unchanged".into(),
+            });
             continue;
         }
         trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
         let task = match task_package(store, id, gs) {
             Ok(t) => t,
             Err(e) => {
-                trace.event(TraceEvent::GenEntityFailed { entity: id.clone(), stage: "task".into(), error: e });
+                trace.event(TraceEvent::GenEntityFailed {
+                    entity: id.clone(),
+                    stage: "task".into(),
+                    error: e,
+                });
                 failures += 1;
                 continue;
             }
@@ -1424,11 +1655,18 @@ pub fn run_all(
         };
         match result {
             Ok(files) => {
-                trace.event(TraceEvent::GenEntityDone { entity: id.clone(), files });
+                trace.event(TraceEvent::GenEntityDone {
+                    entity: id.clone(),
+                    files,
+                });
                 regenerated += 1;
             }
             Err(e) => {
-                trace.event(TraceEvent::GenEntityFailed { entity: id.clone(), stage: "generate".into(), error: e });
+                trace.event(TraceEvent::GenEntityFailed {
+                    entity: id.clone(),
+                    stage: "generate".into(),
+                    error: e,
+                });
                 failures += 1;
             }
         }
@@ -1452,7 +1690,9 @@ pub fn run_all(
             json!({ "ok": false, "error": e })
         }
     };
-    Ok(json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "build": build }))
+    Ok(
+        json!({ "regenerated": regenerated, "skipped": skipped, "failures": failures, "build": build }),
+    )
 }
 
 // Every file a reply carries, in order. A step asks for one, but a model that writes
@@ -1531,14 +1771,20 @@ pub fn parse_file_reply(reply: &str) -> Result<(String, String), String> {
     // The contract is a FILE line first. A model that opens with a sentence or a
     // fence has still answered, so the line is taken where it stands; anything before
     // it is preamble, and the file starts after it.
-    let reply = match reply.lines().position(|l| l.trim_start().starts_with("FILE:")) {
+    let reply = match reply
+        .lines()
+        .position(|l| l.trim_start().starts_with("FILE:"))
+    {
         Some(0) | None => reply.clone(),
         Some(n) => reply.lines().skip(n).collect::<Vec<_>>().join("\n"),
     };
     let mut lines = reply.splitn(2, '\n');
     let first = lines.next().unwrap_or("").trim();
     let Some(path) = first.strip_prefix("FILE:") else {
-        return Err(format!("first line must be `FILE: <path>`, got `{}`", crate::llm::truncate(first, 80)));
+        return Err(format!(
+            "first line must be `FILE: <path>`, got `{}`",
+            crate::llm::truncate(first, 80)
+        ));
     };
     let path = path.trim();
     if path.is_empty() || path.starts_with('/') || path.contains("..") {
@@ -1553,7 +1799,11 @@ pub fn strip_fences(s: &str) -> String {
     if let Some(rest) = t.strip_prefix("```") {
         if let Some(end) = rest.rfind("```") {
             let body = &rest[..end];
-            return body.split_once('\n').map(|(_, b)| b).unwrap_or(body).to_string();
+            return body
+                .split_once('\n')
+                .map(|(_, b)| b)
+                .unwrap_or(body)
+                .to_string();
         }
     }
     t.to_string()
@@ -1569,7 +1819,12 @@ pub fn strip_fences(s: &str) -> String {
 // has no baseline, so a stale snapshot from an earlier run is dropped. File ownership
 // keeps a path with one entity, so a per-gen_one set is once per run per file.
 // Mirrors docs/consumers/gen.md#incremental-regeneration.
-fn snapshot_baseline(out: &Path, gs: &GenSettings, rel: &str, seen: &mut std::collections::HashSet<String>) {
+fn snapshot_baseline(
+    out: &Path,
+    gs: &GenSettings,
+    rel: &str,
+    seen: &mut std::collections::HashSet<String>,
+) {
     if !seen.insert(rel.to_string()) {
         return;
     }
@@ -1605,7 +1860,13 @@ fn medium_directive(medium: &Option<Medium>) -> String {
     }
 }
 
-pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSettings, id: &str, task: &serde_json::Value) -> Result<usize, String> {
+pub fn gen_one(
+    store: &Store,
+    runner: &crate::acp::runner::AcpRunner,
+    gs: &GenSettings,
+    id: &str,
+    task: &serde_json::Value,
+) -> Result<usize, String> {
     let mut baselined: std::collections::HashSet<String> = Default::default();
     let instructions = task["instructions"].as_str().unwrap_or_default();
     // The deliverable's medium is decided before any task runs; this task states it
@@ -1618,7 +1879,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     };
     let run_commands = task["runCommands"]
         .as_array()
-        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
         .unwrap_or_default();
     let header = format!(
         "The deliverable: {}\n{}\nEntity {} ({})\nContext:\n{}\nChanged since last generation: {}\nWhat other entities' tasks already wrote, by entity: their `files` and the statements those files `holds`. Each file belongs to its entity; never write to one of them. Reference them instead: when your part composes theirs, read or import those paths, and let what they hold tell you what is in them: {}\nRecorded run commands (the established toolchain; reuse it): {}\nRecorded build for this deliverable: {}\n",
@@ -1663,14 +1929,17 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
             .find(|(slug, e)| slug.as_str() != own_slug && e.files.iter().any(|f| f == path))
             .map(|(slug, _)| slug.clone())
     };
-    let groups = task["requirementGroups"].as_array().cloned().unwrap_or_default();
+    let groups = task["requirementGroups"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let parts = groups.len();
     let req_line = |r: &serde_json::Value| {
         format!(
             "- {} [{}]: {}\n  quote: {}",
             r["id"].as_str().unwrap_or(""),
             r["testName"].as_str().unwrap_or(""),
-            r["ears"].as_str().unwrap_or(""),
+            r["statement"].as_str().unwrap_or(""),
             r["quote"].as_str().unwrap_or("")
         )
     };
@@ -1683,7 +1952,10 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     let mut code = String::new();
     let mut product_rel = String::new();
     for (k, group) in groups.iter().enumerate() {
-        let req_lines: Vec<String> = group.as_array().map(|a| a.iter().map(req_line).collect()).unwrap_or_default();
+        let req_lines: Vec<String> = group
+            .as_array()
+            .map(|a| a.iter().map(req_line).collect())
+            .unwrap_or_default();
         let user = if k == 0 {
             format!(
                 "{}\n{}\nWrite the implementing content for this entity. Choose the file path yourself, relative to the deliverable. Reply with the first line exactly `FILE: <path>` and the file content after it. Write more files the same way when this part needs them (a dependency manifest, an entry point, a second module): another `FILE: <path>` line on its own, then that file. The first file is this entity's part. Put a single-line marker comment (req:<id> hash:<hash8> in the medium's comment syntax, alone on its line) directly above each implementing site; the harness strips it and records the location. Requirements (group 1 of {}):\n{}\n",
@@ -1696,7 +1968,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
             )
         };
         let reply = runner
-            .ask(instructions, &user, &format!("gen {}", id), &format!("product {}/{}", k + 1, parts))
+            .ask(
+                instructions,
+                &user,
+                &format!("gen {}", id),
+                &format!("product {}/{}", k + 1, parts),
+            )
             .map_err(|e| format!("product part {}/{}: {}", k + 1, parts, e))?;
         if k == 0 {
             // Shape gets one corrective round here too: the product step is where a
@@ -1710,7 +1987,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                         user, e
                     );
                     let again = runner
-                        .ask(instructions, &retry, &format!("gen {}", id), "product format retry")
+                        .ask(
+                            instructions,
+                            &retry,
+                            &format!("gen {}", id),
+                            "product format retry",
+                        )
                         .map_err(|e| format!("product format retry: {}", e))?;
                     parse_file_replies(&again)?
                 }
@@ -1739,7 +2021,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                     user, path, owner
                 );
                 let reply2 = runner
-                    .ask(instructions, &retry, &format!("gen {}", id), "product retry")
+                    .ask(
+                        instructions,
+                        &retry,
+                        &format!("gen {}", id),
+                        "product retry",
+                    )
                     .map_err(|e| format!("product retry: {}", e))?;
                 let (p, b) = parse_file_reply(&reply2).map(|(p, b)| (p, b))?;
                 if let Some(o) = owner_of(&p) {
@@ -1767,7 +2054,10 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     std::fs::write(&product_path, &code).map_err(|e| e.to_string())?;
 
     // Tests: the model names the file too, or declares nothing programmatic.
-    let all_reqs: Vec<serde_json::Value> = groups.iter().flat_map(|g| g.as_array().cloned().unwrap_or_default()).collect();
+    let all_reqs: Vec<serde_json::Value> = groups
+        .iter()
+        .flat_map(|g| g.as_array().cloned().unwrap_or_default())
+        .collect();
     let req_lines: Vec<String> = all_reqs.iter().map(req_line).collect();
     let tests_user = format!(
         "{}\nWrite the tests for the requirements against `{}` (content below). Choose the test file path yourself. One test per requirement you can test programmatically, named EXACTLY by its [testName], with the single-line marker comment above it. Reply with the first line exactly `FILE: <path>` and the content after it; more files follow the same way, each after its own `FILE: <path>` line, when the tests need them (a fixture, a conftest). The first file is the tests artifact. If no requirement can be tested programmatically, reply with exactly `NONE`.\nA test must be falsifiable: its assertion has to FAIL when the requirement is violated. Before writing one, ask what change to the artifact would break this requirement, and assert on exactly that. Asserting on unrelated text, on a heading, or on a keyword that is present either way is worse than no test: it reports a pass while the requirement is unmet. If a requirement is about something this artifact does not carry, do NOT invent a stand-in assertion for it. Leave it out of this file; the manifest step declares it `llm` and a human or an agent judges it.\n{}\nRequirements:\n{}\n\nThe product file:\n{}\n",
@@ -1821,7 +2111,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                     tests_user, e
                 );
                 let again = runner
-                    .ask(instructions, &retry, &format!("gen {}", id), "tests format retry")
+                    .ask(
+                        instructions,
+                        &retry,
+                        &format!("gen {}", id),
+                        "tests format retry",
+                    )
                     .map_err(|e| format!("tests format retry: {}", e))?;
                 if again.trim() == "NONE" {
                     None
@@ -1831,30 +2126,31 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
             }
         };
         if let Some((mut path, mut body)) = parsed {
-        if let Some(owner) = owner_of(&path) {
-            let retry = format!(
+            if let Some(owner) = owner_of(&path) {
+                let retry = format!(
                 "{}\nThe path `{}` already belongs to entity `{}`; never write to another entity's file. Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content after it.",
                 tests_user, path, owner
             );
-            let reply2 = runner
-                .ask(instructions, &retry, &format!("gen {}", id), "tests retry")
-                .map_err(|e| format!("tests retry: {}", e))?;
-            let (p, b) = parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
-            if let Some(o) = owner_of(&p) {
-                return Err(format!("tests path `{}` belongs to entity `{}`", p, o));
+                let reply2 = runner
+                    .ask(instructions, &retry, &format!("gen {}", id), "tests retry")
+                    .map_err(|e| format!("tests retry: {}", e))?;
+                let (p, b) =
+                    parse_file_reply(&reply2).map_err(|e| format!("tests reply: {}", e))?;
+                if let Some(o) = owner_of(&p) {
+                    return Err(format!("tests path `{}` belongs to entity `{}`", p, o));
+                }
+                path = p;
+                body = b;
             }
-            path = p;
-            body = b;
-        }
-        tests_rel = path;
-        tests_code = body;
-        let tests_path = gs.deliverable.join(&tests_rel);
-        if let Some(p) = tests_path.parent() {
-            std::fs::create_dir_all(p).ok();
-        }
-        snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
-        std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
-        files.push(tests_rel.clone());
+            tests_rel = path;
+            tests_code = body;
+            let tests_path = gs.deliverable.join(&tests_rel);
+            if let Some(p) = tests_path.parent() {
+                std::fs::create_dir_all(p).ok();
+            }
+            snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
+            std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
+            files.push(tests_rel.clone());
         }
     }
 
@@ -1917,7 +2213,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
         crate::llm::truncate(&tests_code, 12_000)
     );
     let manifest_reply = runner
-        .ask(instructions, &manifest_user, &format!("gen {}", id), "manifest")
+        .ask(
+            instructions,
+            &manifest_user,
+            &format!("gen {}", id),
+            "manifest",
+        )
         .map_err(|e| format!("manifest: {}", e))?;
     let parse_manifest = |reply: &str| -> Result<serde_json::Value, String> {
         let text = strip_fences(reply);
@@ -1935,7 +2236,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                 manifest_user, e
             );
             let again = runner
-                .ask(instructions, &retry, &format!("gen {}", id), "manifest format retry")
+                .ask(
+                    instructions,
+                    &retry,
+                    &format!("gen {}", id),
+                    "manifest format retry",
+                )
                 .map_err(|e| format!("manifest format retry: {}", e))?;
             parse_manifest(&again).map_err(|e| format!("manifest JSON: {}", e))?
         }
@@ -1991,7 +2297,8 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
             .as_array()
             .and_then(|a| {
                 a.iter().find(|f| {
-                    Some(norm_rel(f["path"].as_str().unwrap_or_default())) == entry_path.as_ref().map(|p| norm_rel(p))
+                    Some(norm_rel(f["path"].as_str().unwrap_or_default()))
+                        == entry_path.as_ref().map(|p| norm_rel(p))
                 })
             })
             .and_then(|f| f["content"].as_str())
@@ -2023,7 +2330,9 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                 .map(|p| norm_rel(&p))
                 .filter(|p| p != &norm_rel(entry) && !p.contains("test"))
                 .filter(|p| {
-                    let stem = std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().to_string());
+                    let stem = std::path::Path::new(p)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string());
                     !stem.map(|st| content.contains(&st)).unwrap_or(true)
                 })
                 .collect();
@@ -2044,7 +2353,11 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
     if let Some(m) = medium.as_ref().filter(|m| m.is_built()) {
         let recorded = !task["build"].is_null();
-        let given = !manifest_json["build"]["run"].as_str().unwrap_or("").trim().is_empty();
+        let given = !manifest_json["build"]["run"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .is_empty();
         if !recorded && !given {
             mismatches.push(format!(
                 "- `build` is missing: this deliverable is {}, so the manifest must carry the command that produces `{}` (`run`, `cwd`, `produces`)",
@@ -2062,7 +2375,12 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
             serde_json::to_string_pretty(&manifest_json).unwrap_or_default(),
             mismatches.join("\n")
         );
-        if let Ok(reply2) = runner.ask(instructions, &retry, &format!("gen {}", id), "manifest retry") {
+        if let Ok(reply2) = runner.ask(
+            instructions,
+            &retry,
+            &format!("gen {}", id),
+            "manifest retry",
+        ) {
             if let Ok(mut v) = parse_manifest(&reply2) {
                 // Merge over the first answer: a retry that forgot a field keeps it.
                 for key in ["supportFiles", "build"] {
@@ -2082,7 +2400,9 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     }
     if let Some(support) = manifest_json["supportFiles"].as_array() {
         for f in support {
-            let (Some(path), Some(content)) = (f["path"].as_str(), f["content"].as_str()) else { continue };
+            let (Some(path), Some(content)) = (f["path"].as_str(), f["content"].as_str()) else {
+                continue;
+            };
             if path.starts_with('/') || path.contains("..") {
                 continue;
             }
@@ -2105,12 +2425,17 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
 
     // Deterministic validation: a programmatic row needs its declared test present in
     // the tests artifact and a non-empty command; anything else becomes an llm row.
-    let declared = manifest_json["tests"].as_array().cloned().unwrap_or_default();
+    let declared = manifest_json["tests"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let mut tests_manifest: Vec<serde_json::Value> = Vec::new();
     for r in &all_reqs {
         let rid = r["id"].as_str().unwrap_or_default();
         let name = r["testName"].as_str().unwrap_or_default();
-        let row = declared.iter().find(|t| t["requirement"].as_str() == Some(rid));
+        let row = declared
+            .iter()
+            .find(|t| t["requirement"].as_str() == Some(rid));
         // The name the row is selected by: the suggestion when the artifact carries
         // it, otherwise whatever the generator named its test, as long as the artifact
         // carries that (docs/consumers/gen.md#file-ownership-and-conventions).
@@ -2152,7 +2477,7 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
                 rid,
                 r["hash"].as_str().unwrap_or_default(),
                 rid,
-                r["ears"].as_str().unwrap_or_default(),
+                r["statement"].as_str().unwrap_or_default(),
                 r["quote"].as_str().unwrap_or_default(),
                 product_rel,
             );
@@ -2171,26 +2496,39 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     // the entity keeps the rest (docs/consumers/gen.md#file-ownership-and-conventions).
     let declared_support: Vec<String> = manifest_json["supportFiles"]
         .as_array()
-        .map(|a| a.iter().filter_map(|f| f["path"].as_str().map(norm_rel)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f["path"].as_str().map(norm_rel))
+                .collect()
+        })
         .unwrap_or_default();
     let build_entry_path = task["buildEntry"]["path"]
         .as_str()
         .map(norm_rel)
-        .or_else(|| entry_from_run(manifest_json["build"]["run"].as_str().unwrap_or("")).map(|p| norm_rel(&p)));
+        .or_else(|| {
+            entry_from_run(manifest_json["build"]["run"].as_str().unwrap_or(""))
+                .map(|p| norm_rel(&p))
+        });
     for p in extra_written {
         let n = norm_rel(&p);
-        let deliverable_wide =
-            declared_support.iter().any(|d| *d == n) || build_entry_path.as_deref() == Some(n.as_str());
+        let deliverable_wide = declared_support.iter().any(|d| *d == n)
+            || build_entry_path.as_deref() == Some(n.as_str());
         if deliverable_wide {
             support_files.push(p);
         } else if !files.contains(&p) {
             files.push(p);
         }
     }
-    let mut manifest = serde_json::json!({"files": files, "tests": tests_manifest, "supportFiles": support_files});
+    let mut manifest =
+        serde_json::json!({"files": files, "tests": tests_manifest, "supportFiles": support_files});
     // The build the manifest step returned rides along: it is the deliverable's, not
     // this row's, and mark records it once (docs/consumers/gen.md#the-build).
-    if !manifest_json["build"]["run"].as_str().unwrap_or("").trim().is_empty() {
+    if !manifest_json["build"]["run"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
         manifest["build"] = manifest_json["build"].clone();
     }
     crate::gen::mark(store, id, task["factHash"].as_str(), &manifest, gs)?;
@@ -2200,7 +2538,10 @@ pub fn gen_one(store: &Store, runner: &crate::acp::runner::AcpRunner, gs: &GenSe
     if let Some(prev) = ledger.entities.get(&own_slug) {
         for f in &prev.files {
             let kept = files.contains(f)
-                || ledger.entities.iter().any(|(slug, e)| slug != &own_slug && e.files.contains(f));
+                || ledger
+                    .entities
+                    .iter()
+                    .any(|(slug, e)| slug != &own_slug && e.files.contains(f));
             if !kept {
                 snapshot_baseline(&store.out, gs, f, &mut baselined);
                 std::fs::remove_file(gs.deliverable.join(f)).ok();

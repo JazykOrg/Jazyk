@@ -72,7 +72,7 @@ impl Replay {
             }
             "update_requirement" => {
                 if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
-                    for k in ["ears", "entities", "edges"] {
+                    for k in ["statement", "entities", "edges"] {
                         if !m[k].is_null() {
                             node.insert(k.into(), m[k].clone());
                         }
@@ -104,7 +104,11 @@ impl Replay {
     }
 }
 
-fn replay_to(out: &Path, upto: u64, mut from_snapshot: Option<(u64, &mut Option<Replay>)>) -> Replay {
+fn replay_to(
+    out: &Path,
+    upto: u64,
+    mut from_snapshot: Option<(u64, &mut Option<Replay>)>,
+) -> Replay {
     let mut r = Replay::default();
     for g in 1..=upto {
         if let Some((at, slot)) = &mut from_snapshot {
@@ -113,8 +117,12 @@ fn replay_to(out: &Path, upto: u64, mut from_snapshot: Option<(u64, &mut Option<
             }
         }
         let f = out.join("journal").join(format!("g{}.yaml", g));
-        let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        let Ok(entry) = serde_norway::from_str::<Value>(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
+            continue;
+        };
         for m in entry["mutations"].as_array().cloned().unwrap_or_default() {
             r.apply(&m);
         }

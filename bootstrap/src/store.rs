@@ -1,5 +1,6 @@
 // The graph store: persistent home of the semantic graph. Owns identifiers, enforces
-// invariants at commit, records every change. Mirrors docs/compiler/graph.md.
+// invariants at commit, recomputes derived data, records every change, and writes the
+// typed dirtiness each commit causes. Mirrors docs/compiler/graph.md.
 use crate::md;
 use crate::model::*;
 use serde::{Deserialize, Serialize};
@@ -10,7 +11,10 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
-    CreateEntity { id: String, entity: Entity },
+    CreateEntity {
+        id: String,
+        entity: Entity,
+    },
     UpdateEntity {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,30 +25,121 @@ pub enum Op {
         add_aliases: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         add_mention: Option<SourceRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stereotype: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+        // Replace the whole attribute list, or refresh by name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set_attributes: Option<Vec<Attribute>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        add_attributes: Vec<Attribute>,
+        // A decree or derivation landing on the entity (docs/compiler/model/entity.md#fields).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<Provenance>,
     },
-    DeleteEntity { id: String, reason: String },
-    MergeEntities { keep: String, absorb: String, reason: String },
-    CreateRequirement { id: String, requirement: Requirement },
+    DeleteEntity {
+        id: String,
+        reason: String,
+    },
+    MergeEntities {
+        keep: String,
+        absorb: String,
+        reason: String,
+    },
+    CreateRequirement {
+        id: String,
+        requirement: Requirement,
+    },
     UpdateRequirement {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        ears: Option<String>,
+        statement: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         entities: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edges: Option<Vec<ReqEdge>>,
-        // A revision may re-anchor its provenance (docs/compiler/tools.md#write-tools).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transition: Option<Transition>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        facets: Option<Vec<Facet>>,
+        // A revision may re-anchor its quote (docs/compiler/tools.md#write-tools).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<SourceRef>,
+        // A decree or derivation replacing the quote (docs/compiler/compilation.md#edit-paths).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<Provenance>,
     },
-    DeleteRequirement { id: String, reason: String },
-    // The align-doc turn's decisions: move one anchor (a requirement source or the
-    // entity mention `from` names) to `to`, optionally flagging it for re-evaluation;
-    // or leave it homeless. Mirrors docs/compiler/alignment.md#the-align-doc-turn.
-    PlaceAnchor { id: String, from: SourceRef, to: SourceRef, reevaluate: bool },
-    OrphanAnchor { id: String, from: SourceRef },
-    ReportDiagnostic { id: String, diagnostic: Diagnostic },
-    ResolveDiagnostic { id: String, reason: String },
+    DeleteRequirement {
+        id: String,
+        reason: String,
+    },
+    CreateView {
+        id: String,
+        view: View,
+    },
+    UpdateView {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        members: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        add_members: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove_members: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<ViewQuery>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collapse: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        exclude: Vec<Exclusion>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
+    },
+    DeleteView {
+        id: String,
+        reason: String,
+    },
+    // A ratified fact: its provenance flips to the quote of the sentence the document
+    // gained. Mirrors docs/compiler/compilation.md#edit-paths.
+    RatifyProvenance {
+        id: String,
+        source: SourceRef,
+    },
+    // Undo a decree: a node created by decree (or derivation) is deleted.
+    RetractDecree {
+        id: String,
+        reason: String,
+    },
+    // A per-node limit bump with the decree behind it. Mirrors docs/compiler/graph.md#per-node-bumps.
+    BumpLimit {
+        id: String,
+        limit: String,
+        value: u64,
+        provenance: Provenance,
+    },
+    // The place-anchors session's decisions: move one anchor (a requirement source or
+    // the entity mention `from` names) to `to`, optionally flagging it for re-evaluation;
+    // or leave it homeless. Mirrors docs/compiler/alignment.md.
+    PlaceAnchor {
+        id: String,
+        from: SourceRef,
+        to: SourceRef,
+        reevaluate: bool,
+    },
+    OrphanAnchor {
+        id: String,
+        from: SourceRef,
+    },
+    ReportDiagnostic {
+        id: String,
+        diagnostic: Diagnostic,
+    },
+    ResolveDiagnostic {
+        id: String,
+        reason: String,
+    },
     // The human triage decision (acknowledged | suppressed | wontfix, None to clear).
     // Only humans set it; the compiler never overwrites it.
     TriageDiagnostic {
@@ -61,7 +156,10 @@ pub enum Op {
     },
     // The human response to a prompt. Frontends stage it; the compiler never does.
     // Mirrors docs/compiler/model/diagnostic.md#answers.
-    AnswerDiagnostic { id: String, answer: crate::model::DiagnosticAnswer },
+    AnswerDiagnostic {
+        id: String,
+        answer: crate::model::DiagnosticAnswer,
+    },
     SetCoverage {
         doc: String,
         section: String,
@@ -87,7 +185,7 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 14] = [
+pub const CHECK_RULES: [&str; 13] = [
     "pinned-fact-drift",
     "empty-file",
     "broken-link",
@@ -100,31 +198,232 @@ pub const CHECK_RULES: [&str; 14] = [
     "duplicate-requirement",
     "section-too-large",
     "doc-too-large",
-    "entity-too-dense",
     "incomplete-build",
 ];
 
-// Rules a review turn may file through report_diagnostic: judged findings, settled by
-// turns (or by deletion propagation), never by the checks.
-pub const JUDGED_RULES: [&str; 6] =
-    ["contradiction", "duplicate-entity", "duplicate-requirement", "missing-link", "ambiguity", "lint"];
+// Rules a review session may file through report_diagnostic: judged findings, settled by
+// sessions (or by deletion propagation), never by the checks.
+pub const JUDGED_RULES: [&str; 6] = [
+    "contradiction",
+    "duplicate-entity",
+    "duplicate-requirement",
+    "missing-link",
+    "ambiguity",
+    "lint",
+];
 
+// The store version written to status.yaml. An out directory carrying another one is
+// archived whole and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
+pub const STORE_VERSION: u32 = 2;
+
+// Change record kinds. Mirrors docs/compiler/graph.md#change-records.
+pub const CHANGE_SECTION_DIRTY: &str = "section-dirty";
+pub const CHANGE_SECTION_REMOVED: &str = "section-removed";
+pub const CHANGE_ANCHOR_STALE: &str = "anchor-stale";
+pub const CHANGE_ALIGNMENT_PENDING: &str = "alignment-pending";
+pub const CHANGE_REQ_CREATED: &str = "requirement-created";
+pub const CHANGE_REQ_REVISED: &str = "requirement-revised";
+pub const CHANGE_REQ_DELETED: &str = "requirement-deleted";
+pub const CHANGE_ENTITY: &str = "entity-changed";
+pub const CHANGE_ENTITY_DELETED: &str = "entity-deleted";
+pub const CHANGE_NODE_DELETED: &str = "node-deleted";
+pub const CHANGE_INSTANCE: &str = "instance-changed";
+pub const CHANGE_PROMPT_UNANSWERED: &str = "prompt-unanswered";
+pub const CHANGE_PROVENANCE_PENDING: &str = "provenance-pending";
+pub const CHANGE_THRESHOLD_CROSSED: &str = "threshold-crossed";
+pub const CHANGE_VIEW_MEMBER_GONE: &str = "view-member-gone";
+pub const CHANGE_EDGES_MISSING: &str = "edges-missing";
+pub const CHANGE_QUERY_MATCH: &str = "query-match";
+// Kinds whose subject is the dead node by design; never pruned for a missing subject.
+pub const TRAIL_KINDS: [&str; 3] = [
+    CHANGE_SECTION_REMOVED,
+    CHANGE_REQ_DELETED,
+    CHANGE_ENTITY_DELETED,
+];
+// The kinds that feed rejudge-pair on a requirement, and review-entity on an entity.
+pub const REQ_REVIEW_KINDS: [&str; 3] =
+    [CHANGE_REQ_CREATED, CHANGE_REQ_REVISED, CHANGE_NODE_DELETED];
+pub const ENTITY_REVIEW_KINDS: [&str; 2] = [CHANGE_ENTITY, CHANGE_NODE_DELETED];
+
+// What a changeset lands as: the journal kind, the goals it served, the goals it
+// resolved, and its cost. Mirrors docs/compiler/graph.md#journal.
+#[derive(Clone, Debug, Default)]
+pub struct Commit {
+    pub kind: String,
+    pub batch: Vec<String>,
+    pub resolved: Vec<Resolved>,
+    pub rounds: u32,
+    pub tokens: u64,
+}
+
+impl Commit {
+    // A store-level commit: edit, align, gc, settle-diagnostics, checks, decree,
+    // dual-write, ratify, triage, answer.
+    pub fn store(kind: &str) -> Commit {
+        Commit {
+            kind: kind.to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn session(batch: Vec<String>, rounds: u32, tokens: u64) -> Commit {
+        Commit {
+            kind: "session".to_string(),
+            batch,
+            resolved: Vec::new(),
+            rounds,
+            tokens,
+        }
+    }
+}
+
+// The change records one generation writes, numbered as they are pushed. One record
+// per kind and subject (and limit, for threshold crossings): the first push wins.
+pub struct RecordBatch {
+    generation: u64,
+    records: Vec<ChangeRecord>,
+}
+
+impl RecordBatch {
+    pub fn new(generation: u64) -> RecordBatch {
+        RecordBatch {
+            generation,
+            records: Vec::new(),
+        }
+    }
+
+    pub fn push(
+        &mut self,
+        mutation: usize,
+        kind: &str,
+        subject: &str,
+        via: &str,
+        detail: serde_json::Value,
+    ) -> bool {
+        if self
+            .records
+            .iter()
+            .any(|c| c.kind == kind && c.subject == subject && c.detail["limit"] == detail["limit"])
+        {
+            return false;
+        }
+        let index = self.records.len() + 1;
+        self.records.push(
+            ChangeRecord::new(self.generation, index, mutation, kind, subject, via)
+                .with_detail(detail),
+        );
+        true
+    }
+
+    pub fn has(&self, kind: &str, subject: &str) -> bool {
+        self.records
+            .iter()
+            .any(|c| c.kind == kind && c.subject == subject)
+    }
+
+    pub fn records(&self) -> &[ChangeRecord] {
+        &self.records
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+#[derive(Debug)]
 pub struct CommitReport {
     pub applied: usize,
     pub skipped: Vec<String>,
-    // Final entity ids touched by this commit (for scheduling review turns).
+    // The generation this commit landed as.
+    pub generation: u64,
+    // The change records this commit wrote.
+    pub changes: Vec<ChangeRecord>,
+    // Final entity ids touched by this commit.
     pub touched_entities: BTreeSet<String>,
-    // Final requirement ids created or whose statement changed (for scheduling
-    // review-requirement pair turns). A quote-only refresh does not qualify.
+    // Final requirement ids created or whose statement or quote changed in substance.
     pub changed_requirements: BTreeSet<String>,
 }
 
-// A document that changed, with what a reconcile turn needs to know.
+// A document that changed, with what a reconcile session needs to know.
 #[derive(Clone, Debug)]
 pub struct DirtyDoc {
     pub doc: String,
     pub dirty_sections: Vec<String>,
     pub stale_anchors: Vec<String>,
+}
+
+// A frontend that delegates file writes (the chat serving's edit sink) passes one;
+// everyone else writes disk directly. Arguments: doc (relative), old_text, new_text,
+// full new document text.
+pub type WriteEdit<'a> = &'a dyn Fn(&str, &str, &str, &str) -> Result<(), String>;
+
+// The prose half of a dual write: one text run in one section, with the document's
+// text before and after the edit. Mirrors docs/compiler/graph.md#mutations.
+#[derive(Clone, Debug)]
+pub struct ProseEdit {
+    pub doc: String,
+    pub section: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub old_full: String,
+    pub full: String,
+}
+
+impl ProseEdit {
+    // Locate the replacement in the document on disk. A non-empty `old_text` must
+    // locate inside the section's stored body, so the same phrase elsewhere in the
+    // document never catches the edit (a section the tree no longer holds falls back to
+    // the whole document). An empty `old_text` appends `new_text` after the section's
+    // last line, which is how a ratification proposal lands.
+    pub fn locate(
+        doc: &str,
+        section: &str,
+        section_raw: Option<&str>,
+        old_full: &str,
+        old_text: &str,
+        new_text: &str,
+    ) -> Result<ProseEdit, String> {
+        let window = section_raw
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| old_full.find(raw).map(|b| (b, b + raw.len())));
+        let full = if old_text.trim().is_empty() {
+            let Some((_, end)) = window else {
+                return Err(format!(
+                    "section {}#{} drifted from the document on disk; compile first",
+                    doc, section
+                ));
+            };
+            format!(
+                "{}\n\n{}{}",
+                old_full[..end].trim_end_matches('\n'),
+                new_text.trim(),
+                &old_full[end..]
+            )
+        } else {
+            let stale = || {
+                format!(
+                    "the old text no longer locates in {}#{}; compile first, then edit",
+                    doc, section
+                )
+            };
+            let (b, e) = match window {
+                Some((wb, we)) => md::locate_bytes(&old_full[wb..we], old_text)
+                    .map(|(sb, se)| (wb + sb, wb + se))
+                    .ok_or_else(stale)?,
+                None => md::locate_bytes(old_full, old_text).ok_or_else(stale)?,
+            };
+            format!("{}{}{}", &old_full[..b], new_text, &old_full[e..])
+        };
+        Ok(ProseEdit {
+            doc: doc.to_string(),
+            section: section.to_string(),
+            old_text: old_text.to_string(),
+            new_text: new_text.to_string(),
+            old_full: old_full.to_string(),
+            full,
+        })
+    }
 }
 
 // Cheap generation read: one line of status.yaml, no shard parsing.
@@ -146,13 +445,15 @@ pub struct Store {
     pub graph: Graph,
     pub docs: BTreeMap<String, DocRecord>,
     pub status: Status,
-    // Alignment thresholds from the project's [limits]; defaults when no project is
-    // at hand (docs/compiler/project-settings.md#limits).
+    // Alignment thresholds, registry constants (docs/compiler/graph.md#budgets-and-thresholds).
     pub align: crate::align::Thresholds,
 }
 
 fn normalize(name: &str) -> String {
-    name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 // Punctuation-insensitive statement normalization: the requirement natural key. A comma
@@ -166,12 +467,14 @@ pub(crate) fn normalize_statement(s: &str) -> String {
 }
 
 // Same fact reworded: one statement's content tokens contained in the other's. A
-// resumed build often re-extracts "shall X" as "shall X using Y" from the same
-// sentence; that is one fact, not two. Distinct atomic facts sharing a sentence
-// ("shall be a REST service" / "shall be built with Go") are not subsets.
+// resumed build often re-extracts "X" as "X using Y" from the same sentence; that is
+// one fact, not two. Distinct atomic facts sharing a sentence are not subsets.
 pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
     let toks = |s: &str| -> std::collections::BTreeSet<String> {
-        normalize_statement(s).split(' ').map(String::from).collect()
+        normalize_statement(s)
+            .split(' ')
+            .map(String::from)
+            .collect()
     };
     let (ta, tb) = (toks(a), toks(b));
     !ta.is_empty() && !tb.is_empty() && (ta.is_subset(&tb) || tb.is_subset(&ta))
@@ -198,20 +501,141 @@ fn write_yaml<T: Serialize>(path: &Path, value: &T) {
     }
 }
 
+// The kind of a node id by prefix.
+fn id_kind(id: &str) -> &'static str {
+    if id.starts_with("req:") {
+        "requirement"
+    } else if id.starts_with("ent:") {
+        "entity"
+    } else if id.starts_with("view:") {
+        "view"
+    } else if id.starts_with("diag:") {
+        "diagnostic"
+    } else {
+        "node"
+    }
+}
+
+fn provenance_is_pending(p: &Provenance) -> bool {
+    !matches!(p, Provenance::Quote(_))
+}
+
+// What one commit dirtied, accumulated while its ops apply: the first mutation that
+// touched a subject is its cause.
+#[derive(Default)]
+struct Dirt {
+    entities: BTreeMap<String, (usize, &'static str)>,
+    created: BTreeMap<String, usize>,
+    revised: BTreeMap<String, (usize, &'static str)>,
+    // Requirements a create or update named: edges-missing is re-evaluated on them.
+    named_reqs: BTreeMap<String, usize>,
+    deleted: BTreeMap<String, usize>,
+    provenance_pending: BTreeMap<String, (usize, &'static str)>,
+    prompts: BTreeMap<String, (usize, &'static str)>,
+    // (section reference, anchor id, mutation) for anchors placed under re-evaluation.
+    stale_anchors: Vec<(String, String, usize)>,
+}
+
+impl Dirt {
+    fn entity(&mut self, id: &str, m: usize, via: &'static str) {
+        self.entities.entry(id.to_string()).or_insert((m, via));
+    }
+    fn entities<'a>(&mut self, ids: impl IntoIterator<Item = &'a String>, m: usize) {
+        for id in ids {
+            self.entity(id, m, "entities");
+        }
+    }
+    fn created(&mut self, id: &str, m: usize) {
+        self.created.entry(id.to_string()).or_insert(m);
+        self.named_reqs.entry(id.to_string()).or_insert(m);
+    }
+    fn revised(&mut self, id: &str, m: usize, via: &'static str) {
+        self.revised.entry(id.to_string()).or_insert((m, via));
+    }
+    fn named(&mut self, id: &str, m: usize) {
+        self.named_reqs.entry(id.to_string()).or_insert(m);
+    }
+    fn deleted(&mut self, id: &str, m: usize) {
+        self.deleted.entry(id.to_string()).or_insert(m);
+    }
+    fn pending(&mut self, id: &str, m: usize, p: &Provenance) {
+        if provenance_is_pending(p) {
+            self.provenance_pending
+                .entry(id.to_string())
+                .or_insert((m, p.kind()));
+        }
+    }
+    fn prompt(&mut self, id: &str, m: usize, via: &'static str) {
+        self.prompts.entry(id.to_string()).or_insert((m, via));
+    }
+}
+
 impl Store {
     pub fn load(out: &Path) -> Store {
         // Readers never take the lock: read the generation counter, load every shard,
         // and retry if the counter moved mid-read (a commit landed between shards).
-        // Mirrors docs/compiler/graph.md#concurrency.
-        let counter = || yaml_to::<Status>(&out.join("status.yaml")).map(|s| s.generation).unwrap_or(0);
+        // A store of another version reads as empty; only a build archives it.
+        // Mirrors docs/compiler/graph.md#concurrency and #store-version.
+        let counter = || {
+            yaml_to::<Status>(&out.join("status.yaml"))
+                .map(|s| s.generation)
+                .unwrap_or(0)
+        };
+        let mut store = Self::load_once(out);
         for _ in 0..4 {
             let before = counter();
-            let store = Self::load_once(out);
+            store = Self::load_once(out);
             if counter() == before {
-                return store;
+                break;
             }
         }
-        Self::load_once(out)
+        if store.status.version != STORE_VERSION {
+            return Store {
+                out: out.to_path_buf(),
+                ..Default::default()
+            };
+        }
+        store
+    }
+
+    // The build's opening: an out directory whose status.yaml lacks the version or
+    // carries another one is archived whole to `<out>.bak` (an earlier archive is
+    // replaced) and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
+    pub fn open_for_build(out: &Path) -> Store {
+        let status_path = out.join("status.yaml");
+        if status_path.exists() {
+            let version = yaml_to::<Status>(&status_path)
+                .map(|s| s.version)
+                .unwrap_or(0);
+            if version != STORE_VERSION {
+                let name = out
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "jazyk-out".to_string());
+                let bak = out.with_file_name(format!("{}.bak", name));
+                std::fs::remove_dir_all(&bak).ok();
+                match std::fs::rename(out, &bak) {
+                    Ok(()) => eprintln!(
+                        "[jazyk] store version {} is not {}; archived {} to {} and starting empty",
+                        version,
+                        STORE_VERSION,
+                        out.display(),
+                        bak.display()
+                    ),
+                    Err(e) => eprintln!(
+                        "[jazyk] warning: could not archive {} to {}: {}",
+                        out.display(),
+                        bak.display(),
+                        e
+                    ),
+                }
+                return Store {
+                    out: out.to_path_buf(),
+                    ..Default::default()
+                };
+            }
+        }
+        Self::load(out)
     }
 
     fn load_once(out: &Path) -> Store {
@@ -221,7 +645,9 @@ impl Store {
             graph: Graph {
                 entities: yaml_to(&g.join("entities.yaml")).unwrap_or_default(),
                 requirements: yaml_to(&g.join("requirements.yaml")).unwrap_or_default(),
+                views: yaml_to(&g.join("views.yaml")).unwrap_or_default(),
                 relationships: yaml_to(&g.join("relationships.yaml")).unwrap_or_default(),
+                state_machines: yaml_to(&g.join("state-machines.yaml")).unwrap_or_default(),
                 diagnostics: yaml_to(&g.join("diagnostics.yaml")).unwrap_or_default(),
                 redirects: yaml_to(&g.join("redirects.yaml")).unwrap_or_default(),
             },
@@ -248,17 +674,84 @@ impl Store {
         let g = self.out.join("graph");
         write_yaml(&g.join("entities.yaml"), &self.graph.entities);
         write_yaml(&g.join("requirements.yaml"), &self.graph.requirements);
+        write_yaml(&g.join("views.yaml"), &self.graph.views);
         write_yaml(&g.join("relationships.yaml"), &self.graph.relationships);
+        write_yaml(&g.join("state-machines.yaml"), &self.graph.state_machines);
         write_yaml(&g.join("diagnostics.yaml"), &self.graph.diagnostics);
         write_yaml(&g.join("redirects.yaml"), &self.graph.redirects);
-        write_yaml(&self.out.join("status.yaml"), &self.status);
+        self.save_status();
         for (doc, rec) in &self.docs {
             write_yaml(&self.out.join("docs").join(format!("{}.yaml", doc)), rec);
         }
     }
 
+    // Every status write stamps the store version.
     pub fn save_status(&self) {
-        write_yaml(&self.out.join("status.yaml"), &self.status);
+        let mut status = self.status.clone();
+        status.version = STORE_VERSION;
+        write_yaml(&self.out.join("status.yaml"), &status);
+    }
+
+    // The journal entry for one commit. Mirrors docs/compiler/graph.md#journal.
+    fn journal_entry(
+        &self,
+        build: &str,
+        commit: &Commit,
+        mutations: Vec<serde_json::Value>,
+    ) -> JournalEntry {
+        JournalEntry {
+            build: build.to_string(),
+            generation: self.status.generation,
+            kind: commit.kind.clone(),
+            batch: commit.batch.clone(),
+            mutations,
+            resolved_goals: commit.resolved.clone(),
+            opened_goals: Vec::new(),
+            rounds: commit.rounds,
+            tokens: commit.tokens,
+            ..Default::default()
+        }
+    }
+
+    fn journal_path(&self, generation: u64) -> PathBuf {
+        self.out
+            .join("journal")
+            .join(format!("g{}.yaml", generation))
+    }
+
+    fn write_journal(&self, entry: &JournalEntry) {
+        write_yaml(&self.journal_path(entry.generation), entry);
+    }
+
+    // The reconciler re-derives the board after a commit and records the goals the
+    // commit opened on that generation's journal entry, under the lock.
+    pub fn record_opened_goals(&mut self, generation: u64, opened: Vec<OpenedGoal>) {
+        let _flock = FileLock::acquire(&self.out);
+        let path = self.journal_path(generation);
+        let Some(mut entry) = yaml_to::<JournalEntry>(&path) else {
+            return;
+        };
+        entry.opened_goals = opened;
+        write_yaml(&path, &entry);
+    }
+
+    // Resolving a goal clears the records it stood on. Persists at once.
+    pub fn clear_changes(&mut self, ids: &[String]) {
+        if ids.is_empty() {
+            return;
+        }
+        let _flock = FileLock::acquire(&self.out);
+        self.status.changes.retain(|c| !ids.contains(&c.id));
+        self.save_status();
+    }
+
+    // Land a batch of records in status.yaml (superseding same-kind same-subject ones).
+    fn commit_records(&mut self, batch: RecordBatch) -> Vec<ChangeRecord> {
+        let records = batch.records;
+        for r in &records {
+            self.status.record_change(r.clone());
+        }
+        records
     }
 
     // Follow merge redirects to the surviving id. A tombstone (empty target) stays dead.
@@ -281,13 +774,18 @@ impl Store {
         let base = format!("ent:{}", md::slug(name));
         let mut id = base.clone();
         let mut n = 1;
-        while self.graph.entities.contains_key(&id) || self.graph.redirects.contains_key(&id) || taken.contains(&id) {
+        while self.graph.entities.contains_key(&id)
+            || self.graph.redirects.contains_key(&id)
+            || taken.contains(&id)
+        {
             n += 1;
             id = format!("{}-{}", base, n);
         }
         id
     }
 
+    // `req:<doc-stem>-<n>`; `doc` is the source document path, or `x` for a derived or
+    // decreed requirement (docs/compiler/model.md#identifiers).
     pub fn mint_req_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
         let stem = doc.rsplit('/').next().unwrap_or(doc);
         let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
@@ -301,6 +799,22 @@ impl Store {
             }
         }
         format!("{}{}", prefix, max + 1)
+    }
+
+    // The id stem of a requirement: its source document, or `x` without a quote.
+    pub fn req_stem(r: &Requirement) -> &str {
+        r.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+    }
+
+    pub fn mint_view_id(&self, kind: &str, title: &str, taken: &BTreeSet<String>) -> String {
+        let base = format!("view:{}/{}", view_kind_slug(kind), md::slug(title));
+        let mut id = base.clone();
+        let mut n = 1;
+        while self.graph.views.contains_key(&id) || taken.contains(&id) {
+            n += 1;
+            id = format!("{}-{}", base, n);
+        }
+        id
     }
 
     pub fn mint_diag_id(&self, rule: &str, taken: &BTreeSet<String>) -> String {
@@ -318,18 +832,101 @@ impl Store {
 
     // ---- lookups ----
 
-    // Natural-key lookup: normalized name or alias, within the same scope.
-    pub fn find_natural(&self, name: &str, scope: &str) -> Option<String> {
+    // The entity natural key: normalized name or alias within the scope, and `parent`
+    // when the caller supplies it. Without a parent, exactly one match lands; several
+    // is an error naming the candidates, so the caller can say which parent it means.
+    // Mirrors docs/compiler/concepts/identity.md#the-natural-key-under-containment.
+    pub fn find_natural(
+        &self,
+        name: &str,
+        scope: &str,
+        parent: Option<&str>,
+    ) -> Result<Option<String>, Vec<String>> {
         let want = normalize(name);
-        for (id, e) in &self.graph.entities {
-            if e.scope != scope {
-                continue;
-            }
-            if normalize(&e.name) == want || e.aliases.iter().any(|a| normalize(a) == want) {
-                return Some(id.clone());
+        let parent = parent.map(|p| self.resolve_id(p).to_string());
+        let mut hits: Vec<String> = self
+            .graph
+            .entities
+            .iter()
+            .filter(|(_, e)| e.scope == scope)
+            .filter(|(_, e)| {
+                normalize(&e.name) == want || e.aliases.iter().any(|a| normalize(a) == want)
+            })
+            .filter(|(_, e)| match &parent {
+                Some(p) => e.parent.as_deref() == Some(p.as_str()),
+                None => true,
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        hits.sort();
+        match hits.len() {
+            0 => Ok(None),
+            1 => Ok(hits.pop()),
+            _ => Err(hits),
+        }
+    }
+
+    // The view natural key: kind plus normalized title.
+    pub fn find_view(&self, kind: &str, title: &str) -> Option<String> {
+        let want = normalize(title);
+        self.graph
+            .views
+            .iter()
+            .find(|(_, v)| v.kind == kind && normalize(&v.title) == want)
+            .map(|(id, _)| id.clone())
+    }
+
+    // Whether `ancestor` is on `node`'s parent chain (bounded against a cycle).
+    pub fn is_ancestor(&self, ancestor: &str, node: &str) -> bool {
+        let mut cur = node;
+        for _ in 0..64 {
+            match self
+                .graph
+                .entities
+                .get(cur)
+                .and_then(|e| e.parent.as_deref())
+            {
+                Some(p) if p == ancestor => return true,
+                Some(p) => cur = p,
+                None => return false,
             }
         }
-        None
+        false
+    }
+
+    // The parent chain of an entity, nearest first.
+    fn ancestors(&self, node: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = node;
+        for _ in 0..64 {
+            match self
+                .graph
+                .entities
+                .get(cur)
+                .and_then(|e| e.parent.as_deref())
+            {
+                Some(p) => {
+                    out.push(p.to_string());
+                    cur = p;
+                }
+                None => break,
+            }
+        }
+        out
+    }
+
+    fn children_of(&self, id: &str) -> Vec<String> {
+        self.graph
+            .entities
+            .iter()
+            .filter(|(_, e)| e.parent.as_deref() == Some(id))
+            .map(|(cid, _)| cid.clone())
+            .collect()
+    }
+
+    // Whether a node id names an existing entity or requirement.
+    fn node_exists(&self, id: &str) -> bool {
+        self.graph.entities.contains_key(id) || self.graph.requirements.contains_key(id)
     }
 
     // Deterministic search over names and aliases: exact, then substring, then token overlap.
@@ -360,11 +957,20 @@ impl Store {
                 }
             }
             if let Some(t) = best {
-                scored.push((t, id.clone(), e.name.clone(), e.definition.clone().unwrap_or_default()));
+                scored.push((
+                    t,
+                    id.clone(),
+                    e.name.clone(),
+                    e.definition.clone().unwrap_or_default(),
+                ));
             }
         }
         scored.sort();
-        scored.into_iter().take(8).map(|(_, id, n, d)| (id, n, d)).collect()
+        scored
+            .into_iter()
+            .take(8)
+            .map(|(_, id, n, d)| (id, n, d))
+            .collect()
     }
 
     // Whether a quote locates inside the named section (whitespace-insensitive).
@@ -388,10 +994,11 @@ impl Store {
     // Content tokens of a statement: normalized tokens minus stop words and the given
     // entities' own name tokens, reduced to crude stems so "reverses" meets "reverse"
     // and "sorting" meets "sort". Feeds requirement_neighbors.
-    fn content_tokens(&self, ears: &str, entities: &[String]) -> BTreeSet<String> {
+    fn content_tokens(&self, statement: &str, entities: &[String]) -> BTreeSet<String> {
         const STOP: [&str; 30] = [
-            "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or", "and", "if", "with",
-            "by", "it", "its", "when", "then", "that", "which", "this", "system", "not", "no", "only", "all", "each",
+            "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or",
+            "and", "if", "with", "by", "it", "its", "when", "then", "that", "which", "this",
+            "system", "not", "no", "only", "all", "each",
         ];
         let stem = |t: &str| -> String {
             for suffix in ["ing", "ed", "s"] {
@@ -411,7 +1018,7 @@ impl Store {
                 }
             }
         }
-        normalize_statement(ears)
+        normalize_statement(statement)
             .split(' ')
             .filter(|t| !STOP.contains(t))
             .map(|t| stem(t))
@@ -421,32 +1028,49 @@ impl Store {
 
     // Deterministic neighbor set for one requirement: other requirements sharing an
     // entity, scored by overlapping content tokens, at least two shared, best six.
-    // Feeds the review-requirement pair wave (docs/compiler/compilation.md#waves).
+    // The rejudge-pair locality. Mirrors docs/compiler/reconciler.md#pairs.
     pub fn requirement_neighbors(&self, rid: &str) -> Vec<String> {
-        let Some(req) = self.graph.requirements.get(rid) else { return Vec::new() };
-        let subject_entities: BTreeSet<&str> = req.entities.iter().map(|e| self.resolve_id(e)).collect();
-        let toks = self.content_tokens(&req.ears, &req.entities);
+        let Some(req) = self.graph.requirements.get(rid) else {
+            return Vec::new();
+        };
+        let subject_entities: BTreeSet<&str> =
+            req.entities.iter().map(|e| self.resolve_id(e)).collect();
+        let toks = self.content_tokens(&req.statement, &req.entities);
         let mut scored: Vec<(usize, &String)> = Vec::new();
         for (oid, other) in &self.graph.requirements {
-            if oid == rid || !other.entities.iter().any(|e| subject_entities.contains(self.resolve_id(e))) {
+            if oid == rid
+                || !other
+                    .entities
+                    .iter()
+                    .any(|e| subject_entities.contains(self.resolve_id(e)))
+            {
                 continue;
             }
-            let shared = self.content_tokens(&other.ears, &other.entities).intersection(&toks).count();
+            let shared = self
+                .content_tokens(&other.statement, &other.entities)
+                .intersection(&toks)
+                .count();
             if shared >= 2 {
                 scored.push((shared, oid));
             }
         }
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
-        scored.into_iter().take(6).map(|(_, id)| id.clone()).collect()
+        scored
+            .into_iter()
+            .take(6)
+            .map(|(_, id)| id.clone())
+            .collect()
     }
 
-    // The pair-review set: computed neighbors plus sticky partners. Open contradiction
-    // and duplicate-requirement diagnostics tie pairs; editing one side of a known pair
+    // The pair set: computed neighbors plus sticky partners. Open contradiction and
+    // duplicate-requirement diagnostics tie pairs; editing one side of a known pair
     // always re-judges the other.
     pub fn pair_review_neighbors(&self, rid: &str) -> Vec<String> {
         let mut nbrs = self.requirement_neighbors(rid);
         for d in self.graph.diagnostics.values() {
-            if d.lifecycle != "open" || !(d.rule == "contradiction" || d.rule == "duplicate-requirement") {
+            if d.lifecycle != "open"
+                || !(d.rule == "contradiction" || d.rule == "duplicate-requirement")
+            {
                 continue;
             }
             if !d.subjects.iter().any(|s| s == rid) {
@@ -473,28 +1097,34 @@ impl Store {
         m
     }
 
-    // An open judged diagnostic naming this node: reason enough to schedule a review
-    // even when the neighbor computation finds nothing (a partner may be deleted; the
-    // diagnostic itself is the remaining work). Mirrors docs/compiler/compilation.md#waves.
+    // An open judged diagnostic naming this node: reason enough for a pair judgment
+    // even when the neighbor computation finds nothing.
     pub fn has_open_judged_diag(&self, id: &str) -> bool {
         self.graph.diagnostics.values().any(|d| {
-            d.lifecycle == "open" && JUDGED_RULES.contains(&d.rule.as_str()) && d.subjects.iter().any(|s| s == id)
+            d.lifecycle == "open"
+                && JUDGED_RULES.contains(&d.rule.as_str())
+                && d.subjects.iter().any(|s| s == id)
         })
     }
 
-    // Whether a pending pair review still has work: the requirement exists and either
-    // computed neighbors or an open judged diagnostic tie it to a judgment.
+    // Whether a pair judgment on a requirement still has work: the requirement exists
+    // and either computed neighbors or an open judged diagnostic tie it to a judgment.
     pub fn pair_review_due(&self, rid: &str) -> bool {
         self.graph.requirements.contains_key(rid)
             && (!self.pair_review_neighbors(rid).is_empty() || self.has_open_judged_diag(rid))
     }
 
     // Deleting nodes settles the open judged diagnostics naming them: all subjects gone
-    // resolves the diagnostic in place (the returned ops go to the journal); surviving
-    // subjects re-enqueue for review, so a turn re-judges the finding. Runs on every
-    // deleting commit, turn and GC alike. Mirrors docs/compiler/graph.md#garbage-collection
-    // and docs/compiler/compilation.md#waves.
-    fn propagate_deletions(&mut self, deleted: &BTreeSet<String>, build: &str) -> Vec<Op> {
+    // resolves the diagnostic in place (the returned ops go to the journal); a surviving
+    // subject gets a node-deleted record, so a session re-judges the finding. Runs on
+    // every deleting commit, session and sweep alike.
+    // Mirrors docs/compiler/graph.md#the-sweep.
+    fn propagate_deletions(
+        &mut self,
+        deleted: &BTreeMap<String, usize>,
+        build: &str,
+        batch: &mut RecordBatch,
+    ) -> Vec<Op> {
         let mut resolved = Vec::new();
         if deleted.is_empty() {
             return resolved;
@@ -506,16 +1136,21 @@ impl Store {
             .filter(|(_, d)| {
                 d.lifecycle == "open"
                     && JUDGED_RULES.contains(&d.rule.as_str())
-                    && d.subjects.iter().any(|s| deleted.contains(s))
+                    && d.subjects.iter().any(|s| deleted.contains_key(s))
             })
             .map(|(id, _)| id.clone())
             .collect();
         for did in hit {
             let subjects = self.graph.diagnostics[&did].subjects.clone();
+            let gone: Vec<&String> = subjects
+                .iter()
+                .filter(|s| deleted.contains_key(*s))
+                .collect();
+            let mutation = gone.iter().map(|s| deleted[*s]).min().unwrap_or(0);
             let survivors: Vec<String> = subjects
                 .iter()
                 .map(|s| self.resolve_id(s).to_string())
-                .filter(|s| self.graph.requirements.contains_key(s) || self.graph.entities.contains_key(s))
+                .filter(|s| self.node_exists(s))
                 .collect();
             if survivors.is_empty() {
                 let d = self.graph.diagnostics.get_mut(&did).unwrap();
@@ -527,17 +1162,162 @@ impl Store {
                 });
             } else {
                 for s in survivors {
-                    if self.graph.requirements.contains_key(&s) {
-                        if !self.status.pending.requirements.contains(&s) {
-                            self.status.pending.requirements.push(s);
-                        }
-                    } else if !self.status.pending.entities.contains(&s) {
-                        self.status.pending.entities.push(s);
-                    }
+                    batch.push(
+                        mutation,
+                        CHANGE_NODE_DELETED,
+                        &s,
+                        "subjects",
+                        serde_json::json!({
+                            "deleted": gone.iter().map(|g| g.as_str()).collect::<Vec<_>>(),
+                            "diagnostic": did,
+                        }),
+                    );
                 }
             }
         }
         resolved
+    }
+
+    // Records for the live nodes that still reference dead ones: a curated view's
+    // member (view-member-gone), a derived node's `from` (node-deleted).
+    // Mirrors docs/compiler/compilation.md#edit-paths.
+    fn deletion_ripple(&self, deleted: &BTreeMap<String, usize>, batch: &mut RecordBatch) {
+        if deleted.is_empty() {
+            return;
+        }
+        let dead = |ids: &[String]| -> Vec<String> {
+            ids.iter()
+                .filter(|m| deleted.contains_key(*m))
+                .cloned()
+                .collect()
+        };
+        let mutation_of = |ids: &[String]| ids.iter().map(|m| deleted[m]).min().unwrap_or(0);
+        for (vid, v) in &self.graph.views {
+            if v.default {
+                continue;
+            }
+            let mut gone = dead(&v.members);
+            gone.extend(dead(&v.collapse));
+            gone.dedup();
+            if !gone.is_empty() {
+                batch.push(
+                    mutation_of(&gone),
+                    CHANGE_VIEW_MEMBER_GONE,
+                    vid,
+                    "members",
+                    serde_json::json!({ "gone": gone }),
+                );
+            }
+        }
+        let from_of = |p: &Option<Provenance>| -> Vec<String> {
+            match p {
+                Some(Provenance::Derived { from, .. }) => from.clone(),
+                _ => Vec::new(),
+            }
+        };
+        let reqs = self
+            .graph
+            .requirements
+            .iter()
+            .map(|(id, r)| (id, from_of(&r.provenance)));
+        let ents = self
+            .graph
+            .entities
+            .iter()
+            .map(|(id, e)| (id, from_of(&e.provenance)));
+        for (id, from) in reqs.chain(ents) {
+            let gone = dead(&from);
+            if !gone.is_empty() {
+                batch.push(
+                    mutation_of(&gone),
+                    CHANGE_NODE_DELETED,
+                    id,
+                    "from",
+                    serde_json::json!({ "deleted": gone }),
+                );
+            }
+        }
+    }
+
+    // Drop records whose evidence lapsed or whose subject no longer exists (the trail
+    // kinds excepted). Mirrors docs/compiler/reconciler.md#change-records.
+    fn prune_records(&mut self) {
+        let alive: Vec<bool> = self
+            .status
+            .changes
+            .iter()
+            .map(|c| self.record_stands(c))
+            .collect();
+        let mut i = 0;
+        self.status.changes.retain(|_| {
+            let keep = alive[i];
+            i += 1;
+            keep
+        });
+    }
+
+    fn record_stands(&self, c: &ChangeRecord) -> bool {
+        if TRAIL_KINDS.contains(&c.kind.as_str()) {
+            return true;
+        }
+        let section_exists = |full: &str| {
+            split_section_ref(full)
+                .map(|(d, s)| {
+                    self.docs
+                        .get(&d)
+                        .is_some_and(|r| r.sections.contains_key(&s))
+                })
+                .unwrap_or(false)
+        };
+        match c.kind.as_str() {
+            CHANGE_SECTION_DIRTY => section_exists(&c.subject),
+            CHANGE_ANCHOR_STALE => c.detail["anchors"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .any(|id| self.node_exists(id))
+                })
+                .unwrap_or(false),
+            CHANGE_ALIGNMENT_PENDING => self.status.alignment.iter().any(|b| b.doc == c.subject),
+            CHANGE_EDGES_MISSING => self
+                .graph
+                .requirements
+                .get(&c.subject)
+                .is_some_and(|r| r.entities.len() >= 2 && r.edges.is_empty()),
+            CHANGE_PROMPT_UNANSWERED => {
+                self.graph.diagnostics.get(&c.subject).is_some_and(|d| {
+                    d.lifecycle == "open" && d.prompt.is_some() && d.answer.is_none()
+                })
+            }
+            CHANGE_PROVENANCE_PENDING => self
+                .graph
+                .requirements
+                .get(&c.subject)
+                .map(|r| {
+                    r.provenance.as_ref().is_some_and(provenance_is_pending) && r.source.is_none()
+                })
+                .or_else(|| {
+                    self.graph
+                        .entities
+                        .get(&c.subject)
+                        .map(|e| e.provenance.as_ref().is_some_and(provenance_is_pending))
+                })
+                .unwrap_or(false),
+            CHANGE_VIEW_MEMBER_GONE => self.graph.views.get(&c.subject).is_some_and(|v| {
+                v.members
+                    .iter()
+                    .chain(v.collapse.iter())
+                    .any(|m| !self.node_exists(self.resolve_id(m)))
+            }),
+            _ => match id_kind(&c.subject) {
+                "requirement" => self.graph.requirements.contains_key(&c.subject),
+                "entity" => self.graph.entities.contains_key(&c.subject),
+                "view" => self.graph.views.contains_key(&c.subject),
+                "diagnostic" => self.graph.diagnostics.contains_key(&c.subject),
+                _ => c.subject.contains('#') || !c.subject.contains(':'),
+            },
+        }
     }
 
     // Subjects of open judged diagnostics that no longer exist in the graph.
@@ -548,88 +1328,56 @@ impl Store {
             .filter(|d| d.lifecycle == "open" && JUDGED_RULES.contains(&d.rule.as_str()))
             .flat_map(|d| d.subjects.iter())
             .filter(|s| s.starts_with("req:") || s.starts_with("ent:"))
-            .filter(|s| {
-                let r = self.resolve_id(s);
-                !self.graph.requirements.contains_key(r) && !self.graph.entities.contains_key(r)
-            })
+            .filter(|s| !self.node_exists(self.resolve_id(s)))
             .cloned()
             .collect()
     }
 
     // Whether any open judged diagnostic names a subject the graph no longer holds:
-    // the queue's signal that the deterministic tail has settling to do.
+    // the signal that the deterministic tail has settling to do.
     pub fn has_dangling_diags(&self) -> bool {
         !self.missing_diag_subjects().is_empty()
     }
 
     // The level-triggered half of deletion propagation: sweep every open judged
-    // diagnostic for missing subjects and settle it, journaled like GC. A graph
-    // deleted into a stranded state heals here instead of staying wedged.
-    // Mirrors docs/compiler/compilation.md#waves.
+    // diagnostic for missing subjects and settle it, journaled like the sweep.
+    // Mirrors docs/compiler/reconciler.md#pairs.
     pub fn settle_dangling_diags(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
         let missing = self.missing_diag_subjects();
         if missing.is_empty() {
             return Vec::new();
         }
-        let pending_before =
-            (self.status.pending.requirements.len(), self.status.pending.entities.len());
-        let build = format!("g{}", self.status.generation + 1);
-        let ops = self.propagate_deletions(&missing, &build);
+        let generation = self.status.generation + 1;
+        let build = format!("g{}", generation);
+        let mut batch = RecordBatch::new(generation);
+        let deleted: BTreeMap<String, usize> = missing.into_iter().map(|m| (m, 0)).collect();
+        let ops = self.propagate_deletions(&deleted, &build, &mut batch);
         let actions: Vec<String> = ops
             .iter()
             .filter_map(|o| match o {
-                Op::ResolveDiagnostic { id, reason } => Some(format!("resolved {} ({})", id, reason)),
+                Op::ResolveDiagnostic { id, reason } => {
+                    Some(format!("resolved {} ({})", id, reason))
+                }
                 _ => None,
             })
             .collect();
-        if !ops.is_empty() {
-            self.status.generation += 1;
-            let entry = JournalEntry {
-                build: build.clone(),
-                work_item: WorkItem {
-                    task: "settle-diagnostics".to_string(),
-                    target: "graph".to_string(),
-                    dirty_sections: Vec::new(),
-                    stale_anchors: Vec::new(),
-                    proposals: Vec::new(),
-                },
-                mutations: ops.iter().map(|o| serde_json::to_value(o).unwrap_or_default()).collect(),
-                rounds: 0,
-                tokens: 0,
-            };
-            write_yaml(&self.out.join("journal").join(format!("{}.yaml", build)), &entry);
+        if !ops.is_empty() || !batch.is_empty() {
+            self.status.generation = generation;
+            self.commit_records(batch);
+            let entry = self.journal_entry(
+                &build,
+                &Commit::store("settle-diagnostics"),
+                ops.iter()
+                    .map(|o| serde_json::to_value(o).unwrap_or_default())
+                    .collect(),
+            );
+            self.write_journal(&entry);
             self.save();
-        } else if (self.status.pending.requirements.len(), self.status.pending.entities.len())
-            != pending_before
-        {
-            self.save_status();
         }
         actions
     }
 
-    // Completing a pair task also completes its mirror: when two changed requirements
-    // are each other's only neighbor, one judgment covers the pair, and scheduling the
-    // reverse would judge the identical pair again.
-    // Mirrors docs/compiler/compilation.md#waves.
-    pub fn complete_pair_mirrors(&mut self, rid: &str) {
-        let judged: std::collections::BTreeSet<String> = self.pair_review_neighbors(rid).into_iter().collect();
-        for r in self.status.pending.requirements.clone() {
-            if r == rid || !judged.contains(&r) {
-                continue;
-            }
-            let nbrs = self.pair_review_neighbors(&r);
-            if !nbrs.is_empty() && nbrs.iter().all(|n| n == rid) {
-                self.complete_review("review-requirement", &r);
-            }
-        }
-    }
-
-    // ---- commit ----
-
-    // Apply a staged changeset atomically: reconcile creates by natural key against nodes
-    // committed concurrently, apply ops in order, recompute derived relationships, journal,
-    // bump the generation, write shards.
     // Absorb a dual-write prose edit: replace the document's stored section tree and
     // content hash with the post-edit text, keeping coverage marks for sections whose
     // references survive. Mirrors docs/compiler/graph.md#mutations.
@@ -641,34 +1389,368 @@ impl Store {
         rec.sections = sections;
     }
 
-    pub fn apply(&mut self, ops: Vec<Op>, work_item: &WorkItem, rounds: u32, tokens: u64) -> CommitReport {
+    // Commit a prose replacement with the graph mutations it carries as one changeset.
+    // The file is written first (through `write` when a frontend delegates it), then the
+    // edit and the mutations apply together; a commit that skips anything puts the
+    // prose back, so neither side moved. Every quoted anchor in the section whose quote
+    // contains the replaced text is re-anchored mechanically (a requirement's statement
+    // updated when the text appears in it verbatim), unless an op in the changeset
+    // already re-anchors, ratifies, or deletes it. Mirrors
+    // docs/compiler/compilation.md#edit-paths.
+    pub fn dual_write(
+        &mut self,
+        root: &Path,
+        edit: &ProseEdit,
+        ops: Vec<Op>,
+        commit: &Commit,
+        write: Option<WriteEdit>,
+    ) -> Result<CommitReport, String> {
+        if ops.is_empty() {
+            return Err(
+                "edit-needs-mutation: a prose edit rides with the graph mutation it carries"
+                    .to_string(),
+            );
+        }
+        let path = root.join(&edit.doc);
+        let put = |text: &str, old: &str, new: &str| -> Result<(), String> {
+            match write {
+                Some(w) => w(&edit.doc, old, new, text),
+                None => std::fs::write(&path, text)
+                    .map_err(|e| format!("write {}: {}", path.display(), e)),
+            }
+        };
+        put(&edit.full, &edit.old_text, &edit.new_text)?;
+        let mut all = vec![Op::EditDocProse {
+            doc: edit.doc.clone(),
+            section: edit.section.clone(),
+            old_text: edit.old_text.clone(),
+            new_text: edit.new_text.clone(),
+            text: edit.full.clone(),
+        }];
+        all.extend(self.reanchor_ops(edit, &ops));
+        all.extend(ops);
+        let report = self.apply(all, commit);
+        if !report.skipped.is_empty() {
+            let _ = put(&edit.old_full, &edit.new_text, &edit.old_text);
+            return Err(report.skipped.join("; "));
+        }
+        Ok(report)
+    }
+
+    // The mechanical re-anchoring a prose replacement owes: requirement sources and
+    // entity mentions in the edited section whose quote contains the replaced text.
+    fn reanchor_ops(&self, edit: &ProseEdit, ops: &[Op]) -> Vec<Op> {
+        let mut out = Vec::new();
+        if edit.old_text.trim().is_empty() {
+            return out;
+        }
+        let handled = |id: &str| {
+            ops.iter().any(|o| match o {
+                Op::UpdateRequirement {
+                    id: x,
+                    source: Some(_),
+                    ..
+                }
+                | Op::RatifyProvenance { id: x, .. }
+                | Op::DeleteRequirement { id: x, .. }
+                | Op::RetractDecree { id: x, .. }
+                | Op::PlaceAnchor { id: x, .. } => x == id,
+                _ => false,
+            })
+        };
+        let splice = |text: &str| -> Option<String> {
+            md::locate_bytes(text, &edit.old_text)
+                .map(|(b, e)| format!("{}{}{}", &text[..b], edit.new_text, &text[e..]))
+        };
+        for (qid, r) in &self.graph.requirements {
+            let Some(src) = r.source.as_ref() else {
+                continue;
+            };
+            if src.doc != edit.doc || src.section != edit.section || handled(qid) {
+                continue;
+            }
+            let Some(new_quote) = splice(&src.quote) else {
+                continue;
+            };
+            out.push(Op::UpdateRequirement {
+                id: qid.clone(),
+                statement: splice(&r.statement),
+                entities: None,
+                edges: None,
+                transition: None,
+                facets: None,
+                source: Some(SourceRef {
+                    doc: edit.doc.clone(),
+                    section: edit.section.clone(),
+                    quote: new_quote,
+                }),
+                provenance: None,
+            });
+        }
+        for (eid, e) in &self.graph.entities {
+            if handled(eid) {
+                continue;
+            }
+            for m in &e.mentions {
+                if m.doc != edit.doc || m.section != edit.section {
+                    continue;
+                }
+                let Some(new_quote) = splice(&m.quote) else {
+                    continue;
+                };
+                out.push(Op::PlaceAnchor {
+                    id: eid.clone(),
+                    from: m.clone(),
+                    to: SourceRef {
+                        doc: edit.doc.clone(),
+                        section: edit.section.clone(),
+                        quote: new_quote,
+                    },
+                    reevaluate: false,
+                });
+            }
+        }
+        out
+    }
+
+    // The ratification proposal for a fact that stands with derived or decree
+    // provenance: a `ratification-pending` diagnostic whose prompt carries one `edit`
+    // option inserting the proposed sentence and one `answer` option that retracts.
+    // `sentence` is the fact's own text. A decree over a quoted fact (`former`) targets
+    // the former source and overwrites the former quote; otherwise the target is the
+    // section sourcing most of a derivation's `from` nodes, or the first entity's first
+    // mention, and the sentence is appended. `attribute` names the attribute when the
+    // fact is one. Mirrors docs/compiler/model/diagnostic.md#ratification-proposals.
+    pub fn ratification_proposal(
+        &self,
+        subject: &str,
+        sentence: &str,
+        provenance: &Provenance,
+        former: Option<&SourceRef>,
+        entities: &[String],
+        attribute: Option<&str>,
+    ) -> Diagnostic {
+        let anchor_of = |id: &str| -> Option<(String, String)> {
+            let id = self.resolve_id(id);
+            if let Some(r) = self.graph.requirements.get(id) {
+                return r
+                    .source
+                    .as_ref()
+                    .map(|s| (s.doc.clone(), s.section.clone()));
+            }
+            self.graph
+                .entities
+                .get(id)
+                .and_then(|e| e.mentions.first())
+                .map(|m| (m.doc.clone(), m.section.clone()))
+        };
+        let (kind, reasoning) = match provenance {
+            Provenance::Derived { from, reasoning } => (
+                "derived",
+                format!("{} (from {})", reasoning, from.join(", ")),
+            ),
+            Provenance::Decree { author, at, note } => (
+                "decreed",
+                format!(
+                    "decreed by {} at {}{}",
+                    author,
+                    at,
+                    note.as_ref()
+                        .map(|n| format!(": {}", n))
+                        .unwrap_or_default()
+                ),
+            ),
+            Provenance::Quote(s) => ("quoted", format!("{}#{}", s.doc, s.section)),
+        };
+        let target: Option<(String, String, String)> = match (former, provenance) {
+            (Some(f), _) => Some((f.doc.clone(), f.section.clone(), f.quote.clone())),
+            (None, Provenance::Derived { from, .. }) => {
+                let mut counts: Vec<((String, String), usize)> = Vec::new();
+                for id in from {
+                    if let Some(anchor) = anchor_of(id) {
+                        match counts.iter_mut().find(|(a, _)| *a == anchor) {
+                            Some((_, n)) => *n += 1,
+                            None => counts.push((anchor, 1)),
+                        }
+                    }
+                }
+                counts
+                    .iter()
+                    .max_by_key(|(_, n)| *n)
+                    .map(|((d, s), _)| (d.clone(), s.clone(), String::new()))
+            }
+            _ => None,
+        }
+        .or_else(|| {
+            std::iter::once(subject)
+                .chain(entities.iter().map(String::as_str))
+                .find_map(anchor_of)
+                .map(|(d, s)| (d, s, String::new()))
+        });
+        let what = match attribute {
+            Some(a) => format!("{}'s attribute `{}`", subject, a),
+            None => subject.to_string(),
+        };
+        let mut options = Vec::new();
+        let question = match &target {
+            Some((doc, section, old)) => {
+                options.push(PromptOption {
+                    label: if old.is_empty() {
+                        format!("Insert into {} {}", doc, section)
+                    } else {
+                        format!("Replace the sentence in {} {}", doc, section)
+                    },
+                    edit: Some(SuggestedEdit {
+                        doc: doc.clone(),
+                        section: section.clone(),
+                        old_text: old.clone(),
+                        new_text: sentence.to_string(),
+                    }),
+                    answer: None,
+                });
+                format!("Should {} state it? \"{}\"", doc, sentence)
+            }
+            None => format!("Should the documents state it? \"{}\"", sentence),
+        };
+        options.push(PromptOption {
+            label: "Retract".to_string(),
+            edit: None,
+            answer: Some("retract".to_string()),
+        });
+        Diagnostic {
+            rule: "ratification-pending".to_string(),
+            severity: "warning".to_string(),
+            subjects: vec![subject.to_string()],
+            message: format!("{} is {} and no document states it.", what, kind),
+            reasoning: Some(reasoning),
+            lifecycle: "open".to_string(),
+            triage: None,
+            prompt: Some(DiagnosticPrompt {
+                question,
+                options,
+                freeform: true,
+            }),
+            answer: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    // ---- commit ----
+
+    // Apply a staged changeset atomically: reconcile creates by natural key against nodes
+    // committed concurrently, apply ops in order under the commit-time gates, propagate
+    // deletions, recompute derived data, write the change records, journal, bump the
+    // generation, write shards. Mirrors docs/compiler/graph.md#changesets.
+    pub fn apply(&mut self, ops: Vec<Op>, commit: &Commit) -> CommitReport {
         let _flock = FileLock::acquire(&self.out);
-        let build = format!("g{}", self.status.generation + 1);
+        let generation = self.status.generation + 1;
+        let build = format!("g{}", generation);
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
         let mut skipped: Vec<String> = Vec::new();
-        let mut touched: BTreeSet<String> = BTreeSet::new();
-        let mut changed_reqs: BTreeSet<String> = BTreeSet::new();
         let mut applied: Vec<Op> = Vec::new();
+        let mut dirt = Dirt::default();
+        let mut batch = RecordBatch::new(generation);
 
         let resolve = |remap: &BTreeMap<String, String>, store: &Store, id: &str| -> String {
             let id = remap.get(id).cloned().unwrap_or_else(|| id.to_string());
             store.resolve_id(&id).to_string()
         };
 
+        // A prose edit is never staged alone: it rides with the graph mutation it carries.
+        let ops = if !ops.is_empty() && ops.iter().all(|o| matches!(o, Op::EditDocProse { .. })) {
+            skipped.push(
+                "edit_doc_prose: edit-needs-mutation; stage the graph mutation in the same changeset"
+                    .to_string(),
+            );
+            Vec::new()
+        } else {
+            ops
+        };
+        // The old text must still stand in the stored section, or the document moved
+        // underneath the edit and the whole pair skips: a document edited underneath
+        // loses the edit, never its consistency.
+        let stale: Vec<String> = ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::EditDocProse {
+                    doc,
+                    section,
+                    old_text,
+                    ..
+                } if !old_text.trim().is_empty() => {
+                    let present = self
+                        .docs
+                        .get(doc)
+                        .and_then(|d| d.sections.get(section))
+                        .is_some_and(|s| text_contains(&s.raw, old_text));
+                    (!present).then(|| {
+                        format!(
+                            "edit_doc_prose: edit-stale; the old text no longer stands in {}#{}",
+                            doc, section
+                        )
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        let ops = if stale.is_empty() {
+            ops
+        } else {
+            skipped.extend(stale);
+            Vec::new()
+        };
+
         for op in ops {
+            // The 1-based index this op takes in the journal if it lands.
+            let m = applied.len() + 1;
             match op {
                 Op::CreateEntity { id, mut entity } => {
                     entity.created = Some(build.clone());
                     entity.updated = Some(build.clone());
+                    if let Some(p) = entity.parent.as_ref() {
+                        let p = resolve(&remap, self, p);
+                        if !self.graph.entities.contains_key(&p) {
+                            skipped.push(format!("create_entity {}: unknown parent {}", id, p));
+                            continue;
+                        }
+                        entity.parent = Some(p);
+                    }
+                    if let Some(Provenance::Derived { from, .. }) = entity.provenance.as_mut() {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    if !entity.mentions.is_empty() {
+                        entity.provenance = None;
+                    }
                     // Commit-time natural-key reconciliation: a create whose key now matches
                     // an existing node becomes an update, with mentions unioned.
-                    if let Some(existing) = self.find_natural(&entity.name, &entity.scope) {
+                    let found = match self.find_natural(
+                        &entity.name,
+                        &entity.scope,
+                        entity.parent.as_deref(),
+                    ) {
+                        Ok(found) => found,
+                        Err(candidates) => {
+                            skipped.push(format!(
+                                "create_entity {}: ambiguous name `{}` ({}); pass parent to say which",
+                                id,
+                                entity.name,
+                                candidates.join(", ")
+                            ));
+                            continue;
+                        }
+                    };
+                    if let Some(existing) = found {
                         remap.insert(id.clone(), existing.clone());
                         let e = self.graph.entities.get_mut(&existing).unwrap();
+                        let had_mentions = !entity.mentions.is_empty();
                         for m in entity.mentions {
                             if !e.mentions.contains(&m) {
                                 e.mentions.push(m);
                             }
+                        }
+                        if had_mentions {
+                            e.provenance = None;
                         }
                         if e.definition.as_deref().unwrap_or("").is_empty() {
                             e.definition = entity.definition.clone();
@@ -678,14 +1760,28 @@ impl Store {
                                 e.aliases.push(a);
                             }
                         }
+                        if e.stereotype.is_none() {
+                            e.stereotype = entity.stereotype.clone();
+                        }
+                        for attr in &entity.attributes {
+                            match e.attributes.iter_mut().find(|x| x.name == attr.name) {
+                                Some(mine) => *mine = attr.clone(),
+                                None => e.attributes.push(attr.clone()),
+                            }
+                        }
                         e.updated = Some(build.clone());
-                        touched.insert(existing.clone());
+                        dirt.entity(&existing, m, "fields");
                         applied.push(Op::UpdateEntity {
                             id: existing,
                             name: None,
                             definition: entity.definition,
                             add_aliases: Vec::new(),
                             add_mention: None,
+                            stereotype: entity.stereotype,
+                            parent: None,
+                            set_attributes: None,
+                            add_attributes: entity.attributes,
+                            provenance: None,
                         });
                     } else {
                         // The store mints ids: a non-canonical or colliding staged id is re-minted.
@@ -699,89 +1795,235 @@ impl Store {
                         if final_id != id {
                             remap.insert(id, final_id.clone());
                         }
-                        touched.insert(final_id.clone());
-                        applied.push(Op::CreateEntity { id: final_id.clone(), entity: entity.clone() });
+                        dirt.entity(&final_id, m, "fields");
+                        if let Some(p) = entity.provenance.as_ref() {
+                            dirt.pending(&final_id, m, p);
+                        }
+                        applied.push(Op::CreateEntity {
+                            id: final_id.clone(),
+                            entity: entity.clone(),
+                        });
                         self.graph.entities.insert(final_id, entity);
                     }
                 }
-                Op::UpdateEntity { id, name, definition, add_aliases, add_mention } => {
+                Op::UpdateEntity {
+                    id,
+                    name,
+                    definition,
+                    add_aliases,
+                    add_mention,
+                    stereotype,
+                    parent,
+                    set_attributes,
+                    add_attributes,
+                    provenance,
+                } => {
                     let rid = resolve(&remap, self, &id);
-                    match self.graph.entities.get_mut(&rid) {
-                        Some(e) => {
-                            if let Some(n) = &name {
-                                e.name = n.clone();
-                            }
-                            if let Some(d) = &definition {
-                                e.definition = Some(d.clone());
-                            }
-                            for a in &add_aliases {
-                                if !e.aliases.contains(a) {
-                                    e.aliases.push(a.clone());
-                                }
-                            }
-                            if let Some(m) = &add_mention {
-                                if !e.mentions.contains(m) {
-                                    e.mentions.push(m.clone());
-                                }
-                            }
-                            e.updated = Some(build.clone());
-                            touched.insert(rid.clone());
-                            applied.push(Op::UpdateEntity { id: rid, name, definition, add_aliases, add_mention });
-                        }
-                        None => skipped.push(format!("update_entity: unknown id {}", rid)),
+                    if !self.graph.entities.contains_key(&rid) {
+                        skipped.push(format!("update_entity: unknown id {}", rid));
+                        continue;
                     }
+                    // The parent must exist and the tree stays acyclic.
+                    let parent = match parent {
+                        Some(p) => {
+                            let p = resolve(&remap, self, &p);
+                            if !self.graph.entities.contains_key(&p) {
+                                skipped
+                                    .push(format!("update_entity {}: unknown parent {}", rid, p));
+                                continue;
+                            }
+                            if p == rid || self.is_ancestor(&rid, &p) {
+                                let mut chain = vec![p.clone()];
+                                chain.extend(self.ancestors(&p));
+                                skipped.push(format!(
+                                    "update_entity {}: parent cycle through {}",
+                                    rid,
+                                    chain.join(" > ")
+                                ));
+                                continue;
+                            }
+                            Some(p)
+                        }
+                        None => None,
+                    };
+                    let mut provenance = provenance;
+                    if let Some(Provenance::Derived { from, .. }) = provenance.as_mut() {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    let e = self.graph.entities.get_mut(&rid).unwrap();
+                    if let Some(n) = &name {
+                        e.name = n.clone();
+                    }
+                    if let Some(d) = &definition {
+                        e.definition = Some(d.clone());
+                    }
+                    for a in &add_aliases {
+                        if !e.aliases.contains(a) {
+                            e.aliases.push(a.clone());
+                        }
+                    }
+                    if let Some(m) = &add_mention {
+                        if !e.mentions.contains(m) {
+                            e.mentions.push(m.clone());
+                        }
+                        // A mention that names the entity makes it quoted.
+                        e.provenance = None;
+                    }
+                    if let Some(s) = &stereotype {
+                        e.stereotype = Some(s.clone());
+                    }
+                    if let Some(p) = &parent {
+                        e.parent = Some(p.clone());
+                    }
+                    if let Some(attrs) = &set_attributes {
+                        e.attributes = attrs.clone();
+                    }
+                    for attr in &add_attributes {
+                        match e.attributes.iter_mut().find(|x| x.name == attr.name) {
+                            Some(mine) => *mine = attr.clone(),
+                            None => e.attributes.push(attr.clone()),
+                        }
+                    }
+                    if let Some(p) = &provenance {
+                        e.provenance = Some(p.clone());
+                        dirt.pending(&rid, m, p);
+                    }
+                    e.updated = Some(build.clone());
+                    dirt.entity(&rid, m, "fields");
+                    applied.push(Op::UpdateEntity {
+                        id: rid,
+                        name,
+                        definition,
+                        add_aliases,
+                        add_mention,
+                        stereotype,
+                        parent,
+                        set_attributes,
+                        add_attributes,
+                        provenance,
+                    });
                 }
                 Op::DeleteEntity { id, reason } => {
                     let rid = resolve(&remap, self, &id);
-                    if !self.requirements_referencing(&rid).is_empty() {
-                        skipped.push(format!("delete_entity {}: still referenced", rid));
-                    } else if self.graph.entities.remove(&rid).is_some() {
-                        self.graph.redirects.insert(rid.clone(), String::new());
-                        touched.insert(rid.clone());
-                        applied.push(Op::DeleteEntity { id: rid, reason });
-                    } else {
+                    if !self.graph.entities.contains_key(&rid) {
                         skipped.push(format!("delete_entity: unknown id {}", rid));
+                        continue;
                     }
+                    let refs = self.requirements_referencing(&rid);
+                    if !refs.is_empty() {
+                        skipped.push(format!(
+                            "delete_entity {}: still referenced by {}",
+                            rid,
+                            refs.join(", ")
+                        ));
+                        continue;
+                    }
+                    let children = self.children_of(&rid);
+                    if !children.is_empty() {
+                        skipped.push(format!(
+                            "delete_entity {}: still a parent of {}",
+                            rid,
+                            children.join(", ")
+                        ));
+                        continue;
+                    }
+                    self.graph.entities.remove(&rid);
+                    self.graph.redirects.insert(rid.clone(), String::new());
+                    dirt.deleted(&rid, m);
+                    applied.push(Op::DeleteEntity { id: rid, reason });
                 }
-                Op::MergeEntities { keep, absorb, reason } => {
+                Op::MergeEntities {
+                    keep,
+                    absorb,
+                    reason,
+                } => {
                     let keep = resolve(&remap, self, &keep);
                     let absorb = resolve(&remap, self, &absorb);
                     if keep == absorb || !self.graph.entities.contains_key(&keep) {
                         skipped.push(format!("merge_entities: bad pair {} {}", keep, absorb));
                         continue;
                     }
-                    let Some(ab) = self.graph.entities.remove(&absorb) else {
+                    if !self.graph.entities.contains_key(&absorb) {
                         skipped.push(format!("merge_entities: unknown id {}", absorb));
                         continue;
+                    }
+                    // A merge never makes the survivor its own ancestor.
+                    if self.is_ancestor(&absorb, &keep) {
+                        skipped.push(format!(
+                            "merge_entities: {} is contained in {}; merging would make it its own ancestor",
+                            keep, absorb
+                        ));
+                        continue;
+                    }
+                    let ab = self.graph.entities.remove(&absorb).unwrap();
+                    let rewire = |id: &mut String| {
+                        if *id == absorb {
+                            *id = keep.clone();
+                        }
+                    };
+                    let rewire_provenance = |p: &mut Option<Provenance>| {
+                        if let Some(Provenance::Derived { from, .. }) = p.as_mut() {
+                            from.iter_mut().for_each(rewire);
+                            from.dedup();
+                        }
                     };
                     for r in self.graph.requirements.values_mut() {
-                        for e in r.entities.iter_mut() {
-                            if *e == absorb {
-                                *e = keep.clone();
-                            }
-                        }
+                        r.entities.iter_mut().for_each(rewire);
                         r.entities.dedup();
                         for edge in r.edges.iter_mut() {
-                            if edge.a == absorb {
-                                edge.a = keep.clone();
-                            }
-                            if edge.b == absorb {
-                                edge.b = keep.clone();
-                            }
+                            rewire(&mut edge.a);
+                            rewire(&mut edge.b);
                         }
                         r.edges.retain(|e| e.a != e.b);
+                        if let Some(t) = r.transition.as_mut() {
+                            rewire(&mut t.subject);
+                        }
+                        rewire_provenance(&mut r.provenance);
                     }
-                    for d in self.graph.diagnostics.values_mut() {
-                        for s in d.subjects.iter_mut() {
-                            if *s == absorb {
-                                *s = keep.clone();
+                    for e in self.graph.entities.values_mut() {
+                        if let Some(p) = e.parent.as_mut() {
+                            rewire(p);
+                        }
+                        rewire_provenance(&mut e.provenance);
+                        for a in e.attributes.iter_mut() {
+                            let mut p = Some(a.provenance.clone());
+                            rewire_provenance(&mut p);
+                            a.provenance = p.unwrap();
+                        }
+                    }
+                    for v in self.graph.views.values_mut() {
+                        v.members.iter_mut().for_each(rewire);
+                        v.members.dedup();
+                        v.collapse.iter_mut().for_each(rewire);
+                        v.collapse.dedup();
+                        for x in v.excluded.iter_mut() {
+                            rewire(&mut x.id);
+                        }
+                        if let Some(q) = v.query.as_mut() {
+                            if let Some(p) = q.parent.as_mut() {
+                                rewire(p);
                             }
                         }
+                        rewire_provenance(&mut v.provenance);
+                    }
+                    for d in self.graph.diagnostics.values_mut() {
+                        d.subjects.iter_mut().for_each(rewire);
                         d.subjects.dedup();
                     }
+                    let adopt_parent = match (
+                        self.graph.entities[&keep].parent.is_none(),
+                        ab.parent.as_deref(),
+                    ) {
+                        (true, Some(p)) if p != keep && !self.is_ancestor(&keep, p) => {
+                            Some(p.to_string())
+                        }
+                        _ => None,
+                    };
                     {
                         let k = self.graph.entities.get_mut(&keep).unwrap();
-                        if !k.aliases.contains(&ab.name) && normalize(&ab.name) != normalize(&k.name) {
+                        if !k.aliases.contains(&ab.name)
+                            && normalize(&ab.name) != normalize(&k.name)
+                        {
                             k.aliases.push(ab.name.clone());
                         }
                         for a in ab.aliases {
@@ -794,54 +2036,147 @@ impl Store {
                                 k.mentions.push(m);
                             }
                         }
+                        // The survivor's attribute stands on a name clash.
+                        for attr in ab.attributes {
+                            if !k.attributes.iter().any(|x| x.name == attr.name) {
+                                k.attributes.push(attr);
+                            }
+                        }
                         if k.definition.as_deref().unwrap_or("").is_empty() {
                             k.definition = ab.definition;
+                        }
+                        if k.stereotype.is_none() {
+                            k.stereotype = ab.stereotype;
+                        }
+                        if let Some(p) = adopt_parent {
+                            k.parent = Some(p);
+                        }
+                        if !k.mentions.is_empty() {
+                            k.provenance = None;
                         }
                         k.updated = Some(build.clone());
                     }
                     self.graph.redirects.insert(absorb.clone(), keep.clone());
-                    touched.insert(keep.clone());
-                    applied.push(Op::MergeEntities { keep, absorb, reason });
+                    dirt.entity(&keep, m, "merge");
+                    applied.push(Op::MergeEntities {
+                        keep,
+                        absorb,
+                        reason,
+                    });
                 }
-                Op::CreateRequirement { id, mut requirement } => {
-                    requirement.entities = requirement.entities.iter().map(|e| resolve(&remap, self, e)).collect();
+                Op::CreateRequirement {
+                    id,
+                    mut requirement,
+                } => {
+                    requirement.entities = requirement
+                        .entities
+                        .iter()
+                        .map(|e| resolve(&remap, self, e))
+                        .collect();
                     requirement.entities.dedup();
                     for edge in requirement.edges.iter_mut() {
                         edge.a = resolve(&remap, self, &edge.a);
                         edge.b = resolve(&remap, self, &edge.b);
                     }
-                    if let Some(missing) = requirement.entities.iter().find(|e| !self.graph.entities.contains_key(*e)) {
-                        skipped.push(format!("create_requirement {}: unknown entity {}", id, missing));
+                    if let Some(t) = requirement.transition.as_mut() {
+                        t.subject = resolve(&remap, self, &t.subject);
+                    }
+                    if let Some(Provenance::Derived { from, .. }) = requirement.provenance.as_mut()
+                    {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    if requirement.source.is_some() {
+                        requirement.provenance = None;
+                    }
+                    if requirement.source.is_none() && requirement.provenance.is_none() {
+                        skipped.push(format!(
+                            "create_requirement {}: no provenance (a quote source, a derivation, or a decree)",
+                            id
+                        ));
                         continue;
                     }
-                    // Natural key for requirements: source section plus the punctuation-
-                    // insensitive statement. A same-statement create becomes an update,
-                    // never a duplicate; a lightly reworded statement refreshes in place.
-                    // A re-extraction from the same source sentence whose statement
-                    // subsumes (or is subsumed by) the existing one is the same fact
-                    // reworded and also refreshes in place. A create staged under an
-                    // existing id whose statement subsumes the incoming one in the same
-                    // section is the stage-time resolution of a stale anchor: it folds
-                    // into that id (an accidental id race with a different statement
-                    // still re-mints below).
+                    if let Some(missing) = requirement
+                        .entities
+                        .iter()
+                        .find(|e| !self.graph.entities.contains_key(*e))
+                    {
+                        skipped.push(format!(
+                            "create_requirement {}: unknown entity {}",
+                            id, missing
+                        ));
+                        continue;
+                    }
+                    if let Some(t) = requirement.transition.as_ref() {
+                        if !requirement.entities.contains(&t.subject) {
+                            skipped.push(format!(
+                                "create_requirement {}: transition subject {} not among entities",
+                                id, t.subject
+                            ));
+                            continue;
+                        }
+                    }
+                    // Natural key: source section plus the punctuation-insensitive
+                    // statement for a quoted requirement (a same-sentence reword that
+                    // subsumes the existing statement refreshes in place too); the
+                    // statement within its `from` set for a derived one; the statement
+                    // alone for a decree. A create staged under an existing id whose
+                    // statement subsumes the incoming one in the same section is the
+                    // stage-time resolution of a stale anchor and folds into that id.
+                    let same_key = |r: &Requirement, incoming: &Requirement| -> bool {
+                        let same_statement = normalize_statement(&r.statement)
+                            == normalize_statement(&incoming.statement);
+                        match (
+                            &r.source,
+                            &incoming.source,
+                            &r.provenance,
+                            &incoming.provenance,
+                        ) {
+                            (Some(a), Some(b), _, _) => {
+                                a.doc == b.doc
+                                    && a.section == b.section
+                                    && (same_statement
+                                        || (normalize_statement(&a.quote)
+                                            == normalize_statement(&b.quote)
+                                            && statement_subsumes(
+                                                &r.statement,
+                                                &incoming.statement,
+                                            )))
+                            }
+                            (
+                                None,
+                                None,
+                                Some(Provenance::Derived { from: fa, .. }),
+                                Some(Provenance::Derived { from: fb, .. }),
+                            ) => {
+                                same_statement
+                                    && fa.iter().collect::<BTreeSet<_>>()
+                                        == fb.iter().collect::<BTreeSet<_>>()
+                            }
+                            (
+                                None,
+                                None,
+                                Some(Provenance::Decree { .. }),
+                                Some(Provenance::Decree { .. }),
+                            ) => same_statement,
+                            _ => false,
+                        }
+                    };
+                    let same_anchor = |r: &Requirement, incoming: &Requirement| -> bool {
+                        match (&r.source, &incoming.source) {
+                            (Some(a), Some(b)) => a.doc == b.doc && a.section == b.section,
+                            _ => false,
+                        }
+                    };
                     let fold_target = self
                         .graph
                         .requirements
                         .iter()
-                        .find(|(_, r)| {
-                            r.source.doc == requirement.source.doc
-                                && r.source.section == requirement.source.section
-                                && (normalize_statement(&r.ears) == normalize_statement(&requirement.ears)
-                                    || (normalize_statement(&r.source.quote)
-                                        == normalize_statement(&requirement.source.quote)
-                                        && statement_subsumes(&r.ears, &requirement.ears)))
-                        })
+                        .find(|(_, r)| same_key(r, &requirement))
                         .map(|(rid, _)| rid.clone())
                         .or_else(|| {
                             self.graph.requirements.get(&id).and_then(|r| {
-                                (r.source.doc == requirement.source.doc
-                                    && r.source.section == requirement.source.section
-                                    && statement_subsumes(&r.ears, &requirement.ears))
+                                (same_anchor(r, &requirement)
+                                    && statement_subsumes(&r.statement, &requirement.statement))
                                 .then(|| id.clone())
                             })
                         });
@@ -853,40 +2188,61 @@ impl Store {
                                 r.entities.push(e.clone());
                             }
                         }
+                        // Edges are directional: the same pair in the other direction, or
+                        // under another type, is another edge.
                         for edge in requirement.edges {
-                            if !r.edges.iter().any(|x| (x.a == edge.a && x.b == edge.b) || (x.a == edge.b && x.b == edge.a)) {
+                            if !r.edges.iter().any(|x| {
+                                x.a == edge.a && x.b == edge.b && x.rel_type == edge.rel_type
+                            }) {
                                 r.edges.push(edge);
                             }
                         }
-                        // The matched statement's ears and quote refresh in place (same
+                        if requirement.transition.is_some() {
+                            r.transition = requirement.transition.clone();
+                        }
+                        if !requirement.facets.is_empty() {
+                            r.facets = requirement.facets.clone();
+                        }
+                        // The matched statement and quote refresh in place (same
                         // statement modulo punctuation); the id never churns. A refresh
                         // that changes something is journaled as the update it is.
-                        let mut refreshed_ears: Option<String> = None;
+                        let mut refreshed_statement: Option<String> = None;
                         let mut refreshed_source: Option<SourceRef> = None;
-                        if r.ears != requirement.ears {
-                            r.ears = requirement.ears.clone();
-                            refreshed_ears = Some(requirement.ears.clone());
-                            changed_reqs.insert(existing.clone());
+                        if r.statement != requirement.statement {
+                            r.statement = requirement.statement.clone();
+                            refreshed_statement = Some(requirement.statement.clone());
+                            dirt.revised(&existing, m, "fields");
                         }
-                        if r.source.quote != requirement.source.quote {
-                            // A quote that changed in substance (not punctuation) means
-                            // the document text under the statement changed: revised,
-                            // even when the turn kept the old wording.
-                            if normalize_statement(&r.source.quote) != normalize_statement(&requirement.source.quote) {
-                                changed_reqs.insert(existing.clone());
+                        if let Some(incoming) = requirement.source.as_ref() {
+                            let old_quote = r.source.as_ref().map(|s| s.quote.clone());
+                            if old_quote.as_deref() != Some(incoming.quote.as_str()) {
+                                // A quote that changed in substance (not punctuation) means
+                                // the document text under the statement changed: revised,
+                                // even when the session kept the old wording.
+                                if old_quote.map(|q| normalize_statement(&q))
+                                    != Some(normalize_statement(&incoming.quote))
+                                {
+                                    dirt.revised(&existing, m, "quote");
+                                }
+                                r.source = Some(incoming.clone());
+                                r.provenance = None;
+                                refreshed_source = Some(incoming.clone());
                             }
-                            r.source = requirement.source.clone();
-                            refreshed_source = Some(requirement.source.clone());
                         }
                         r.updated = Some(build.clone());
-                        touched.extend(r.entities.iter().cloned());
-                        if refreshed_ears.is_some() || refreshed_source.is_some() {
+                        let ents = r.entities.clone();
+                        dirt.entities(ents.iter(), m);
+                        dirt.named(&existing, m);
+                        if refreshed_statement.is_some() || refreshed_source.is_some() {
                             applied.push(Op::UpdateRequirement {
                                 id: existing,
-                                ears: refreshed_ears,
+                                statement: refreshed_statement,
                                 entities: None,
                                 edges: None,
+                                transition: None,
+                                facets: None,
                                 source: refreshed_source,
+                                provenance: None,
                             });
                         }
                         continue;
@@ -894,80 +2250,564 @@ impl Store {
                     requirement.created = Some(build.clone());
                     requirement.updated = Some(build.clone());
                     let mut final_id = id.clone();
-                    if !final_id.starts_with("req:") || self.graph.requirements.contains_key(&final_id) {
-                        final_id = self.mint_req_id(&requirement.source.doc, &BTreeSet::new());
+                    if !final_id.starts_with("req:")
+                        || self.graph.requirements.contains_key(&final_id)
+                    {
+                        final_id = self.mint_req_id(Self::req_stem(&requirement), &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
                     }
-                    touched.extend(requirement.entities.iter().cloned());
-                    changed_reqs.insert(final_id.clone());
+                    dirt.entities(requirement.entities.iter(), m);
+                    dirt.created(&final_id, m);
+                    if let Some(p) = requirement.provenance.as_ref() {
+                        dirt.pending(&final_id, m, p);
+                    }
                     // A committed requirement adds its source as a mention on every entity
                     // it references, so reuse accumulates cross-document presence.
-                    for e in &requirement.entities {
-                        if let Some(ent) = self.graph.entities.get_mut(e) {
-                            if !ent.mentions.contains(&requirement.source) {
-                                ent.mentions.push(requirement.source.clone());
-                                ent.updated = Some(build.clone());
+                    if let Some(src) = requirement.source.as_ref() {
+                        for e in &requirement.entities {
+                            if let Some(ent) = self.graph.entities.get_mut(e) {
+                                if !ent.mentions.contains(src) {
+                                    ent.mentions.push(src.clone());
+                                    ent.updated = Some(build.clone());
+                                }
                             }
                         }
                     }
-                    applied.push(Op::CreateRequirement { id: final_id.clone(), requirement: requirement.clone() });
+                    applied.push(Op::CreateRequirement {
+                        id: final_id.clone(),
+                        requirement: requirement.clone(),
+                    });
                     self.graph.requirements.insert(final_id, requirement);
                 }
-                Op::UpdateRequirement { id, ears, entities, edges, source } => {
+                Op::UpdateRequirement {
+                    id,
+                    statement,
+                    entities,
+                    edges,
+                    transition,
+                    facets,
+                    source,
+                    provenance,
+                } => {
                     let rid = resolve(&remap, self, &id);
-                    let resolved_entities = entities
-                        .map(|es| es.iter().map(|e| resolve(&remap, self, e)).collect::<Vec<_>>());
-                    match self.graph.requirements.get_mut(&rid) {
-                        Some(r) => {
-                            if let Some(e) = &ears {
-                                if r.ears != *e {
-                                    changed_reqs.insert(rid.clone());
-                                }
-                                r.ears = e.clone();
-                            }
-                            if let Some(es) = &resolved_entities {
-                                r.entities = es.clone();
-                            }
-                            if let Some(ed) = &edges {
-                                r.edges = ed.clone();
-                            }
-                            if let Some(s) = &source {
-                                // Same rule as the create fold: a re-anchored quote that
-                                // changed in substance marks the statement revised.
-                                if normalize_statement(&r.source.quote) != normalize_statement(&s.quote) {
-                                    changed_reqs.insert(rid.clone());
-                                }
-                                r.source = s.clone();
-                            }
-                            r.updated = Some(build.clone());
-                            touched.extend(r.entities.iter().cloned());
-                            applied.push(Op::UpdateRequirement { id: rid, ears, entities: resolved_entities, edges, source });
-                        }
-                        None => skipped.push(format!("update_requirement: unknown id {}", rid)),
+                    if !self.graph.requirements.contains_key(&rid) {
+                        skipped.push(format!("update_requirement: unknown id {}", rid));
+                        continue;
                     }
+                    let resolved_entities = entities.map(|es| {
+                        let mut v: Vec<String> =
+                            es.iter().map(|e| resolve(&remap, self, e)).collect();
+                        v.dedup();
+                        v
+                    });
+                    if let Some(es) = &resolved_entities {
+                        if let Some(missing) =
+                            es.iter().find(|e| !self.graph.entities.contains_key(*e))
+                        {
+                            skipped.push(format!(
+                                "update_requirement {}: unknown entity {}",
+                                rid, missing
+                            ));
+                            continue;
+                        }
+                    }
+                    let edges = edges.map(|ed| {
+                        ed.into_iter()
+                            .map(|mut e| {
+                                e.a = resolve(&remap, self, &e.a);
+                                e.b = resolve(&remap, self, &e.b);
+                                e
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let transition = transition.map(|mut t| {
+                        t.subject = resolve(&remap, self, &t.subject);
+                        t
+                    });
+                    let mut provenance = provenance;
+                    if let Some(Provenance::Derived { from, .. }) = provenance.as_mut() {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    if let Some(t) = transition.as_ref() {
+                        let listed = resolved_entities
+                            .as_ref()
+                            .unwrap_or(&self.graph.requirements[&rid].entities)
+                            .contains(&t.subject);
+                        if !listed || !self.graph.entities.contains_key(&t.subject) {
+                            skipped.push(format!(
+                                "update_requirement {}: transition subject {} not among entities",
+                                rid, t.subject
+                            ));
+                            continue;
+                        }
+                    }
+                    let r = self.graph.requirements.get_mut(&rid).unwrap();
+                    let before: Vec<String> = r.entities.clone();
+                    if let Some(e) = &statement {
+                        if r.statement != *e {
+                            dirt.revised(&rid, m, "fields");
+                        }
+                        r.statement = e.clone();
+                    }
+                    if let Some(es) = &resolved_entities {
+                        r.entities = es.clone();
+                    }
+                    if let Some(ed) = &edges {
+                        r.edges = ed.clone();
+                    }
+                    if let Some(t) = &transition {
+                        r.transition = Some(t.clone());
+                    }
+                    if let Some(f) = &facets {
+                        r.facets = f.clone();
+                    }
+                    if let Some(s) = &source {
+                        // Same rule as the create fold: a re-anchored quote that
+                        // changed in substance marks the statement revised. A quote
+                        // landing on a derived or decreed fact makes it quoted.
+                        if r.source.as_ref().map(|q| normalize_statement(&q.quote))
+                            != Some(normalize_statement(&s.quote))
+                        {
+                            dirt.revised(&rid, m, "quote");
+                        }
+                        r.source = Some(s.clone());
+                        r.provenance = None;
+                    } else if let Some(p) = &provenance {
+                        // A decree or derivation over the fact: the quote gives way.
+                        r.source = None;
+                        r.provenance = Some(p.clone());
+                        dirt.pending(&rid, m, p);
+                    }
+                    r.updated = Some(build.clone());
+                    let after = r.entities.clone();
+                    dirt.entities(before.iter().chain(after.iter()), m);
+                    dirt.named(&rid, m);
+                    applied.push(Op::UpdateRequirement {
+                        id: rid,
+                        statement,
+                        entities: resolved_entities,
+                        edges,
+                        transition,
+                        facets,
+                        source,
+                        provenance,
+                    });
                 }
                 Op::DeleteRequirement { id, reason } => {
                     let rid = resolve(&remap, self, &id);
                     match self.graph.requirements.remove(&rid) {
                         Some(r) => {
-                            touched.extend(r.entities.iter().cloned());
+                            dirt.entities(r.entities.iter(), m);
+                            dirt.deleted(&rid, m);
                             applied.push(Op::DeleteRequirement { id: rid, reason });
                         }
                         None => skipped.push(format!("delete_requirement: unknown id {}", rid)),
                     }
                 }
-                Op::PlaceAnchor { id, from, to, reevaluate } => {
+                Op::CreateView { id, mut view } => {
+                    if !VIEW_KINDS.contains(&view.kind.as_str()) {
+                        skipped.push(format!(
+                            "create_view {}: unknown kind `{}`; one of: {}",
+                            id,
+                            view.kind,
+                            VIEW_KINDS.join(", ")
+                        ));
+                        continue;
+                    }
+                    if view.title.trim().is_empty() {
+                        skipped.push(format!("create_view {}: empty title", id));
+                        continue;
+                    }
+                    let Some(provenance) = view.provenance.take() else {
+                        skipped.push(format!("create_view {}: no provenance", id));
+                        continue;
+                    };
+                    let mut provenance = provenance;
+                    if let Provenance::Derived { from, .. } = &mut provenance {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    view.provenance = Some(provenance);
+                    view.members = view
+                        .members
+                        .iter()
+                        .map(|x| resolve(&remap, self, x))
+                        .collect();
+                    view.members.dedup();
+                    view.collapse = view
+                        .collapse
+                        .iter()
+                        .map(|x| resolve(&remap, self, x))
+                        .collect();
+                    for x in view.excluded.iter_mut() {
+                        x.id = resolve(&remap, self, &x.id);
+                    }
+                    if let Some(q) = view.query.as_mut() {
+                        if let Some(p) = q.parent.as_mut() {
+                            *p = resolve(&remap, self, p);
+                        }
+                    }
+                    if let Some(missing) = view
+                        .members
+                        .iter()
+                        .chain(view.collapse.iter())
+                        .chain(view.excluded.iter().map(|x| &x.id))
+                        .chain(view.query.iter().filter_map(|q| q.parent.as_ref()))
+                        .find(|x| !self.node_exists(x))
+                    {
+                        skipped.push(format!("create_view {}: unknown member {}", id, missing));
+                        continue;
+                    }
+                    // Natural key: kind plus title. A default under that key is curated
+                    // from here on.
+                    if let Some(existing) = self.find_view(&view.kind, &view.title) {
+                        remap.insert(id, existing.clone());
+                        let v = self.graph.views.get_mut(&existing).unwrap();
+                        if !view.members.is_empty() {
+                            v.members = view.members.clone();
+                        }
+                        for x in &view.excluded {
+                            if !v.excluded.iter().any(|y| y.id == x.id) {
+                                v.excluded.push(x.clone());
+                            }
+                        }
+                        if view.query.is_some() {
+                            v.query = view.query.clone();
+                        }
+                        if !view.collapse.is_empty() {
+                            v.collapse = view.collapse.clone();
+                        }
+                        v.provenance = view.provenance.clone();
+                        v.default = false;
+                        v.updated = Some(build.clone());
+                        applied.push(Op::UpdateView {
+                            id: existing,
+                            title: None,
+                            members: (!view.members.is_empty()).then(|| view.members.clone()),
+                            add_members: Vec::new(),
+                            remove_members: Vec::new(),
+                            query: view.query.clone(),
+                            collapse: (!view.collapse.is_empty()).then(|| view.collapse.clone()),
+                            exclude: view.excluded.clone(),
+                            reasoning: None,
+                        });
+                        continue;
+                    }
+                    let mut final_id = id.clone();
+                    if !final_id.starts_with("view:") || self.graph.views.contains_key(&final_id) {
+                        final_id = self.mint_view_id(&view.kind, &view.title, &BTreeSet::new());
+                    }
+                    if final_id != id {
+                        remap.insert(id, final_id.clone());
+                    }
+                    view.default = false;
+                    view.created = Some(build.clone());
+                    view.updated = Some(build.clone());
+                    applied.push(Op::CreateView {
+                        id: final_id.clone(),
+                        view: view.clone(),
+                    });
+                    self.graph.views.insert(final_id, view);
+                }
+                Op::UpdateView {
+                    id,
+                    title,
+                    members,
+                    add_members,
+                    remove_members,
+                    query,
+                    collapse,
+                    exclude,
+                    reasoning,
+                } => {
+                    let rid = resolve(&remap, self, &id);
+                    if !self.graph.views.contains_key(&rid) {
+                        skipped.push(format!("update_view: unknown id {}", rid));
+                        continue;
+                    }
+                    let res = |v: Vec<String>| -> Vec<String> {
+                        v.iter().map(|x| resolve(&remap, self, x)).collect()
+                    };
+                    let members = members.map(&res);
+                    let add_members = res(add_members);
+                    let remove_members = res(remove_members);
+                    let collapse = collapse.map(&res);
+                    let exclude: Vec<Exclusion> = exclude
+                        .into_iter()
+                        .map(|x| Exclusion {
+                            id: resolve(&remap, self, &x.id),
+                            note: x.note,
+                        })
+                        .collect();
+                    let query = query.map(|mut q| {
+                        if let Some(p) = q.parent.as_mut() {
+                            *p = resolve(&remap, self, p);
+                        }
+                        q
+                    });
+                    if let Some(missing) = members
+                        .iter()
+                        .flatten()
+                        .chain(add_members.iter())
+                        .chain(collapse.iter().flatten())
+                        .chain(exclude.iter().map(|x| &x.id))
+                        .chain(query.iter().filter_map(|q| q.parent.as_ref()))
+                        .find(|x| !self.node_exists(x))
+                    {
+                        skipped.push(format!("update_view {}: unknown member {}", rid, missing));
+                        continue;
+                    }
+                    let v = self.graph.views.get_mut(&rid).unwrap();
+                    if let Some(t) = &title {
+                        v.title = t.clone();
+                    }
+                    if let Some(ms) = &members {
+                        v.members = ms.clone();
+                    }
+                    for x in &add_members {
+                        if !v.members.contains(x) {
+                            v.members.push(x.clone());
+                        }
+                    }
+                    v.members.retain(|x| !remove_members.contains(x));
+                    if let Some(q) = &query {
+                        v.query = Some(q.clone());
+                    }
+                    if let Some(c) = &collapse {
+                        v.collapse = c.clone();
+                    }
+                    for x in &exclude {
+                        v.members.retain(|y| y != &x.id);
+                        match v.excluded.iter_mut().find(|y| y.id == x.id) {
+                            Some(mine) => mine.note = x.note.clone(),
+                            None => v.excluded.push(x.clone()),
+                        }
+                    }
+                    if let Some(why) = &reasoning {
+                        if let Some(Provenance::Derived { reasoning: r, .. }) =
+                            v.provenance.as_mut()
+                        {
+                            *r = why.clone();
+                        }
+                    }
+                    // Any mutation naming a default view makes it curated.
+                    v.default = false;
+                    v.updated = Some(build.clone());
+                    applied.push(Op::UpdateView {
+                        id: rid,
+                        title,
+                        members,
+                        add_members,
+                        remove_members,
+                        query,
+                        collapse,
+                        exclude,
+                        reasoning,
+                    });
+                }
+                Op::DeleteView { id, reason } => {
+                    let rid = resolve(&remap, self, &id);
+                    match self.graph.views.get(&rid) {
+                        Some(v) if v.default => skipped.push(format!(
+                            "delete_view {}: a default view derives again at the next commit; curate it first (update_view clears default)",
+                            rid
+                        )),
+                        Some(_) => {
+                            self.graph.views.remove(&rid);
+                            dirt.deleted(&rid, m);
+                            applied.push(Op::DeleteView { id: rid, reason });
+                        }
+                        None => skipped.push(format!("delete_view: unknown id {}", rid)),
+                    }
+                }
+                Op::RatifyProvenance { id, source } => {
+                    let rid = resolve(&remap, self, &id);
+                    if !self.quote_locates(&source.doc, &source.section, &source.quote) {
+                        skipped.push(format!(
+                            "ratify_provenance {}: quote not found in {}#{}",
+                            rid, source.doc, source.section
+                        ));
+                        continue;
+                    }
+                    if let Some(r) = self.graph.requirements.get_mut(&rid) {
+                        if r.source.is_some() {
+                            skipped.push(format!("ratify_provenance {}: already quoted", rid));
+                            continue;
+                        }
+                        r.source = Some(source.clone());
+                        r.provenance = None;
+                        r.updated = Some(build.clone());
+                        let ents = r.entities.clone();
+                        for e in &ents {
+                            if let Some(ent) = self.graph.entities.get_mut(e) {
+                                if !ent.mentions.contains(&source) {
+                                    ent.mentions.push(source.clone());
+                                    ent.updated = Some(build.clone());
+                                }
+                            }
+                        }
+                        dirt.entities(ents.iter(), m);
+                    } else if let Some(e) = self.graph.entities.get_mut(&rid) {
+                        if e.provenance.is_none() {
+                            skipped.push(format!("ratify_provenance {}: already quoted", rid));
+                            continue;
+                        }
+                        if !e.mentions.contains(&source) {
+                            e.mentions.push(source.clone());
+                        }
+                        e.provenance = None;
+                        e.updated = Some(build.clone());
+                        dirt.entity(&rid, m, "mentions");
+                    } else if self.graph.views.contains_key(&rid) {
+                        skipped.push(format!("ratify_provenance {}: views are not ratified", rid));
+                        continue;
+                    } else {
+                        skipped.push(format!("ratify_provenance: unknown id {}", rid));
+                        continue;
+                    }
+                    self.status
+                        .clear_changes(&[CHANGE_PROVENANCE_PENDING], &rid);
+                    applied.push(Op::RatifyProvenance {
+                        id: rid.clone(),
+                        source,
+                    });
+                    applied.extend(self.resolve_ratification_diags(&rid, &build, "ratified"));
+                }
+                Op::RetractDecree { id, reason } => {
+                    let rid = resolve(&remap, self, &id);
+                    let pending =
+                        |p: &Option<Provenance>| p.as_ref().is_some_and(provenance_is_pending);
+                    if let Some(r) = self.graph.requirements.get(&rid) {
+                        if r.source.is_some() || !pending(&r.provenance) {
+                            skipped.push(format!("retract_decree {}: not a decree", rid));
+                            continue;
+                        }
+                        let r = self.graph.requirements.remove(&rid).unwrap();
+                        dirt.entities(r.entities.iter(), m);
+                        dirt.deleted(&rid, m);
+                    } else if let Some(e) = self.graph.entities.get(&rid) {
+                        if !pending(&e.provenance) {
+                            skipped.push(format!("retract_decree {}: not a decree", rid));
+                            continue;
+                        }
+                        let refs = self.requirements_referencing(&rid);
+                        if !refs.is_empty() {
+                            skipped.push(format!(
+                                "retract_decree {}: still referenced by {}",
+                                rid,
+                                refs.join(", ")
+                            ));
+                            continue;
+                        }
+                        let children = self.children_of(&rid);
+                        if !children.is_empty() {
+                            skipped.push(format!(
+                                "retract_decree {}: still a parent of {}",
+                                rid,
+                                children.join(", ")
+                            ));
+                            continue;
+                        }
+                        self.graph.entities.remove(&rid);
+                        self.graph.redirects.insert(rid.clone(), String::new());
+                        dirt.deleted(&rid, m);
+                    } else if let Some(v) = self.graph.views.get(&rid) {
+                        if v.default || !pending(&v.provenance) {
+                            skipped.push(format!("retract_decree {}: not a decree", rid));
+                            continue;
+                        }
+                        self.graph.views.remove(&rid);
+                        dirt.deleted(&rid, m);
+                    } else {
+                        skipped.push(format!("retract_decree: unknown id {}", rid));
+                        continue;
+                    }
+                    self.status
+                        .clear_changes(&[CHANGE_PROVENANCE_PENDING], &rid);
+                    applied.push(Op::RetractDecree {
+                        id: rid.clone(),
+                        reason: reason.clone(),
+                    });
+                    applied.extend(self.resolve_ratification_diags(&rid, &build, &reason));
+                }
+                Op::BumpLimit {
+                    id,
+                    limit,
+                    value,
+                    provenance,
+                } => {
+                    let rid = resolve(&remap, self, &id);
+                    if crate::limits::limit(&limit).is_none() {
+                        skipped.push(format!(
+                            "bump_limit {}: unknown limit `{}`; one of: {}",
+                            rid,
+                            limit,
+                            crate::limits::LIMITS
+                                .iter()
+                                .map(|l| l.name)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                        continue;
+                    }
+                    if value == 0 {
+                        skipped.push(format!("bump_limit {}: value must be positive", rid));
+                        continue;
+                    }
+                    let bump = LimitBump { value };
+                    if let Some(e) = self.graph.entities.get_mut(&rid) {
+                        if !crate::limits::ENTITY_LIMITS.contains(&limit.as_str()) {
+                            skipped.push(format!(
+                                "bump_limit {}: `{}` does not apply to an entity",
+                                rid, limit
+                            ));
+                            continue;
+                        }
+                        e.limits.insert(limit.clone(), bump);
+                        e.updated = Some(build.clone());
+                    } else if let Some(v) = self.graph.views.get_mut(&rid) {
+                        if !crate::limits::VIEW_LIMITS.contains(&limit.as_str()) {
+                            skipped.push(format!(
+                                "bump_limit {}: `{}` does not apply to a view",
+                                rid, limit
+                            ));
+                            continue;
+                        }
+                        v.limits.insert(limit.clone(), bump);
+                        v.default = false;
+                        v.updated = Some(build.clone());
+                    } else {
+                        skipped.push(format!("bump_limit: unknown id {}", rid));
+                        continue;
+                    }
+                    applied.push(Op::BumpLimit {
+                        id: rid,
+                        limit,
+                        value,
+                        provenance,
+                    });
+                }
+                Op::PlaceAnchor {
+                    id,
+                    from,
+                    to,
+                    reevaluate,
+                } => {
                     let rid = resolve(&remap, self, &id);
                     let locates = self.quote_locates(&to.doc, &to.section, &to.quote);
                     if let Some(r) = self.graph.requirements.get_mut(&rid) {
-                        if normalize_statement(&r.source.quote) != normalize_statement(&to.quote) {
-                            changed_reqs.insert(rid.clone());
+                        if r.source.as_ref().map(|s| normalize_statement(&s.quote))
+                            != Some(normalize_statement(&to.quote))
+                        {
+                            dirt.revised(&rid, m, "quote");
                         }
-                        let old_source = std::mem::replace(&mut r.source, to.clone());
+                        let old_source = std::mem::replace(&mut r.source, Some(to.clone()))
+                            .unwrap_or_else(|| from.clone());
+                        r.provenance = None;
                         r.updated = Some(build.clone());
-                        touched.extend(r.entities.iter().cloned());
+                        let ents = r.entities.clone();
+                        dirt.entities(ents.iter(), m);
                         // Mentions derived from this source at commit follow it.
                         for e in self.graph.entities.values_mut() {
                             if let Some(i) = e.mentions.iter().position(|m| *m == old_source) {
@@ -980,11 +2820,23 @@ impl Store {
                             }
                         }
                         // Flagged, or placed under a quote that does not locate: the
-                        // reconcile turn owes this anchor a decision.
-                        if (reevaluate || !locates) && !self.status.reevaluate.contains(&rid) {
-                            self.status.reevaluate.push(rid.clone());
+                        // reconcile session owes this anchor a decision.
+                        if reevaluate || !locates {
+                            if !self.status.reevaluate.contains(&rid) {
+                                self.status.reevaluate.push(rid.clone());
+                            }
+                            dirt.stale_anchors.push((
+                                format!("{}#{}", to.doc, to.section),
+                                rid.clone(),
+                                m,
+                            ));
                         }
-                        applied.push(Op::PlaceAnchor { id: rid, from, to, reevaluate });
+                        applied.push(Op::PlaceAnchor {
+                            id: rid,
+                            from,
+                            to,
+                            reevaluate,
+                        });
                     } else if let Some(e) = self.graph.entities.get_mut(&rid) {
                         match e.mentions.iter().position(|m| *m == from) {
                             Some(i) => {
@@ -994,10 +2846,18 @@ impl Store {
                                     e.mentions[i] = to.clone();
                                 }
                                 e.updated = Some(build.clone());
-                                touched.insert(rid.clone());
-                                applied.push(Op::PlaceAnchor { id: rid, from, to, reevaluate });
+                                dirt.entity(&rid, m, "mentions");
+                                applied.push(Op::PlaceAnchor {
+                                    id: rid,
+                                    from,
+                                    to,
+                                    reevaluate,
+                                });
                             }
-                            None => skipped.push(format!("place_anchor {}: no mention at {}#{}", rid, from.doc, from.section)),
+                            None => skipped.push(format!(
+                                "place_anchor {}: no mention at {}#{}",
+                                rid, from.doc, from.section
+                            )),
                         }
                     } else {
                         skipped.push(format!("place_anchor: unknown id {}", rid));
@@ -1008,11 +2868,16 @@ impl Store {
                     applied.push(Op::OrphanAnchor { id: rid, from });
                 }
                 Op::ReportDiagnostic { id, mut diagnostic } => {
-                    diagnostic.subjects = diagnostic.subjects.iter().map(|s| resolve(&remap, self, s)).collect();
+                    diagnostic.subjects = diagnostic
+                        .subjects
+                        .iter()
+                        .map(|s| resolve(&remap, self, s))
+                        .collect();
                     // Sticky: an open diagnostic with the same rule and subjects is updated,
                     // not duplicated. Subject order does not matter: a pair reported from
                     // either endpoint is the same finding. Human triage is never touched.
-                    let subject_set = |v: &[String]| -> BTreeSet<String> { v.iter().cloned().collect() };
+                    let subject_set =
+                        |v: &[String]| -> BTreeSet<String> { v.iter().cloned().collect() };
                     let incoming_subjects = subject_set(&diagnostic.subjects);
                     let existing = self
                         .graph
@@ -1038,21 +2903,31 @@ impl Store {
                             // the question; a promptless re-report keeps the old one.
                             if d.answer.is_none() && diagnostic.prompt.is_some() {
                                 d.prompt = diagnostic.prompt;
+                                dirt.prompt(&did, m, "report_diagnostic");
                             }
                             d.updated = Some(build.clone());
-                            // Journal the update as what it is: the merged diagnostic,
-                            // not an entity op carrying a diagnostic id.
+                            // Journal the update as what it is: the merged diagnostic.
                             let merged = d.clone();
-                            applied.push(Op::ReportDiagnostic { id: did, diagnostic: merged });
+                            applied.push(Op::ReportDiagnostic {
+                                id: did,
+                                diagnostic: merged,
+                            });
                         }
                         None => {
                             diagnostic.created = Some(build.clone());
                             diagnostic.updated = Some(build.clone());
                             let mut final_id = id.clone();
-                            if final_id.is_empty() || self.graph.diagnostics.contains_key(&final_id) {
+                            if final_id.is_empty() || self.graph.diagnostics.contains_key(&final_id)
+                            {
                                 final_id = self.mint_diag_id(&diagnostic.rule, &BTreeSet::new());
                             }
-                            applied.push(Op::ReportDiagnostic { id: final_id.clone(), diagnostic: diagnostic.clone() });
+                            if diagnostic.prompt.is_some() && diagnostic.answer.is_none() {
+                                dirt.prompt(&final_id, m, "report_diagnostic");
+                            }
+                            applied.push(Op::ReportDiagnostic {
+                                id: final_id.clone(),
+                                diagnostic: diagnostic.clone(),
+                            });
                             self.graph.diagnostics.insert(final_id, diagnostic);
                         }
                     }
@@ -1063,7 +2938,7 @@ impl Store {
                         Some(d) => {
                             d.lifecycle = "resolved".to_string();
                             // Resolving while an answer is being handled is the
-                            // handling turn finishing its work.
+                            // handling session finishing its work.
                             if let Some(a) = d.answer.as_mut() {
                                 if a.status == "handling" {
                                     a.status = "handled".to_string();
@@ -1092,6 +2967,9 @@ impl Store {
                         Some(d) => {
                             d.prompt = prompt.clone();
                             d.updated = Some(build.clone());
+                            if d.prompt.is_some() && d.answer.is_none() {
+                                dirt.prompt(&rid, m, "update_diagnostic");
+                            }
                             applied.push(Op::UpdateDiagnosticPrompt { id: rid, prompt });
                         }
                         None => skipped.push(format!("update_diagnostic: unknown id {}", rid)),
@@ -1108,127 +2986,298 @@ impl Store {
                         None => skipped.push(format!("answer_diagnostic: unknown id {}", rid)),
                     }
                 }
-                Op::EditDocProse { doc, section, old_text, new_text, text } => {
+                Op::EditDocProse {
+                    doc,
+                    section,
+                    old_text,
+                    new_text,
+                    text,
+                } => {
                     // The graph mutation paired with this edit lands in the same
                     // changeset; absorbing the new hashes here is its reconciliation,
                     // so the edit does not dirty the document it just reconciled.
                     // Mirrors docs/compiler/graph.md#mutations.
                     self.absorb_doc_edit(&doc, &text);
-                    applied.push(Op::EditDocProse { doc, section, old_text, new_text, text });
+                    applied.push(Op::EditDocProse {
+                        doc,
+                        section,
+                        old_text,
+                        new_text,
+                        text,
+                    });
                 }
-                Op::SetCoverage { doc, section, state, note } => {
-                    match self.docs.get_mut(&doc) {
-                        Some(rec) if rec.sections.contains_key(&section) => {
-                            rec.coverage.insert(
-                                section.clone(),
-                                Coverage { state: state.clone(), note: note.clone(), claimed_by: Some(build.clone()) },
-                            );
-                            applied.push(Op::SetCoverage { doc, section, state, note });
-                        }
-                        _ => skipped.push(format!("set_coverage: unknown section {}#{}", doc, section)),
+                Op::SetCoverage {
+                    doc,
+                    section,
+                    state,
+                    note,
+                } => match self.docs.get_mut(&doc) {
+                    Some(rec) if rec.sections.contains_key(&section) => {
+                        rec.coverage.insert(
+                            section.clone(),
+                            Coverage {
+                                state: state.clone(),
+                                note: note.clone(),
+                                claimed_by: Some(build.clone()),
+                            },
+                        );
+                        applied.push(Op::SetCoverage {
+                            doc,
+                            section,
+                            state,
+                            note,
+                        });
                     }
-                }
+                    _ => skipped.push(format!("set_coverage: unknown section {}#{}", doc, section)),
+                },
             }
         }
 
-        // Deletion propagation: the ops above may have removed diagnostic subjects.
-        let deleted: BTreeSet<String> = applied
+        // Deletion propagation: the ops above may have removed diagnostic subjects, view
+        // members, and derivation sources.
+        let auto_resolved = self.propagate_deletions(&dirt.deleted, &build, &mut batch);
+        applied.extend(auto_resolved);
+        self.deletion_ripple(&dirt.deleted, &mut batch);
+
+        // Derived data: relationships, state machines, default views, limit counts.
+        crate::derive::recompute(self, &build, &mut batch);
+
+        // The typed dirtiness this commit caused. Mirrors docs/compiler/graph.md#change-records.
+        for (id, (m, via)) in &dirt.entities {
+            if self.graph.entities.contains_key(id) {
+                batch.push(*m, CHANGE_ENTITY, id, via, serde_json::Value::Null);
+            }
+        }
+        for (id, m) in &dirt.created {
+            if self.graph.requirements.contains_key(id) {
+                batch.push(
+                    *m,
+                    CHANGE_REQ_CREATED,
+                    id,
+                    "section",
+                    serde_json::Value::Null,
+                );
+            }
+        }
+        for (id, (m, via)) in &dirt.revised {
+            if self.graph.requirements.contains_key(id) && !dirt.created.contains_key(id) {
+                batch.push(*m, CHANGE_REQ_REVISED, id, via, serde_json::Value::Null);
+            }
+        }
+        for (id, m) in &dirt.deleted {
+            let kind = match id_kind(id) {
+                "requirement" => CHANGE_REQ_DELETED,
+                "entity" => CHANGE_ENTITY_DELETED,
+                _ => continue,
+            };
+            batch.push(*m, kind, id, "fields", serde_json::Value::Null);
+        }
+        // Instances: an instance touched, or the type of one.
+        let types = crate::derive::instance_types(self);
+        for (id, (m, via)) in &dirt.entities {
+            if types.contains_key(id) {
+                batch.push(*m, CHANGE_INSTANCE, id, via, serde_json::Value::Null);
+            }
+            for (inst, ty) in &types {
+                if ty == id {
+                    batch.push(*m, CHANGE_INSTANCE, inst, "edges", serde_json::Value::Null);
+                }
+            }
+        }
+        for (id, m) in &dirt.named_reqs {
+            if let Some(r) = self.graph.requirements.get(id) {
+                if r.entities.len() >= 2 && r.edges.is_empty() {
+                    batch.push(
+                        *m,
+                        CHANGE_EDGES_MISSING,
+                        id,
+                        "edges",
+                        serde_json::Value::Null,
+                    );
+                }
+            }
+        }
+        for (id, (m, kind)) in &dirt.provenance_pending {
+            if self.node_exists(id) {
+                batch.push(
+                    *m,
+                    CHANGE_PROVENANCE_PENDING,
+                    id,
+                    "provenance",
+                    serde_json::json!({ "provenance": kind }),
+                );
+            }
+        }
+        for (id, (m, via)) in &dirt.prompts {
+            batch.push(
+                *m,
+                CHANGE_PROMPT_UNANSWERED,
+                id,
+                via,
+                serde_json::Value::Null,
+            );
+        }
+        for (section, anchor, m) in &dirt.stale_anchors {
+            self.push_stale_anchor(&mut batch, *m, section, anchor);
+        }
+
+        // A decided proposal leaves its document's alignment block; an emptied block
+        // goes. A resolved place-anchors goal clears its document's block outright.
+        let decided: Vec<(String, String)> = applied
             .iter()
             .filter_map(|o| match o {
-                Op::DeleteRequirement { id, .. } | Op::DeleteEntity { id, .. } => Some(id.clone()),
+                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from } => {
+                    Some((id.clone(), format!("{}#{}", from.doc, from.section)))
+                }
                 _ => None,
             })
             .collect();
-        let auto_resolved = self.propagate_deletions(&deleted, &build);
-        applied.extend(auto_resolved);
+        for b in self.status.alignment.iter_mut() {
+            b.proposals.retain(|p| {
+                !decided
+                    .iter()
+                    .any(|(id, from)| *id == p.anchor && *from == p.from)
+            });
+        }
+        self.status.alignment.retain(|b| !b.proposals.is_empty());
+        // An anchor under re-evaluation is addressed by an update, delete, or re-record
+        // on its id, or by the reconcile-section goal of its section.
+        let addressed: BTreeSet<String> = dirt
+            .named_reqs
+            .keys()
+            .chain(dirt.deleted.keys())
+            .cloned()
+            .collect();
+        let resolved_targets: Vec<(&str, &str)> = commit
+            .resolved
+            .iter()
+            .filter_map(|r| {
+                r.goal
+                    .strip_prefix("g:")
+                    .and_then(|rest| rest.split_once(':'))
+            })
+            .collect();
+        for (kind, target) in &resolved_targets {
+            if *kind == "place-anchors" {
+                self.status.alignment.retain(|b| b.doc != *target);
+            }
+        }
+        let reqs = &self.graph.requirements;
+        self.status.reevaluate.retain(|rid| {
+            if addressed.contains(rid) {
+                return false;
+            }
+            let Some(src) = reqs.get(rid).and_then(|r| r.source.as_ref()) else {
+                return false;
+            };
+            !resolved_targets.iter().any(|(kind, target)| {
+                *kind == "reconcile-section"
+                    && (*target == src.doc || *target == format!("{}#{}", src.doc, src.section))
+            })
+        });
 
-        self.recompute_relationships();
-        self.status.generation += 1;
-        self.status.spent.turns += 1;
-        self.status.spent.rounds += rounds as u64;
-        self.status.spent.tokens += tokens;
-        // A reconcile commit owes reviews for what it touched; recording them here is
-        // what makes the task queue derivable by any process, not just the loop that
-        // ran the ingest. Mirrors docs/compiler/reconciler.md#the-task-queue.
-        if work_item.task == "reconcile-doc" {
-            for id in &touched {
-                if self.graph.entities.contains_key(id) && !self.status.pending.entities.contains(id) {
-                    self.status.pending.entities.push(id.clone());
-                }
-            }
-            for id in &changed_reqs {
-                if self.graph.requirements.contains_key(id) && !self.status.pending.requirements.contains(id) {
-                    self.status.pending.requirements.push(id.clone());
-                }
-            }
-            // The done gate held the turn to every listed anchor; the re-evaluation
-            // debt is paid.
-            self.status.reevaluate.retain(|id| !work_item.stale_anchors.contains(id));
+        self.status.generation = generation;
+        if commit.kind == "session" {
+            self.status.spent.sessions += 1;
         }
-        // An align-doc commit decided its document's proposals.
-        if work_item.task == "align-doc" {
-            self.status.alignment.retain(|b| b.doc != work_item.target);
-        }
-        let entry = JournalEntry {
-            build: build.clone(),
-            work_item: work_item.clone(),
-            mutations: applied.iter().map(|o| serde_json::to_value(o).unwrap_or_default()).collect(),
-            rounds,
-            tokens,
-        };
-        write_yaml(
-            &self.out.join("journal").join(format!("{}.yaml", build)),
-            &entry,
+        self.status.spent.rounds += commit.rounds as u64;
+        self.status.spent.tokens += commit.tokens;
+        self.prune_records();
+        let changes = self.commit_records(batch);
+        let entry = self.journal_entry(
+            &build,
+            commit,
+            applied
+                .iter()
+                .map(|o| serde_json::to_value(o).unwrap_or_default())
+                .collect(),
         );
+        self.write_journal(&entry);
         self.save();
-        CommitReport { applied: applied.len(), skipped, touched_entities: touched, changed_requirements: changed_reqs }
-    }
-
-    // A completed review task pays its debt: the target leaves the pending block, and
-    // the queue stops offering it. Completion, not commit: a review that stages nothing
-    // still completes. Persists immediately so any process sees it.
-    pub fn complete_review(&mut self, task: &str, target: &str) {
-        let _flock = FileLock::acquire(&self.out);
-        match task {
-            "review-entity" => self.status.pending.entities.retain(|e| e != target),
-            "review-requirement" => self.status.pending.requirements.retain(|r| r != target),
-            _ => return,
+        CommitReport {
+            applied: applied.len(),
+            skipped,
+            generation,
+            changes,
+            touched_entities: dirt.entities.keys().cloned().collect(),
+            changed_requirements: dirt
+                .created
+                .keys()
+                .chain(dirt.revised.keys())
+                .cloned()
+                .collect(),
         }
-        self.save_status();
     }
 
-    // Relationships are a materialized view over requirements: group requirement edges by
-    // entity pair, union the contributing requirements, keep the strongest implied type.
-    pub fn recompute_relationships(&mut self) {
-        let mut edges: BTreeMap<String, Relationship> = BTreeMap::new();
-        for (rid, r) in &self.graph.requirements {
-            for e in &r.edges {
-                let a = self.resolve_id(&e.a).to_string();
-                let b = self.resolve_id(&e.b).to_string();
-                if a == b || !self.graph.entities.contains_key(&a) || !self.graph.entities.contains_key(&b) {
-                    continue;
-                }
-                let (x, y) = if a <= b { (&a, &b) } else { (&b, &a) };
-                let key = format!(
-                    "rel:{}~{}",
-                    x.strip_prefix("ent:").unwrap_or(x),
-                    y.strip_prefix("ent:").unwrap_or(y)
-                );
-                let t = e.rel_type.clone().unwrap_or_else(|| "reference".to_string());
-                let entry = edges.entry(key).or_insert_with(|| Relationship {
-                    rel_type: "reference".to_string(),
-                    members: vec![x.clone(), y.clone()],
-                    requirements: Vec::new(),
-                });
-                if rel_rank(&t) < rel_rank(&entry.rel_type) {
-                    entry.rel_type = t;
-                }
-                if !entry.requirements.contains(rid) {
-                    entry.requirements.push(rid.clone());
+    // An anchor-stale record on a section, its anchors merged with any earlier record
+    // on the same section.
+    fn push_stale_anchor(
+        &self,
+        batch: &mut RecordBatch,
+        mutation: usize,
+        section: &str,
+        anchor: &str,
+    ) {
+        let mut anchors: Vec<String> = self
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_ANCHOR_STALE && c.subject == section)
+            .flat_map(|c| c.detail["anchors"].as_array().cloned().unwrap_or_default())
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        if !anchors.contains(&anchor.to_string()) {
+            anchors.push(anchor.to_string());
+        }
+        anchors.sort();
+        if let Some(existing) = batch
+            .records
+            .iter_mut()
+            .find(|c| c.kind == CHANGE_ANCHOR_STALE && c.subject == section)
+        {
+            let mut merged: Vec<String> = existing.detail["anchors"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            for a in anchors {
+                if !merged.contains(&a) {
+                    merged.push(a);
                 }
             }
+            merged.sort();
+            existing.detail = serde_json::json!({ "anchors": merged });
+            return;
         }
-        self.graph.relationships = edges;
+        batch.push(
+            mutation,
+            CHANGE_ANCHOR_STALE,
+            section,
+            "quote",
+            serde_json::json!({ "anchors": anchors }),
+        );
+    }
+
+    // Resolve the open ratification-pending diagnostics on a fact, returning the
+    // journaled resolutions.
+    fn resolve_ratification_diags(&mut self, subject: &str, build: &str, reason: &str) -> Vec<Op> {
+        let mut out = Vec::new();
+        for (did, d) in self.graph.diagnostics.iter_mut() {
+            if d.lifecycle == "open"
+                && d.rule == "ratification-pending"
+                && d.subjects.iter().any(|s| s == subject)
+            {
+                d.lifecycle = "resolved".to_string();
+                d.updated = Some(build.to_string());
+                out.push(Op::ResolveDiagnostic {
+                    id: did.clone(),
+                    reason: reason.to_string(),
+                });
+            }
+        }
+        out
     }
 
     // ---- document sync (the dirty set) ----
@@ -1236,16 +3285,32 @@ impl Store {
     // Bring the stored document records in line with a fresh parse. Returns the dirty work.
     // Alignment matches the trees (docs/compiler/alignment.md): exact moves rewrite
     // anchored references mechanically and are not dirty; every other relocation is a
-    // proposal persisted for the align-doc turn; an anchor with no candidate is stale.
-    // Coverage carries over only for unchanged and exactly moved sections.
-    pub fn sync_docs(&mut self, parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>) -> Vec<DirtyDoc> {
+    // proposal persisted for the place-anchors session; an anchor with no candidate is
+    // stale. Coverage carries over only for unchanged and exactly moved sections. A save
+    // that dirtied sections journals an `edit` entry of its own; the moves and proposals
+    // journal an `align` entry. Both write their change records.
+    // Mirrors docs/compiler/reconciler.md#dirty-set.
+    pub fn sync_docs(
+        &mut self,
+        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    ) -> Vec<DirtyDoc> {
         use crate::align::Full;
         let changed: BTreeSet<String> = self
             .docs
             .iter()
-            .filter(|(d, rec)| parsed.get(*d).map(|(h, _)| h != &rec.content_hash).unwrap_or(true))
+            .filter(|(d, rec)| {
+                parsed
+                    .get(*d)
+                    .map(|(h, _)| h != &rec.content_hash)
+                    .unwrap_or(true)
+            })
             .map(|(d, _)| d.clone())
-            .chain(parsed.keys().filter(|d| !self.docs.contains_key(*d)).cloned())
+            .chain(
+                parsed
+                    .keys()
+                    .filter(|d| !self.docs.contains_key(*d))
+                    .cloned(),
+            )
             .collect();
         let mut out = Vec::new();
         if changed.is_empty() {
@@ -1256,7 +3321,11 @@ impl Store {
         // Exact moves apply now: references follow, coverage follows.
         let mut carried: BTreeMap<Full, Coverage> = BTreeMap::new();
         for (from, to) in &plan.exact_moves {
-            if let Some(c) = self.docs.get(&from.doc).and_then(|r| r.coverage.get(&from.section)) {
+            if let Some(c) = self
+                .docs
+                .get(&from.doc)
+                .and_then(|r| r.coverage.get(&from.section))
+            {
                 carried.insert(to.clone(), c.clone());
             }
             self.rewrite_section_refs(from, to);
@@ -1265,30 +3334,48 @@ impl Store {
         let moved_to: BTreeSet<&Full> = plan.exact_moves.iter().map(|(_, t)| t).collect();
         // Anchors the model will place are not stale: keyed by id plus old location,
         // since an entity can hold several mentions.
-        let proposed: BTreeSet<(String, String)> =
-            plan.proposals.iter().map(|p| (p.anchor.clone(), p.from.clone())).collect();
+        let proposed: BTreeSet<(String, String)> = plan
+            .proposals
+            .iter()
+            .map(|p| (p.anchor.clone(), p.from.clone()))
+            .collect();
         let is_proposed = |id: &str, at: &Full| proposed.contains(&(id.to_string(), at.render()));
         // An entity whose mentions in a section all coincide with requirement sources
-        // there follows those requirements (placed with them, or pruned by gc when
-        // they go); it is no anchor of its own.
+        // there follows those requirements (placed with them, or pruned by the sweep
+        // when they go); it is no anchor of its own.
         let derived_only = |id: &str, at: &Full| -> bool {
-            let Some(e) = self.graph.entities.get(id) else { return false };
+            let Some(e) = self.graph.entities.get(id) else {
+                return false;
+            };
             let sources: BTreeSet<&str> = self
                 .graph
                 .requirements
                 .values()
-                .filter(|r| r.source.doc == at.doc && r.source.section == at.section)
-                .map(|r| r.source.quote.as_str())
+                .filter_map(|r| r.source.as_ref())
+                .filter(|s| s.doc == at.doc && s.section == at.section)
+                .map(|s| s.quote.as_str())
                 .collect();
             e.mentions
                 .iter()
                 .filter(|m| m.doc == at.doc && m.section == at.section)
                 .all(|m| sources.contains(m.quote.as_str()))
         };
-        let covered = |id: &str, at: &Full| is_proposed(id, at) || (id.starts_with("ent:") && derived_only(id, at));
+        let covered = |id: &str, at: &Full| {
+            is_proposed(id, at) || (id.starts_with("ent:") && derived_only(id, at))
+        };
+
+        // (section reference, anchor id): what the edit left stale, for the records.
+        let mut stale_at: Vec<(String, String)> = Vec::new();
+        let mut removed_refs: Vec<String> = Vec::new();
+        let mut dirty_refs: Vec<String> = Vec::new();
 
         // Documents that disappeared from the project entirely.
-        let gone: Vec<String> = self.docs.keys().filter(|d| !parsed.contains_key(*d)).cloned().collect();
+        let gone: Vec<String> = self
+            .docs
+            .keys()
+            .filter(|d| !parsed.contains_key(*d))
+            .cloned()
+            .collect();
         for doc in gone {
             let mut stale: Vec<String> = Vec::new();
             if let Some(rec) = self.docs.get(&doc) {
@@ -1297,7 +3384,15 @@ impl Store {
                     if moved_from.contains(&at) {
                         continue;
                     }
-                    stale.extend(self.anchors_in_doc(&doc, Some(r)).into_iter().filter(|a| !covered(a, &at)));
+                    removed_refs.push(at.render());
+                    for a in self
+                        .anchors_in_doc(&doc, Some(r))
+                        .into_iter()
+                        .filter(|a| !covered(a, &at))
+                    {
+                        stale_at.push((at.render(), a.clone()));
+                        stale.push(a);
+                    }
                 }
             }
             self.docs.remove(&doc);
@@ -1305,7 +3400,11 @@ impl Store {
             stale.sort();
             stale.dedup();
             if !stale.is_empty() {
-                out.push(DirtyDoc { doc, dirty_sections: Vec::new(), stale_anchors: stale });
+                out.push(DirtyDoc {
+                    doc,
+                    dirty_sections: Vec::new(),
+                    stale_anchors: stale,
+                });
             }
         }
         for (doc, (content_hash, sections)) in parsed {
@@ -1332,19 +3431,32 @@ impl Store {
             let mut stale = Vec::new();
             for r in &removed {
                 let at = Full::new(doc, r);
-                stale.extend(self.anchors_in_doc(doc, Some(r)).into_iter().filter(|a| !covered(a, &at)));
+                removed_refs.push(at.render());
+                for a in self
+                    .anchors_in_doc(doc, Some(r))
+                    .into_iter()
+                    .filter(|a| !covered(a, &at))
+                {
+                    stale_at.push((at.render(), a.clone()));
+                    stale.push(a);
+                }
             }
             // Also stale: anchors whose section changed and whose quote no longer
             // locates, requirement sources and entity mentions alike.
             for r in &dirty {
                 let at = Full::new(doc, r);
+                dirty_refs.push(at.render());
                 let Some(sec) = sections.get(r) else { continue };
                 for a in self.anchors_in_doc(doc, Some(r)) {
                     if covered(&a, &at) {
                         continue;
                     }
                     let ok = match self.graph.requirements.get(&a) {
-                        Some(q) => text_contains(&sec.raw, &q.source.quote),
+                        Some(q) => q
+                            .source
+                            .as_ref()
+                            .map(|s| text_contains(&sec.raw, &s.quote))
+                            .unwrap_or(true),
                         None => self
                             .graph
                             .entities
@@ -1358,6 +3470,7 @@ impl Store {
                             .unwrap_or(true),
                     };
                     if !ok {
+                        stale_at.push((at.render(), a.clone()));
                         stale.push(a);
                     }
                 }
@@ -1379,11 +3492,19 @@ impl Store {
             }
             self.docs.insert(
                 doc.clone(),
-                DocRecord { content_hash: content_hash.clone(), sections: sections.clone(), coverage },
+                DocRecord {
+                    content_hash: content_hash.clone(),
+                    sections: sections.clone(),
+                    coverage,
+                },
             );
             if !dirty.is_empty() || !stale.is_empty() {
                 dirty.sort();
-                out.push(DirtyDoc { doc: doc.clone(), dirty_sections: dirty, stale_anchors: stale });
+                out.push(DirtyDoc {
+                    doc: doc.clone(),
+                    dirty_sections: dirty,
+                    stale_anchors: stale,
+                });
             }
         }
 
@@ -1391,9 +3512,14 @@ impl Store {
         // document that changed again or that receives new proposals.
         let mut blocks: BTreeMap<String, Vec<AnchorProposal>> = BTreeMap::new();
         for p in &plan.proposals {
-            blocks.entry(crate::align::target_doc(p)).or_default().push(p.clone());
+            blocks
+                .entry(crate::align::target_doc(p))
+                .or_default()
+                .push(p.clone());
         }
-        self.status.alignment.retain(|b| !changed.contains(&b.doc) && !blocks.contains_key(&b.doc));
+        self.status
+            .alignment
+            .retain(|b| !changed.contains(&b.doc) && !blocks.contains_key(&b.doc));
         for (doc, proposals) in blocks {
             let touches = |r: &str| split_section_ref(r).map(|(d, _)| d == doc).unwrap_or(false);
             let changes: Vec<SectionOp> = plan
@@ -1402,39 +3528,93 @@ impl Store {
                 .filter(|o| o.from.iter().chain(o.to.iter()).any(|r| touches(r)))
                 .cloned()
                 .collect();
-            self.status.alignment.push(DocAlignment { doc, changes, proposals });
+            self.status.alignment.push(DocAlignment {
+                doc,
+                changes,
+                proposals,
+            });
         }
         self.status.alignment.sort_by(|a, b| a.doc.cmp(&b.doc));
 
-        // Mechanical moves are graph changes: journaled as one entry per build.
-        if !plan.exact_moves.is_empty() {
+        // The human save is a generation of its own: one mutation per dirtied or removed
+        // section, with the section records. Mirrors docs/compiler/graph.md#journal.
+        dirty_refs.sort();
+        dirty_refs.dedup();
+        removed_refs.sort();
+        removed_refs.dedup();
+        if !dirty_refs.is_empty() || !removed_refs.is_empty() {
+            self.status.generation += 1;
+            let generation = self.status.generation;
+            let build = format!("g{}", generation);
+            let mut batch = RecordBatch::new(generation);
+            let mut mutations = Vec::new();
+            for (i, full) in dirty_refs.iter().chain(removed_refs.iter()).enumerate() {
+                let removed = i >= dirty_refs.len();
+                let (doc, section) = split_section_ref(full).unwrap_or_default();
+                let kind = if removed {
+                    CHANGE_SECTION_REMOVED
+                } else {
+                    CHANGE_SECTION_DIRTY
+                };
+                mutations.push(serde_json::json!({"op": kind, "doc": doc, "section": section}));
+                batch.push(
+                    i + 1,
+                    kind,
+                    full,
+                    "section",
+                    serde_json::json!({"doc": doc, "section": section}),
+                );
+            }
+            let mut entry = self.journal_entry(&build, &Commit::store("edit"), mutations);
+            entry.dirtied = dirty_refs
+                .iter()
+                .chain(removed_refs.iter())
+                .cloned()
+                .collect();
+            self.write_journal(&entry);
+            self.commit_records(batch);
+        }
+
+        // Mechanical moves and the proposals left pending: one align entry per build.
+        if !plan.exact_moves.is_empty() || !plan.proposals.is_empty() {
             self.status.generation += 1;
             let build = format!("g{}", self.status.generation);
-            let entry = JournalEntry {
-                build: build.clone(),
-                work_item: WorkItem {
-                    task: "align".to_string(),
-                    target: "graph".to_string(),
-                    dirty_sections: Vec::new(),
-                    stale_anchors: Vec::new(),
-                    proposals: Vec::new(),
-                },
-                mutations: plan
-                    .exact_moves
-                    .iter()
-                    .map(|(f, t)| serde_json::json!({"op": "move", "from": f.render(), "to": t.render()}))
-                    .collect(),
-                rounds: 0,
-                tokens: 0,
-            };
-            write_yaml(&self.out.join("journal").join(format!("{}.yaml", build)), &entry);
+            let mut mutations: Vec<serde_json::Value> = plan
+                .exact_moves
+                .iter()
+                .map(|(f, t)| serde_json::json!({"op": "move", "from": f.render(), "to": t.render()}))
+                .collect();
+            mutations.extend(plan.proposals.iter().map(|p| {
+                serde_json::json!({"op": "propose", "anchor": p.anchor, "from": p.from,
+                    "candidates": p.candidates.iter().map(|c| c.section.clone()).collect::<Vec<_>>()})
+            }));
+            let entry = self.journal_entry(&build, &Commit::store("align"), mutations);
+            self.write_journal(&entry);
         }
+        // Stale anchors and pending proposals, under the last generation written.
+        let generation = self.status.generation;
+        let mut batch = RecordBatch::new(generation);
+        for (section, anchor) in &stale_at {
+            self.push_stale_anchor(&mut batch, 0, section, anchor);
+        }
+        for b in &self.status.alignment {
+            let anchors: BTreeSet<String> = b.proposals.iter().map(|p| p.anchor.clone()).collect();
+            batch.push(
+                0,
+                CHANGE_ALIGNMENT_PENDING,
+                &b.doc,
+                "alignment",
+                serde_json::json!({ "proposals": anchors }),
+            );
+        }
+        self.commit_records(batch);
+        self.prune_records();
         // Persist the synced records so context reads see the new sections.
         self.save();
         self.reevaluate_items(out)
     }
 
-    // Anchors an align-doc turn flagged for re-evaluation ride on their document's
+    // Anchors a place-anchors session flagged for re-evaluation ride on their document's
     // reconcile item as stale anchors, their section dirty, whether or not the document
     // changed this build. Mirrors docs/compiler/reconciler.md#dirty-set.
     fn reevaluate_items(&self, mut out: Vec<DirtyDoc>) -> Vec<DirtyDoc> {
@@ -1446,7 +3626,11 @@ impl Store {
             let item = match out.iter_mut().find(|d| &d.doc == doc) {
                 Some(d) => d,
                 None => {
-                    out.push(DirtyDoc { doc: doc.clone(), dirty_sections: Vec::new(), stale_anchors: Vec::new() });
+                    out.push(DirtyDoc {
+                        doc: doc.clone(),
+                        dirty_sections: Vec::new(),
+                        stale_anchors: Vec::new(),
+                    });
                     out.last_mut().unwrap()
                 }
             };
@@ -1465,26 +3649,31 @@ impl Store {
         out
     }
 
-    // Requirements of one document that owe the reconcile turn a decision: the quote no
-    // longer locates, or an align-doc turn flagged the anchor for re-evaluation. Returns
-    // the ids and the existing sections they sit in (to be dirtied).
+    // Requirements of one document that owe the reconcile session a decision: the quote
+    // no longer locates, or a place-anchors session flagged the anchor for re-evaluation.
+    // Returns the ids and the existing sections they sit in (to be dirtied).
     pub fn stale_extras(&self, doc: &str) -> (Vec<String>, Vec<String>) {
         let mut stale: Vec<String> = Vec::new();
         let mut sections: Vec<String> = Vec::new();
         let rec = self.docs.get(doc);
-        // An anchor with a pending proposal is the align turn's to place, not stale.
+        // An anchor with a pending proposal is the align session's to place, not stale.
         let proposed = self.proposed_anchors();
         for (rid, r) in &self.graph.requirements {
-            if r.source.doc != doc || proposed.contains(rid) {
+            let Some(src) = r.source.as_ref() else {
+                continue;
+            };
+            if src.doc != doc || proposed.contains(rid) {
                 continue;
             }
-            let unlocated = !self.quote_locates(&r.source.doc, &r.source.section, &r.source.quote);
+            let unlocated = !self.quote_locates(&src.doc, &src.section, &src.quote);
             if unlocated || self.status.reevaluate.iter().any(|x| x == rid) {
                 stale.push(rid.clone());
-                if rec.map(|x| x.sections.contains_key(&r.source.section)).unwrap_or(false)
-                    && !sections.contains(&r.source.section)
+                if rec
+                    .map(|x| x.sections.contains_key(&src.section))
+                    .unwrap_or(false)
+                    && !sections.contains(&src.section)
                 {
-                    sections.push(r.source.section.clone());
+                    sections.push(src.section.clone());
                 }
             }
         }
@@ -1494,19 +3683,29 @@ impl Store {
     // Anchors named by a pending alignment proposal: the model will place them, so the
     // store must not reap them in between.
     fn proposed_anchors(&self) -> BTreeSet<String> {
-        self.status.alignment.iter().flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone())).collect()
+        self.status
+            .alignment
+            .iter()
+            .flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone()))
+            .collect()
     }
 
     // Node ids anchored to a document (optionally to one section of it).
     fn anchors_in_doc(&self, doc: &str, section: Option<&str>) -> Vec<String> {
         let mut out = Vec::new();
         for (id, r) in &self.graph.requirements {
-            if r.source.doc == doc && section.map(|s| r.source.section == s).unwrap_or(true) {
+            let Some(src) = r.source.as_ref() else {
+                continue;
+            };
+            if src.doc == doc && section.map(|s| src.section == s).unwrap_or(true) {
                 out.push(id.clone());
             }
         }
         for (id, e) in &self.graph.entities {
-            if e.mentions.iter().any(|m| m.doc == doc && section.map(|s| m.section == s).unwrap_or(true)) {
+            if e.mentions
+                .iter()
+                .any(|m| m.doc == doc && section.map(|s| m.section == s).unwrap_or(true))
+            {
                 out.push(id.clone());
             }
         }
@@ -1516,17 +3715,27 @@ impl Store {
     // Mechanically rewrite anchored references when a section moved, within a document
     // or across documents.
     fn rewrite_section_refs(&mut self, from: &crate::align::Full, to: &crate::align::Full) {
-        for r in self.graph.requirements.values_mut() {
-            if r.source.doc == from.doc && r.source.section == from.section {
-                r.source.doc = to.doc.clone();
-                r.source.section = to.section.clone();
+        let moved = |s: &mut SourceRef| {
+            if s.doc == from.doc && s.section == from.section {
+                s.doc = to.doc.clone();
+                s.section = to.section.clone();
             }
+        };
+        for src in self
+            .graph
+            .requirements
+            .values_mut()
+            .filter_map(|r| r.source.as_mut())
+        {
+            moved(src);
         }
         for e in self.graph.entities.values_mut() {
             for m in e.mentions.iter_mut() {
-                if m.doc == from.doc && m.section == from.section {
-                    m.doc = to.doc.clone();
-                    m.section = to.section.clone();
+                moved(m);
+            }
+            for a in e.attributes.iter_mut() {
+                if let Provenance::Quote(s) = &mut a.provenance {
+                    moved(s);
                 }
             }
         }
@@ -1534,11 +3743,17 @@ impl Store {
 
     // ---- garbage collection ----
 
-    // Deterministic cleanup after reconcile: requirements whose source section vanished are
-    // deleted; mentions pointing at removed sections are pruned; an entity with zero
-    // mentions and zero requirements is deleted with a tombstone. Journaled as one entry.
+    // The sweep, the mechanical half of garbage collection: quoted requirements whose
+    // source section vanished are deleted; mentions and quoted attributes pointing at
+    // removed sections are pruned; an entity with zero mentions, zero requirements, zero
+    // attributes, zero children, and no derived or decree provenance is deleted with a
+    // tombstone. Derived and decreed nodes are never swept. A curated view's dangling
+    // member is noted as view-member-gone. Journaled as one entry.
+    // Mirrors docs/compiler/graph.md#the-sweep.
     pub fn gc(&mut self) -> Vec<String> {
         let mut actions = Vec::new();
+        let generation = self.status.generation + 1;
+        let mut batch = RecordBatch::new(generation);
         let proposed = self.proposed_anchors();
         let dead_reqs: Vec<String> = self
             .graph
@@ -1546,19 +3761,24 @@ impl Store {
             .iter()
             .filter(|(id, _)| !proposed.contains(*id))
             .filter(|(_, r)| {
-                !self
-                    .docs
-                    .get(&r.source.doc)
-                    .map(|d| d.sections.contains_key(&r.source.section))
+                r.source
+                    .as_ref()
+                    .map(|s| {
+                        !self
+                            .docs
+                            .get(&s.doc)
+                            .map(|d| d.sections.contains_key(&s.section))
+                            .unwrap_or(false)
+                    })
                     .unwrap_or(false)
             })
             .map(|(id, _)| id.clone())
             .collect();
-        let mut deleted: BTreeSet<String> = BTreeSet::new();
+        let mut deleted: BTreeMap<String, usize> = BTreeMap::new();
         for id in dead_reqs {
             self.graph.requirements.remove(&id);
             actions.push(format!("deleted {} (source section gone)", id));
-            deleted.insert(id);
+            deleted.insert(id, 0);
         }
         // Mentions derived from a proposed requirement's source follow it when placed.
         let protected: Vec<SourceRef> = self
@@ -1566,7 +3786,7 @@ impl Store {
             .requirements
             .iter()
             .filter(|(id, _)| proposed.contains(*id))
-            .map(|(_, r)| r.source.clone())
+            .filter_map(|(_, r)| r.source.clone())
             .collect();
         for (id, e) in self.graph.entities.iter_mut() {
             if proposed.contains(id) {
@@ -1576,7 +3796,7 @@ impl Store {
             let docs = &self.docs;
             // A mention whose section is gone, or whose quote no longer locates in it,
             // is stale prose: left in place it leaks statements the documents no longer
-            // make into later context packs.
+            // make into later loaded sets.
             e.mentions.retain(|m| {
                 protected.contains(m)
                     || docs
@@ -1586,47 +3806,129 @@ impl Store {
                         .unwrap_or(false)
             });
             if e.mentions.len() < before {
-                actions.push(format!("pruned {} mention(s) on {}", before - e.mentions.len(), id));
+                actions.push(format!(
+                    "pruned {} mention(s) on {}",
+                    before - e.mentions.len(),
+                    id
+                ));
+            }
+            let attrs_before = e.attributes.len();
+            e.attributes.retain(|a| match &a.provenance {
+                Provenance::Quote(s) => docs
+                    .get(&s.doc)
+                    .map(|d| d.sections.contains_key(&s.section))
+                    .unwrap_or(false),
+                _ => true,
+            });
+            if e.attributes.len() < attrs_before {
+                actions.push(format!(
+                    "pruned {} attribute(s) on {}",
+                    attrs_before - e.attributes.len(),
+                    id
+                ));
             }
         }
+        let parents: BTreeSet<&str> = self
+            .graph
+            .entities
+            .values()
+            .filter_map(|e| e.parent.as_deref())
+            .collect();
         let orphans: Vec<String> = self
             .graph
             .entities
             .iter()
-            .filter(|(id, e)| e.mentions.is_empty() && self.requirements_referencing(id).is_empty())
+            .filter(|(id, e)| {
+                e.mentions.is_empty()
+                    && e.attributes.is_empty()
+                    && e.provenance.is_none()
+                    && !parents.contains(id.as_str())
+                    && self.requirements_referencing(id).is_empty()
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in orphans {
             self.graph.entities.remove(&id);
             self.graph.redirects.insert(id.clone(), String::new());
             actions.push(format!("deleted {} (no mentions, no requirements)", id));
-            deleted.insert(id);
+            deleted.insert(id, 0);
         }
-        for op in self.propagate_deletions(&deleted, &format!("g{}", self.status.generation + 1)) {
+        let build = format!("g{}", generation);
+        for op in self.propagate_deletions(&deleted, &build, &mut batch) {
             if let Op::ResolveDiagnostic { id, reason } = op {
                 actions.push(format!("resolved {} ({})", id, reason));
             }
         }
+        self.deletion_ripple(&deleted, &mut batch);
+        // Level-triggered: a curated view whose member died by any path owes a retrace.
+        let dangling: Vec<(String, Vec<String>)> = self
+            .graph
+            .views
+            .iter()
+            .filter(|(_, v)| !v.default)
+            .map(|(id, v)| {
+                let gone: Vec<String> = v
+                    .members
+                    .iter()
+                    .chain(v.collapse.iter())
+                    .filter(|m| !self.node_exists(self.resolve_id(m)))
+                    .cloned()
+                    .collect();
+                (id.clone(), gone)
+            })
+            .filter(|(id, gone)| {
+                !gone.is_empty()
+                    && !self.status.has_change(CHANGE_VIEW_MEMBER_GONE, id)
+                    && !batch.has(CHANGE_VIEW_MEMBER_GONE, id)
+            })
+            .collect();
+        for (id, gone) in dangling {
+            batch.push(
+                0,
+                CHANGE_VIEW_MEMBER_GONE,
+                &id,
+                "members",
+                serde_json::json!({ "gone": gone }),
+            );
+            actions.push(format!(
+                "noted dangling member(s) {} on {}",
+                gone.join(", "),
+                id
+            ));
+        }
+        // The sweep has run: the section-removed trail clears.
+        let had_removed = self
+            .status
+            .changes
+            .iter()
+            .any(|c| c.kind == CHANGE_SECTION_REMOVED);
+        self.status
+            .changes
+            .retain(|c| c.kind != CHANGE_SECTION_REMOVED);
         if !actions.is_empty() {
-            self.recompute_relationships();
-            let wi = WorkItem {
-                task: "gc".to_string(),
-                target: "graph".to_string(),
-                dirty_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: Vec::new(),
-            };
-            self.status.generation += 1;
-            let build = format!("g{}", self.status.generation);
-            let entry = JournalEntry {
-                build: build.clone(),
-                work_item: wi,
-                mutations: actions.iter().map(|a| serde_json::json!({"op": "gc", "action": a})).collect(),
-                rounds: 0,
-                tokens: 0,
-            };
-            write_yaml(&self.out.join("journal").join(format!("{}.yaml", build)), &entry);
+            crate::derive::recompute(self, &build, &mut batch);
+            self.status.generation = generation;
+            for (id, m) in &deleted {
+                let kind = match id_kind(id) {
+                    "requirement" => CHANGE_REQ_DELETED,
+                    _ => CHANGE_ENTITY_DELETED,
+                };
+                batch.push(*m, kind, id, "sweep", serde_json::Value::Null);
+            }
+            self.prune_records();
+            self.commit_records(batch);
+            let entry = self.journal_entry(
+                &build,
+                &Commit::store("gc"),
+                actions
+                    .iter()
+                    .map(|a| serde_json::json!({"op": "gc", "action": a}))
+                    .collect(),
+            );
+            self.write_journal(&entry);
             self.save();
+        } else if had_removed {
+            self.save_status();
         }
         actions
     }
@@ -1635,13 +3937,22 @@ impl Store {
 
     // Reconcile the deterministic findings: new ones are reported, existing ones updated,
     // vanished ones resolved. Keyed by rule plus subjects, like the sticky rule in apply().
+    // A run that changed anything is a `checks` generation of its own.
     pub fn reconcile_check_diags(
         &mut self,
-        findings: Vec<(String, String, String, String, Option<crate::model::DiagnosticPrompt>)>,
+        findings: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<crate::model::DiagnosticPrompt>,
+        )>,
     ) {
-        let build = format!("g{}", self.status.generation + 1);
+        let generation = self.status.generation + 1;
+        let build = format!("g{}", generation);
         let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
-        let mut changed = false;
+        let mut mutations: Vec<serde_json::Value> = Vec::new();
+        let mut batch = RecordBatch::new(generation);
         for (rule, subject, severity, message, prompt) in findings {
             let subjects = vec![subject];
             seen.insert((rule.clone(), subjects.clone()));
@@ -1654,22 +3965,44 @@ impl Store {
             match existing {
                 Some(id) => {
                     let d = self.graph.diagnostics.get_mut(&id).unwrap();
+                    let mut changed = false;
                     if d.message != message || d.severity != severity {
                         d.message = message;
                         d.severity = severity;
-                        d.updated = Some(build.clone());
                         changed = true;
                     }
                     // The question rides along on a finding that never had one and
                     // was never answered; an answered or standing prompt is kept.
                     if d.prompt.is_none() && d.answer.is_none() && prompt.is_some() {
                         d.prompt = prompt;
-                        d.updated = Some(build.clone());
                         changed = true;
+                        batch.push(
+                            mutations.len() + 1,
+                            CHANGE_PROMPT_UNANSWERED,
+                            &id,
+                            &rule,
+                            serde_json::Value::Null,
+                        );
+                    }
+                    if changed {
+                        d.updated = Some(build.clone());
+                        mutations.push(serde_json::json!({"op": "report_diagnostic", "id": id,
+                            "rule": rule, "subjects": subjects}));
                     }
                 }
                 None => {
                     let id = self.mint_diag_id(&rule, &BTreeSet::new());
+                    if prompt.is_some() {
+                        batch.push(
+                            mutations.len() + 1,
+                            CHANGE_PROMPT_UNANSWERED,
+                            &id,
+                            &rule,
+                            serde_json::Value::Null,
+                        );
+                    }
+                    mutations.push(serde_json::json!({"op": "report_diagnostic", "id": id,
+                        "rule": rule, "subjects": subjects}));
                     self.graph.diagnostics.insert(
                         id,
                         Diagnostic {
@@ -1686,15 +4019,14 @@ impl Store {
                             updated: Some(build.clone()),
                         },
                     );
-                    changed = true;
                 }
             }
         }
         // Deterministic rules whose condition cleared: resolve. Check findings carry
         // exactly one subject; a multi-subject diagnostic under a shared rule name
-        // (a review turn's duplicate-requirement pair) is judged work, not the checks'
+        // (a session's duplicate-requirement pair) is judged work, not the checks'
         // to resolve.
-        for d in self.graph.diagnostics.values_mut() {
+        for (id, d) in self.graph.diagnostics.iter_mut() {
             if d.lifecycle == "open"
                 && d.subjects.len() == 1
                 && CHECK_RULES.contains(&d.rule.as_str())
@@ -1702,11 +4034,16 @@ impl Store {
             {
                 d.lifecycle = "resolved".to_string();
                 d.updated = Some(build.clone());
-                changed = true;
+                mutations.push(serde_json::json!({"op": "resolve_diagnostic", "id": id,
+                    "reason": "the condition cleared"}));
             }
         }
-        if changed {
-            self.status.generation += 1;
+        if !mutations.is_empty() {
+            self.status.generation = generation;
+            self.prune_records();
+            self.commit_records(batch);
+            let entry = self.journal_entry(&build, &Commit::store("checks"), mutations);
+            self.write_journal(&entry);
             self.save();
         }
     }
@@ -1735,7 +4072,11 @@ impl FileLock {
         let path = out.join(".lock");
         std::fs::create_dir_all(out).ok();
         for _ in 0..100 {
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
                 Ok(mut f) => {
                     use std::io::Write;
                     write!(f, "{}", std::process::id()).ok();
@@ -1744,7 +4085,10 @@ impl FileLock {
                 Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
             }
         }
-        eprintln!("[jazyk] warning: stale lock at {}; proceeding", path.display());
+        eprintln!(
+            "[jazyk] warning: stale lock at {}; proceeding",
+            path.display()
+        );
         FileLock { path }
     }
 }
@@ -1766,251 +4110,1545 @@ mod tests {
         dir
     }
 
+    // A directory of its own for a test that reloads from disk (the shared tmp dir is
+    // stomped by parallel tests).
+    fn own_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).ok();
+        dir
+    }
+
     fn wi() -> WorkItem {
-        WorkItem { task: "reconcile-doc".into(), target: "t.md".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() }
+        WorkItem {
+            task: "reconcile-doc".into(),
+            target: "t.md".into(),
+            dirty_sections: vec![],
+            stale_anchors: vec![],
+            proposals: Vec::new(),
+        }
+    }
+
+    fn session() -> Commit {
+        wi().commit(1, 0)
     }
 
     fn mention(doc: &str, sec: &str, quote: &str) -> SourceRef {
-        SourceRef { doc: doc.into(), section: sec.into(), quote: quote.into() }
+        SourceRef {
+            doc: doc.into(),
+            section: sec.into(),
+            quote: quote.into(),
+        }
     }
 
     fn seed_doc(store: &mut Store, doc: &str, text: &str) {
         let sections = crate::md::parse_sections(text);
-        store.docs.insert(doc.to_string(), DocRecord {
-            content_hash: hash_hex(text),
-            sections,
-            coverage: BTreeMap::new(),
-        });
+        store.docs.insert(
+            doc.to_string(),
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections,
+                coverage: BTreeMap::new(),
+            },
+        );
     }
 
-    // A reconcile commit records the reviews it owes; completing a review pays the
-    // debt. What makes the task queue derivable by any process.
-    // Mirrors docs/compiler/reconciler.md#the-task-queue.
+    fn entity(name: &str) -> Entity {
+        Entity {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    fn create(id: &str, name: &str) -> Op {
+        Op::CreateEntity {
+            id: id.into(),
+            entity: entity(name),
+        }
+    }
+
+    fn derived(from: &[&str]) -> Provenance {
+        Provenance::Derived {
+            from: from.iter().map(|f| f.to_string()).collect(),
+            reasoning: "invented structure".into(),
+        }
+    }
+
+    fn journal_entry(s: &Store, generation: u64) -> JournalEntry {
+        let path = s.out.join("journal").join(format!("g{}.yaml", generation));
+        serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    }
+
+    // A dual write lands the prose and the graph as one changeset, absorbs its own
+    // hashes so the document is not dirty against the graph, re-anchors the quoted
+    // facts in the section, and puts the file back when the commit skips.
+    // Mirrors docs/compiler/compilation.md#edit-paths.
     #[test]
-    fn reconcile_commit_records_pending_reviews_and_completion_clears_them() {
-        // Own directory: this test reloads from disk, and the shared tmp dir is
-        // stomped by parallel tests.
-        let dir = std::env::temp_dir().join(format!("jazyk-pending-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
-        let mut s = Store { out: dir, ..Default::default() };
+    fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
+        let root = own_dir("dual-write");
+        let text = "# Pay\n\nAn Order is paid within 30 days.\n";
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("docs/pay.md"), text).unwrap();
+        let mut s = Store {
+            out: root.join("jazyk-out"),
+            ..Default::default()
+        };
+        let parsed_of = |text: &str| {
+            let mut m = BTreeMap::new();
+            m.insert(
+                "docs/pay.md".to_string(),
+                (hash_hex(text), crate::md::parse_sections(text)),
+            );
+            m
+        };
+        s.sync_docs(&parsed_of(text));
+        s.apply(
+            vec![
+                create("ent:order", "Order"),
+                Op::CreateRequirement {
+                    id: "req:pay-1".into(),
+                    requirement: Requirement {
+                        statement: "An Order is paid within 30 days.".into(),
+                        entities: vec!["ent:order".into()],
+                        source: Some(mention(
+                            "docs/pay.md",
+                            "/pay",
+                            "An Order is paid within 30 days.",
+                        )),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let before = s.status.generation;
+        let raw = s.docs["docs/pay.md"].sections["/pay"].raw.clone();
+        let edit = ProseEdit::locate(
+            "docs/pay.md",
+            "/pay",
+            Some(&raw),
+            text,
+            "within 30 days",
+            "within 21 days",
+        )
+        .unwrap();
+        let report = s
+            .dual_write(
+                &root,
+                &edit,
+                vec![Op::UpdateRequirement {
+                    id: "req:pay-1".into(),
+                    statement: Some("An Order is paid within 21 days.".into()),
+                    entities: None,
+                    edges: None,
+                    transition: None,
+                    facets: None,
+                    source: Some(mention(
+                        "docs/pay.md",
+                        "/pay",
+                        "An Order is paid within 21 days.",
+                    )),
+                    provenance: None,
+                }],
+                &Commit::store("dual-write"),
+                None,
+            )
+            .unwrap();
+        assert_eq!(report.generation, before + 1, "one changeset");
+        let on_disk = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        assert!(on_disk.contains("within 21 days"), "{}", on_disk);
+        assert_eq!(s.docs["docs/pay.md"].content_hash, hash_hex(&on_disk));
+        let r = &s.graph.requirements["req:pay-1"];
+        assert_eq!(
+            r.source.as_ref().unwrap().quote,
+            "An Order is paid within 21 days."
+        );
+        assert!(r.statement.contains("21 days"));
+        // The entity mention derived from the sentence followed it.
+        assert!(s.graph.entities["ent:order"]
+            .mentions
+            .iter()
+            .any(|m| m.quote == "An Order is paid within 21 days."));
+        let entry = journal_entry(&s, report.generation);
+        assert_eq!(entry.kind, "dual-write");
+        assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"));
+        assert!(entry
+            .mutations
+            .iter()
+            .any(|m| m["op"] == "update_requirement"));
+        // No re-dirtying: a following sync reports nothing and writes no record.
+        let records = s.status.changes.clone();
+        let dirty = s.sync_docs(&parsed_of(&on_disk));
+        assert!(dirty.is_empty(), "{:?}", dirty);
+        assert_eq!(s.status.changes, records);
+        // A stale edit (the old text no longer stands) skips whole; the file comes back.
+        let stale = ProseEdit {
+            doc: "docs/pay.md".into(),
+            section: "/pay".into(),
+            old_text: "within 30 days".into(),
+            new_text: "within 7 days".into(),
+            old_full: on_disk.clone(),
+            full: on_disk.replace("21", "7"),
+        };
+        let err = s
+            .dual_write(
+                &root,
+                &stale,
+                vec![Op::DeleteRequirement {
+                    id: "req:pay-1".into(),
+                    reason: "x".into(),
+                }],
+                &Commit::store("dual-write"),
+                None,
+            )
+            .unwrap_err();
+        assert!(err.contains("edit-stale"), "{}", err);
+        assert_eq!(
+            std::fs::read_to_string(root.join("docs/pay.md")).unwrap(),
+            on_disk
+        );
+        assert!(s.graph.requirements.contains_key("req:pay-1"));
+        // A prose edit never lands alone.
+        assert!(s
+            .dual_write(&root, &edit, Vec::new(), &Commit::store("dual-write"), None)
+            .is_err());
+        // An empty old_text appends the sentence to the section's body.
+        let on_disk = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        let raw = s.docs["docs/pay.md"].sections["/pay"].raw.clone();
+        let insert = ProseEdit::locate(
+            "docs/pay.md",
+            "/pay",
+            Some(&raw),
+            &on_disk,
+            "",
+            "A late Order is cancelled.",
+        )
+        .unwrap();
+        assert!(
+            insert
+                .full
+                .ends_with("within 21 days.\n\nA late Order is cancelled.\n"),
+            "{}",
+            insert.full
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // A commit writes the change records its mutations caused, each with its cause;
+    // resolving the goals clears them by id. Mirrors docs/compiler/graph.md#change-records.
+    #[test]
+    fn commit_writes_change_records_and_clear_changes_removes_them() {
+        let mut s = Store {
+            out: own_dir("records"),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
         let ops = vec![
-            Op::CreateEntity { id: "ent:cart".into(), entity: Entity { name: "Cart".into(), ..Default::default() } },
+            create("ent:cart", "Cart"),
             Op::CreateRequirement {
                 id: "req:t-1".into(),
                 requirement: Requirement {
-                    ears: "The Cart shall hold items.".into(),
+                    statement: "The Cart holds items.".into(),
                     entities: vec!["ent:cart".into()],
-                    edges: vec![],
-                    source: mention("t.md", "/t", "The Cart holds items."),
-                    confidence: None,
-                    reasoning: None,
-                    created: None,
-                    updated: None,
+                    source: Some(mention("t.md", "/t", "The Cart holds items.")),
+                    ..Default::default()
                 },
             },
         ];
-        s.apply(ops, &wi(), 1, 0);
-        assert_eq!(s.status.pending.entities, vec!["ent:cart".to_string()]);
-        assert_eq!(s.status.pending.requirements, vec!["req:t-1".to_string()]);
-        // A review changeset owes nothing new.
-        let review = WorkItem { task: "review-entity".into(), target: "ent:cart".into(), dirty_sections: vec![], stale_anchors: vec![], proposals: Vec::new() };
-        s.apply(vec![], &review, 1, 0);
-        assert_eq!(s.status.pending.entities.len(), 1);
-        // Completion pays the debt, task by task.
-        s.complete_review("review-requirement", "req:t-1");
-        s.complete_review("review-entity", "ent:cart");
-        assert!(s.status.pending.is_empty());
-        // And it persisted: a fresh load agrees.
-        assert!(Store::load(&s.out).status.pending.is_empty());
+        let report = s.apply(ops, &session());
+        assert_eq!(report.generation, 1);
+        assert_eq!(report.changes.len(), 2, "{:?}", report.changes);
+        let entity = report
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_ENTITY)
+            .unwrap();
+        assert_eq!(
+            (
+                entity.subject.as_str(),
+                entity.mutation,
+                entity.via.as_str()
+            ),
+            ("ent:cart", 1, "fields")
+        );
+        let created = report
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REQ_CREATED)
+            .unwrap();
+        assert_eq!(
+            (
+                created.subject.as_str(),
+                created.mutation,
+                created.via.as_str()
+            ),
+            ("req:t-1", 2, "section")
+        );
+        assert!(report.changes.iter().all(|c| c.id.starts_with("c1-")));
+        assert_ne!(report.changes[0].id, report.changes[1].id);
+        // The journal entry names the session's goal and the store version is stamped.
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+        assert_eq!(entry.kind, "session");
+        assert_eq!(entry.batch, vec!["g:reconcile-section:t.md".to_string()]);
+        assert!(entry.opened_goals.is_empty());
+        assert_eq!(Store::load(&s.out).status.version, STORE_VERSION);
+        // Resolved goals ride on the entry; opened goals land after the board re-derives.
+        let mut commit = wi().commit(2, 10);
+        commit.resolved.push(Resolved {
+            goal: "g:reconcile-section:t.md".into(),
+            justification: "covered".into(),
+            evidence: serde_json::Value::Null,
+        });
+        let report = s.apply(vec![], &commit);
+        s.record_opened_goals(
+            report.generation,
+            vec![OpenedGoal {
+                goal: "g:review-entity:ent:cart".into(),
+                cause: Cause {
+                    generation: 1,
+                    mutation: 1,
+                    via: "fields".into(),
+                },
+            }],
+        );
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g2.yaml")).unwrap();
+        assert_eq!(entry.resolved_goals.len(), 1);
+        assert_eq!(entry.opened_goals[0].goal, "g:review-entity:ent:cart");
+        assert_eq!(entry.rounds, 2);
+        // Clearing by id, persisted.
+        let ids = s.status.change_ids(&[CHANGE_ENTITY], "ent:cart");
+        s.clear_changes(&ids);
+        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"));
+        assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:t-1"));
+        assert_eq!(Store::load(&s.out).status.changes.len(), 1);
+    }
+
+    // The natural key: name plus scope, and parent when supplied. Two same-named
+    // children under different parents stay apart; an upsert that names neither is
+    // an ambiguity error naming the candidates.
+    // Mirrors docs/compiler/concepts/identity.md#the-natural-key-under-containment.
+    #[test]
+    fn natural_key_with_and_without_parent() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nTwo modules each carry a Config.\n");
+        s.apply(
+            vec![create("ent:auth", "Auth"), create("ent:billing", "Billing")],
+            &session(),
+        );
+        let under = |id: &str, parent: &str| Op::CreateEntity {
+            id: id.into(),
+            entity: Entity {
+                name: "Config".into(),
+                parent: Some(parent.into()),
+                ..Default::default()
+            },
+        };
+        let r = s.apply(
+            vec![
+                under("ent:config", "ent:auth"),
+                under("ent:config-b", "ent:billing"),
+            ],
+            &session(),
+        );
+        assert_eq!(r.applied, 2, "{:?}", r.skipped);
+        assert_eq!(s.graph.entities.len(), 4);
+        assert_eq!(
+            s.graph.entities["ent:config"].parent.as_deref(),
+            Some("ent:auth")
+        );
+        assert_eq!(
+            s.graph.entities["ent:config-b"].parent.as_deref(),
+            Some("ent:billing")
+        );
+        // With the parent, the key lands on that child alone.
+        assert_eq!(
+            s.find_natural("config", "public", Some("ent:billing")),
+            Ok(Some("ent:config-b".into()))
+        );
+        // A parent nobody has: no match, never a wrong merge.
+        assert_eq!(
+            s.find_natural("config", "public", Some("ent:auth-2")),
+            Ok(None)
+        );
+        // Without the parent: two candidates is an error naming them.
+        assert_eq!(
+            s.find_natural("Config", "public", None),
+            Err(vec!["ent:config".to_string(), "ent:config-b".to_string()])
+        );
+        let r = s.apply(vec![create("ent:config-c", "Config")], &session());
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].contains("ambiguous name"), "{:?}", r.skipped);
+        assert!(r.skipped[0].contains("ent:config-b"));
+        // A single match lands whatever its parent.
+        assert_eq!(
+            s.find_natural("auth", "public", None),
+            Ok(Some("ent:auth".into()))
+        );
+        let r = s.apply(vec![create("ent:auth-x", "auth")], &session());
+        assert_eq!(r.applied, 1);
+        assert_eq!(s.graph.entities.len(), 4);
+        assert_eq!(s.find_natural("auth", "other", None), Ok(None));
     }
 
     #[test]
     fn mint_and_create_and_natural_key_reconcile() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
-        let e = Entity { name: "Cart".into(), mentions: vec![mention("t.md", "/t", "The Cart holds items.")], ..Default::default() };
-        let r = s.apply(vec![Op::CreateEntity { id: "ent:cart".into(), entity: e.clone() }], &wi(), 1, 10);
+        let e = Entity {
+            name: "Cart".into(),
+            mentions: vec![mention("t.md", "/t", "The Cart holds items.")],
+            ..Default::default()
+        };
+        let r = s.apply(
+            vec![Op::CreateEntity {
+                id: "ent:cart".into(),
+                entity: e.clone(),
+            }],
+            &wi().commit(1, 10),
+        );
         assert_eq!(r.applied, 1);
         assert!(s.graph.entities.contains_key("ent:cart"));
         // A second create with the same natural key becomes an update, not a duplicate.
-        let e2 = Entity { name: "cart".into(), mentions: vec![mention("t.md", "/t", "holds items")], ..Default::default() };
-        s.apply(vec![Op::CreateEntity { id: "ent:cart-x".into(), entity: e2 }], &wi(), 1, 10);
+        let e2 = Entity {
+            name: "cart".into(),
+            mentions: vec![mention("t.md", "/t", "holds items")],
+            ..Default::default()
+        };
+        s.apply(
+            vec![Op::CreateEntity {
+                id: "ent:cart-x".into(),
+                entity: e2,
+            }],
+            &wi().commit(1, 10),
+        );
         assert_eq!(s.graph.entities.len(), 1);
         assert_eq!(s.graph.entities["ent:cart"].mentions.len(), 2);
+        assert_eq!(
+            s.mint_view_id("use-case", "Checkout", &BTreeSet::new()),
+            "view:usecase/checkout"
+        );
     }
 
     #[test]
     fn same_sentence_subsumed_statement_refreshes_in_place() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        seed_doc(&mut s, "t.md", "# T\n- `createUser` - creates a new user account\n");
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\n- `createUser` - creates a new user account\n",
+        );
         let base = Requirement {
-            ears: "The user management system shall create a new user account.".into(),
+            statement: "The user management system creates a new user account.".into(),
             entities: vec!["ent:um".into()],
-            edges: Vec::new(),
-            source: mention("t.md", "/t", "- `createUser` - creates a new user account"),
-            confidence: None,
-            reasoning: None,
-            created: None,
-            updated: None,
+            source: Some(mention(
+                "t.md",
+                "/t",
+                "- `createUser` - creates a new user account",
+            )),
+            ..Default::default()
         };
         s.apply(
             vec![
-                Op::CreateEntity { id: "ent:um".into(), entity: Entity { name: "User Management".into(), ..Default::default() } },
-                Op::CreateRequirement { id: "req:t-1".into(), requirement: base.clone() },
+                create("ent:um", "User Management"),
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: base.clone(),
+                },
             ],
-            &wi(),
-            1,
-            10,
+            &session(),
         );
         // A resumed build rewords the same sentence's statement; one fact, one node.
         let reworded = Requirement {
-            ears: "The user management system shall create a new user account using createUser.".into(),
+            statement: "The user management system creates a new user account using createUser."
+                .into(),
             ..base
         };
-        s.apply(vec![Op::CreateRequirement { id: "req:t-2".into(), requirement: reworded }], &wi(), 1, 10);
+        let r = s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:t-2".into(),
+                requirement: reworded,
+            }],
+            &session(),
+        );
         assert_eq!(s.graph.requirements.len(), 1);
-        assert!(s.graph.requirements["req:t-1"].ears.contains("using createUser"));
+        assert!(s.graph.requirements["req:t-1"]
+            .statement
+            .contains("using createUser"));
+        assert!(r.changed_requirements.contains("req:t-1"));
+        assert!(s.status.has_change(CHANGE_REQ_REVISED, "req:t-1"));
         // Distinct atomic facts from one sentence stay separate.
         assert!(!statement_subsumes(
-            "The gateway shall be a REST service.",
-            "The gateway shall be built with Go."
+            "The gateway is a REST service.",
+            "The gateway is built with Go."
         ));
     }
 
     #[test]
     fn requirement_remaps_provisional_ids_and_derives_edges() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        seed_doc(&mut s, "t.md", "# T\nWhen checkout completes, the system shall empty the Cart of Products.\n");
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\nWhen checkout completes, the system empties the Cart of Products.\n",
+        );
         let ops = vec![
-            Op::CreateEntity { id: "prov:1".into(), entity: Entity { name: "Cart".into(), ..Default::default() } },
-            Op::CreateEntity { id: "prov:2".into(), entity: Entity { name: "Product".into(), ..Default::default() } },
+            create("prov:1", "Cart"),
+            create("prov:2", "Product"),
             Op::CreateRequirement {
                 id: "req:t-1".into(),
                 requirement: Requirement {
-                    ears: "When checkout completes, the system shall empty the Cart.".into(),
+                    statement: "When checkout completes, the system empties the Cart.".into(),
                     entities: vec!["prov:1".into(), "prov:2".into()],
-                    edges: vec![ReqEdge { a: "prov:1".into(), b: "prov:2".into(), rel_type: Some("composition".into()) }],
-                    source: mention("t.md", "/t", "the system shall empty the Cart"),
-                    confidence: None, reasoning: None, created: None, updated: None,
+                    edges: vec![ReqEdge {
+                        a: "prov:1".into(),
+                        b: "prov:2".into(),
+                        rel_type: Some("composition".into()),
+                        cardinality: Some("1..*".into()),
+                    }],
+                    source: Some(mention("t.md", "/t", "the system empties the Cart")),
+                    ..Default::default()
                 },
             },
         ];
-        let r = s.apply(ops, &wi(), 3, 100);
+        let r = s.apply(ops, &wi().commit(3, 100));
         assert_eq!(r.applied, 3);
         let req = &s.graph.requirements["req:t-1"];
-        assert_eq!(req.entities, vec!["ent:cart".to_string(), "ent:product".to_string()]);
+        assert_eq!(
+            req.entities,
+            vec!["ent:cart".to_string(), "ent:product".to_string()]
+        );
         assert_eq!(s.graph.relationships.len(), 1);
         let rel = s.graph.relationships.values().next().unwrap();
-        assert_eq!(rel.rel_type, "composition");
-        assert_eq!(rel.requirements, vec!["req:t-1".to_string()]);
+        assert_eq!(rel.strongest(), "composition");
+        assert_eq!(rel.contributions[0].cardinality.as_deref(), Some("1..*"));
+        // A two-entity requirement with edges owes no declare-edges; one without does.
+        assert!(!s.status.has_change(CHANGE_EDGES_MISSING, "req:t-1"));
+        s.apply(
+            vec![Op::UpdateRequirement {
+                id: "req:t-1".into(),
+                statement: None,
+                entities: None,
+                edges: Some(vec![]),
+                transition: None,
+                facets: None,
+                source: None,
+                provenance: None,
+            }],
+            &session(),
+        );
+        assert!(s.status.has_change(CHANGE_EDGES_MISSING, "req:t-1"));
+        assert!(s.graph.relationships.is_empty());
     }
 
+    // A merge rewires every reference: parent, transition subject, view members,
+    // provenance from, and refuses to make the survivor its own ancestor.
     #[test]
-    fn merge_rewires_and_redirects() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+    fn merge_rewires_every_reference_and_redirects() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nbuyer and customer\n");
-        s.apply(vec![
-            Op::CreateEntity { id: "ent:buyer".into(), entity: Entity { name: "buyer".into(), ..Default::default() } },
-            Op::CreateEntity { id: "ent:customer".into(), entity: Entity { name: "Customer".into(), ..Default::default() } },
-            Op::CreateRequirement {
-                id: "req:t-1".into(),
-                requirement: Requirement {
-                    ears: "The buyer shall pay.".into(),
-                    entities: vec!["ent:buyer".into()],
-                    edges: vec![],
-                    source: mention("t.md", "/t", "buyer and customer"),
-                    confidence: None, reasoning: None, created: None, updated: None,
+        s.apply(
+            vec![
+                create("ent:buyer", "buyer"),
+                create("ent:customer", "Customer"),
+                Op::CreateEntity {
+                    id: "ent:wishlist".into(),
+                    entity: Entity {
+                        name: "Wishlist".into(),
+                        parent: Some("ent:buyer".into()),
+                        ..Default::default()
+                    },
                 },
-            },
-        ], &wi(), 1, 10);
-        s.apply(vec![Op::MergeEntities { keep: "ent:customer".into(), absorb: "ent:buyer".into(), reason: "same concept".into() }], &wi(), 1, 10);
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "The buyer pays.".into(),
+                        entities: vec!["ent:buyer".into()],
+                        transition: Some(Transition {
+                            subject: "ent:buyer".into(),
+                            from: "browsing".into(),
+                            to: "paid".into(),
+                            trigger: None,
+                            guard: None,
+                        }),
+                        source: Some(mention("t.md", "/t", "buyer and customer")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "req:x-1".into(),
+                    requirement: Requirement {
+                        statement: "The buyer is split into tiers.".into(),
+                        entities: vec!["ent:buyer".into()],
+                        provenance: Some(derived(&["ent:buyer"])),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateView {
+                    id: "view:class/people".into(),
+                    view: View {
+                        kind: "class".into(),
+                        title: "People".into(),
+                        members: vec!["ent:buyer".into(), "ent:customer".into()],
+                        collapse: vec!["ent:buyer".into()],
+                        provenance: Some(derived(&["ent:buyer", "ent:customer"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert!(s.graph.state_machines.contains_key("sm:buyer"));
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:customer".into(),
+                absorb: "ent:buyer".into(),
+                reason: "same concept".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
         assert!(!s.graph.entities.contains_key("ent:buyer"));
         assert_eq!(s.graph.redirects["ent:buyer"], "ent:customer");
-        assert_eq!(s.graph.requirements["req:t-1"].entities, vec!["ent:customer".to_string()]);
-        assert!(s.graph.entities["ent:customer"].aliases.contains(&"buyer".to_string()));
+        assert_eq!(
+            s.graph.requirements["req:t-1"].entities,
+            vec!["ent:customer".to_string()]
+        );
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .transition
+                .as_ref()
+                .unwrap()
+                .subject,
+            "ent:customer"
+        );
+        assert_eq!(
+            s.graph.entities["ent:wishlist"].parent.as_deref(),
+            Some("ent:customer")
+        );
+        assert!(matches!(
+            s.graph.requirements["req:x-1"].provenance.as_ref(),
+            Some(Provenance::Derived { from, .. }) if from == &vec!["ent:customer".to_string()]
+        ));
+        let v = &s.graph.views["view:class/people"];
+        assert_eq!(v.members, vec!["ent:customer"]);
+        assert_eq!(v.collapse, vec!["ent:customer"]);
+        assert!(matches!(
+            v.provenance.as_ref(),
+            Some(Provenance::Derived { from, .. }) if from == &vec!["ent:customer".to_string()]
+        ));
+        assert!(s.graph.entities["ent:customer"]
+            .aliases
+            .contains(&"buyer".to_string()));
         assert_eq!(s.resolve_id("ent:buyer"), "ent:customer");
+        assert!(s.graph.state_machines.contains_key("sm:customer"));
+        assert!(!s.graph.state_machines.contains_key("sm:buyer"));
+        assert_eq!(
+            s.status.change_ids(&[CHANGE_ENTITY], "ent:customer").len(),
+            1
+        );
+        // Merging a child into its ancestor is refused: it would make the survivor its
+        // own ancestor.
+        let r = s.apply(
+            vec![Op::MergeEntities {
+                keep: "ent:wishlist".into(),
+                absorb: "ent:customer".into(),
+                reason: "bad idea".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].contains("own ancestor"), "{:?}", r.skipped);
+    }
+
+    // The commit-time gates: a parent cycle, an unknown view member, and deleting a
+    // parent are refused with the rule spelled out. Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn commit_gates_refuse_cycles_unknown_members_and_deleting_a_parent() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![
+                create("ent:shop", "Shop"),
+                Op::CreateEntity {
+                    id: "ent:orders".into(),
+                    entity: Entity {
+                        name: "Orders".into(),
+                        parent: Some("ent:shop".into()),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let update_parent = |id: &str, parent: &str| Op::UpdateEntity {
+            id: id.into(),
+            name: None,
+            definition: None,
+            add_aliases: Vec::new(),
+            add_mention: None,
+            stereotype: None,
+            parent: Some(parent.into()),
+            set_attributes: None,
+            add_attributes: Vec::new(),
+            provenance: None,
+        };
+        let r = s.apply(
+            vec![
+                update_parent("ent:shop", "ent:orders"),
+                update_parent("ent:shop", "ent:shop"),
+                update_parent("ent:shop", "ent:nowhere"),
+                Op::CreateView {
+                    id: "view:class/x".into(),
+                    view: View {
+                        kind: "class".into(),
+                        title: "X".into(),
+                        members: vec!["ent:shop".into(), "ent:ghost".into()],
+                        provenance: Some(derived(&["ent:shop"])),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateView {
+                    id: "view:mindmap/x".into(),
+                    view: View {
+                        kind: "mindmap".into(),
+                        title: "X".into(),
+                        provenance: Some(derived(&["ent:shop"])),
+                        ..Default::default()
+                    },
+                },
+                Op::DeleteEntity {
+                    id: "ent:shop".into(),
+                    reason: "trying".into(),
+                },
+            ],
+            &session(),
+        );
+        assert_eq!(r.applied, 0, "{:?}", r.skipped);
+        assert_eq!(r.skipped.len(), 6);
+        assert!(
+            r.skipped[0].contains("parent cycle through ent:orders > ent:shop"),
+            "{:?}",
+            r.skipped
+        );
+        assert!(r.skipped[1].contains("parent cycle"));
+        assert!(r.skipped[2].contains("unknown parent ent:nowhere"));
+        assert!(r.skipped[3].contains("unknown member ent:ghost"));
+        assert!(r.skipped[4].contains("unknown kind"));
+        assert!(r.skipped[5].contains("still a parent of ent:orders"));
+        assert!(s.graph.entities["ent:shop"].parent.is_none());
+        // Deleting the child first frees the parent, and the delete tombstones.
+        let r = s.apply(
+            vec![
+                Op::DeleteEntity {
+                    id: "ent:orders".into(),
+                    reason: "gone".into(),
+                },
+                Op::DeleteEntity {
+                    id: "ent:shop".into(),
+                    reason: "gone".into(),
+                },
+            ],
+            &session(),
+        );
+        assert_eq!(r.applied, 2, "{:?}", r.skipped);
+        assert_eq!(s.graph.redirects["ent:shop"], "");
+        assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:shop"));
+        // A prose edit staged alone is refused.
+        let r = s.apply(
+            vec![Op::EditDocProse {
+                doc: "t.md".into(),
+                section: "/t".into(),
+                old_text: "shop".into(),
+                new_text: "store".into(),
+                text: "# T\nstore\n".into(),
+            }],
+            &Commit::store("dual-write"),
+        );
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].contains("edit-needs-mutation"));
+    }
+
+    // Views: upsert by kind and title, curation clears default, deletes of a member
+    // are allowed and noted, a default view refuses deletion, a bump raises the limit.
+    #[test]
+    fn views_curate_delete_and_bump() {
+        let mut s = Store {
+            out: own_dir("views"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\ncart and order\n");
+        let req = |id: &str, statement: &str| Op::CreateRequirement {
+            id: id.into(),
+            requirement: Requirement {
+                statement: statement.into(),
+                entities: vec!["ent:cart".into()],
+                facets: vec![Facet {
+                    facet: "behavior".into(),
+                    reasoning: "a step".into(),
+                    measure: None,
+                }],
+                source: Some(mention("t.md", "/t", "cart and order")),
+                ..Default::default()
+            },
+        };
+        s.apply(
+            vec![
+                create("ent:cart", "Cart"),
+                create("ent:order", "Order"),
+                req("req:t-1", "The cart opens."),
+                req("req:t-2", "The cart closes."),
+            ],
+            &session(),
+        );
+        // Defaults derived: a class view per scope and the cart's flow.
+        assert!(s.graph.views["view:class/public"].default);
+        assert_eq!(
+            s.graph.views["view:usecase/cart-t"].members,
+            vec!["req:t-1", "req:t-2"]
+        );
+        let r = s.apply(
+            vec![Op::DeleteView {
+                id: "view:class/public".into(),
+                reason: "noise".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].contains("default view"), "{:?}", r.skipped);
+        // An upsert on the default's kind and title lands on it and curates it.
+        let r = s.apply(
+            vec![Op::CreateView {
+                id: "view:class/whatever".into(),
+                view: View {
+                    kind: "class".into(),
+                    title: "public".into(),
+                    members: vec!["ent:cart".into()],
+                    provenance: Some(derived(&["ent:cart"])),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        let v = &s.graph.views["view:class/public"];
+        assert!(!v.default);
+        // The default's query keeps recomputing membership on the curated view: the
+        // match the session left out joins as a query-match change.
+        assert_eq!(v.members, vec!["ent:cart", "ent:order"]);
+        assert!(s.status.has_change(CHANGE_QUERY_MATCH, "view:class/public"));
+        assert!(!s.graph.views.contains_key("view:class/whatever"));
+        // A curated view is never removed by the recompute, and its members survive.
+        s.apply(
+            vec![Op::UpdateView {
+                id: "view:usecase/cart-t".into(),
+                title: Some("Cart flow".into()),
+                members: None,
+                add_members: Vec::new(),
+                remove_members: Vec::new(),
+                query: None,
+                collapse: None,
+                exclude: vec![Exclusion {
+                    id: "req:t-2".into(),
+                    note: "example, not flow".into(),
+                }],
+                reasoning: Some("trimmed".into()),
+            }],
+            &session(),
+        );
+        let v = &s.graph.views["view:usecase/cart-t"];
+        assert!(!v.default);
+        assert_eq!(v.title, "Cart flow");
+        assert_eq!(v.members, vec!["req:t-1"]);
+        assert_eq!(v.excluded.len(), 1);
+        // Deleting a member of a curated view is allowed; the view owes a retrace.
+        let r = s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-1".into(),
+                reason: "gone".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1);
+        assert_eq!(
+            s.graph.views["view:usecase/cart-t"].members,
+            vec!["req:t-1"]
+        );
+        let gone = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_VIEW_MEMBER_GONE)
+            .expect("view-member-gone");
+        assert_eq!(gone.subject, "view:usecase/cart-t");
+        assert_eq!(gone.via, "members");
+        assert_eq!(gone.detail["gone"], serde_json::json!(["req:t-1"]));
+        // A bump on a view records the limit and curates it; a limit of the wrong kind
+        // is refused.
+        let r = s.apply(
+            vec![
+                Op::BumpLimit {
+                    id: "view:class/public".into(),
+                    limit: "members-per-structural-view".into(),
+                    value: 25,
+                    provenance: Provenance::Decree {
+                        author: "owner".into(),
+                        at: "now".into(),
+                        note: None,
+                    },
+                },
+                Op::BumpLimit {
+                    id: "ent:cart".into(),
+                    limit: "edges-per-view".into(),
+                    value: 25,
+                    provenance: Provenance::Decree {
+                        author: "owner".into(),
+                        at: "now".into(),
+                        note: None,
+                    },
+                },
+            ],
+            &Commit::store("decree"),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(
+            s.graph.views["view:class/public"].limits["members-per-structural-view"].value,
+            25
+        );
+        assert!(r.skipped[0].contains("does not apply to an entity"));
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", r.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "decree");
+        assert_eq!(entry.mutations[0]["op"], "bump_limit");
+        // Now deletable.
+        let r = s.apply(
+            vec![Op::DeleteView {
+                id: "view:class/public".into(),
+                reason: "noise".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        // And the next commit derives it again as a default.
+        s.apply(vec![], &session());
+        assert!(s.graph.views["view:class/public"].default);
+    }
+
+    // The 51st requirement crosses requirements-per-entity; a bump on the entity
+    // raises the threshold and the record clears. Mirrors docs/compiler/graph.md#limits.
+    #[test]
+    fn threshold_crossed_on_the_fifty_first_requirement_and_cleared_by_a_bump() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nthe order\n");
+        let mut ops = vec![create("ent:order", "Order")];
+        for i in 0..50 {
+            ops.push(Op::CreateRequirement {
+                id: format!("req:t-{}", i + 1),
+                requirement: Requirement {
+                    statement: format!("The order does thing number {}.", i),
+                    entities: vec!["ent:order".into()],
+                    source: Some(mention("t.md", "/t", "the order")),
+                    ..Default::default()
+                },
+            });
+        }
+        s.apply(ops, &session());
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:order"));
+        let r = s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:t-51".into(),
+                requirement: Requirement {
+                    statement: "The order does one thing more.".into(),
+                    entities: vec!["ent:order".into()],
+                    source: Some(mention("t.md", "/t", "the order")),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        let crossed = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_THRESHOLD_CROSSED)
+            .expect("threshold-crossed");
+        assert_eq!(crossed.subject, "ent:order");
+        assert_eq!(crossed.via, "limits");
+        assert_eq!(crossed.detail["limit"], "requirements-per-entity");
+        assert_eq!(crossed.detail["count"], 51);
+        assert_eq!(crossed.detail["level"], "soft");
+        assert_eq!(crossed.detail["goal"], "abstract-entity");
+        let id = crossed.id.clone();
+        // Another commit keeps the record (no duplicate, same id), refreshing the count.
+        let r = s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:t-52".into(),
+                requirement: Requirement {
+                    statement: "The order ships by courier.".into(),
+                    entities: vec!["ent:order".into()],
+                    source: Some(mention("t.md", "/t", "the order")),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert!(r.changes.iter().all(|c| c.kind != CHANGE_THRESHOLD_CROSSED));
+        let standing: Vec<&ChangeRecord> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_THRESHOLD_CROSSED)
+            .collect();
+        assert_eq!(standing.len(), 1);
+        assert_eq!(standing[0].id, id);
+        assert_eq!(standing[0].detail["count"], 52);
+        // The bump raises the threshold: the crossing lapses.
+        s.apply(
+            vec![Op::BumpLimit {
+                id: "ent:order".into(),
+                limit: "requirements-per-entity".into(),
+                value: 70,
+                provenance: Provenance::Decree {
+                    author: "owner".into(),
+                    at: "now".into(),
+                    note: Some("the order is the hub".into()),
+                },
+            }],
+            &Commit::store("decree"),
+        );
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:order"));
+        assert_eq!(
+            s.graph.entities["ent:order"].limits["requirements-per-entity"].value,
+            70
+        );
+    }
+
+    // The store version: a build archives an out directory of another version to
+    // `<out>.bak` and starts empty; a reader treats it as empty without touching it.
+    // Mirrors docs/compiler/graph.md#store-version.
+    #[test]
+    fn store_version_archives_on_build_and_reads_as_empty() {
+        let dir = own_dir("version");
+        let mut s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\ncart\n");
+        s.apply(vec![create("ent:cart", "Cart")], &session());
+        assert_eq!(Store::open_for_build(&dir).graph.entities.len(), 1);
+        // Rewrite status.yaml without a version, as an older store would have it.
+        std::fs::write(dir.join("status.yaml"), "generation: 7\n").unwrap();
+        let read = Store::load(&dir);
+        assert!(read.graph.entities.is_empty());
+        assert_eq!(read.status.generation, 0);
+        assert!(dir.join("graph").join("entities.yaml").exists());
+        let bak = dir.with_file_name(format!(
+            "{}.bak",
+            dir.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::remove_dir_all(&bak).ok();
+        let fresh = Store::open_for_build(&dir);
+        assert!(fresh.graph.entities.is_empty());
+        assert!(!dir.join("status.yaml").exists());
+        assert!(bak.join("graph").join("entities.yaml").exists());
+        // A second archive replaces the first.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("status.yaml"), "version: 1\ngeneration: 2\n").unwrap();
+        std::fs::write(dir.join("marker"), "second").unwrap();
+        let fresh = Store::open_for_build(&dir);
+        assert!(fresh.graph.entities.is_empty());
+        assert!(bak.join("marker").exists());
+        assert!(!bak.join("graph").exists());
+        // A fresh directory is simply empty: nothing to archive.
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(Store::open_for_build(&dir).graph.entities.is_empty());
+        assert!(!dir.join("status.yaml").exists());
+    }
+
+    // A derived requirement mints under stem x, lands a provenance-pending record, and
+    // ratifies to a quote in place; a decree retracts. Mirrors docs/compiler/compilation.md#edit-paths.
+    #[test]
+    fn derived_and_decreed_requirements_pend_ratify_and_retract() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nThe cart is split by category.\n");
+        let r = s.apply(
+            vec![
+                create("ent:cart", "Cart"),
+                Op::CreateRequirement {
+                    id: "prov:new".into(),
+                    requirement: Requirement {
+                        statement: "The cart is split by category.".into(),
+                        entities: vec!["ent:cart".into()],
+                        provenance: Some(derived(&["ent:cart"])),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "prov:decree".into(),
+                    requirement: Requirement {
+                        statement: "The cart never exceeds ten categories.".into(),
+                        entities: vec!["ent:cart".into()],
+                        provenance: Some(Provenance::Decree {
+                            author: "owner".into(),
+                            at: "now".into(),
+                            note: None,
+                        }),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "prov:none".into(),
+                    requirement: Requirement {
+                        statement: "Nothing backs this.".into(),
+                        entities: vec!["ent:cart".into()],
+                        ..Default::default()
+                    },
+                },
+                Op::ReportDiagnostic {
+                    id: String::new(),
+                    diagnostic: Diagnostic {
+                        rule: "ratification-pending".into(),
+                        severity: "info".into(),
+                        subjects: vec!["req:x-1".into()],
+                        message: "the docs should say so".into(),
+                        reasoning: None,
+                        lifecycle: "open".into(),
+                        triage: None,
+                        prompt: None,
+                        answer: None,
+                        created: None,
+                        updated: None,
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert_eq!(r.applied, 4, "{:?}", r.skipped);
+        assert!(r.skipped[0].contains("no provenance"));
+        assert!(s.graph.requirements.contains_key("req:x-1"));
+        assert!(s.graph.requirements.contains_key("req:x-2"));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-2"));
+        // The same derived statement from the same sources folds, never duplicates.
+        s.apply(
+            vec![Op::CreateRequirement {
+                id: "prov:again".into(),
+                requirement: Requirement {
+                    statement: "The cart is split by category".into(),
+                    entities: vec!["ent:cart".into()],
+                    provenance: Some(derived(&["ent:cart"])),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert_eq!(s.graph.requirements.len(), 2);
+        // The sweep never deletes derived or decreed nodes.
+        s.gc();
+        assert_eq!(s.graph.requirements.len(), 2);
+        // Ratification flips the provenance to the quote and resolves the diagnostic.
+        let r = s.apply(
+            vec![Op::RatifyProvenance {
+                id: "req:x-1".into(),
+                source: mention("t.md", "/t", "The cart is split by category."),
+            }],
+            &Commit::store("ratify"),
+        );
+        assert_eq!(r.applied, 2, "{:?}", r.skipped);
+        let q = &s.graph.requirements["req:x-1"];
+        assert!(q.source.is_some() && q.provenance.is_none());
+        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
+        assert!(s
+            .graph
+            .diagnostics
+            .values()
+            .all(|d| d.lifecycle == "resolved"));
+        assert!(s.graph.entities["ent:cart"]
+            .mentions
+            .iter()
+            .any(|m| m.section == "/t"));
+        // Retracting the decree deletes it; a quoted fact is not a decree.
+        let r = s.apply(
+            vec![
+                Op::RetractDecree {
+                    id: "req:x-2".into(),
+                    reason: "withdrawn".into(),
+                },
+                Op::RetractDecree {
+                    id: "req:x-1".into(),
+                    reason: "withdrawn".into(),
+                },
+            ],
+            &Commit::store("decree"),
+        );
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert!(!s.graph.requirements.contains_key("req:x-2"));
+        assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:x-2"));
+        assert!(r.skipped[0].contains("not a decree"));
+    }
+
+    // A save that dirtied sections is a generation of its own with its records.
+    // Mirrors docs/compiler/graph.md#journal.
+    #[test]
+    fn sync_docs_journals_an_edit_entry_with_section_records() {
+        let mut s = Store {
+            out: own_dir("edit"),
+            ..Default::default()
+        };
+        let v1 = "# T\nintro\n\n## Alpha\nalpha body\n\n## Beta\nbeta body\n";
+        let mut parsed = BTreeMap::new();
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(v1), crate::md::parse_sections(v1)),
+        );
+        s.sync_docs(&parsed);
+        assert_eq!(s.status.generation, 1);
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+        assert_eq!(entry.kind, "edit");
+        assert_eq!(entry.dirtied.len(), 3);
+        assert!(entry
+            .mutations
+            .iter()
+            .all(|m| m["op"] == CHANGE_SECTION_DIRTY));
+        assert!(s.status.has_change(CHANGE_SECTION_DIRTY, "t.md#/t/alpha"));
+        let rec = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.subject == "t.md#/t/alpha")
+            .unwrap();
+        assert_eq!(rec.generation, 1);
+        assert_eq!(rec.via, "section");
+        assert_eq!(rec.detail["section"], "/t/alpha");
+        // Nothing changed: no entry, no generation.
+        s.sync_docs(&parsed);
+        assert_eq!(s.status.generation, 1);
+        // Beta removed, Alpha edited: the entry lists both, the removed record is a trail
+        // the sweep clears, and Alpha's stale anchor is recorded on its section.
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "alpha body".into(),
+                entities: vec![],
+                source: Some(mention("t.md", "/t/alpha", "alpha body")),
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            Requirement {
+                statement: "beta body".into(),
+                entities: vec![],
+                source: Some(mention("t.md", "/t/beta", "beta body")),
+                ..Default::default()
+            },
+        );
+        let v2 = "# T\nintro\n\n## Alpha\nalpha CHANGED\n";
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(v2), crate::md::parse_sections(v2)),
+        );
+        let d2 = s.sync_docs(&parsed2);
+        assert!(
+            d2[0].stale_anchors.contains(&"req:t-1".to_string()) || !s.status.alignment.is_empty()
+        );
+        let edit_gen = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_SECTION_REMOVED)
+            .map(|c| c.generation)
+            .expect("section-removed");
+        let entry: JournalEntry =
+            yaml_to(&s.out.join("journal").join(format!("g{}.yaml", edit_gen))).unwrap();
+        assert_eq!(entry.kind, "edit");
+        assert!(entry.dirtied.contains(&"t.md#/t/beta".to_string()));
+        assert!(entry
+            .mutations
+            .iter()
+            .any(|m| m["op"] == CHANGE_SECTION_REMOVED && m["section"] == "/t/beta"));
+        assert!(entry
+            .mutations
+            .iter()
+            .any(|m| m["op"] == CHANGE_SECTION_DIRTY && m["section"] == "/t/alpha"));
+        assert!(
+            s.status.has_change(CHANGE_ANCHOR_STALE, "t.md#/t/beta")
+                || s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"),
+            "{:?}",
+            s.status.changes
+        );
+        // The sweep deletes the homeless requirement and clears the trail.
+        s.gc();
+        assert!(!s.graph.requirements.contains_key("req:t-2") || !s.status.alignment.is_empty());
+        assert!(!s.status.has_change(CHANGE_SECTION_REMOVED, "t.md#/t/beta"));
     }
 
     #[test]
     fn sync_docs_dirty_moved_removed() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        let v1 = "# T\nintro\n\n## Group\ngroup body\n\n### Alpha\nalpha body\n\n## Beta\nbeta body\n";
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        let v1 =
+            "# T\nintro\n\n## Group\ngroup body\n\n### Alpha\nalpha body\n\n## Beta\nbeta body\n";
         let mut parsed = BTreeMap::new();
-        parsed.insert("t.md".to_string(), (hash_hex(v1), crate::md::parse_sections(v1)));
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(v1), crate::md::parse_sections(v1)),
+        );
         let d1 = s.sync_docs(&parsed);
         assert_eq!(d1.len(), 1);
         assert_eq!(d1[0].dirty_sections.len(), 4);
 
         // Anchor nodes in Alpha (which will move) and Beta (which will change).
-        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/group/alpha", "alpha body")], ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), Requirement {
-            ears: "The A shall alpha.".into(), entities: vec!["ent:a".into()], edges: vec![],
-            source: mention("t.md", "/t/group/alpha", "alpha body"), confidence: None, reasoning: None, created: None, updated: None,
-        });
-        s.graph.requirements.insert("req:t-2".into(), Requirement {
-            ears: "The B shall beta.".into(), entities: vec!["ent:a".into()], edges: vec![],
-            source: mention("t.md", "/t/beta", "beta body"), confidence: None, reasoning: None, created: None, updated: None,
-        });
-        s.docs.get_mut("t.md").unwrap().coverage.insert("/t/group/alpha".into(), Coverage { state: "covered".into(), note: None, claimed_by: None });
+        s.graph.entities.insert(
+            "ent:a".into(),
+            Entity {
+                name: "A".into(),
+                mentions: vec![mention("t.md", "/t/group/alpha", "alpha body")],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The A alphas.".into(),
+                entities: vec!["ent:a".into()],
+                source: Some(mention("t.md", "/t/group/alpha", "alpha body")),
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            Requirement {
+                statement: "The B betas.".into(),
+                entities: vec!["ent:a".into()],
+                source: Some(mention("t.md", "/t/beta", "beta body")),
+                ..Default::default()
+            },
+        );
+        s.docs.get_mut("t.md").unwrap().coverage.insert(
+            "/t/group/alpha".into(),
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
 
         // Rename the Group heading (Alpha moves under the new reference, its raw unchanged)
         // and edit Beta so the anchored quote no longer locates.
         let v2 = "# T\nintro\n\n## Bunch\ngroup body\n\n### Alpha\nalpha body\n\n## Beta\nbeta CHANGED body\n";
         let mut parsed2 = BTreeMap::new();
-        parsed2.insert("t.md".to_string(), (hash_hex(v2), crate::md::parse_sections(v2)));
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(v2), crate::md::parse_sections(v2)),
+        );
         let d2 = s.sync_docs(&parsed2);
         assert_eq!(d2.len(), 1);
         // Bunch is a changed section, Beta is a changed section; the moved Alpha is not dirty.
-        assert_eq!(d2[0].dirty_sections, vec!["/t/beta".to_string(), "/t/bunch".to_string()]);
-        // Beta's quote no longer locates -> a proposal for the align turn (the section
+        assert_eq!(
+            d2[0].dirty_sections,
+            vec!["/t/beta".to_string(), "/t/bunch".to_string()]
+        );
+        // Beta's quote no longer locates -> a proposal for the align session (the section
         // was edited in place, so it has a candidate); Alpha's references were rewritten.
         assert!(!d2[0].stale_anchors.contains(&"req:t-2".to_string()));
-        assert!(s.status.alignment.iter().any(|b| b.doc == "t.md" && b.proposals.iter().any(|p| p.anchor == "req:t-2")));
+        assert!(s
+            .status
+            .alignment
+            .iter()
+            .any(|b| b.doc == "t.md" && b.proposals.iter().any(|p| p.anchor == "req:t-2")));
+        assert!(s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
         assert!(!d2[0].stale_anchors.contains(&"req:t-1".to_string()));
-        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/bunch/alpha");
-        assert_eq!(s.graph.entities["ent:a"].mentions[0].section, "/t/bunch/alpha");
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/bunch/alpha"
+        );
+        assert_eq!(
+            s.graph.entities["ent:a"].mentions[0].section,
+            "/t/bunch/alpha"
+        );
         let rec = &s.docs["t.md"];
         assert!(rec.coverage.contains_key("/t/bunch/alpha"));
     }
 
     #[test]
-    fn gc_removes_unanchored() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+    fn gc_removes_unanchored_and_spares_derived() {
+        let mut s = Store {
+            out: own_dir("gc"),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nbody\n");
-        s.graph.requirements.insert("req:gone-1".into(), Requirement {
-            ears: "The X shall y.".into(), entities: vec!["ent:x".into()], edges: vec![],
-            source: mention("gone.md", "/gone", "x"), confidence: None, reasoning: None, created: None, updated: None,
-        });
-        s.graph.entities.insert("ent:x".into(), Entity { name: "X".into(), mentions: vec![mention("gone.md", "/gone", "x")], ..Default::default() });
+        s.graph.requirements.insert(
+            "req:gone-1".into(),
+            Requirement {
+                statement: "The X ys.".into(),
+                entities: vec!["ent:x".into()],
+                source: Some(mention("gone.md", "/gone", "x")),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:x".into(),
+            Entity {
+                name: "X".into(),
+                mentions: vec![mention("gone.md", "/gone", "x")],
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:invented".into(),
+            Entity {
+                name: "Invented".into(),
+                provenance: Some(derived(&["ent:x"])),
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:class/kept".into(),
+            View {
+                kind: "class".into(),
+                title: "Kept".into(),
+                members: vec!["ent:x".into()],
+                provenance: Some(derived(&["ent:x"])),
+                ..Default::default()
+            },
+        );
         let actions = s.gc();
-        assert!(actions.len() >= 2);
+        assert!(actions.len() >= 2, "{:?}", actions);
         assert!(s.graph.requirements.is_empty());
-        assert!(s.graph.entities.is_empty());
+        assert!(!s.graph.entities.contains_key("ent:x"));
         assert_eq!(s.graph.redirects["ent:x"], "");
+        // Derived nodes are judgment's, not the sweep's; the ones citing the dead node
+        // and the curated view listing it owe a retrace.
+        assert!(s.graph.entities.contains_key("ent:invented"));
+        let node = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_NODE_DELETED && c.subject == "ent:invented")
+            .expect("node-deleted");
+        assert_eq!(node.via, "from");
+        assert!(s
+            .status
+            .has_change(CHANGE_VIEW_MEMBER_GONE, "view:class/kept"));
+        assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:x"));
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", s.status.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "gc");
+        // A second sweep is a no-op: the standing record is not rewritten.
+        let gen = s.status.generation;
+        assert!(s.gc().is_empty());
+        assert_eq!(s.status.generation, gen);
     }
 
     #[test]
     fn check_diags_reconcile_not_regenerate() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into(), None)]);
+        let mut s = Store {
+            out: own_dir("checks"),
+            ..Default::default()
+        };
+        s.reconcile_check_diags(vec![(
+            "uncovered-section".into(),
+            "t.md#/t".into(),
+            "warning".into(),
+            "section /t is unprocessed".into(),
+            None,
+        )]);
         assert_eq!(s.graph.diagnostics.len(), 1);
+        assert_eq!(s.status.generation, 1);
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+        assert_eq!(entry.kind, "checks");
+        assert_eq!(entry.mutations[0]["op"], "report_diagnostic");
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
-        // Same finding again: same id, no duplicate.
-        s.reconcile_check_diags(vec![("uncovered-section".into(), "t.md#/t".into(), "warning".into(), "section /t is unprocessed".into(), None)]);
+        // Same finding again: same id, no duplicate, no generation.
+        s.reconcile_check_diags(vec![(
+            "uncovered-section".into(),
+            "t.md#/t".into(),
+            "warning".into(),
+            "section /t is unprocessed".into(),
+            None,
+        )]);
         assert_eq!(s.graph.diagnostics.len(), 1);
         assert!(s.graph.diagnostics.contains_key(&id));
-        // Finding cleared: resolved, not deleted.
+        assert_eq!(s.status.generation, 1);
+        // A prompt landing on a finding opens an answer.
+        s.reconcile_check_diags(vec![(
+            "uncovered-section".into(),
+            "t.md#/t".into(),
+            "warning".into(),
+            "section /t is unprocessed".into(),
+            Some(crate::model::DiagnosticPrompt {
+                question: "skip it?".into(),
+                options: Vec::new(),
+                freeform: true,
+            }),
+        )]);
+        assert!(s.status.has_change(CHANGE_PROMPT_UNANSWERED, &id));
+        // Finding cleared: resolved, not deleted, and the answer debt goes with it.
         s.reconcile_check_diags(vec![]);
         assert_eq!(s.graph.diagnostics[&id].lifecycle, "resolved");
+        assert!(!s.status.has_change(CHANGE_PROMPT_UNANSWERED, &id));
+        assert_eq!(s.status.generation, 3);
     }
 
     #[test]
     fn search_tiers() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        s.graph.entities.insert("ent:shopping-cart".into(), Entity { name: "Shopping Cart".into(), aliases: vec!["cart".into()], ..Default::default() });
-        s.graph.entities.insert("ent:card".into(), Entity { name: "Credit Card".into(), ..Default::default() });
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        s.graph.entities.insert(
+            "ent:shopping-cart".into(),
+            Entity {
+                name: "Shopping Cart".into(),
+                aliases: vec!["cart".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:card".into(),
+            Entity {
+                name: "Credit Card".into(),
+                ..Default::default()
+            },
+        );
         let hits = s.search("cart");
         assert_eq!(hits[0].0, "ent:shopping-cart");
         let hits2 = s.search("credit card");
@@ -2019,39 +5657,73 @@ mod tests {
 
     #[test]
     fn create_under_existing_id_folds_in_place_and_reports_change() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), Requirement {
-            ears: "The Cart shall hold items a Customer intends to buy.".into(), entities: vec!["ent:cart".into()], edges: vec![],
-            source: mention("t.md", "/t", "holds items a Customer intends to buy"), confidence: None, reasoning: None, created: None, updated: None,
-        });
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:cart".into(), entity("Cart"));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The Cart holds items a Customer intends to buy.".into(),
+                entities: vec!["ent:cart".into()],
+                source: Some(mention(
+                    "t.md",
+                    "/t",
+                    "holds items a Customer intends to buy",
+                )),
+                ..Default::default()
+            },
+        );
         // Stage-time resolution staged a create under the anchor's id with a reworded,
         // subsuming statement and a fresh quote; commit folds it in place.
-        let report = s.apply(vec![Op::CreateRequirement { id: "req:t-1".into(), requirement: Requirement {
-            ears: "The Cart shall hold items.".into(), entities: vec!["ent:cart".into()], edges: vec![],
-            source: mention("t.md", "/t", "keeps items"), confidence: None, reasoning: None, created: None, updated: None,
-        }}], &wi(), 1, 10);
+        let report = s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:t-1".into(),
+                requirement: Requirement {
+                    statement: "The Cart holds items.".into(),
+                    entities: vec!["ent:cart".into()],
+                    source: Some(mention("t.md", "/t", "keeps items")),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
         assert_eq!(s.graph.requirements.len(), 1);
         let r = &s.graph.requirements["req:t-1"];
-        assert_eq!(r.ears, "The Cart shall hold items.");
-        assert_eq!(r.source.quote, "keeps items");
-        assert!(report.changed_requirements.contains("req:t-1"), "{:?}", report.changed_requirements);
+        assert_eq!(r.statement, "The Cart holds items.");
+        assert_eq!(r.source.as_ref().unwrap().quote, "keeps items");
+        assert!(
+            report.changed_requirements.contains("req:t-1"),
+            "{:?}",
+            report.changed_requirements
+        );
     }
 
     #[test]
     fn requirement_neighbors_find_the_topic_cluster() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:util".into(), Entity { name: "Sorting Algorithm CLI Utility".into(), ..Default::default() });
-        let mk = |ears: &str| Requirement {
-            ears: ears.into(), entities: vec!["ent:util".into()], edges: vec![],
-            source: mention("m.md", "/m", "q"), confidence: None, reasoning: None, created: None, updated: None,
+        s.graph
+            .entities
+            .insert("ent:util".into(), entity("Sorting Algorithm CLI Utility"));
+        let mk = |statement: &str| Requirement {
+            statement: statement.into(),
+            entities: vec!["ent:util".into()],
+            source: Some(mention("m.md", "/m", "q")),
+            ..Default::default()
         };
         // The example-sort failure: three statements about reverse-order sorting were
         // never put side by side. Stemmed content-token overlap pairs them.
-        s.graph.requirements.insert("req:m-2".into(), mk("The system shall allow the -r argument, which reverses sorting order to descending."));
-        s.graph.requirements.insert("req:m-3".into(), mk("The Sorting Algorithm CLI Utility shall keep track of reverse order with `-r`."));
-        s.graph.requirements.insert("req:m-5".into(), mk("The Sorting Algorithm CLI Utility shall strip out whitespace before and after the current line."));
-        s.graph.requirements.insert("req:m-8".into(), mk("The Sorting Algorithm CLI Utility shall sort lines descending, or ascending if reverse order is set."));
+        s.graph.requirements.insert(
+            "req:m-2".into(),
+            mk("The system allows the -r argument, which reverses sorting order to descending."),
+        );
+        s.graph.requirements.insert(
+            "req:m-3".into(),
+            mk("The Sorting Algorithm CLI Utility keeps track of reverse order with `-r`."),
+        );
+        s.graph.requirements.insert("req:m-5".into(), mk("The Sorting Algorithm CLI Utility strips out whitespace before and after the current line."));
+        s.graph.requirements.insert("req:m-8".into(), mk("The Sorting Algorithm CLI Utility sorts lines descending, or ascending if reverse order is set."));
         let n = s.requirement_neighbors("req:m-8");
         assert!(n.contains(&"req:m-2".to_string()), "{:?}", n);
         assert!(n.contains(&"req:m-3".to_string()), "{:?}", n);
@@ -2060,48 +5732,139 @@ mod tests {
 
     #[test]
     fn pair_diagnostic_sticky_regardless_of_subject_order() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        let d = |subjects: Vec<String>| Diagnostic {
-            rule: "contradiction".into(), severity: "warning".into(), subjects, message: "conflict".into(),
-            reasoning: None, lifecycle: "open".into(), triage: None, prompt: None, answer: None,
-            created: None, updated: None,
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
         };
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:a".into(), "req:b".into()]) }], &wi(), 1, 1);
+        let d = |subjects: Vec<String>| Diagnostic {
+            rule: "contradiction".into(),
+            severity: "warning".into(),
+            subjects,
+            message: "conflict".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        };
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: d(vec!["req:a".into(), "req:b".into()]),
+            }],
+            &session(),
+        );
         // The same pair reported from the other endpoint updates the finding in place.
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: d(vec!["req:b".into(), "req:a".into()]) }], &wi(), 1, 1);
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: d(vec!["req:b".into(), "req:a".into()]),
+            }],
+            &session(),
+        );
         assert_eq!(s.graph.diagnostics.len(), 1);
     }
 
     #[test]
     fn answered_prompt_is_never_reasked_and_resolve_marks_handled() {
         use crate::model::{DiagnosticAnswer, DiagnosticPrompt};
-        let mut s = Store { out: tmp(), ..Default::default() };
-        let prompt = |q: &str| DiagnosticPrompt { question: q.into(), options: Vec::new(), freeform: true };
-        let with_prompt = |q: Option<&str>| Diagnostic {
-            rule: "contradiction".into(), severity: "warning".into(),
-            subjects: vec!["req:a".into(), "req:b".into()], message: "conflict".into(),
-            reasoning: None, lifecycle: "open".into(), triage: None,
-            prompt: q.map(prompt), answer: None, created: None, updated: None,
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
         };
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("which?")) }], &wi(), 1, 0);
+        let prompt = |q: &str| DiagnosticPrompt {
+            question: q.into(),
+            options: Vec::new(),
+            freeform: true,
+        };
+        let with_prompt = |q: Option<&str>| Diagnostic {
+            rule: "contradiction".into(),
+            severity: "warning".into(),
+            subjects: vec!["req:a".into(), "req:b".into()],
+            message: "conflict".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: q.map(prompt),
+            answer: None,
+            created: None,
+            updated: None,
+        };
+        let r = s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: with_prompt(Some("which?")),
+            }],
+            &session(),
+        );
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
+        // A prompt landing opens an answer; its cause is the report.
+        let unanswered = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_PROMPT_UNANSWERED)
+            .unwrap();
+        assert_eq!(
+            (unanswered.subject.as_str(), unanswered.via.as_str()),
+            (id.as_str(), "report_diagnostic")
+        );
         // A promptless re-report keeps the question; a fresh one replaces it.
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(None) }], &wi(), 1, 0);
-        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "which?");
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("sharper?")) }], &wi(), 1, 0);
-        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "sharper?");
-        // Once answered, a re-report never re-asks.
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: with_prompt(None),
+            }],
+            &session(),
+        );
+        assert_eq!(
+            s.graph.diagnostics[&id].prompt.as_ref().unwrap().question,
+            "which?"
+        );
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: with_prompt(Some("sharper?")),
+            }],
+            &session(),
+        );
+        assert_eq!(
+            s.graph.diagnostics[&id].prompt.as_ref().unwrap().question,
+            "sharper?"
+        );
+        // Once answered, a re-report never re-asks, and the answer debt is paid.
         s.apply(
             vec![Op::AnswerDiagnostic {
                 id: id.clone(),
-                answer: DiagnosticAnswer { choice: None, text: "both".into(), status: "handling".into() },
+                answer: DiagnosticAnswer {
+                    choice: None,
+                    text: "both".into(),
+                    status: "handling".into(),
+                },
             }],
-            &wi(), 0, 0,
+            &Commit::store("answer"),
         );
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: with_prompt(Some("again?")) }], &wi(), 1, 0);
-        assert_eq!(s.graph.diagnostics[&id].prompt.as_ref().unwrap().question, "sharper?");
-        // Resolving while handling is the handling turn finishing.
-        s.apply(vec![Op::ResolveDiagnostic { id: id.clone(), reason: "settled".into() }], &wi(), 0, 0);
+        assert!(!s.status.has_change(CHANGE_PROMPT_UNANSWERED, &id));
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: with_prompt(Some("again?")),
+            }],
+            &session(),
+        );
+        assert_eq!(
+            s.graph.diagnostics[&id].prompt.as_ref().unwrap().question,
+            "sharper?"
+        );
+        // Resolving while handling is the handling session finishing.
+        s.apply(
+            vec![Op::ResolveDiagnostic {
+                id: id.clone(),
+                reason: "settled".into(),
+            }],
+            &session(),
+        );
         let d = &s.graph.diagnostics[&id];
         assert_eq!(d.lifecycle, "resolved");
         assert_eq!(d.answer.as_ref().unwrap().status, "handled");
@@ -2123,97 +5886,170 @@ mod tests {
         }
     }
 
-    fn seeded_req(doc: &str, ears: &str) -> Requirement {
+    fn seeded_req(doc: &str, statement: &str) -> Requirement {
         Requirement {
-            ears: ears.into(),
+            statement: statement.into(),
             entities: vec!["ent:cart".into()],
-            edges: vec![],
-            source: mention(doc, "/t", "The Cart holds items."),
-            confidence: None,
-            reasoning: None,
-            created: None,
-            updated: None,
+            source: Some(mention(doc, "/t", "The Cart holds items.")),
+            ..Default::default()
         }
     }
 
-    // The example-sort failure: deleting one side of a filed contradiction left the
-    // diagnostic open forever. Deletion now settles or re-enqueues.
-    // Mirrors docs/compiler/compilation.md#waves.
+    // Deleting one side of a filed contradiction settles or re-judges: a surviving
+    // subject gets a node-deleted record, a diagnostic with no subject left resolves.
+    // Mirrors docs/compiler/reconciler.md#pairs.
     #[test]
-    fn deleting_a_subject_settles_or_reenqueues_its_diagnostics() {
-        let dir = std::env::temp_dir().join(format!("jazyk-propagate-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
-        let mut s = Store { out: dir, ..Default::default() };
+    fn deleting_a_subject_settles_or_rejudges_its_diagnostics() {
+        let mut s = Store {
+            out: own_dir("propagate"),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
-        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), mentions: vec![mention("t.md", "/t", "The Cart holds items.")], ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), seeded_req("t.md", "The Cart shall hold items."));
-        s.graph.requirements.insert("req:t-2".into(), seeded_req("t.md", "The Cart shall stay empty."));
-        s.apply(vec![Op::ReportDiagnostic { id: String::new(), diagnostic: diag("contradiction", vec!["req:t-1", "req:t-2"]) }], &wi(), 1, 0);
+        s.graph.entities.insert(
+            "ent:cart".into(),
+            Entity {
+                name: "Cart".into(),
+                mentions: vec![mention("t.md", "/t", "The Cart holds items.")],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            seeded_req("t.md", "The Cart holds items."),
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            seeded_req("t.md", "The Cart stays empty."),
+        );
+        s.apply(
+            vec![Op::ReportDiagnostic {
+                id: String::new(),
+                diagnostic: diag("contradiction", vec!["req:t-1", "req:t-2"]),
+            }],
+            &session(),
+        );
         let did = s.graph.diagnostics.keys().next().unwrap().clone();
-        s.status.pending = PendingReviews::default();
+        s.status.changes.clear();
 
-        // One subject deleted: the diagnostic stands, the survivor is re-enqueued.
-        s.apply(vec![Op::DeleteRequirement { id: "req:t-1".into(), reason: "fact gone".into() }], &wi(), 1, 0);
+        // One subject deleted: the diagnostic stands, the survivor owes a re-judgment.
+        let r = s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-1".into(),
+                reason: "fact gone".into(),
+            }],
+            &session(),
+        );
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "open");
-        assert!(s.status.pending.requirements.contains(&"req:t-2".to_string()), "{:?}", s.status.pending.requirements);
+        let node = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_NODE_DELETED && c.subject == "req:t-2")
+            .expect("node-deleted on the survivor");
+        assert_eq!(node.via, "subjects");
+        assert_eq!(node.mutation, 1);
+        assert_eq!(node.detail["diagnostic"], did);
+        assert!(s
+            .status
+            .changed_subjects(&REQ_REVIEW_KINDS)
+            .contains(&"req:t-2".to_string()));
+        assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:t-1"));
 
-        // The open diagnostic alone keeps the survivor's pair review due, with no
+        // The open diagnostic alone keeps the survivor's pair judgment due, with no
         // computed neighbor left.
         assert!(s.pair_review_neighbors("req:t-2").is_empty());
         assert!(s.pair_review_due("req:t-2"));
 
         // Every subject deleted: the store resolves the diagnostic itself.
-        s.apply(vec![Op::DeleteRequirement { id: "req:t-2".into(), reason: "fact gone".into() }], &wi(), 1, 0);
+        s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-2".into(),
+                reason: "fact gone".into(),
+            }],
+            &session(),
+        );
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+        assert!(!s.status.has_change(CHANGE_NODE_DELETED, "req:t-2"));
     }
 
-    // A graph deleted into a stranded state before propagation existed heals at the
-    // deterministic tail. Mirrors docs/compiler/compilation.md#waves.
+    // A graph deleted into a stranded state heals at the deterministic tail.
     #[test]
     fn settle_dangling_diags_heals_a_stranded_graph() {
-        let dir = std::env::temp_dir().join(format!("jazyk-settle-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
-        let mut s = Store { out: dir, ..Default::default() };
+        let mut s = Store {
+            out: own_dir("settle"),
+            ..Default::default()
+        };
         seed_doc(&mut s, "t.md", "# T\nThe Cart holds items.\n");
-        s.graph.entities.insert("ent:cart".into(), Entity { name: "Cart".into(), ..Default::default() });
-        s.graph.requirements.insert("req:t-2".into(), seeded_req("t.md", "The Cart shall stay empty."));
-        s.graph.diagnostics.insert("diag:contradiction-1".into(), diag("contradiction", vec!["req:gone", "req:t-2"]));
-        s.graph.diagnostics.insert("diag:contradiction-2".into(), diag("contradiction", vec!["req:gone-a", "req:gone-b"]));
+        s.graph.entities.insert("ent:cart".into(), entity("Cart"));
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            seeded_req("t.md", "The Cart stays empty."),
+        );
+        s.graph.diagnostics.insert(
+            "diag:contradiction-1".into(),
+            diag("contradiction", vec!["req:gone", "req:t-2"]),
+        );
+        s.graph.diagnostics.insert(
+            "diag:contradiction-2".into(),
+            diag("contradiction", vec!["req:gone-a", "req:gone-b"]),
+        );
         assert!(s.has_dangling_diags());
 
         let actions = s.settle_dangling_diags();
         // All subjects gone: resolved by the store, with a journaled action.
-        assert_eq!(s.graph.diagnostics["diag:contradiction-2"].lifecycle, "resolved");
-        assert!(actions.iter().any(|a| a.contains("diag:contradiction-2")), "{:?}", actions);
-        // A survivor remains: the diagnostic stands and the survivor is re-enqueued.
-        assert_eq!(s.graph.diagnostics["diag:contradiction-1"].lifecycle, "open");
-        assert_eq!(s.status.pending.requirements, vec!["req:t-2".to_string()]);
+        assert_eq!(
+            s.graph.diagnostics["diag:contradiction-2"].lifecycle,
+            "resolved"
+        );
+        assert!(
+            actions.iter().any(|a| a.contains("diag:contradiction-2")),
+            "{:?}",
+            actions
+        );
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", s.status.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "settle-diagnostics");
+        // A survivor remains: the diagnostic stands and the survivor owes a judgment.
+        assert_eq!(
+            s.graph.diagnostics["diag:contradiction-1"].lifecycle,
+            "open"
+        );
+        assert_eq!(
+            s.status.changed_subjects(&REQ_REVIEW_KINDS),
+            vec!["req:t-2".to_string()]
+        );
         // Idempotent: a second sweep resolves nothing new.
         assert!(s.settle_dangling_diags().is_empty());
     }
 
     // Check reconciliation resolves only its own single-subject findings; a judged
-    // pair filed under a shared rule name is a turn's to resolve.
+    // pair filed under a shared rule name is a session's to resolve.
     #[test]
     fn check_reconcile_leaves_judged_pairs_alone() {
-        let mut s = Store { out: tmp(), ..Default::default() };
-        s.graph.diagnostics.insert("diag:duplicate-requirement-1".into(), diag("duplicate-requirement", vec!["req:a", "req:b"]));
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        s.graph.diagnostics.insert(
+            "diag:duplicate-requirement-1".into(),
+            diag("duplicate-requirement", vec!["req:a", "req:b"]),
+        );
         s.reconcile_check_diags(Vec::new());
-        assert_eq!(s.graph.diagnostics["diag:duplicate-requirement-1"].lifecycle, "open");
+        assert_eq!(
+            s.graph.diagnostics["diag:duplicate-requirement-1"].lifecycle,
+            "open"
+        );
     }
 
     fn req_at(doc: &str, sec: &str, quote: &str) -> Requirement {
         Requirement {
-            ears: format!("The A shall {}", quote.trim_end_matches('.')),
+            statement: format!("The A {}", quote.trim_end_matches('.')),
             entities: vec!["ent:a".into()],
-            edges: vec![],
-            source: mention(doc, sec, quote),
-            confidence: None,
-            reasoning: None,
-            created: None,
-            updated: None,
+            source: Some(mention(doc, sec, quote)),
+            ..Default::default()
         }
     }
 
@@ -2221,60 +6057,154 @@ mod tests {
     const ORDERS: &str = "Orders are placed from a cart. An order records the address and the total. Payment is taken at placement.";
 
     // A moved-and-edited section yields proposals, not stale anchors; the block persists
-    // in status.yaml and the anchor survives gc until the align turn decides.
+    // in status.yaml and the anchor survives the sweep until the session decides.
     #[test]
     fn sync_docs_proposes_for_a_moved_and_edited_section_and_gc_waits() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+        let mut s = Store {
+            out: own_dir("proposal"),
+            ..Default::default()
+        };
         let v1 = format!("# T\nintro\n\n## Cart\n{}\n\n## Orders\n{}\n", CART, ORDERS);
         let mut parsed = BTreeMap::new();
-        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(&v1), crate::md::parse_sections(&v1)),
+        );
         s.sync_docs(&parsed);
-        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")], ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
-        s.graph.requirements.insert("req:t-2".into(), req_at("t.md", "/t/cart", "A cart may hold up to fifty items at once."));
+        s.graph.entities.insert(
+            "ent:a".into(),
+            Entity {
+                name: "A".into(),
+                mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            req_at("t.md", "/t/cart", "Items stay until checkout."),
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            req_at(
+                "t.md",
+                "/t/cart",
+                "A cart may hold up to fifty items at once.",
+            ),
+        );
 
-        let v2 = format!("# T\nintro\n\n## Orders\n{}\n\n## Basket\n{}\n", ORDERS, CART.replace("fifty", "sixty"));
+        let v2 = format!(
+            "# T\nintro\n\n## Orders\n{}\n\n## Basket\n{}\n",
+            ORDERS,
+            CART.replace("fifty", "sixty")
+        );
         let mut parsed2 = BTreeMap::new();
-        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(&v2), crate::md::parse_sections(&v2)),
+        );
         let d2 = s.sync_docs(&parsed2);
         assert_eq!(d2.len(), 1);
         assert_eq!(d2[0].dirty_sections, vec!["/t/basket".to_string()]);
         assert!(d2[0].stale_anchors.is_empty(), "{:?}", d2[0].stale_anchors);
-        let block = s.status.alignment.iter().find(|b| b.doc == "t.md").expect("alignment block");
+        let block = s
+            .status
+            .alignment
+            .iter()
+            .find(|b| b.doc == "t.md")
+            .expect("alignment block");
         // ent:a's mention coincides with req:t-1's source: derived, it follows the
         // requirement and is no proposal of its own.
         let anchors: BTreeSet<&str> = block.proposals.iter().map(|p| p.anchor.as_str()).collect();
         assert_eq!(anchors, ["req:t-1", "req:t-2"].into_iter().collect());
-        assert!(block.changes.iter().any(|c| c.op == "moved" && c.to == vec!["t.md#/t/basket"]));
+        assert!(block
+            .changes
+            .iter()
+            .any(|c| c.op == "moved" && c.to == vec!["t.md#/t/basket"]));
+        // The align entry carries the proposals.
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", s.status.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "align");
+        assert!(entry
+            .mutations
+            .iter()
+            .any(|m| m["op"] == "propose" && m["anchor"] == "req:t-2"));
         // The persisted form round-trips.
         let reloaded = Store::load(&s.out);
         assert_eq!(reloaded.status.alignment, s.status.alignment);
-        // Anchors still point at the vanished section, and gc leaves them alone.
-        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/cart");
+        // Anchors still point at the vanished section, and the sweep leaves them alone.
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/cart"
+        );
         s.gc();
         assert!(s.graph.requirements.contains_key("req:t-1"));
         assert_eq!(s.graph.entities["ent:a"].mentions.len(), 1);
     }
 
     // place_anchor moves the source; reevaluate lists it as a stale anchor on the
-    // target document; a reconcile commit listing it pays the debt. orphan_anchor
-    // leaves the anchor where it was, and the align commit clears the block.
+    // target document; a commit naming it pays the debt. orphan_anchor leaves the
+    // anchor where it was, and the decided proposals clear the block.
     #[test]
     fn place_and_orphan_anchor_apply_and_clear_the_block() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
         let v1 = format!("# T\nintro\n\n## Cart\n{}\n", CART);
         let mut parsed = BTreeMap::new();
-        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(&v1), crate::md::parse_sections(&v1)),
+        );
         s.sync_docs(&parsed);
-        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")], ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
-        s.graph.requirements.insert("req:t-2".into(), req_at("t.md", "/t/cart", "A cart may hold up to fifty items at once."));
-        s.graph.requirements.insert("req:t-3".into(), req_at("t.md", "/t/cart", "The cart holds items a customer intends to buy."));
-        let v2 = format!("# T\nintro\n\n## Basket\n{}\n", CART.replace("fifty", "sixty"));
+        s.graph.entities.insert(
+            "ent:a".into(),
+            Entity {
+                name: "A".into(),
+                mentions: vec![mention("t.md", "/t/cart", "Items stay until checkout.")],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            req_at("t.md", "/t/cart", "Items stay until checkout."),
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            req_at(
+                "t.md",
+                "/t/cart",
+                "A cart may hold up to fifty items at once.",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:t-3".into(),
+            req_at(
+                "t.md",
+                "/t/cart",
+                "The cart holds items a customer intends to buy.",
+            ),
+        );
+        let v2 = format!(
+            "# T\nintro\n\n## Basket\n{}\n",
+            CART.replace("fifty", "sixty")
+        );
         let mut parsed2 = BTreeMap::new();
-        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(&v2), crate::md::parse_sections(&v2)),
+        );
         s.sync_docs(&parsed2);
         assert_eq!(s.status.alignment.len(), 1);
+        assert!(s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
 
         let align_item = WorkItem {
             task: "align-doc".into(),
@@ -2286,25 +6216,70 @@ mod tests {
         let from = |q: &str| mention("t.md", "/t/cart", q);
         let report = s.apply(
             vec![
-                Op::PlaceAnchor { id: "req:t-1".into(), from: from("Items stay until checkout."), to: mention("t.md", "/t/basket", "Items stay until checkout."), reevaluate: false },
-                Op::PlaceAnchor { id: "req:t-2".into(), from: from("A cart may hold up to fifty items at once."), to: mention("t.md", "/t/basket", "A cart may hold up to sixty items at once."), reevaluate: true },
-                Op::OrphanAnchor { id: "req:t-3".into(), from: from("The cart holds items a customer intends to buy.") },
+                Op::PlaceAnchor {
+                    id: "req:t-1".into(),
+                    from: from("Items stay until checkout."),
+                    to: mention("t.md", "/t/basket", "Items stay until checkout."),
+                    reevaluate: false,
+                },
+                Op::PlaceAnchor {
+                    id: "req:t-2".into(),
+                    from: from("A cart may hold up to fifty items at once."),
+                    to: mention(
+                        "t.md",
+                        "/t/basket",
+                        "A cart may hold up to sixty items at once.",
+                    ),
+                    reevaluate: true,
+                },
+                Op::OrphanAnchor {
+                    id: "req:t-3".into(),
+                    from: from("The cart holds items a customer intends to buy."),
+                },
             ],
-            &align_item,
-            1,
-            0,
+            &align_item.commit(1, 0),
         );
         assert_eq!(report.applied, 3, "{:?}", report.skipped);
         assert!(s.status.alignment.is_empty());
-        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/basket");
-        assert_eq!(s.graph.requirements["req:t-2"].source.quote, "A cart may hold up to sixty items at once.");
+        assert!(!s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/basket"
+        );
+        assert_eq!(
+            s.graph.requirements["req:t-2"]
+                .source
+                .as_ref()
+                .unwrap()
+                .quote,
+            "A cart may hold up to sixty items at once."
+        );
         // The mention derived from req:t-1's source followed the requirement.
         assert_eq!(s.graph.entities["ent:a"].mentions[0].section, "/t/basket");
-        assert_eq!(s.graph.requirements["req:t-3"].source.section, "/t/cart");
+        assert_eq!(
+            s.graph.requirements["req:t-3"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/cart"
+        );
         assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
-        // A substantive quote change is a revision owed a pair review; the align task
-        // itself records no pending reviews (only reconcile commits do).
+        // A substantive quote change is a revision owed a pair judgment; the flagged
+        // anchor is recorded stale on its new section.
         assert!(report.changed_requirements.contains("req:t-2"));
+        assert!(s.status.has_change(CHANGE_REQ_REVISED, "req:t-2"));
+        let stale = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_ANCHOR_STALE && c.subject == "t.md#/t/basket")
+            .expect("anchor-stale");
+        assert_eq!(stale.detail["anchors"], serde_json::json!(["req:t-2"]));
 
         // The next sync lists the flagged anchor as stale on its document even though
         // its quote locates, and the orphan (section gone) as stale too.
@@ -2315,46 +6290,91 @@ mod tests {
         assert!(!t.stale_anchors.contains(&"req:t-1".to_string()));
         assert!(t.dirty_sections.contains(&"/t/basket".to_string()));
 
-        // A reconcile commit whose item listed the anchor clears the flag.
-        let rec_item = WorkItem {
-            task: "reconcile-doc".into(),
-            target: "t.md".into(),
-            dirty_sections: vec!["/t/basket".into()],
-            stale_anchors: vec!["req:t-2".into(), "req:t-3".into()],
-            proposals: vec![],
-        };
-        s.apply(vec![Op::DeleteRequirement { id: "req:t-3".into(), reason: "gone".into() }], &rec_item, 1, 0);
+        // A commit that names the anchor clears the flag; resolving the section's
+        // reconcile goal clears the rest.
+        s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-3".into(),
+                reason: "gone".into(),
+            }],
+            &session(),
+        );
+        assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
+        let mut commit = session();
+        commit.resolved.push(Resolved {
+            goal: "g:reconcile-section:t.md#/t/basket".into(),
+            justification: "re-evaluated".into(),
+            evidence: serde_json::Value::Null,
+        });
+        s.apply(vec![], &commit);
         assert!(s.status.reevaluate.is_empty());
     }
 
     // Exact moves are journaled, and a heading level change is an exact move: nothing
-    // dirty, coverage carried.
+    // dirty beyond the new heading, coverage carried.
     #[test]
     fn exact_moves_are_journaled_and_survive_a_level_change() {
-        // Own directory: the shared tmp() is wiped by sibling tests mid-run.
-        let dir = std::env::temp_dir().join(format!("jazyk-align-journal-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
-        let mut s = Store { out: dir, ..Default::default() };
+        let mut s = Store {
+            out: own_dir("align-journal"),
+            ..Default::default()
+        };
         let v1 = format!("# T\nintro\n\n## Cart\n{}\n", CART);
         let mut parsed = BTreeMap::new();
-        parsed.insert("t.md".to_string(), (hash_hex(&v1), crate::md::parse_sections(&v1)));
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(&v1), crate::md::parse_sections(&v1)),
+        );
         s.sync_docs(&parsed);
-        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), ..Default::default() });
-        s.graph.requirements.insert("req:t-1".into(), req_at("t.md", "/t/cart", "Items stay until checkout."));
-        s.docs.get_mut("t.md").unwrap().coverage.insert("/t/cart".into(), Coverage { state: "covered".into(), note: None, claimed_by: None });
+        s.graph.entities.insert("ent:a".into(), entity("A"));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            req_at("t.md", "/t/cart", "Items stay until checkout."),
+        );
+        s.docs.get_mut("t.md").unwrap().coverage.insert(
+            "/t/cart".into(),
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
         let gen_before = s.status.generation;
         let v2 = format!("# T\nintro\n\n## Group\n\n### Cart\n{}\n", CART);
         let mut parsed2 = BTreeMap::new();
-        parsed2.insert("t.md".to_string(), (hash_hex(&v2), crate::md::parse_sections(&v2)));
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(&v2), crate::md::parse_sections(&v2)),
+        );
         let d2 = s.sync_docs(&parsed2);
         assert_eq!(d2[0].dirty_sections, vec!["/t/group".to_string()]);
         assert!(d2[0].stale_anchors.is_empty());
-        assert_eq!(s.graph.requirements["req:t-1"].source.section, "/t/group/cart");
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/group/cart"
+        );
         assert!(s.docs["t.md"].coverage.contains_key("/t/group/cart"));
-        assert_eq!(s.status.generation, gen_before + 1);
-        let entry: JournalEntry = yaml_to(&s.out.join("journal").join(format!("g{}.yaml", s.status.generation))).unwrap();
-        assert_eq!(entry.work_item.task, "align");
+        // The edit entry, then the align entry.
+        assert_eq!(s.status.generation, gen_before + 2);
+        let edit: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", gen_before + 1)),
+        )
+        .unwrap();
+        assert_eq!(edit.kind, "edit");
+        assert_eq!(edit.dirtied, vec!["t.md#/t/group".to_string()]);
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", gen_before + 2)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "align");
+        assert!(entry.batch.is_empty());
         assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");
     }
 
@@ -2362,18 +6382,45 @@ mod tests {
     // anchor too, not only a requirement source.
     #[test]
     fn dirty_section_checks_entity_mention_quotes() {
-        let mut s = Store { out: tmp(), ..Default::default() };
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
         let v1 = "# T\nintro\n\n## Cart\nThe cart holds items.\nA customer owns the cart.\n";
         let mut parsed = BTreeMap::new();
-        parsed.insert("t.md".to_string(), (hash_hex(v1), crate::md::parse_sections(v1)));
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(v1), crate::md::parse_sections(v1)),
+        );
         s.sync_docs(&parsed);
-        s.graph.entities.insert("ent:a".into(), Entity { name: "A".into(), mentions: vec![mention("t.md", "/t/cart", "A customer owns the cart.")], ..Default::default() });
-        let v2 = "# T\nintro\n\n## Cart\nThe cart holds items.\nNobody owns anything here at all.\n";
+        s.graph.entities.insert(
+            "ent:a".into(),
+            Entity {
+                name: "A".into(),
+                mentions: vec![mention("t.md", "/t/cart", "A customer owns the cart.")],
+                ..Default::default()
+            },
+        );
+        let v2 =
+            "# T\nintro\n\n## Cart\nThe cart holds items.\nNobody owns anything here at all.\n";
         let mut parsed2 = BTreeMap::new();
-        parsed2.insert("t.md".to_string(), (hash_hex(v2), crate::md::parse_sections(v2)));
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(v2), crate::md::parse_sections(v2)),
+        );
         let d2 = s.sync_docs(&parsed2);
         let all: Vec<String> = d2[0].stale_anchors.clone();
-        let proposed: Vec<String> = s.status.alignment.iter().flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone())).collect();
-        assert!(all.contains(&"ent:a".to_string()) || proposed.contains(&"ent:a".to_string()), "stale {:?} proposed {:?}", all, proposed);
+        let proposed: Vec<String> = s
+            .status
+            .alignment
+            .iter()
+            .flat_map(|b| b.proposals.iter().map(|p| p.anchor.clone()))
+            .collect();
+        assert!(
+            all.contains(&"ent:a".to_string()) || proposed.contains(&"ent:a".to_string()),
+            "stale {:?} proposed {:?}",
+            all,
+            proposed
+        );
     }
 }

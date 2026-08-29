@@ -43,12 +43,20 @@ impl ProxyState {
     }
 
     fn add_route(&self, up: &str, down: &str) {
-        self.routes.lock().unwrap().insert(up.to_string(), down.to_string());
+        self.routes
+            .lock()
+            .unwrap()
+            .insert(up.to_string(), down.to_string());
     }
 
     // The id the downstream agent knows a session by.
     fn route_down(&self, sid: &str) -> String {
-        self.routes.lock().unwrap().get(sid).cloned().unwrap_or_else(|| sid.to_string())
+        self.routes
+            .lock()
+            .unwrap()
+            .get(sid)
+            .cloned()
+            .unwrap_or_else(|| sid.to_string())
     }
 
     // The id the IDE knows a session by.
@@ -115,7 +123,9 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         config = config.env(k, v);
     }
     if agent.name == crate::acp::config::EMBEDDED {
-        config = config.env("JAZYK_LLM_BASE_URL", &llm.base_url).env("JAZYK_MODEL", &llm.model);
+        config = config
+            .env("JAZYK_LLM_BASE_URL", &llm.base_url)
+            .env("JAZYK_MODEL", &llm.model);
         if !llm.api_key.is_empty() {
             config = config.env("JAZYK_API_KEY", &llm.api_key);
         }
@@ -629,9 +639,13 @@ fn ensure_down(
 // disk otherwise. Mirrors docs/frontends/acp.md#doc-edit-delegation.
 fn start_sink(state: &Arc<ProxyState>) {
     use std::io::{BufRead, BufReader, Write};
-    let path = state.out.join(format!("acp-edit-sink-{}.sock", std::process::id()));
+    let path = state
+        .out
+        .join(format!("acp-edit-sink-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { return };
+    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
+        return;
+    };
     *state.sink_path.lock().unwrap() = Some(path);
     let st = state.clone();
     std::thread::spawn(move || {
@@ -644,7 +658,9 @@ fn start_sink(state: &Arc<ProxyState>) {
                 if reader.read_line(&mut line).is_err() {
                     return;
                 }
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else { return };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                    return;
+                };
                 let reply = match delegate_edit(&st, &v) {
                     Ok(()) => json!({"ok": true}),
                     Err(e) => json!({"ok": false, "error": e}),
@@ -661,16 +677,25 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Stri
         return Err("the client has no fs.writeTextFile capability".into());
     }
     let up = st.up.get().ok_or("no upstream connection")?;
-    let sid = st.last_session.lock().unwrap().clone().ok_or("no open session")?;
+    let sid = st
+        .last_session
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("no open session")?;
     let path = v["path"].as_str().ok_or("missing path")?;
     let content = v["content"].as_str().ok_or("missing content")?;
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
-    up.send_request(WriteTextFileRequest::new(sid_of(&sid), path.to_string(), content.to_string()))
-        .on_receiving_result(async move |result| {
-            let _ = tx.send(result.map(|_| ()).map_err(|e| format!("{}", e)));
-            Ok(())
-        })
-        .map_err(|e| format!("{}", e))?;
+    up.send_request(WriteTextFileRequest::new(
+        sid_of(&sid),
+        path.to_string(),
+        content.to_string(),
+    ))
+    .on_receiving_result(async move |result| {
+        let _ = tx.send(result.map(|_| ()).map_err(|e| format!("{}", e)));
+        Ok(())
+    })
+    .map_err(|e| format!("{}", e))?;
     rx.recv_timeout(std::time::Duration::from_secs(20))
         .map_err(|_| "the client did not answer the write".to_string())?
 }
@@ -741,7 +766,8 @@ fn run_command(
         "agent" if args.is_empty() => commands::agent_text(proj),
         "agent" => commands::agent_set(proj, args),
         "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
-            "no standing questions; every open finding is either unprompted or already answered".into()
+            "no standing questions; every open finding is either unprompted or already answered"
+                .into()
         }),
         "status" => {
             let s = crate::store::Store::load(&st.out);
@@ -781,8 +807,8 @@ fn run_command(
                     Err(e) => return format!("refused: {}", e),
                 };
                 runner.set_build_token(Some(format!("internal-{}", std::process::id())));
-                let _ = crate::bind::run_all(&store, &runner, &gs, &[], &proj.limits, &proj.linting, &trace);
-                crate::gen::run_all(&store, &runner, &gs, &[], false, &proj.limits, &proj.linting, &trace)
+                let _ = crate::bind::run_all(&store, &runner, &gs, &[], &trace);
+                crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {
                 crate::verify::run_all(&store, &runner, &gs, &[], None, false, &trace)
             };
@@ -823,7 +849,7 @@ fn call_title(name: &str, input: &str) -> String {
         "update_entity" => format!("update entity {}", s("id")),
         "delete_entity" => format!("delete entity {}", s("id")),
         "merge_entities" => format!("merge {} into {}", s("absorb"), s("keep")),
-        "upsert_requirement" => format!("requirement: {}", short(s("ears"))),
+        "upsert_requirement" => format!("requirement: {}", short(s("statement"))),
         "update_requirement" => format!("update requirement {}", s("id")),
         "delete_requirement" => format!("delete requirement {}", s("id")),
         "report_diagnostic" => format!("report {} {}", s("severity"), s("rule")),
@@ -864,7 +890,9 @@ fn result_title(name: &str, output: &str) -> Option<String> {
 // never collide. Mirrors docs/frontends/acp.md#slash-commands.
 fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
     use crate::turn::TraceEvent;
-    use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields};
+    use agent_client_protocol::schema::v1::{
+        ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    };
     // Per worker label: calls made so far, the id of the one still open, and the
     // summary the suppressed `done` call carried (the runner's TurnDone has none;
     // the model's own words fill the closing line).
@@ -885,13 +913,26 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
         };
         match ev {
             TraceEvent::WaveStart { task, items, .. } => {
-                send(text_update(format!("wave: {} ({} item(s))\n", task, items.len())));
+                send(text_update(format!(
+                    "wave: {} ({} item(s))\n",
+                    task,
+                    items.len()
+                )));
             }
             TraceEvent::TurnStart { label, .. } => {
-                open.lock().unwrap().entry(label.clone()).or_default().done_summary = None;
+                open.lock()
+                    .unwrap()
+                    .entry(label.clone())
+                    .or_default()
+                    .done_summary = None;
                 send(text_update(format!("▶ {}\n", label)));
             }
-            TraceEvent::TurnDone { label, staged, summary, .. } => {
+            TraceEvent::TurnDone {
+                label,
+                staged,
+                summary,
+                ..
+            } => {
                 // The model's own account of the turn: the answer to "done doing
                 // what?". Mirrors docs/frontends/acp.md#slash-commands.
                 let said = if summary.trim().is_empty() {
@@ -903,26 +944,39 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                 } else {
                     summary.trim().to_string()
                 };
-                let tail =
-                    if said.is_empty() { String::new() } else { format!(": {}", said) };
-                send(text_update(format!("✓ {} ({} staged){}\n", label, staged, tail)));
+                let tail = if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", said)
+                };
+                send(text_update(format!(
+                    "✓ {} ({} staged){}\n",
+                    label, staged, tail
+                )));
             }
             TraceEvent::TurnFailed { label, error, .. } => {
                 send(text_update(format!("✗ {}: {}\n", label, error)));
             }
             TraceEvent::GenEntityDone { entity, files } => {
-                send(text_update(format!("✓ gen {} ({} file(s))\n", entity, files)));
+                send(text_update(format!(
+                    "✓ gen {} ({} file(s))\n",
+                    entity, files
+                )));
             }
             TraceEvent::GenEntityFailed { entity, error, .. } => {
                 send(text_update(format!("✗ gen {}: {}\n", entity, error)));
             }
-            TraceEvent::VerifyRowDone { requirement, verdict, .. } => {
+            TraceEvent::VerifyRowDone {
+                requirement,
+                verdict,
+                ..
+            } => {
                 send(text_update(format!("{} {}\n", verdict, requirement)));
             }
             TraceEvent::ModelText { text, .. } => {
-                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
-                    format!("{}\n", text),
-                ))));
+                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{}\n", text)),
+                )));
             }
             // Jazyk's own narration is commentary, not the model thinking: it
             // renders as message text, so a thought section is never empty.
@@ -930,7 +984,12 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             TraceEvent::Note { text, verbose, .. } if !verbose => {
                 send(text_update(format!("{}\n", text)));
             }
-            TraceEvent::ToolCall { label, name, summary, full } => {
+            TraceEvent::ToolCall {
+                label,
+                name,
+                summary,
+                full,
+            } => {
                 let input = full.clone().unwrap_or_else(|| summary.clone());
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
                     if name == "done" {
@@ -960,11 +1019,21 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                         .raw_input(serde_json::Value::String(input)),
                 ));
             }
-            TraceEvent::ToolResult { label, name, summary, full } => {
+            TraceEvent::ToolResult {
+                label,
+                name,
+                summary,
+                full,
+            } => {
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
                     return;
                 }
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
+                if let Some(id) = open
+                    .lock()
+                    .unwrap()
+                    .get_mut(label)
+                    .and_then(|e| e.open.take())
+                {
                     let output = full.clone().unwrap_or_else(|| summary.clone());
                     let title = result_title(name, &output);
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
@@ -976,8 +1045,17 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                     )));
                 }
             }
-            TraceEvent::ToolError { label, rule, message } => {
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
+            TraceEvent::ToolError {
+                label,
+                rule,
+                message,
+            } => {
+                if let Some(id) = open
+                    .lock()
+                    .unwrap()
+                    .get_mut(label)
+                    .and_then(|e| e.open.take())
+                {
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                         id,
                         ToolCallUpdateFields::new()
@@ -1004,16 +1082,28 @@ fn mirrored_sessions(
     if let Ok(rd) = std::fs::read_dir(out.join("trace")) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            let Some(stem) = name.strip_suffix(".jsonl") else { continue };
-            let Ok(file) = std::fs::File::open(e.path()) else { continue };
+            let Some(stem) = name.strip_suffix(".jsonl") else {
+                continue;
+            };
+            let Ok(file) = std::fs::File::open(e.path()) else {
+                continue;
+            };
             let mut first = String::new();
             use std::io::BufRead;
             if std::io::BufReader::new(file).read_line(&mut first).is_err() {
                 continue;
             }
-            let Ok(meta) = serde_json::from_str::<serde_json::Value>(first.trim()) else { continue };
-            let kind = meta["meta"]["kind"]["kind"].as_str().unwrap_or("run").to_string();
-            let started = meta["meta"]["startedAt"].as_str().unwrap_or_default().to_string();
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(first.trim()) else {
+                continue;
+            };
+            let kind = meta["meta"]["kind"]["kind"]
+                .as_str()
+                .unwrap_or("run")
+                .to_string();
+            let started = meta["meta"]["startedAt"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             entries.push((stem.to_string(), kind, started));
         }
     }
@@ -1032,11 +1122,16 @@ fn mirrored_sessions(
 fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
     use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus};
     let path = out.join("trace").join(format!("{}.jsonl", stem));
-    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let mut updates: Vec<SessionUpdate> = Vec::new();
-    let chunk = |t: String| SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(t)));
+    let chunk =
+        |t: String| SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(t)));
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         let ev = &v["event"];
         let n = v["n"].as_u64().unwrap_or(0);
         let label = ev["label"].as_str().unwrap_or("");
@@ -1048,19 +1143,33 @@ fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
             "toolCall" => updates.push(SessionUpdate::ToolCall(
                 ToolCall::new(
                     format!("replay-{}", n),
-                    format!("{} → {} {}", label, ev["name"].as_str().unwrap_or(""), ev["summary"].as_str().unwrap_or("")),
+                    format!(
+                        "{} → {} {}",
+                        label,
+                        ev["name"].as_str().unwrap_or(""),
+                        ev["summary"].as_str().unwrap_or("")
+                    ),
                 )
                 .status(ToolCallStatus::Completed),
             )),
             "toolError" => updates.push(SessionUpdate::ToolCall(
                 ToolCall::new(
                     format!("replay-{}", n),
-                    format!("{} ✗ {}: {}", label, ev["rule"].as_str().unwrap_or(""), ev["message"].as_str().unwrap_or("")),
+                    format!(
+                        "{} ✗ {}: {}",
+                        label,
+                        ev["rule"].as_str().unwrap_or(""),
+                        ev["message"].as_str().unwrap_or("")
+                    ),
                 )
                 .status(ToolCallStatus::Failed),
             )),
             "turnDone" => updates.push(chunk(format!("✓ {}\n", label))),
-            "turnFailed" => updates.push(chunk(format!("✗ {}: {}\n", label, ev["error"].as_str().unwrap_or("")))),
+            "turnFailed" => updates.push(chunk(format!(
+                "✗ {}: {}\n",
+                label,
+                ev["error"].as_str().unwrap_or("")
+            ))),
             _ => {}
         }
     }
@@ -1109,7 +1218,11 @@ fn recorded_sessions(
         .take(30)
         // The timestamp is what a history picker renders as "5m ago"; without it a
         // row cannot be placed in time. Mirrors docs/frontends/acp.md#session-store.
-        .map(|m| SessionInfo::new(sid_of(&m.id), root).title(m.title).updated_at(m.updated_at))
+        .map(|m| {
+            SessionInfo::new(sid_of(&m.id), root)
+                .title(m.title)
+                .updated_at(m.updated_at)
+        })
         .collect()
 }
 

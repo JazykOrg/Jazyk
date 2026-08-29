@@ -92,7 +92,10 @@ impl Queue {
     // The work item behind a queue entry, by target; None when it is not in the queue.
     pub fn find(&self, target: Option<&str>) -> Option<WorkItem> {
         let entry = match target {
-            Some(t) => self.compile.iter().find(|e| e["target"] == t || e["task"] == t)?,
+            Some(t) => self
+                .compile
+                .iter()
+                .find(|e| e["target"] == t || e["task"] == t)?,
             // The first task a worker can actually act on: ready, not gated, unclaimed.
             None => self
                 .compile
@@ -107,15 +110,27 @@ impl Queue {
             target: entry["target"].as_str().unwrap_or_default().to_string(),
             dirty_sections: entry["dirtySections"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             stale_anchors: entry["staleAnchors"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             proposals: entry["proposals"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
         })
     }
@@ -126,8 +141,7 @@ impl Queue {
 // come from status.pending; generation and verification from the ledger.
 pub fn compute(proj: &Project, out: &Path) -> Queue {
     let mut store = Store::load(out);
-    store.align = align_thresholds(proj);
-    let verdict = store.status.verdict.clone();
+    let verdict = store.status.verdict.to_string();
     let open_diags = store.open_diag_counts();
     let dangling_diags = store.has_dangling_diags();
     let gs = crate::gen::GenSettings::resolve(proj);
@@ -145,7 +159,8 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             .iter()
             .filter(|(r, sec)| {
                 let skip = if sec.kind == "heading" { 1 } else { 0 };
-                !rec.coverage.contains_key(*r) && !sec.raw.lines().skip(skip).all(|l| l.trim().is_empty())
+                !rec.coverage.contains_key(*r)
+                    && !sec.raw.lines().skip(skip).all(|l| l.trim().is_empty())
             })
             .map(|(r, _)| r.clone())
             .collect();
@@ -172,7 +187,11 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
                 }
             }
         } else if !in_dirty.contains(doc) {
-            extra.push(crate::store::DirtyDoc { doc: doc.clone(), dirty_sections: uncovered, stale_anchors: stale });
+            extra.push(crate::store::DirtyDoc {
+                doc: doc.clone(),
+                dirty_sections: uncovered,
+                stale_anchors: stale,
+            });
         }
     }
     dirty.extend(extra);
@@ -186,7 +205,12 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     // Alignment first: anchors are placed before any document is reconciled, and a
     // document with pending proposals waits for its own align task.
     // Mirrors docs/compiler/alignment.md#the-align-doc-turn.
-    let aligning: BTreeSet<String> = store.status.alignment.iter().map(|b| b.doc.clone()).collect();
+    let aligning: BTreeSet<String> = store
+        .status
+        .alignment
+        .iter()
+        .map(|b| b.doc.clone())
+        .collect();
     for b in &store.status.alignment {
         compile.push(json!({
             "kind": "align-document",
@@ -220,12 +244,16 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     }
     let reconcile_open = !compile.is_empty();
 
-    // Reviews owed, recorded at commit. Pair reviews before entity reviews.
-    let pending_reqs: std::collections::BTreeSet<&String> = store.status.pending.requirements.iter().collect();
-    let pair: Vec<&String> = store
+    // Reviews owed, recorded at commit as change records. Pair reviews before entity
+    // reviews.
+    let owed_reqs: Vec<String> = store
         .status
-        .pending
-        .requirements
+        .changed_subjects(&crate::store::REQ_REVIEW_KINDS)
+        .into_iter()
+        .filter(|r| store.graph.requirements.contains_key(r))
+        .collect();
+    let pending_reqs: std::collections::BTreeSet<&String> = owed_reqs.iter().collect();
+    let pair: Vec<&String> = owed_reqs
         .iter()
         .filter(|rid| store.pair_review_due(rid))
         // A pair scheduled from both ends runs once; the smaller id carries the task
@@ -235,7 +263,10 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             !(nbrs.len() == 1
                 && nbrs[0].as_str() < rid.as_str()
                 && pending_reqs.contains(&nbrs[0])
-                && store.pair_review_neighbors(&nbrs[0]).iter().any(|x| x == *rid))
+                && store
+                    .pair_review_neighbors(&nbrs[0])
+                    .iter()
+                    .any(|x| x == *rid))
         })
         .collect();
     for rid in &pair {
@@ -247,7 +278,10 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         }));
     }
     let pair_open = reconcile_open || !pair.is_empty();
-    for eid in &store.status.pending.entities {
+    for eid in &store
+        .status
+        .changed_subjects(&crate::store::ENTITY_REVIEW_KINDS)
+    {
         if !store.graph.entities.contains_key(eid) {
             continue;
         }
@@ -263,9 +297,12 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     // (Cleared lazily at finish; listed nowhere.)
 
     // Parked work resumes first: it is ready by definition.
-    for p in &store.status.parked {
+    for p in &store.status.parked_items() {
         let kind = kind_of(&p.task);
-        if compile.iter().any(|e| e["target"] == p.target.as_str() && e["kind"] == kind) {
+        if compile
+            .iter()
+            .any(|e| e["target"] == p.target.as_str() && e["kind"] == kind)
+        {
             continue;
         }
         compile.push(json!({
@@ -293,10 +330,14 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             p
         })
         .collect();
-    let bind_entities: BTreeSet<String> =
-        bind.iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
-    let bind_reqs: BTreeSet<String> =
-        bind.iter().filter_map(|p| p["requirement"].as_str().map(String::from)).collect();
+    let bind_entities: BTreeSet<String> = bind
+        .iter()
+        .filter_map(|p| p["entity"].as_str().map(String::from))
+        .collect();
+    let bind_reqs: BTreeSet<String> = bind
+        .iter()
+        .filter_map(|p| p["requirement"].as_str().map(String::from))
+        .collect();
     let generate: Vec<Value> = crate::gen::pending(&store, &gs)
         .into_iter()
         .map(|mut p| {
@@ -313,8 +354,10 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
             p
         })
         .collect();
-    let gen_entities: BTreeSet<String> =
-        generate.iter().filter_map(|p| p["entity"].as_str().map(String::from)).collect();
+    let gen_entities: BTreeSet<String> = generate
+        .iter()
+        .filter_map(|p| p["entity"].as_str().map(String::from))
+        .collect();
     let verify: Vec<Value> = crate::verify::pending(&store, &gs, Some("stale"), None)
         .into_iter()
         // Unbound rows are bind work and unimplemented rows are generation work;
@@ -323,16 +366,29 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         .filter(|p| !bind_reqs.contains(p["requirement"].as_str().unwrap_or_default()))
         .map(|mut p| {
             let ent = p["entity"].as_str().unwrap_or_default().to_string();
-            let blocked = compile_open || gen_entities.contains(&ent) || bind_entities.contains(&ent);
+            let blocked =
+                compile_open || gen_entities.contains(&ent) || bind_entities.contains(&ent);
             p["ready"] = json!(!blocked);
             if blocked {
-                p["blockedBy"] = json!(if compile_open { "compilation first" } else { "binding and generation first" });
+                p["blockedBy"] = json!(if compile_open {
+                    "compilation first"
+                } else {
+                    "binding and generation first"
+                });
             }
             p
         })
         .collect();
 
-    let mut q = Queue { compile, bind, generate, verify, verdict, open_diags, dangling_diags };
+    let mut q = Queue {
+        compile,
+        bind,
+        generate,
+        verify,
+        verdict,
+        open_diags,
+        dangling_diags,
+    };
 
     // Manual mode gates work behind a release; leases mark claimed tasks. Reviews and
     // verification are never gated. Mirrors docs/compiler/control-plane.md.
@@ -340,13 +396,22 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
     // A gated task is not ready, and blockedBy names the one release phrase used
     // everywhere: the flags never contradict each other.
     if control.compile == "manual" {
-        for t in q.compile.iter_mut().filter(|t| t["kind"] == "reconcile-document") {
+        for t in q
+            .compile
+            .iter_mut()
+            .filter(|t| t["kind"] == "reconcile-document")
+        {
             let doc = t["target"].as_str().unwrap_or_default();
-            let current = store.docs.get(doc).map(|r| r.content_hash.as_str()).unwrap_or_default();
+            let current = store
+                .docs
+                .get(doc)
+                .map(|r| r.content_hash.as_str())
+                .unwrap_or_default();
             if control.released.compile.get(doc).map(String::as_str) != Some(current) {
                 t["gated"] = json!(true);
                 t["ready"] = json!(false);
-                t["blockedBy"] = json!("awaiting release: `jazyk release compile` (or the GUI) approves it");
+                t["blockedBy"] =
+                    json!("awaiting release: `jazyk release compile` (or the GUI) approves it");
             }
         }
     }
@@ -356,11 +421,17 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         for t in q.generate.iter_mut().chain(q.bind.iter_mut()) {
             t["gated"] = json!(true);
             t["ready"] = json!(false);
-            t["blockedBy"] = json!("awaiting release: `jazyk release generate` (or the GUI) approves it");
+            t["blockedBy"] =
+                json!("awaiting release: `jazyk release generate` (or the GUI) approves it");
         }
     }
     let leases = crate::control::task_leases(out);
-    for t in q.compile.iter_mut().chain(q.bind.iter_mut()).chain(q.generate.iter_mut()) {
+    for t in q
+        .compile
+        .iter_mut()
+        .chain(q.bind.iter_mut())
+        .chain(q.generate.iter_mut())
+    {
         let target = t["target"]
             .as_str()
             .or_else(|| t["requirement"].as_str())
@@ -377,13 +448,6 @@ pub fn compute(proj: &Project, out: &Path) -> Queue {
         }
     }
     q
-}
-
-pub fn align_thresholds(proj: &Project) -> crate::align::Thresholds {
-    crate::align::Thresholds {
-        move_similarity: proj.limits.align_move_similarity,
-        split_coverage: proj.limits.align_split_coverage,
-    }
 }
 
 // Actionable work: ready, not gated, not claimed by someone else. What monitor

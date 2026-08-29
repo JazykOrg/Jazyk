@@ -42,7 +42,10 @@ pub struct AcpSettings {
 
 // Parse the [acp] table out of a jazyk.toml (or the global config).
 fn parse_acp(t: &Toml) -> AcpSettings {
-    let mut s = AcpSettings { agent: t.string("acp.agent"), agents: BTreeMap::new() };
+    let mut s = AcpSettings {
+        agent: t.string("acp.agent"),
+        agents: BTreeMap::new(),
+    };
     // Profile names are whatever appears as [acp.agents.<name>]; enumerate the keys.
     let mut names: Vec<String> = Vec::new();
     for key in t.strings.keys().chain(t.arrays.keys()) {
@@ -60,7 +63,10 @@ fn parse_acp(t: &Toml) -> AcpSettings {
         let mut env: Vec<(String, String)> = t
             .strings
             .iter()
-            .filter_map(|(k, v)| k.strip_prefix(&env_prefix).map(|name| (name.to_string(), v.clone())))
+            .filter_map(|(k, v)| {
+                k.strip_prefix(&env_prefix)
+                    .map(|name| (name.to_string(), v.clone()))
+            })
             .collect();
         env.sort();
         s.agents.insert(
@@ -69,7 +75,10 @@ fn parse_acp(t: &Toml) -> AcpSettings {
                 command: t.string(&format!("{}.command", p)).unwrap_or_default(),
                 args: t.array(&format!("{}.args", p)).unwrap_or_default(),
                 env,
-                serve_files: t.string(&format!("{}.serve_files", p)).map(|v| v == "true").unwrap_or(false),
+                serve_files: t
+                    .string(&format!("{}.serve_files", p))
+                    .map(|v| v == "true")
+                    .unwrap_or(false),
             },
         );
     }
@@ -94,34 +103,85 @@ pub fn load_global_acp() -> AcpSettings {
     AcpSettings::default()
 }
 
-// Turn and build budgets, the [limits] table. Defaults per docs/compiler/project-settings.md.
-#[derive(Clone)]
-pub struct Limits {
-    pub turn_rounds: u32,
-    pub turn_mutations: usize,
-    pub context_budget: usize,
-    pub build_turn_factor: u32,
-    pub max_section_chars: usize,
-    pub max_doc_sections: usize,
-    pub max_entity_requirements: usize,
-    pub align_move_similarity: f64,
-    pub align_split_coverage: f64,
+// The keys the [executors] table accepts: the goal kinds that run in a session and the
+// two goal classes. Mirrors docs/compiler/project-settings.md#executors.
+pub const EXECUTOR_KEYS: [&str; 16] = [
+    "compile",
+    "gc",
+    "place-anchors",
+    "reconcile-section",
+    "rejudge-pair",
+    "review-entity",
+    "retrace",
+    "conform-instance",
+    "bind",
+    "generate",
+    "verify",
+    "declare-edges",
+    "dedupe-candidates",
+    "curate-view",
+    "split-view",
+    "abstract-entity",
+];
+
+// The [executors] table: an ACP profile name per goal kind or goal class, overriding the
+// [acp] agent for the sessions of that kind or class. Mirrors
+// docs/compiler/project-settings.md#executors.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Executors {
+    pub by_kind: BTreeMap<String, String>,
 }
 
-impl Default for Limits {
-    fn default() -> Self {
-        Limits {
-            turn_rounds: 24,
-            turn_mutations: 64,
-            context_budget: 24_000,
-            build_turn_factor: 3,
-            max_section_chars: 6_000,
-            max_doc_sections: 40,
-            max_entity_requirements: 50,
-            align_move_similarity: 0.5,
-            align_split_coverage: 0.6,
+impl Executors {
+    // The profile for a batch: the kind's key, then the class's key. None defers to
+    // the [acp] agent.
+    pub fn resolve(&self, kind: &str, class: &str) -> Option<&str> {
+        self.by_kind
+            .get(kind)
+            .or_else(|| self.by_kind.get(class))
+            .map(String::as_str)
+    }
+
+    // Keys outside the accepted set: a settings error naming them.
+    pub fn unknown_keys(&self) -> Vec<String> {
+        self.by_kind
+            .keys()
+            .filter(|k| !EXECUTOR_KEYS.contains(&k.as_str()))
+            .cloned()
+            .collect()
+    }
+}
+
+// Parse the [executors] table out of a jazyk.toml (or the global config).
+fn parse_executors(t: &Toml) -> Executors {
+    Executors {
+        by_kind: t
+            .strings
+            .iter()
+            .filter_map(|(k, v)| {
+                k.strip_prefix("executors.")
+                    .map(|kind| (kind.to_string(), v.clone()))
+            })
+            .collect(),
+    }
+}
+
+// Read the global [executors] table if present (same file as the global LLM config).
+pub fn load_global_executors() -> Executors {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Executors::default(),
+    };
+    let candidates = [
+        PathBuf::from(&home).join(".jazyk").join("config.toml"),
+        PathBuf::from(&home).join(".jazyk.toml"),
+    ];
+    for c in candidates {
+        if let Ok(text) = std::fs::read_to_string(&c) {
+            return parse_executors(&Toml::parse(&text));
         }
     }
+    Executors::default()
 }
 
 // [workflow] defaults for the control plane: auto acts on change, manual gates work
@@ -138,7 +198,11 @@ impl Default for Workflow {
     fn default() -> Self {
         // Manual by default: a change queues, nothing spends LLM budget unprompted.
         // Explicit commands are their own approval.
-        Workflow { compile: "manual".into(), generate: "manual".into(), worker: "any".into() }
+        Workflow {
+            compile: "manual".into(),
+            generate: "manual".into(),
+            worker: "any".into(),
+        }
     }
 }
 
@@ -162,7 +226,7 @@ pub struct Project {
     pub llm: LlmSettings,
     pub acp: AcpSettings,
     pub linting: Linting,
-    pub limits: Limits,
+    pub executors: Executors,
     // When set (ad-hoc `jazyk compile <paths>` with no jazyk.toml), these files are used
     // directly instead of resolving the docs glob.
     pub explicit_files: Option<Vec<PathBuf>>,
@@ -182,7 +246,7 @@ impl Default for Project {
             llm: LlmSettings::default(),
             acp: AcpSettings::default(),
             linting: Linting::default(),
-            limits: Limits::default(),
+            executors: Executors::default(),
             explicit_files: None,
         }
     }
@@ -217,7 +281,9 @@ pub fn load_global_llm() -> GlobalLlm {
                 model: t.string("llm.model"),
                 api_key: t.string("llm.api_key"),
                 api_key_env: t.string("llm.api_key_env"),
-                temperature: t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok()),
+                temperature: t
+                    .string("llm.temperature")
+                    .and_then(|s| s.parse::<f64>().ok()),
             };
         }
     }
@@ -233,7 +299,12 @@ mod tests {
     fn generated_dirs_are_never_doc_input() {
         let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
-        for d in ["docs", "jazyk-out/docsgen", "jazyk-out-backup-local/docsgen", "elsewhere"] {
+        for d in [
+            "docs",
+            "jazyk-out/docsgen",
+            "jazyk-out-backup-local/docsgen",
+            "elsewhere",
+        ] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
         }
         std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
@@ -242,7 +313,10 @@ mod tests {
         std::fs::write(dir.join("jazyk-out-backup-local/docsgen/y.md"), "# Y\n").unwrap();
         std::fs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
         let mut p = Project::load(&dir);
-        assert_eq!(p.doc_files(), vec![dir.join("docs/a.md"), dir.join("elsewhere/z.md")]);
+        assert_eq!(
+            p.doc_files(),
+            vec![dir.join("docs/a.md"), dir.join("elsewhere/z.md")]
+        );
         // A relocated out directory (--out) is skipped by path, whatever its name.
         p.out = dir.join("elsewhere");
         assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
@@ -251,7 +325,8 @@ mod tests {
 
     #[test]
     fn default_deliverable_is_root_and_docs_glob_whitelists() {
-        let dir = std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -265,7 +340,11 @@ mod tests {
         assert_eq!(crate::gen::GenSettings::resolve(&p).deliverable, dir);
         assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
         // A deliverable outside the root needs no implicit exclusion.
-        std::fs::write(dir.join("jazyk.toml"), "[gen]\ndeliverable = \"../elsewhere\"\n").unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[gen]\ndeliverable = \"../elsewhere\"\n",
+        )
+        .unwrap();
         assert_eq!(Project::load(&dir).deliverable_rel(), None);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -374,40 +453,16 @@ impl Project {
         p.llm.model = t.string("llm.model");
         p.llm.api_key = t.string("llm.api_key");
         p.llm.api_key_env = t.string("llm.api_key_env");
-        p.llm.temperature = t.string("llm.temperature").and_then(|s| s.parse::<f64>().ok());
+        p.llm.temperature = t
+            .string("llm.temperature")
+            .and_then(|s| s.parse::<f64>().ok());
         p.acp = parse_acp(&t);
+        p.executors = parse_executors(&t);
         if let Some(v) = t.array("docs.linting.rules.warnings") {
             p.linting.warnings = v;
         }
         if let Some(v) = t.array("docs.linting.rules.errors") {
             p.linting.errors = v;
-        }
-        if let Some(v) = t.integer("limits.turn_rounds") {
-            p.limits.turn_rounds = v as u32;
-        }
-        if let Some(v) = t.integer("limits.turn_mutations") {
-            p.limits.turn_mutations = v as usize;
-        }
-        if let Some(v) = t.integer("limits.context_budget") {
-            p.limits.context_budget = v as usize;
-        }
-        if let Some(v) = t.integer("limits.build_turn_factor") {
-            p.limits.build_turn_factor = v as u32;
-        }
-        if let Some(v) = t.integer("limits.max_section_chars") {
-            p.limits.max_section_chars = v as usize;
-        }
-        if let Some(v) = t.integer("limits.max_doc_sections") {
-            p.limits.max_doc_sections = v as usize;
-        }
-        if let Some(v) = t.integer("limits.max_entity_requirements") {
-            p.limits.max_entity_requirements = v as usize;
-        }
-        if let Some(v) = t.float("limits.align_move_similarity") {
-            p.limits.align_move_similarity = v;
-        }
-        if let Some(v) = t.float("limits.align_split_coverage") {
-            p.limits.align_split_coverage = v;
         }
         p
     }
@@ -442,7 +497,11 @@ impl Project {
         }
         let mut patterns: Vec<String> = Vec::new();
         if let Some(rel) = self.deliverable_rel() {
-            patterns.push(if rel.is_empty() { "!**".to_string() } else { format!("!{}/**", rel) });
+            patterns.push(if rel.is_empty() {
+                "!**".to_string()
+            } else {
+                format!("!{}/**", rel)
+            });
         }
         patterns.extend(self.docs_glob.iter().cloned());
         let mut all = Vec::new();
@@ -606,12 +665,6 @@ impl Toml {
     fn string(&self, key: &str) -> Option<String> {
         self.strings.get(key).cloned()
     }
-    fn integer(&self, key: &str) -> Option<i64> {
-        self.strings.get(key).and_then(|s| s.parse::<i64>().ok())
-    }
-    fn float(&self, key: &str) -> Option<f64> {
-        self.strings.get(key).and_then(|s| s.parse::<f64>().ok())
-    }
     fn array(&self, key: &str) -> Option<Vec<String>> {
         self.arrays.get(key).cloned()
     }
@@ -684,13 +737,18 @@ mod discovery_tests {
 
     #[test]
     fn redirect_above_is_a_boundary_not_a_capture() {
-        let dir = std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join("inner")).unwrap();
         std::fs::create_dir_all(dir.join("inner/deep")).unwrap();
         std::fs::create_dir_all(dir.join("side")).unwrap();
         std::fs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
-        std::fs::write(dir.join("inner/jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
+        std::fs::write(
+            dir.join("inner/jazyk.toml"),
+            "[docs]\nglob = [\"**/*.md\"]\n",
+        )
+        .unwrap();
 
         // Starting at the redirecting directory follows it (via Project::load).
         assert_eq!(find_root(&dir), Some(dir.clone()));
@@ -715,18 +773,13 @@ const KNOWN_STRINGS: &[&str] = &[
     "llm.api_key",
     "llm.api_key_env",
     "llm.temperature",
-    "limits.turn_rounds",
-    "limits.turn_mutations",
-    "limits.context_budget",
-    "limits.build_turn_factor",
-    "limits.max_section_chars",
-    "limits.max_doc_sections",
-    "limits.max_entity_requirements",
-    "limits.align_move_similarity",
-    "limits.align_split_coverage",
 ];
-const KNOWN_ARRAYS: &[&str] =
-    &["docs.glob", "roots.files", "docs.linting.rules.warnings", "docs.linting.rules.errors"];
+const KNOWN_ARRAYS: &[&str] = &[
+    "docs.glob",
+    "roots.files",
+    "docs.linting.rules.warnings",
+    "docs.linting.rules.errors",
+];
 
 // The parsed file for the settings form: set keys, effective defaults, unknown keys
 // (which make the form refuse to write), and the file hash for the conditional write.
@@ -737,11 +790,15 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let t = Toml::parse(&text);
     // [acp] keys are known but not form-edited: the writer carries them over verbatim,
-    // like the redirect and the api key.
+    // like the redirect and the api key. [executors] keys are the form's own table.
     let unknown: Vec<String> = t
         .strings
         .keys()
-        .filter(|k| !KNOWN_STRINGS.contains(&k.as_str()) && !k.starts_with("acp."))
+        .filter(|k| {
+            !KNOWN_STRINGS.contains(&k.as_str())
+                && !k.starts_with("acp.")
+                && !k.starts_with("executors.")
+        })
         .chain(
             t.arrays
                 .keys()
@@ -749,7 +806,7 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
         )
         .cloned()
         .collect();
-    let d = Limits::default();
+    let executors = parse_executors(&t);
     json!({
         "exists": path.exists(),
         "hash": crate::model::hash_hex(&text),
@@ -770,32 +827,13 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
                 "warnings": t.array("docs.linting.rules.warnings").unwrap_or_default(),
                 "errors": t.array("docs.linting.rules.errors").unwrap_or_default(),
             },
-            "limits": {
-                "turnRounds": t.integer("limits.turn_rounds"),
-                "turnMutations": t.integer("limits.turn_mutations"),
-                "contextBudget": t.integer("limits.context_budget"),
-                "buildTurnFactor": t.integer("limits.build_turn_factor"),
-                "maxSectionChars": t.integer("limits.max_section_chars"),
-                "maxDocSections": t.integer("limits.max_doc_sections"),
-                "maxEntityRequirements": t.integer("limits.max_entity_requirements"),
-                "alignMoveSimilarity": t.float("limits.align_move_similarity"),
-                "alignSplitCoverage": t.float("limits.align_split_coverage"),
-            },
+            "executors": executors.by_kind,
         },
+        "executorKeys": EXECUTOR_KEYS,
+        "unknownExecutors": executors.unknown_keys(),
         "defaults": {
             "docsGlob": Project::default().docs_glob,
             "deliverable": ".",
-            "limits": {
-                "turnRounds": d.turn_rounds,
-                "turnMutations": d.turn_mutations,
-                "contextBudget": d.context_budget,
-                "buildTurnFactor": d.build_turn_factor,
-                "maxSectionChars": d.max_section_chars,
-                "maxDocSections": d.max_doc_sections,
-                "maxEntityRequirements": d.max_entity_requirements,
-                "alignMoveSimilarity": d.align_move_similarity,
-                "alignSplitCoverage": d.align_split_coverage,
-            },
         },
     })
 }
@@ -883,12 +921,20 @@ pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, Str
     if !roots.is_empty() {
         out.push_str(&format!("[roots]\nfiles = {}\n\n", toml_list(&roots)));
     }
-    if let Some(d) = s["deliverable"].as_str().map(str::trim).filter(|d| !d.is_empty()) {
+    if let Some(d) = s["deliverable"]
+        .as_str()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
         out.push_str(&format!("[gen]\ndeliverable = {}\n\n", toml_str(d)));
     }
     let llm = &s["llm"];
     let mut llm_lines: Vec<String> = Vec::new();
-    for (key, field) in [("base_url", "baseUrl"), ("model", "model"), ("api_key_env", "apiKeyEnv")] {
+    for (key, field) in [
+        ("base_url", "baseUrl"),
+        ("model", "model"),
+        ("api_key_env", "apiKeyEnv"),
+    ] {
         if let Some(v) = llm[field].as_str().map(str::trim).filter(|v| !v.is_empty()) {
             llm_lines.push(format!("{} = {}", key, toml_str(v)));
         }
@@ -897,32 +943,43 @@ pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, Str
         llm_lines.push(format!("api_key = {}", toml_str(&k)));
     }
     if !llm["temperature"].is_null() {
-        let t = llm["temperature"].as_f64().ok_or("temperature must be a number")?;
+        let t = llm["temperature"]
+            .as_f64()
+            .ok_or("temperature must be a number")?;
         llm_lines.push(format!("temperature = {}", t));
     }
     if !llm_lines.is_empty() {
         out.push_str(&format!("[llm]\n{}\n\n", llm_lines.join("\n")));
     }
-    let limits = &s["limits"];
-    let mut limit_lines: Vec<String> = Vec::new();
-    for (key, field) in [
-        ("turn_rounds", "turnRounds"),
-        ("turn_mutations", "turnMutations"),
-        ("context_budget", "contextBudget"),
-        ("build_turn_factor", "buildTurnFactor"),
-        ("max_section_chars", "maxSectionChars"),
-        ("max_doc_sections", "maxDocSections"),
-        ("max_entity_requirements", "maxEntityRequirements"),
-    ] {
-        if !limits[field].is_null() {
-            let v = limits[field].as_u64().filter(|v| *v > 0).ok_or_else(|| {
-                format!("limits.{} must be a positive integer", key)
-            })?;
-            limit_lines.push(format!("{} = {}", key, v));
-        }
+    // The [executors] table: the form's own when given, the old file's otherwise.
+    let executors: BTreeMap<String, String> = match s["executors"].as_object() {
+        Some(m) => m
+            .iter()
+            .filter_map(|(k, v)| {
+                v.as_str()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| (k.clone(), v.to_string()))
+            })
+            .collect(),
+        None => parse_executors(&old).by_kind,
+    };
+    if let Some(bad) = executors
+        .keys()
+        .find(|k| !EXECUTOR_KEYS.contains(&k.as_str()))
+    {
+        return Err(format!(
+            "executors.{} is not a goal kind or class; one of: {}",
+            bad,
+            EXECUTOR_KEYS.join(", ")
+        ));
     }
-    if !limit_lines.is_empty() {
-        out.push_str(&format!("[limits]\n{}\n\n", limit_lines.join("\n")));
+    if !executors.is_empty() {
+        let lines: Vec<String> = executors
+            .iter()
+            .map(|(k, v)| format!("{} = {}", k, toml_str(v)))
+            .collect();
+        out.push_str(&format!("[executors]\n{}\n\n", lines.join("\n")));
     }
     Ok(out.trim_end().to_string() + "\n")
 }
@@ -950,18 +1007,30 @@ mod settings_tests {
             &serde_json::json!({
                 "docsGlob": ["**/*.md", "!drafts/**"],
                 "llm": { "model": "m2" },
-                "limits": { "turnRounds": 30 },
+                "executors": { "gc": "claude", "reconcile-section": "embedded" },
             }),
         )
         .unwrap();
         assert!(text.contains("glob = [\"**/*.md\", \"!drafts/**\"]"));
         assert!(text.contains("api_key = \"sekret\""));
         assert!(text.contains("model = \"m2\""));
-        assert!(text.contains("turn_rounds = 30"));
+        assert!(text.contains("[executors]\ngc = \"claude\""), "{}", text);
         std::fs::write(dir.join("jazyk.toml"), &text).unwrap();
         let p = Project::load(&dir);
         assert_eq!(p.llm.model.as_deref(), Some("m2"));
-        assert_eq!(p.limits.turn_rounds, 30);
+        assert_eq!(
+            p.executors.resolve("reconcile-section", "compile"),
+            Some("embedded")
+        );
+        assert_eq!(p.executors.resolve("split-view", "gc"), Some("claude"));
+        assert_eq!(p.executors.resolve("retrace", "compile"), None);
+        let read3 = settings_read(&dir);
+        assert_eq!(read3["settings"]["executors"]["gc"], "claude");
+        assert!(read3["unknown"].as_array().unwrap().is_empty());
+        // A key outside the goal kinds and classes is a settings error.
+        let err = settings_render(&dir, &serde_json::json!({"executors": {"chat": "claude"}}))
+            .unwrap_err();
+        assert!(err.contains("executors.chat"), "{}", err);
         // Unknown keys are surfaced so the form refuses instead of dropping them.
         std::fs::write(dir.join("jazyk.toml"), "[custom]\nthing = \"x\"\n").unwrap();
         let read2 = settings_read(&dir);

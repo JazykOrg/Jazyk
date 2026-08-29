@@ -25,7 +25,11 @@ const WIRE_STRING_CAP: usize = 2_000;
 pub(crate) fn elide(v: &Value) -> Value {
     match v {
         Value::String(s) if s.len() > WIRE_STRING_CAP => {
-            json!(format!("{}… [{} chars total]", crate::llm::truncate(s, WIRE_STRING_CAP), s.len()))
+            json!(format!(
+                "{}… [{} chars total]",
+                crate::llm::truncate(s, WIRE_STRING_CAP),
+                s.len()
+            ))
         }
         Value::Array(a) => Value::Array(a.iter().map(elide).collect()),
         Value::Object(o) => {
@@ -55,13 +59,25 @@ pub(crate) fn elide(v: &Value) -> Value {
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobKind {
     Compile,
-    Gen { entities: Vec<String>, force: bool },
-    Verify { targets: Vec<String>, test_kind: Option<String>, force: bool },
+    Gen {
+        entities: Vec<String>,
+        force: bool,
+    },
+    Verify {
+        targets: Vec<String>,
+        test_kind: Option<String>,
+        force: bool,
+    },
     Audit,
     // Draft docs for unclaimed code under the named scopes (empty: every scope).
-    Decompile { scopes: Vec<String> },
+    Decompile {
+        scopes: Vec<String>,
+    },
     // Grade a model: endpoint and model override the resolved settings when given.
-    Benchmark { base_url: Option<String>, model: Option<String> },
+    Benchmark {
+        base_url: Option<String>,
+        model: Option<String>,
+    },
 }
 
 impl JobKind {
@@ -78,8 +94,14 @@ impl JobKind {
     fn as_value(&self) -> Value {
         match self {
             JobKind::Compile => json!({ "kind": "compile" }),
-            JobKind::Gen { entities, force } => json!({ "kind": "gen", "entities": entities, "force": force }),
-            JobKind::Verify { targets, test_kind, force } => {
+            JobKind::Gen { entities, force } => {
+                json!({ "kind": "gen", "entities": entities, "force": force })
+            }
+            JobKind::Verify {
+                targets,
+                test_kind,
+                force,
+            } => {
                 json!({ "kind": "verify", "targets": targets, "testKind": test_kind, "force": force })
             }
             JobKind::Audit => json!({ "kind": "audit" }),
@@ -206,7 +228,10 @@ impl JobManager {
             job.finished_at = Some(crate::verify::now_iso());
             let summary = job.summary();
             drop(inner);
-            st.events.emit("job.finished", json!({ "jobId": id, "state": "cancelled", "result": Value::Null }));
+            st.events.emit(
+                "job.finished",
+                json!({ "jobId": id, "state": "cancelled", "result": Value::Null }),
+            );
             return Some(summary);
         }
         Some(inner.jobs.get(&id).unwrap().summary())
@@ -269,29 +294,40 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
                 inner = jm.wake.wait(inner).unwrap();
             }
         };
-        st.events.emit("job.started", json!({ "jobId": id, "kind": kind.name() }));
+        st.events
+            .emit("job.started", json!({ "jobId": id, "kind": kind.name() }));
 
         // The transcript: one JSON-lines file per job under <out>/trace/, flushed per
         // line so a tail (or the API) always sees a parseable prefix.
         // Mirrors docs/frontends/gui.md#jobs.
         let stem = {
             let started = crate::verify::now_iso();
-            let compact: String = started.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            let compact: String = started
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
             format!("{}-{}-j{}", compact, kind.name(), id)
         };
         st.jobs.set_stem(id, &stem);
         let trace_path = st.out.join("trace").join(format!("{}.jsonl", stem));
         std::fs::create_dir_all(st.out.join("trace")).ok();
         let writer: Arc<Mutex<Option<std::fs::File>>> = Arc::new(Mutex::new(
-            std::fs::OpenOptions::new().create(true).append(true).open(&trace_path).ok(),
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&trace_path)
+                .ok(),
         ));
         // The generation at start and finish brackets the run: the journal entries
         // between the two are the run's changesets (gui.md#jobs).
-        write_line(&writer, &json!({ "meta": {
-            "id": id, "kind": kind.as_value(), "queuedAt": st.jobs.get(id).map(|j| j["queuedAt"].clone()),
-            "startedAt": crate::verify::now_iso(),
-            "generation": crate::store::read_generation(&st.out),
-        }}));
+        write_line(
+            &writer,
+            &json!({ "meta": {
+                "id": id, "kind": kind.as_value(), "queuedAt": st.jobs.get(id).map(|j| j["queuedAt"].clone()),
+                "startedAt": crate::verify::now_iso(),
+                "generation": crate::store::read_generation(&st.out),
+            }}),
+        );
 
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let sink: Arc<dyn Fn(&TraceEvent) + Send + Sync> = {
@@ -324,11 +360,17 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             job.finished_at = Some(crate::verify::now_iso());
             job.result = result.clone();
         }
-        write_line(&writer, &json!({ "outcome": {
-            "state": state, "result": result, "finishedAt": crate::verify::now_iso(),
-            "generation": crate::store::read_generation(&st.out),
-        }}));
-        st.events.emit("job.finished", json!({ "jobId": id, "state": state, "result": result }));
+        write_line(
+            &writer,
+            &json!({ "outcome": {
+                "state": state, "result": result, "finishedAt": crate::verify::now_iso(),
+                "generation": crate::store::read_generation(&st.out),
+            }}),
+        );
+        st.events.emit(
+            "job.finished",
+            json!({ "jobId": id, "state": state, "result": result }),
+        );
         let st2 = st.clone();
         std::thread::spawn(move || super::events::recompute_pending(&st2));
         super::jobs_hook_on_job_finished(&st, &kind);
@@ -349,17 +391,27 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             let store = crate::store::Store::load(&st.out);
             // Binding first, same as `jazyk gen`: owed binds classify each requirement
             // and the bound tests become the acceptance gates.
-            if let Err(e) =
-                crate::bind::run_all(&store, &runner, &st.gs(), entities, &st.proj().limits, &st.proj().linting, trace)
-            {
+            if let Err(e) = crate::bind::run_all(&store, &runner, &st.gs(), entities, trace) {
                 trace.line("bind", &e);
             }
-            crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, &st.proj().limits, &st.proj().linting, trace)
+            crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, trace)
         }
-        JobKind::Verify { targets, test_kind, force } => {
+        JobKind::Verify {
+            targets,
+            test_kind,
+            force,
+        } => {
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
             let store = crate::store::Store::load(&st.out);
-            crate::verify::run_all(&store, &runner, &st.gs(), targets, test_kind.as_deref(), *force, trace)
+            crate::verify::run_all(
+                &store,
+                &runner,
+                &st.gs(),
+                targets,
+                test_kind.as_deref(),
+                *force,
+                trace,
+            )
         }
         JobKind::Audit => {
             let store = crate::store::Store::load(&st.out);
@@ -410,7 +462,9 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
                     let mut scopes = str_list(&body["scopes"]);
                     if scopes.is_empty() {
                         let store = crate::store::Store::load(&st.out);
-                        scopes = crate::decompile::scopes(&st.proj(), &store, &st.gs()).into_keys().collect();
+                        scopes = crate::decompile::scopes(&st.proj(), &store, &st.gs())
+                            .into_keys()
+                            .collect();
                     }
                     crate::control::release_decompile(&st.proj(), &st.out, &scopes);
                 } else {
@@ -452,7 +506,9 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
             force: body["force"].as_bool().unwrap_or(false),
         },
         Some("audit") => JobKind::Audit,
-        Some("decompile") => JobKind::Decompile { scopes: str_list(&body["scopes"]) },
+        Some("decompile") => JobKind::Decompile {
+            scopes: str_list(&body["scopes"]),
+        },
         _ => {
             return super::api::err(
                 StatusCode::BAD_REQUEST,
@@ -466,7 +522,11 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
 
 fn str_list(v: &Value) -> Vec<String> {
     v.as_array()
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -499,7 +559,9 @@ fn write_line(writer: &Arc<Mutex<Option<std::fs::File>>>, v: &Value) {
 // Remove transcripts past the retention window. Runs once per server start.
 pub fn sweep_traces(out: &std::path::Path) {
     let dir = out.join("trace");
-    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
     let cutoff = std::time::SystemTime::now()
         - std::time::Duration::from_secs(TRACE_RETENTION_DAYS * 24 * 3600);
     for e in rd.flatten() {
@@ -523,32 +585,58 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
     let dir = st.out.join("trace");
     let list = tokio::task::spawn_blocking(move || {
         let mut items: Vec<(std::time::SystemTime, Value)> = Vec::new();
-        let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             let mut lines = text.lines();
-            let Some(meta) = lines.next().and_then(|l| serde_json::from_str::<Value>(l).ok()) else { continue };
+            let Some(meta) = lines
+                .next()
+                .and_then(|l| serde_json::from_str::<Value>(l).ok())
+            else {
+                continue;
+            };
             let outcome = text
                 .lines()
                 .last()
                 .and_then(|l| serde_json::from_str::<Value>(l).ok())
                 .filter(|v| !v["outcome"].is_null());
-            let events = text.lines().count().saturating_sub(1 + outcome.is_some() as usize);
-            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            let mtime = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-            items.push((mtime, serde_json::json!({
-                "stem": stem,
-                "meta": meta["meta"],
-                "outcome": outcome.map(|o| o["outcome"].clone()),
-                "events": events,
-            })));
+            let events = text
+                .lines()
+                .count()
+                .saturating_sub(1 + outcome.is_some() as usize);
+            let stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            items.push((
+                mtime,
+                serde_json::json!({
+                    "stem": stem,
+                    "meta": meta["meta"],
+                    "outcome": outcome.map(|o| o["outcome"].clone()),
+                    "events": events,
+                }),
+            ));
         }
         items.sort_by(|a, b| b.0.cmp(&a.0));
-        items.into_iter().map(|(_, v)| v).take(200).collect::<Vec<_>>()
+        items
+            .into_iter()
+            .map(|(_, v)| v)
+            .take(200)
+            .collect::<Vec<_>>()
     })
     .await
     .expect("trace list");
@@ -556,7 +644,11 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
 }
 
 fn trace_path(st: &SharedState, stem: &str) -> Option<std::path::PathBuf> {
-    if stem.is_empty() || !stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if stem.is_empty()
+        || !stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
     Some(st.out.join("trace").join(format!("{}.jsonl", stem)))
@@ -572,7 +664,9 @@ pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<Str
         let mut outcome = Value::Null;
         let mut events: Vec<Value> = Vec::new();
         for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
             if !v["meta"].is_null() {
                 meta = v["meta"].clone();
             } else if !v["outcome"].is_null() {

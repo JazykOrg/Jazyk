@@ -28,7 +28,11 @@ pub struct EventHub {
 impl EventHub {
     pub fn new() -> EventHub {
         let (tx, _) = broadcast::channel(256);
-        EventHub { tx, seq: AtomicU64::new(0), ring: Mutex::new(VecDeque::new()) }
+        EventHub {
+            tx,
+            seq: AtomicU64::new(0),
+            ring: Mutex::new(VecDeque::new()),
+        }
     }
 
     // Callable from any thread: broadcast send and the ring are both sync.
@@ -54,15 +58,26 @@ impl EventHub {
     // Events after `last`, or None when the gap exceeds the ring (client must resync).
     fn replay_after(&self, last: u64) -> Option<Vec<Arc<Value>>> {
         let ring = self.ring.lock().unwrap();
-        let oldest = ring.front().map(|e| e["seq"].as_u64().unwrap_or(0)).unwrap_or(0);
-        let newest = ring.back().map(|e| e["seq"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let oldest = ring
+            .front()
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .unwrap_or(0);
+        let newest = ring
+            .back()
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .unwrap_or(0);
         if last >= newest {
             return Some(Vec::new());
         }
         if last + 1 < oldest {
             return None;
         }
-        Some(ring.iter().filter(|e| e["seq"].as_u64().unwrap_or(0) > last).cloned().collect())
+        Some(
+            ring.iter()
+                .filter(|e| e["seq"].as_u64().unwrap_or(0) > last)
+                .cloned()
+                .collect(),
+        )
     }
 }
 
@@ -106,17 +121,24 @@ pub fn read_generation(out: &Path) -> u64 {
     crate::store::read_generation(out)
 }
 
-// Condense a journal entry for the event stream: the work item and one {op, id} per
-// mutation. Full bodies stay behind /api/journal.
+// Condense a journal entry for the event stream: the entry kind, the goal batch, and one
+// {op, id} per mutation. Full bodies stay behind /api/journal.
 fn entry_summary(g: u64, entry: &Value) -> Value {
     let ops: Vec<Value> = entry["mutations"]
         .as_array()
-        .map(|ms| ms.iter().map(|m| json!({ "op": m["op"], "id": m["id"] })).collect())
+        .map(|ms| {
+            ms.iter()
+                .map(|m| json!({ "op": m["op"], "id": m["id"] }))
+                .collect()
+        })
         .unwrap_or_default();
     json!({
         "generation": g,
         "build": entry["build"],
-        "workItem": entry["workItem"],
+        "kind": entry["kind"],
+        "batch": entry["batch"],
+        "resolvedGoals": entry["resolved_goals"],
+        "openedGoals": entry["opened_goals"],
         "ops": ops,
         "rounds": entry["rounds"],
         "tokens": entry["tokens"],
@@ -160,14 +182,20 @@ pub fn spawn_store_watcher(st: SharedState) {
             if gen_now > last_gen {
                 for g in (last_gen + 1)..=gen_now {
                     let path = st.out.join("journal").join(format!("g{}.yaml", g));
-                    let Ok(text) = std::fs::read_to_string(&path) else { continue };
-                    let Ok(entry) = serde_norway::from_str::<Value>(&text) else { continue };
+                    let Ok(text) = std::fs::read_to_string(&path) else {
+                        continue;
+                    };
+                    let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
+                        continue;
+                    };
                     entries.push(entry_summary(g, &entry));
                 }
             }
             last_gen = gen_now;
-            st.events
-                .emit("store.generation", json!({ "generation": gen_now, "entries": entries }));
+            st.events.emit(
+                "store.generation",
+                json!({ "generation": gen_now, "entries": entries }),
+            );
             let st2 = st.clone();
             tokio::task::spawn_blocking(move || recompute_pending(&st2));
         }
@@ -185,7 +213,9 @@ pub fn spawn_control_watcher(st: SharedState) {
         let fingerprint = |st: &SharedState| -> String {
             let mut s = String::new();
             let meta = |p: &std::path::Path| {
-                std::fs::metadata(p).map(|m| format!("{}:{:?};", m.len(), m.modified().ok())).unwrap_or_default()
+                std::fs::metadata(p)
+                    .map(|m| format!("{}:{:?};", m.len(), m.modified().ok()))
+                    .unwrap_or_default()
             };
             s.push_str(&meta(&crate::control::Control::path(&st.out)));
             for dir in ["workers", "leases"] {
@@ -206,7 +236,8 @@ pub fn spawn_control_watcher(st: SharedState) {
             let now = fingerprint(&st);
             if now != last {
                 last = now;
-                st.events.emit("control.changed", super::api::workers_snapshot(&st));
+                st.events
+                    .emit("control.changed", super::api::workers_snapshot(&st));
             }
         }
     });
@@ -239,7 +270,10 @@ pub fn spawn_docs_watcher(st: SharedState) {
             Ok(w) => w,
             Err(_) => return, // no watcher available: docs.changed simply never fires
         };
-        if watcher.watch(&st.proj().root, notify::RecursiveMode::Recursive).is_err() {
+        if watcher
+            .watch(&st.proj().root, notify::RecursiveMode::Recursive)
+            .is_err()
+        {
             return;
         }
         loop {
@@ -273,7 +307,10 @@ pub fn spawn_docs_watcher(st: SharedState) {
                     _ => false,
                 }
             });
-            st.events.emit("docs.changed", json!({ "docs": changed, "graphStale": graph_stale }));
+            st.events.emit(
+                "docs.changed",
+                json!({ "docs": changed, "graphStale": graph_stale }),
+            );
             super::jobs_hook_on_docs_changed(&st);
         }
     });

@@ -1382,7 +1382,11 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let (parsed, _links) = parse_all(proj);
     store.sync_docs(&parsed);
     sweep(&mut store, trace);
+    // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
+    // record the compile release so manual mode gates nothing this run asked for.
+    crate::control::release(proj, out, Some("compile"));
     let control = Control::load(proj, out);
+    crate::derive::record_ledger_stale(&mut store, &crate::gen::GenSettings::resolve(proj));
     let mut board = Board::derive(&store, proj, &control);
     absorb_derivation(&mut store, &board);
     trace.event(TraceEvent::Board {
@@ -1517,6 +1521,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         reload(&mut store, out, &parsed);
         sweep(&mut store, trace);
         let before = board;
+        crate::derive::record_ledger_stale(&mut store, &crate::gen::GenSettings::resolve(proj));
         board = Board::derive(&store, proj, &control);
         absorb_derivation(&mut store, &board);
         let gen_after = crate::store::read_generation(out);
@@ -1763,6 +1768,7 @@ pub fn finalize(
     }
 
     // The verdict: the board after the checks, blocked and optional riding as counts.
+    crate::derive::record_ledger_stale(s, &crate::gen::GenSettings::resolve(proj));
     let control = Control::load(proj, &proj.out);
     let board = Board::derive(s, proj, &control);
     absorb_derivation(s, &board);

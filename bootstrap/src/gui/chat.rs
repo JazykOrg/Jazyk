@@ -476,6 +476,10 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
                 s.open_diag_counts()
             ))
         }
+        "board" => Some(crate::acp::commands::board_text(&proj, &st.out)),
+        "preview" => Some(crate::acp::commands::preview_text(&proj, &st.out, rest)),
+        "explain" => Some(crate::acp::commands::explain_text(&proj, &st.out, rest)),
+        "ripple" => Some(crate::acp::commands::ripple_text(&proj, &st.out, rest)),
         "release" => {
             crate::control::release(&st.proj(), &st.out, None);
             st.events.emit("control.changed", json!({}));

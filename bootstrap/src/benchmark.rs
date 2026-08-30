@@ -7,8 +7,8 @@
 use crate::llm::{self, Llm};
 use crate::model::*;
 use crate::project::Linting;
+use crate::session::{Trace, TraceLevel};
 use crate::store::Store;
-use crate::turn::{Trace, TraceLevel};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -685,32 +685,16 @@ fn run_case_turn(
     llm: &Llm,
     snapshot: Store,
     item: &crate::model::WorkItem,
-    lint: &crate::project::Linting,
+    _lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     transcript: Option<&std::path::Path>,
 ) -> (Vec<crate::store::Op>, u32, Option<String>) {
     use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
-    let scope = match item.task.as_str() {
-        "reconcile-doc" => WorkScope {
-            task: item.task.clone(),
-            doc: Some(item.target.clone()),
-            target: item.target.clone(),
-            target_sections: item.dirty_sections.clone(),
-            stale_anchors: item.stale_anchors.clone(),
-            proposals: Vec::new(),
-        },
-        _ => WorkScope {
-            task: item.task.clone(),
-            doc: None,
-            target: item.target.clone(),
-            target_sections: Vec::new(),
-            stale_anchors: Vec::new(),
-            proposals: Vec::new(),
-        },
-    };
-    let (system, pack) = crate::turn::task_prompt(&snapshot, item, lint, gs);
+    let scope = WorkScope::from_item(item);
+    let goal = item.to_goal(crate::model::GoalState::Open);
+    let prompt = crate::session::preview(&snapshot, std::slice::from_ref(&goal));
     let names = toolset(&item.task);
     let tools: Vec<GenericTool> = catalog()
         .iter()
@@ -736,8 +720,7 @@ fn run_case_turn(
         };
         s
     });
-    let mut history =
-        vec![serde_json::json!({"role": "user", "content": format!("{}\n\n{}", system, pack)})];
+    let mut history = vec![serde_json::json!({"role": "user", "content": prompt})];
     let rounds = std::cell::Cell::new(0u32);
     let mut dispatch = |name: &str, args: &serde_json::Value| -> Result<String, String> {
         match session.borrow_mut().dispatch(name, args) {

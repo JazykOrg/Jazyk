@@ -20,8 +20,16 @@ fn dir(out: &Path) -> PathBuf {
 
 fn path_for(out: &Path, id: &str) -> PathBuf {
     // Ids come from an agent, so they are file names only after sanitizing.
-    let safe: String =
-        id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
+    let safe: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
     dir(out).join(format!("{}.jsonl", safe))
 }
 
@@ -63,26 +71,36 @@ pub fn record_prompt(out: &Path, id: &str, text: &str) {
 }
 
 pub fn record_update(out: &Path, id: &str, update: &Value) {
-    append(out, id, json!({"kind": "update", "at": now(), "update": update}));
+    append(
+        out,
+        id,
+        json!({"kind": "update", "at": now(), "update": update}),
+    );
 }
 
 // Every recorded conversation for this project, newest first.
 pub fn list(out: &Path) -> Vec<SessionMeta> {
     let mut sessions: Vec<SessionMeta> = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir(out)) else { return sessions };
+    let Ok(rd) = std::fs::read_dir(dir(out)) else {
+        return sessions;
+    };
     for e in rd.flatten() {
         let path = e.path();
         if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
             continue;
         }
-        let Ok(file) = std::fs::File::open(&path) else { continue };
+        let Ok(file) = std::fs::File::open(&path) else {
+            continue;
+        };
         let mut id = String::new();
         let mut started = String::new();
         let mut updated = String::new();
         let mut title = String::new();
         let mut turns = 0u64;
         for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             match v["kind"].as_str().unwrap_or("") {
                 "meta" => {
                     id = v["id"].as_str().unwrap_or_default().to_string();
@@ -111,7 +129,13 @@ pub fn list(out: &Path) -> Vec<SessionMeta> {
         if title.is_empty() {
             title = "(no prompt yet)".to_string();
         }
-        sessions.push(SessionMeta { id, title, started_at: started, updated_at: updated, turns });
+        sessions.push(SessionMeta {
+            id,
+            title,
+            started_at: started,
+            updated_at: updated,
+            turns,
+        });
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
@@ -125,14 +149,22 @@ pub fn turns(out: &Path, id: &str) -> u64 {
 
 // One conversation's records, in order.
 pub fn read(out: &Path, id: &str) -> Vec<Value> {
-    let Ok(text) = std::fs::read_to_string(path_for(out, id)) else { return Vec::new() };
-    text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).collect()
+    let Ok(text) = std::fs::read_to_string(path_for(out, id)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect()
 }
 
 // A conversation's name is its opening line, shortened. A picker shows a list of
 // these, so a whole paragraph in the title is worse than nothing.
 fn summarize(text: &str) -> String {
-    let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let line = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
     let mut short: String = line.chars().take(60).collect();
     if line.chars().count() > 60 {
         short.push('…');
@@ -167,8 +199,16 @@ mod tests {
         let cwd = std::path::Path::new("/tmp/project");
 
         open(&out, "sess-1", cwd, "embedded");
-        record_prompt(&out, "sess-1", "what does the payment document promise?\nsecond line");
-        record_update(&out, "sess-1", &json!({"sessionUpdate": "agent_message_chunk"}));
+        record_prompt(
+            &out,
+            "sess-1",
+            "what does the payment document promise?\nsecond line",
+        );
+        record_update(
+            &out,
+            "sess-1",
+            &json!({"sessionUpdate": "agent_message_chunk"}),
+        );
         // Reopening an existing conversation appends rather than truncating.
         open(&out, "sess-1", cwd, "embedded");
         record_prompt(&out, "sess-1", "and the refund window?");
@@ -177,7 +217,10 @@ mod tests {
         let records = read(&out, "sess-1");
         assert_eq!(records.len(), 4, "{:?}", records);
         assert_eq!(records[0]["kind"], "meta");
-        assert_eq!(records[1]["text"], "what does the payment document promise?\nsecond line");
+        assert_eq!(
+            records[1]["text"],
+            "what does the payment document promise?\nsecond line"
+        );
         assert_eq!(records[3]["text"], "and the refund window?");
 
         let listed = list(&out);
@@ -188,7 +231,10 @@ mod tests {
 
         // An id that names a path cannot escape the store.
         open(&out, "../escape", cwd, "embedded");
-        assert!(!out.parent().map(|p| p.join("escape.jsonl").exists()).unwrap_or(false));
+        assert!(!out
+            .parent()
+            .map(|p| p.join("escape.jsonl").exists())
+            .unwrap_or(false));
         assert!(list(&out).iter().any(|m| m.id == "../escape"));
 
         assert_eq!(read(&out, "nope").len(), 0);
@@ -203,7 +249,11 @@ mod tests {
         let cwd = std::path::Path::new("/tmp/project");
         for (i, at) in [("a", "100"), ("b", "200"), ("c", "300")] {
             open(&out, i, cwd, "embedded");
-            append(&out, i, json!({"kind": "user", "at": at, "text": format!("prompt {}", i)}));
+            append(
+                &out,
+                i,
+                json!({"kind": "user", "at": at, "text": format!("prompt {}", i)}),
+            );
         }
         assert_eq!(prune(&out, 2), 1);
         let left: Vec<String> = list(&out).into_iter().map(|m| m.id).collect();

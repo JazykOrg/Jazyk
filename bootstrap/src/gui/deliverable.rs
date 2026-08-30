@@ -13,13 +13,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         // Same skip list as doc collection, so a deliverable at the project root
         // lists the product, not the compiler's output.
-        if name.starts_with('.') || name == "node_modules" || name == "target" || name.starts_with("jazyk-out") {
+        if name.starts_with('.')
+            || name == "node_modules"
+            || name == "target"
+            || name.starts_with("jazyk-out")
+        {
             continue;
         }
         if p.is_dir() {
@@ -46,7 +52,11 @@ fn ownership(out_dir: &Path, gs: &crate::gen::GenSettings) -> BTreeMap<String, V
         }
         // A programmatic test artifact lives under the deliverable too.
         if row.test.kind == "programmatic" && !row.test.artifact.is_empty() {
-            by_file.entry(row.test.artifact.clone()).or_default().2.push(rid.clone());
+            by_file
+                .entry(row.test.artifact.clone())
+                .or_default()
+                .2
+                .push(rid.clone());
         }
     }
     let _ = gs;
@@ -90,7 +100,10 @@ fn safe_under(root_dir: &Path, rel: &str) -> Option<PathBuf> {
     if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
         return None;
     }
-    if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
+    if rel
+        .split('/')
+        .any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.'))
+    {
         return None;
     }
     let abs = root_dir.join(rel);
@@ -137,8 +150,12 @@ fn sites(store: &Store, out_dir: &Path, path: &str, text: &str) -> Vec<Value> {
                 "exists": exists,
             }));
         }
-        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty() {
-            let line = text.lines().position(|l| l.contains(&row.test.name)).map(|i| i + 1);
+        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty()
+        {
+            let line = text
+                .lines()
+                .position(|l| l.contains(&row.test.name))
+                .map(|i| i + 1);
             out.push(json!({
                 "line": line,
                 "requirement": rid,
@@ -183,10 +200,17 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
     let path = p.path.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<Value, (StatusCode, String)> {
         let Some(abs) = safe_path(&gs, &path) else {
-            return Err((StatusCode::BAD_REQUEST, format!("invalid deliverable path {}", path)));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("invalid deliverable path {}", path),
+            ));
         };
-        let bytes = std::fs::read(&abs)
-            .map_err(|e| (StatusCode::NOT_FOUND, format!("cannot read {}: {}", path, e)))?;
+        let bytes = std::fs::read(&abs).map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("cannot read {}: {}", path, e),
+            )
+        })?;
         let own = ownership(&out_dir, &gs);
         let empty = json!({ "entities": [], "requirements": [], "tests": [] });
         let owners = own.get(&path).unwrap_or(&empty).clone();

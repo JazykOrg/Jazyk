@@ -151,7 +151,7 @@ pub struct BuildRun {
 pub fn run_build(
     out: &Path,
     gs: &GenSettings,
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
     label: &str,
 ) -> Result<(), String> {
     let Some(b) = Ledger::load(out).build.clone() else {
@@ -751,7 +751,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                             "id": rid,
                             "statement": r.statement,
                             "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
-                            "provenance": crate::turn::provenance_line(r),
+                            "provenance": crate::session::provenance_line(r),
                             "hash": hash_hex(&r.statement),
                             "testName": test_name(rid, &r.statement),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
@@ -1553,9 +1553,9 @@ pub fn run_all(
     gs: &GenSettings,
     entities: &[String],
     force: bool,
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-    use crate::turn::TraceEvent;
+    use crate::session::TraceEvent;
     let mut targets: Vec<String> = if entities.is_empty() {
         store
             .graph
@@ -1708,16 +1708,12 @@ fn gen_turn(
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     id: &str,
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<usize, String> {
-    let item = crate::model::WorkItem {
-        task: "generate-entity".into(),
-        target: id.to_string(),
-        dirty_sections: Vec::new(),
-        stale_anchors: Vec::new(),
-        proposals: Vec::new(),
-    };
-    let report = runner.run_item(&item, trace);
+    let batch = crate::acp::runner::BatchRun::single(
+        crate::model::WorkItem::new("generate-entity", id).to_goal(crate::model::GoalState::Open),
+    );
+    let report = runner.run_item(&batch, trace);
     if let Some(e) = report.failed {
         return Err(e);
     }

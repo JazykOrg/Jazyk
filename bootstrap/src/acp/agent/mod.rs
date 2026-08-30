@@ -7,10 +7,10 @@ pub mod agent_loop;
 pub mod mcp_client;
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
-    ContentBlock, ContentChunk, InitializeRequest, InitializeResponse, McpServer,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
+    ContentChunk, InitializeRequest, InitializeResponse, McpServer, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
     SessionConfigSelectOption, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, UsageUpdate,
@@ -362,7 +362,10 @@ mod tests {
         let options = model_options(&llm, &llm.model);
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].id.0.as_ref(), MODEL_OPTION);
-        assert_eq!(options[0].category, Some(SessionConfigOptionCategory::Model));
+        assert_eq!(
+            options[0].category,
+            Some(SessionConfigOptionCategory::Model)
+        );
         let SessionConfigKind::Select(select) = &options[0].kind else {
             panic!("the model option is a select");
         };
@@ -372,7 +375,10 @@ mod tests {
         assert_eq!(json["options"][0]["value"], "some-model");
 
         // A model with no name at all offers nothing rather than an empty picker.
-        let bare = crate::llm::Llm { model: String::new(), ..llm };
+        let bare = crate::llm::Llm {
+            model: String::new(),
+            ..llm
+        };
         assert!(model_options(&bare, "").is_empty());
     }
 }

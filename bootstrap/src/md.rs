@@ -149,7 +149,14 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
         let parent_ref = if stack.is_empty() {
             None
         } else {
-            Some(format!("/{}", stack.iter().map(|(_, s)| s.clone()).collect::<Vec<_>>().join("/")))
+            Some(format!(
+                "/{}",
+                stack
+                    .iter()
+                    .map(|(_, s)| s.clone())
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ))
         };
         let sl = slug(&h.title);
         let path: Vec<String> = stack
@@ -171,7 +178,11 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
             lines.len()
         };
         let raw = lines[h.line..end].join("\n");
-        let kind = if stack.is_empty() && idx == 0 { "root" } else { "heading" };
+        let kind = if stack.is_empty() && idx == 0 {
+            "root"
+        } else {
+            "heading"
+        };
         sections.insert(
             reference,
             Section {

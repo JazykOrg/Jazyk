@@ -1,8 +1,9 @@
 // The tool registry: the graph's only interface for models. One registry, served
 // in-process to the turn harness and over stdio as the MCP server.
 // Mirrors docs/compiler/tools.md.
-use crate::context::{self, Focus};
+use crate::context::LoadedSet;
 use crate::model::*;
+use crate::session::{SkillLoad, SkillState};
 use crate::store::{Op, Store};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -39,14 +40,27 @@ pub fn catalog() -> Vec<ToolDef> {
     }
     vec![
         ToolDef {
-            name: "context",
-            description: "Load a bounded context pack around a target: an entity id (ent:...), a requirement id (req:...), or a section reference (doc.md#/ref). Returns the pack plus expansion handles for what was cut off.",
-            parameters: obj(json!({"target": {"type": "string"}}), &["target"]),
+            name: "load",
+            description: "Load a target and its immediate neighborhood into the loaded set: any node id (ent:..., req:..., view:..., diag:...) or a section reference (doc.md#/ref). depth defaults to 1: the target in full, its edges, each neighbor as a stub; depth 2 loads the neighbors in full too. Whatever the budget cut off arrives as expansion handles (h:<target>:<axis>). Loading an already loaded target is a repeat; deepen a loaded node with expand instead.",
+            parameters: obj(
+                json!({"target": {"type": "string"}, "depth": {"type": "integer", "minimum": 1}}),
+                &["target"],
+            ),
         },
         ToolDef {
             name: "expand",
-            description: "Load the frontier behind an expansion handle returned by a previous context call.",
+            description: "Load the frontier behind an expansion handle (h:<target>:<axis>[:<start>]) from the loaded set's status block or an earlier reply.",
             parameters: obj(json!({"handle": {"type": "string"}}), &["handle"]),
+        },
+        ToolDef {
+            name: "unload",
+            description: "Drop an item from the loaded set. Its handles close and its budget frees for the rest of the session.",
+            parameters: obj(json!({"target": {"type": "string"}}), &["target"]),
+        },
+        ToolDef {
+            name: "graph_status",
+            description: "Re-render the loaded set's status block in full: every loaded item, its handles, the skill index line, and the unload suggestions. A condensed form already rides on every mutating reply.",
+            parameters: obj(json!({}), &[]),
         },
         ToolDef {
             name: "search",
@@ -61,6 +75,11 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "get_entity",
             description: "One entity with its definition, mentions, requirements, and relationships.",
+            parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
+        },
+        ToolDef {
+            name: "get_view",
+            description: "One view with its members in order, its exclusions, query, and collapse list, and the relationships among its members.",
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {
@@ -394,21 +413,47 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"command": {"type": "string"}, "cwd": {"type": "string"}}), &["command"]),
         },
         ToolDef {
+            name: "mark_goal_done",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads (a verdict per neighbor for rejudge-pair, per attribute for conform-instance). The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            parameters: obj(
+                json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
+                &["goal", "justification"],
+            ),
+        },
+        ToolDef {
+            name: "mark_goal_failed",
+            description: "Record that one goal of the batch cannot honestly be accomplished, with a one or two sentence reason. Always accepted; a failed mandatory goal blocks convergence, a failed optional goal is recorded and stands.",
+            parameters: obj(
+                json!({"goal": {"type": "string"}, "reason": {"type": "string"}}),
+                &["goal", "reason"],
+            ),
+        },
+        ToolDef {
+            name: "load_skill",
+            description: "Bring one skill into the session by name (extraction, judgment, flow-views, structural-views, abstraction, conformance). The reply renders the payload; at most four skills render in one session.",
+            parameters: obj(json!({"name": {"type": "string"}}), &["name"]),
+        },
+        ToolDef {
             name: "done",
-            description: "End the turn and request commit of the staged mutations. summary says what was done.",
+            description: "End the session and request commit of the staged mutations. Every mandatory goal of the batch must be marked done or failed first; the batch gates run and a failure names the repair. summary is one line.",
             parameters: obj(json!({"summary": {"type": "string"}}), &["summary"]),
         },
     ]
 }
 
-pub const READ_TOOLS: [&str; 6] = [
-    "context",
+pub const READ_TOOLS: [&str; 9] = [
+    "load",
     "expand",
+    "unload",
+    "graph_status",
     "search",
     "read_section",
     "get_entity",
+    "get_view",
     "diagnostics",
 ];
+// The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
+pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
 pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
 pub const VERIFY_TOOLS: [&str; 4] = [
@@ -447,76 +492,55 @@ pub const FEEDBACK_TOOL: &str = "report_feedback";
 // record, so a confused model cannot flood the log.
 pub const FEEDBACK_LIMIT: usize = 5;
 
+// The session toolset for a goal batch: the union of the kinds' write slices plus
+// the always-on set (the read tools, the goal tools, report_feedback).
+// Mirrors docs/compiler/tools.md#toolsets.
+pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = READ_TOOLS.to_vec();
+    for k in kinds {
+        if let Some(kind) = crate::goals::kind(k) {
+            for t in kind.toolset() {
+                if !v.contains(t) {
+                    v.push(t);
+                }
+            }
+        }
+    }
+    for t in GOAL_TOOLS {
+        if !v.contains(&t) {
+            v.push(t);
+        }
+    }
+    v.push(FEEDBACK_TOOL);
+    v
+}
+
+// The task names of the per-target serving, and the serving surfaces (`mcp-*`).
 pub fn toolset(task: &str) -> Vec<&'static str> {
+    // A legacy task name routes through its goal kind's slice.
+    if let Some(kind) = match task {
+        "align-doc" => Some("place-anchors"),
+        "reconcile-doc" => Some("reconcile-section"),
+        "review-requirement" => Some("rejudge-pair"),
+        "review-entity" => Some("review-entity"),
+        "bind-requirement" => Some("bind"),
+        "generate-entity" => Some("generate"),
+        "verify-requirement" => Some("verify"),
+        _ => None,
+    } {
+        let mut v = toolset_for_kinds(&[kind]);
+        // The in-process ledger workers get the file and command tools.
+        if matches!(task, "generate-entity" | "bind-requirement") {
+            for t in FILE_TOOLS {
+                if !v.contains(&t) {
+                    v.push(t);
+                }
+            }
+        }
+        return v;
+    }
     let mut v = match task {
-        "align-doc" => vec![
-            "context",
-            "expand",
-            "search",
-            "read_section",
-            "get_entity",
-            "place_anchor",
-            "orphan_anchor",
-            "done",
-        ],
-        "reconcile-doc" => vec![
-            "context",
-            "expand",
-            "search",
-            "read_section",
-            "upsert_entity",
-            "update_entity",
-            "delete_entity",
-            "upsert_requirement",
-            "update_requirement",
-            "delete_requirement",
-            "set_coverage",
-            "done",
-        ],
-        "review-requirement" => vec![
-            "context",
-            "expand",
-            "search",
-            "get_entity",
-            "read_section",
-            "diagnostics",
-            "update_requirement",
-            "delete_requirement",
-            "report_diagnostic",
-            "resolve_diagnostic",
-            "done",
-        ],
-        "review-entity" => vec![
-            "context",
-            "expand",
-            "search",
-            "get_entity",
-            "diagnostics",
-            "update_entity",
-            "merge_entities",
-            "update_requirement",
-            "delete_requirement",
-            "report_diagnostic",
-            "resolve_diagnostic",
-            "done",
-        ],
-        // The in-process generation worker: the read tools, the file and command
-        // tools, and the generation lifecycle. Mirrors docs/compiler/turns.md#generation-turns.
-        "generate-entity" => {
-            let mut v = READ_TOOLS.to_vec();
-            v.extend(FILE_TOOLS);
-            v.extend(["begin_generation", "record_generation", "run_tests", "done"]);
-            v
-        }
-        // The in-process bind worker: search the deliverable, find or write the test,
-        // record the row. Mirrors docs/consumers/bind.md#the-bind-task.
-        "bind-requirement" => {
-            let mut v = READ_TOOLS.to_vec();
-            v.extend(FILE_TOOLS);
-            v.extend(["record_binding", "done"]);
-            v
-        }
-        // MCP servings. Mirrors docs/compiler/tools.md#task-toolsets.
+        // MCP servings. Mirrors docs/compiler/tools.md#toolsets.
         "mcp-generate" => {
             let mut v = READ_TOOLS.to_vec();
             v.extend(BIND_TOOLS);
@@ -531,13 +555,8 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         }
         // The compile serving's write surface; the lifecycle tools live in the server.
         "mcp-compile" => {
-            let mut v = vec![
-                "context",
-                "expand",
-                "search",
-                "read_section",
-                "get_entity",
-                "diagnostics",
+            let mut v = READ_TOOLS.to_vec();
+            v.extend([
                 "upsert_entity",
                 "update_entity",
                 "delete_entity",
@@ -551,14 +570,17 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
                 "resolve_diagnostic",
                 "place_anchor",
                 "orphan_anchor",
-            ];
+            ]);
             v.extend(VIEW_TOOLS);
+            v.extend(GOAL_TOOLS);
             v
         }
         "mcp-write" => catalog()
             .iter()
             .map(|t| t.name)
-            .filter(|n| *n != "done" && !FILE_TOOLS.contains(n) && !CHAT_TOOLS.contains(n))
+            .filter(|n| {
+                !GOAL_TOOLS.contains(n) && !FILE_TOOLS.contains(n) && !CHAT_TOOLS.contains(n)
+            })
             .collect(),
         _ => READ_TOOLS.to_vec(),
     };
@@ -899,40 +921,242 @@ fn junk_name(name: &str) -> Option<&'static str> {
     None
 }
 
-// The scope a turn works in: which task, which document, which sections it may claim.
-#[derive(Clone, Default)]
-pub struct WorkScope {
-    pub task: String,
-    pub doc: Option<String>,
-    // The work item's target: the entity id for a generate-entity turn (file
-    // ownership checks name it), empty when the task has no single target.
+// The scope of one goal in the batch: what the per-goal gates key on.
+// Mirrors docs/compiler/sessions.md#anatomy.
+#[derive(Clone, Debug, Default)]
+pub struct GoalScope {
+    pub goal: String,
+    pub kind: String,
+    pub mandatory: bool,
     pub target: String,
-    pub target_sections: Vec<String>,
-    // Requirement ids whose quote stopped locating; the done gate holds the turn to
+    pub doc: Option<String>,
+    // The sections a reconcile-section goal owns (the coverage contract).
+    pub sections: Vec<String>,
+    // Requirement ids whose quote stopped locating; the gate holds the session to
     // addressing each one. See docs/compiler/graph.md#validation-gates.
     pub stale_anchors: Vec<String>,
-    // Anchor ids an align-doc turn must decide; place_anchor and orphan_anchor accept
-    // no others, and done holds the turn to every one.
+    // Anchor ids a place-anchors goal must decide; place_anchor and orphan_anchor
+    // accept no others, and the gate holds the session to every one.
     pub proposals: Vec<String>,
 }
 
-// One turn's tool session: reads answer from the snapshot, writes stage into the changeset.
+impl GoalScope {
+    pub fn from_goal(g: &Goal) -> GoalScope {
+        let list = |key: &str| -> Vec<String> {
+            g.change[key]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut sections = list("dirtySections");
+        let mut doc = None;
+        match g.kind.as_str() {
+            "reconcile-section" => match split_section_ref(&g.target) {
+                Some((d, s)) => {
+                    doc = Some(d);
+                    if !sections.contains(&s) {
+                        sections.push(s);
+                    }
+                }
+                // The legacy per-document item: the target is the document and the
+                // sections ride in the change payload.
+                None => doc = Some(g.target.clone()),
+            },
+            "place-anchors" => doc = Some(g.target.clone()),
+            _ => {}
+        }
+        let mut proposals = list("proposals");
+        for a in list("anchors") {
+            if !proposals.contains(&a) {
+                proposals.push(a);
+            }
+        }
+        GoalScope {
+            goal: g.id.clone(),
+            kind: g.kind.clone(),
+            mandatory: g.mandatory,
+            target: g.target.clone(),
+            doc,
+            sections,
+            stale_anchors: list("staleAnchors"),
+            proposals,
+        }
+    }
+}
+
+// The scope a session works in: one goal batch, or a serving surface outside one.
+#[derive(Clone, Default)]
+pub struct WorkScope {
+    // The batch id: names the session and the feedback entries.
+    pub batch: String,
+    pub goals: Vec<GoalScope>,
+    // The serving surface for scopes outside a goal batch (mcp-write, mcp-read).
+    pub serving: String,
+    // The serving's own target (the entity a generation session owns, for file
+    // ownership); a generate goal in the batch overrides it.
+    pub target: String,
+}
+
+impl WorkScope {
+    pub fn for_batch(batch: &str, goals: &[Goal]) -> WorkScope {
+        WorkScope {
+            batch: batch.to_string(),
+            goals: goals.iter().map(GoalScope::from_goal).collect(),
+            serving: String::new(),
+            target: goals.first().map(|g| g.target.clone()).unwrap_or_default(),
+        }
+    }
+
+    // The per-target work item the current serving claims, as a one-goal batch.
+    pub fn from_item(item: &WorkItem) -> WorkScope {
+        let goal = item.to_goal(GoalState::Open);
+        let mut s = WorkScope::for_batch(&item.goal_id(), std::slice::from_ref(&goal));
+        s.target = item.target.clone();
+        s
+    }
+
+    // A serving surface with no open batch (mcp-write, mcp-read, chat).
+    pub fn serving(name: &str) -> WorkScope {
+        WorkScope {
+            batch: String::new(),
+            goals: Vec::new(),
+            serving: name.to_string(),
+            target: String::new(),
+        }
+    }
+
+    pub fn goal_ids(&self) -> Vec<String> {
+        self.goals.iter().map(|g| g.goal.clone()).collect()
+    }
+
+    pub fn kinds(&self) -> Vec<String> {
+        let mut v: Vec<String> = Vec::new();
+        for g in &self.goals {
+            if !v.contains(&g.kind) {
+                v.push(g.kind.clone());
+            }
+        }
+        v
+    }
+
+    pub fn goal(&self, id: &str) -> Option<&GoalScope> {
+        self.goals.iter().find(|g| g.goal == id)
+    }
+
+    // The batch's document (locality is one document per batch).
+    pub fn doc(&self) -> Option<String> {
+        self.goals.iter().find_map(|g| g.doc.clone())
+    }
+
+    // The document whose sections the reconcile-section goals own.
+    pub fn reconcile_doc(&self) -> Option<String> {
+        self.goals
+            .iter()
+            .find(|g| g.kind == "reconcile-section")
+            .and_then(|g| g.doc.clone())
+    }
+
+    pub fn reconcile_scopes(&self) -> Vec<&GoalScope> {
+        self.goals
+            .iter()
+            .filter(|g| g.kind == "reconcile-section")
+            .collect()
+    }
+
+    // The document a place-anchors goal decides.
+    pub fn place_doc(&self) -> Option<String> {
+        self.goals
+            .iter()
+            .find(|g| g.kind == "place-anchors")
+            .and_then(|g| g.doc.clone())
+    }
+
+    pub fn stale_anchors(&self) -> Vec<String> {
+        let mut v: Vec<String> = Vec::new();
+        for g in &self.goals {
+            for a in &g.stale_anchors {
+                if !v.contains(a) {
+                    v.push(a.clone());
+                }
+            }
+        }
+        v
+    }
+
+    pub fn proposals(&self) -> Vec<String> {
+        let mut v: Vec<String> = Vec::new();
+        for g in &self.goals {
+            for p in &g.proposals {
+                if !v.contains(p) {
+                    v.push(p.clone());
+                }
+            }
+        }
+        v
+    }
+
+    // The entity a generation session owns; file ownership checks name it.
+    pub fn gen_target(&self) -> String {
+        self.goals
+            .iter()
+            .find(|g| g.kind == "generate")
+            .map(|g| g.target.clone())
+            .unwrap_or_else(|| self.target.clone())
+    }
+
+    // The feedback entry's task: the batch's goal kinds, or the serving surface.
+    pub fn feedback_task(&self) -> String {
+        if self.goals.is_empty() {
+            self.serving.clone()
+        } else {
+            self.kinds().join("+")
+        }
+    }
+}
+
+// How one goal of the batch ended, as the session claimed it.
+#[derive(Clone, Debug)]
+pub enum GoalOutcome {
+    Done {
+        justification: String,
+        evidence: Value,
+    },
+    Failed {
+        reason: String,
+    },
+}
+
+// One session's tool serving: reads answer from the snapshot, writes stage into the changeset.
 pub struct ToolSession {
     pub snapshot: Store,
     pub scope: WorkScope,
     pub staged: Vec<Op>,
     pub done: Option<String>,
+    // The session's working set, re-rendered condensed on every mutating reply.
+    pub loaded: LoadedSet,
+    // The skills rendered this session, active or inactive, capped.
+    pub skills: SkillState,
     // Resolved [gen] settings for the generation and verification tools.
     pub gen: crate::gen::GenSettings,
     // Who is driving this session, recorded on every feedback entry so a record names
     // its caller. Set by the harness that owns the session.
     pub caller: crate::feedback::Caller,
+    // Goal outcomes the session recorded: resolved with a justification, or failed.
+    outcomes: std::collections::BTreeMap<String, GoalOutcome>,
+    // The repeated-call guard, keyed per open batch: the same call with the same
+    // arguments has the same answer (docs/compiler/sessions.md#repeated-calls).
+    repeats: std::collections::BTreeMap<String, u32>,
+    refusals: u32,
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
     feedback_count: usize,
     mutation_limit: usize,
     default_budget: usize,
-    // Staged entities (id -> entity) so lookup-before-create sees this turn's own creates.
+    // Staged entities (id -> entity) so lookup-before-create sees this session's own creates.
     staged_entities: std::collections::BTreeMap<String, Entity>,
     staged_reqs: BTreeSet<String>,
     // Staged views (id -> view) so a repeated upsert lands on the staged one and
@@ -942,7 +1166,7 @@ pub struct ToolSession {
     staged_parents: std::collections::BTreeMap<String, String>,
     taken_ids: BTreeSet<String>,
     // True only while finish_implicit drives `done`: the implicit path commits around
-    // an unmarked dirty section instead of bouncing (docs/compiler/turns.md#budgets).
+    // an unmarked dirty section instead of bouncing (docs/compiler/sessions.md#budgets).
     implicit_done: bool,
 }
 
@@ -953,16 +1177,28 @@ impl ToolSession {
         mutation_limit: usize,
         default_budget: usize,
     ) -> ToolSession {
-        // Placeholder; sessions that reach the gen tools (MCP, run_turn) overwrite it
-        // with the project-resolved settings.
+        // Placeholder; sessions that reach the gen tools (MCP, the runner) overwrite
+        // it with the project-resolved settings.
         let gen = crate::gen::GenSettings::from_out(&snapshot.out);
+        // The batch's goal kinds activate their skills from the first round.
+        let mut skills = SkillState::new();
+        for g in &scope.goals {
+            for s in crate::goals::skills_for(&g.kind, &snapshot, &g.target) {
+                skills.pin(s);
+            }
+        }
         ToolSession {
+            loaded: LoadedSet::new(default_budget),
+            skills,
             snapshot,
             scope,
             staged: Vec::new(),
             done: None,
             gen,
             caller: Default::default(),
+            outcomes: Default::default(),
+            repeats: Default::default(),
+            refusals: 0,
             feedback_count: 0,
             mutation_limit,
             default_budget,
@@ -973,6 +1209,312 @@ impl ToolSession {
             taken_ids: Default::default(),
             implicit_done: false,
         }
+    }
+
+    // The commit this session lands as: kind `session`, the batch's goal ids, and the
+    // resolutions with their justifications. Mirrors docs/compiler/graph.md#journal.
+    pub fn commit(&self, rounds: u32, tokens: u64) -> crate::store::Commit {
+        let resolved = self
+            .outcomes
+            .iter()
+            .filter_map(|(goal, o)| match o {
+                GoalOutcome::Done {
+                    justification,
+                    evidence,
+                } => Some(Resolved {
+                    goal: goal.clone(),
+                    justification: justification.clone(),
+                    evidence: evidence.clone(),
+                }),
+                GoalOutcome::Failed { .. } => None,
+            })
+            .collect();
+        crate::store::Commit {
+            kind: "session".to_string(),
+            batch: self.scope.goal_ids(),
+            resolved,
+            rounds,
+            tokens,
+        }
+    }
+
+    // The goals the session failed, with their reasons, for the serving to record.
+    pub fn failed_goals(&self) -> Vec<(String, String)> {
+        self.outcomes
+            .iter()
+            .filter_map(|(goal, o)| match o {
+                GoalOutcome::Failed { reason } => Some((goal.clone(), reason.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pinned_targets(&self) -> BTreeSet<String> {
+        let mut p: BTreeSet<String> = self.scope.goals.iter().map(|g| g.target.clone()).collect();
+        for g in &self.scope.goals {
+            p.extend(g.stale_anchors.iter().cloned());
+            if let Some(d) = &g.doc {
+                for s in &g.sections {
+                    p.insert(format!("{}#{}", d, s));
+                }
+            }
+        }
+        p
+    }
+
+    fn render_status_full(&self) -> String {
+        self.loaded.render_status(
+            &self.skills.index_line(),
+            self.skills.rendered_chars(),
+            &self.pinned_targets(),
+        )
+    }
+
+    fn condensed_status(&self) -> String {
+        self.loaded.render_condensed(self.skills.rendered_chars())
+    }
+
+    // Past the high-water mark, load and expand are refused with the unload
+    // candidates named, until something is unloaded. Mirrors docs/compiler/context.md#policy.
+    fn refuse_past_high_water(&self, what: &str) -> Result<(), ToolError> {
+        if !self.loaded.over_high_water(self.skills.rendered_chars()) {
+            return Ok(());
+        }
+        let pinned = self.pinned_targets();
+        let mut candidates = self.loaded.unload_candidates(&pinned);
+        if candidates.is_empty() {
+            candidates = self
+                .loaded
+                .items
+                .iter()
+                .map(|i| i.target.clone())
+                .filter(|t| !pinned.contains(t))
+                .collect();
+        }
+        Err(ToolError::new(
+            "context-full",
+            format!(
+                "{} refused: the loaded set is past the high-water mark ({}/{} chars); unload something first. Candidates: {}",
+                what,
+                self.loaded.used() + self.skills.rendered_chars(),
+                self.loaded.budget,
+                if candidates.is_empty() {
+                    "(unload any loaded item)".to_string()
+                } else {
+                    candidates.join(", ")
+                }
+            ),
+        ))
+    }
+
+    // ---- the per-goal gates ----
+
+    fn undecided_proposals(&self, proposals: &[String]) -> Vec<String> {
+        proposals
+            .iter()
+            .filter(|a| {
+                !self.staged.iter().any(|o| {
+                    matches!(o, Op::PlaceAnchor { id, .. } | Op::OrphanAnchor { id, .. } if id == *a)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    // Stale anchors are a contract. Each must be re-anchored (its quote locates
+    // again), re-recorded under its natural key, revised, or deleted. An anchor
+    // flagged for re-evaluation owes a decision even though its quote locates.
+    fn untouched_stale(&self, anchors: &[String]) -> Vec<String> {
+        let mut untouched: Vec<String> = Vec::new();
+        for a in anchors {
+            let Some(r) = self.snapshot.graph.requirements.get(a) else {
+                continue;
+            };
+            let Some(src) = r.source.as_ref() else {
+                continue;
+            };
+            if self
+                .snapshot
+                .quote_locates(&src.doc, &src.section, &src.quote)
+                && !self.snapshot.status.reevaluate.contains(a)
+            {
+                continue;
+            }
+            let addressed = self.staged.iter().any(|o| match o {
+                Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
+                // A staged create that resolved to the anchor carries its id; the
+                // statement-equality fallback covers pre-resolution stages.
+                Op::CreateRequirement { id, requirement } => {
+                    id == a
+                        || (requirement.anchored_at(&src.doc, &src.section)
+                            && crate::store::normalize_statement(&requirement.statement)
+                                == crate::store::normalize_statement(&r.statement))
+                }
+                _ => false,
+            });
+            if !addressed {
+                untouched.push(a.clone());
+            }
+        }
+        untouched
+    }
+
+    fn unmarked_sections(&self, doc: &str, sections: &[String]) -> Vec<String> {
+        sections
+            .iter()
+            .filter(|sec| {
+                let recorded = self
+                    .snapshot
+                    .docs
+                    .get(doc)
+                    .map(|d| d.coverage.contains_key(*sec))
+                    .unwrap_or(false);
+                let staged = self.staged.iter().any(|o| {
+                    matches!(o, Op::SetCoverage { doc: d, section, .. } if d == doc && section == *sec)
+                });
+                !recorded && !staged
+            })
+            .cloned()
+            .collect()
+    }
+
+    // A `covered` claim is honest only when a requirement is sourced from that
+    // section, staged or recorded.
+    fn dishonest_covered(&self) -> Option<ToolError> {
+        for op in &self.staged {
+            if let Op::SetCoverage {
+                doc,
+                section,
+                state,
+                ..
+            } = op
+            {
+                if state != "covered" {
+                    continue;
+                }
+                let has_req = self
+                    .snapshot
+                    .graph
+                    .requirements
+                    .values()
+                    .any(|r| r.anchored_at(doc, section))
+                    || self.staged.iter().any(|o| match o {
+                        Op::CreateRequirement { requirement, .. } => {
+                            requirement.anchored_at(doc, section)
+                        }
+                        _ => false,
+                    });
+                if !has_req {
+                    return Some(ToolError::new(
+                        "uncovered-claim",
+                        format!(
+                            "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (state the obligation, keep the quote verbatim), or mark the section non-normative with a note",
+                            doc, section
+                        ),
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    // One goal's gate over the store plus the staged work: the kind's batch gate and
+    // the scope gates that key on the owning goal. mark_goal_done validates against
+    // this and done re-validates every resolution.
+    // Mirrors docs/compiler/tools.md#goal-tools.
+    fn goal_gate(&self, gs: &GoalScope) -> Result<(), ToolError> {
+        if let Some(k) = crate::goals::kind(&gs.kind) {
+            if let Some(v) = k.gates(&self.snapshot, &self.staged).into_iter().next() {
+                return Err(ToolError::new(&v.rule, v.message));
+            }
+        }
+        if gs.kind == "place-anchors" {
+            let undecided = self.undecided_proposals(&gs.proposals);
+            if !undecided.is_empty() {
+                return Err(ToolError::new(
+                    "undecided-proposal",
+                    format!(
+                        "{}: proposals left undecided: {}; place_anchor or orphan_anchor each",
+                        gs.goal,
+                        undecided.join(", ")
+                    ),
+                ));
+            }
+        }
+        if gs.kind == "reconcile-section" {
+            let untouched = self.untouched_stale(&gs.stale_anchors);
+            if !untouched.is_empty() {
+                return Err(ToolError::new(
+                    "stale-anchor",
+                    format!(
+                        "{}: stale anchors left untouched: {}; re-record, revise, or delete each",
+                        gs.goal,
+                        untouched.join(", ")
+                    ),
+                ));
+            }
+            if let Some(doc) = &gs.doc {
+                let unmarked = self.unmarked_sections(doc, &gs.sections);
+                if !unmarked.is_empty() {
+                    return Err(ToolError::new(
+                        "unmarked-section",
+                        format!(
+                            "{}: section(s) without a coverage mark: {}; set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
+                            gs.goal,
+                            unmarked.join(", ")
+                        ),
+                    ));
+                }
+            }
+            if let Some(e) = self.dishonest_covered() {
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_goal_done(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let goal = Self::str_arg(args, "goal")?;
+        let Some(gs) = self.scope.goal(&goal).cloned() else {
+            return Err(ToolError::new(
+                "unknown-goal",
+                format!(
+                    "`{}` is not a goal of this batch ({}); only goals in the batch can be marked",
+                    goal,
+                    self.scope.goal_ids().join(", ")
+                ),
+            ));
+        };
+        let justification = Self::str_arg(args, "justification")?;
+        let sentences = justification
+            .split(['.', '!', '?'])
+            .filter(|s| !s.trim().is_empty())
+            .count();
+        if sentences > 2 {
+            return Err(ToolError::new(
+                "bad-justification",
+                format!(
+                    "the justification is {} sentences; one or two saying why the gate holds, never an essay",
+                    sentences
+                ),
+            ));
+        }
+        self.goal_gate(&gs)?;
+        self.outcomes.insert(
+            goal.clone(),
+            GoalOutcome::Done {
+                justification,
+                evidence: args["evidence"].clone(),
+            },
+        );
+        let open: Vec<&str> = self
+            .scope
+            .goals
+            .iter()
+            .filter(|g| !self.outcomes.contains_key(&g.goal))
+            .map(|g| g.goal.as_str())
+            .collect();
+        Ok(json!({"marked": goal, "open": open}))
     }
 
     // The author a decree records: the MCP client when one is known, else the user.
@@ -1446,7 +1988,7 @@ impl ToolSession {
                 let path = self.deliverable_path(&rel)?;
                 // File ownership: a path recorded for another entity is off limits.
                 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-                let own = crate::gen::slug_of(&self.scope.target);
+                let own = crate::gen::slug_of(&self.scope.gen_target());
                 let ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 if let Some((owner, _)) = ledger
                     .entities
@@ -1717,10 +2259,11 @@ impl ToolSession {
         hits
     }
 
-    // Resolve a section argument: either "doc.md#/ref" or a bare "/ref" against the work doc.
+    // Resolve a section argument: either "doc.md#/ref" or a bare "/ref" against the
+    // batch's document.
     fn resolve_section(&self, section: &str) -> Result<(String, String), ToolError> {
         let full = if section.starts_with('/') {
-            match &self.scope.doc {
+            match self.scope.doc() {
                 Some(d) => format!("{}#{}", d, section),
                 None => {
                     return Err(ToolError::new(
@@ -1736,20 +2279,23 @@ impl ToolSession {
             section.to_string()
         };
         let (doc, sec) = split_section_ref(&full).ok_or_else(|| {
-            // Repair-oriented: name the sections this turn is actually working on.
-            let hint = if self.scope.target_sections.is_empty() {
+            // Repair-oriented: name the sections this batch is actually working on.
+            let owned: Vec<String> = self
+                .scope
+                .reconcile_scopes()
+                .iter()
+                .flat_map(|g| {
+                    let d = g.doc.clone().unwrap_or_default();
+                    g.sections
+                        .iter()
+                        .map(move |s| format!("{}#{}", d, s))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let hint = if owned.is_empty() {
                 String::new()
             } else {
-                let doc = self.scope.doc.as_deref().unwrap_or_default();
-                format!(
-                    "; this turn's sections: {}",
-                    self.scope
-                        .target_sections
-                        .iter()
-                        .map(|s| format!("{}#{}", doc, s))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                format!("; this batch's sections: {}", owned.join(", "))
             };
             ToolError::new(
                 "bad-section",
@@ -2014,55 +2560,215 @@ impl ToolSession {
     }
 
     pub fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
-        // Reads see the turn's snapshot, not its staged mutations. Saying so on every
-        // read while writes are staged stops the caller from concluding a staged
-        // delete or update was lost.
+        self.loaded.next_round();
+        // Targets a call names count as referenced, for the unload suggestions.
+        for key in ["target", "id", "goal", "section", "ref"] {
+            if let Some(v) = args[key].as_str() {
+                self.loaded.note_reference(v);
+            }
+        }
+        if let Some(h) = args["handle"].as_str() {
+            if let Ok((t, _, _)) = crate::context::parse_handle(h) {
+                self.loaded.note_reference(&t);
+            }
+        }
+        // The repeated-call guard, keyed per open batch: the second identical call
+        // answers with a repeat marker, the third is refused. done, mark_goal_done,
+        // and mark_goal_failed are exempt: repairing a rejected claim legitimately
+        // repeats it. A load of an already loaded target counts as a repeat whatever
+        // its depth. Mirrors docs/compiler/sessions.md#repeated-calls.
+        let exempt = matches!(name, "done" | "mark_goal_done" | "mark_goal_failed");
+        if !exempt {
+            let key = if name == "load" {
+                format!("load|{}", args["target"].as_str().unwrap_or_default())
+            } else {
+                format!("{}|{}", name, args)
+            };
+            let seen = {
+                let c = self.repeats.entry(key).or_insert(0);
+                *c += 1;
+                *c
+            };
+            if seen >= 3 {
+                self.refusals += 1;
+                // Past eight refusals in one batch, the serving finishes the session
+                // implicitly: the staged work commits under the same gates the budget
+                // path uses.
+                if self.refusals > 8 && self.done.is_none() {
+                    self.finish_implicit("(implicit: the session repeated itself past the guard)");
+                }
+                return Err(ToolError::new(
+                    "repeated-call",
+                    format!(
+                        "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have, or finish with done.",
+                        seen, name
+                    ),
+                ));
+            }
+            if seen == 2 {
+                let mut v = self.dispatch_gated(name, args)?;
+                if v.is_object() {
+                    v["repeat"] = json!(
+                        "you already made this exact call; the answer is unchanged. Act on it."
+                    );
+                }
+                return Ok(v);
+            }
+        }
+        self.dispatch_gated(name, args)
+    }
+
+    fn dispatch_gated(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        // Reads see the session's snapshot, not its staged mutations. Saying so on
+        // every read while writes are staged stops the caller from concluding a
+        // staged delete or update was lost.
         if READ_TOOLS.contains(&name) && !self.staged.is_empty() {
             return self.dispatch_inner(name, args).map(|mut v| {
                 if v.is_object() {
-                    v["note"] = json!("reads show the graph as the turn began; this turn's staged mutations apply at commit");
+                    v["note"] = json!("reads show the graph as the session began; this session's staged mutations apply at commit");
                 }
                 v
             });
         }
-        self.dispatch_inner(name, args)
+        let before = self.staged.len();
+        let mut v = self.dispatch_inner(name, args)?;
+        // A mutating reply previews the goals the mutation will open at commit and
+        // re-renders the condensed status block.
+        // Mirrors docs/compiler/reconciler.md#bubbling.
+        if self.staged.len() > before && v.is_object() {
+            let opens = crate::board::staged_opens(&self.snapshot, &self.staged[before..]);
+            if !opens.is_empty() {
+                v["opens"] = json!(opens);
+            }
+            v["status"] = json!(self.condensed_status());
+        }
+        Ok(v)
     }
 
     fn dispatch_inner(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         match name {
-            "context" => {
+            "load" => {
                 let target = Self::str_arg(args, "target")?;
-                let focus = if args["focus"].is_object() {
-                    Focus {
-                        parents: args["focus"]["parents"].as_u64().unwrap_or(2) as u32,
-                        mentions: args["focus"]["mentions"].as_u64().unwrap_or(1) as u32,
-                        requirements: args["focus"]["requirements"].as_u64().unwrap_or(2) as u32,
-                    }
-                } else {
-                    Focus::default()
-                };
-                let budget = args["budget"]
-                    .as_u64()
-                    .map(|b| b as usize)
-                    .unwrap_or(self.default_budget / 2);
-                let pack = context::assemble(&self.snapshot, &target, &focus, budget)
+                let depth = args["depth"].as_u64().unwrap_or(1).max(1) as u32;
+                self.refuse_past_high_water("load")?;
+                let id = self.canon_entity_id(&target).unwrap_or(target);
+                let text = self
+                    .loaded
+                    .load(&self.snapshot, &id, depth)
                     .map_err(|e| ToolError::new("bad-target", e))?;
-                Ok(json!({"pack": pack.pack, "handles": pack.handles}))
+                let mut v = json!({"pack": text});
+                // The first node of a kind loaded in the session brings the kind's
+                // skill, once. Mirrors docs/compiler/sessions.md#skills.
+                if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
+                    if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
+                        v["skill"] = json!(format!("[skill: {} (active)]\n{}", skill, payload));
+                    }
+                }
+                v["status"] = json!(self.condensed_status());
+                Ok(v)
             }
             "expand" => {
                 let handle = Self::str_arg(args, "handle")?;
-                let budget = args["budget"]
-                    .as_u64()
-                    .map(|b| b as usize)
-                    .unwrap_or(self.default_budget / 2);
-                let pack = context::expand(&self.snapshot, &handle, budget)
-                    .map_err(|e| ToolError::new("bad-handle", e))?;
-                Ok(json!({"pack": pack.pack, "handles": pack.handles}))
+                self.refuse_past_high_water("expand")?;
+                let text = self
+                    .loaded
+                    .expand(&self.snapshot, &handle)
+                    .map_err(|e| ToolError::new("unknown-handle", e))?;
+                Ok(json!({"pack": text, "status": self.condensed_status()}))
+            }
+            "unload" => {
+                let target = Self::str_arg(args, "target")?;
+                if !self.loaded.unload(&target) {
+                    return Err(ToolError::new(
+                        "bad-target",
+                        format!(
+                            "`{}` is not loaded; graph_status lists the loaded set",
+                            target
+                        ),
+                    ));
+                }
+                // Unloading the last node of a kind marks the kind's skill inactive.
+                if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &target) {
+                    let another = self.loaded.items.iter().any(|i| {
+                        crate::session::skill_for_target(&self.snapshot, &i.target) == Some(skill)
+                    });
+                    if !another {
+                        self.skills.deactivate(skill);
+                    }
+                }
+                Ok(json!({"unloaded": target, "status": self.condensed_status()}))
+            }
+            "graph_status" => Ok(json!({"status": self.render_status_full()})),
+            "load_skill" => {
+                let name_arg = Self::str_arg(args, "name")?;
+                match self.skills.activate(&name_arg) {
+                    Err(e) => Err(ToolError::new("unknown-skill", e)),
+                    Ok(SkillLoad::CapReached) => Err(ToolError::new(
+                        "skill-cap",
+                        format!(
+                            "at most {} skills render in one session; already rendered: {}",
+                            self.skills.cap,
+                            self.skills.rendered_names().join(", ")
+                        ),
+                    )),
+                    Ok(SkillLoad::Rendered(payload)) => {
+                        Ok(json!({"skill": name_arg, "payload": payload}))
+                    }
+                    Ok(_) => Ok(json!({
+                        "skill": name_arg,
+                        "note": "already rendered this session; its text stands in the conversation"
+                    })),
+                }
+            }
+            "get_view" => {
+                let id = Self::str_arg(args, "id")?;
+                let Some(v) = self.snapshot.graph.views.get(&id) else {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!(
+                            "unknown view id `{}`; search with kind view lists titles",
+                            id
+                        ),
+                    ));
+                };
+                let slug = id.rsplit('/').next().unwrap_or_default();
+                let reply = json!({
+                    "id": id, "kind": v.kind, "title": v.title, "members": v.members,
+                    "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
+                    "collapse": v.collapse, "query": v.query, "default": v.default,
+                    "rendering": format!("diagrams/{}/{}.svg", v.kind, slug),
+                });
+                self.loaded.load_stub(&self.snapshot, &id);
+                Ok(reply)
+            }
+            "mark_goal_done" => self.mark_goal_done(args),
+            "mark_goal_failed" => {
+                let goal = Self::str_arg(args, "goal")?;
+                if self.scope.goal(&goal).is_none() {
+                    return Err(ToolError::new(
+                        "unknown-goal",
+                        format!(
+                            "`{}` is not a goal of this batch ({})",
+                            goal,
+                            self.scope.goal_ids().join(", ")
+                        ),
+                    ));
+                }
+                let reason = Self::str_arg(args, "reason")?;
+                self.outcomes
+                    .insert(goal.clone(), GoalOutcome::Failed { reason });
+                Ok(
+                    json!({"failed": goal, "note": "recorded; a failed mandatory goal blocks convergence and stays visible on its target"}),
+                )
             }
             "search" => {
                 let query = Self::str_arg(args, "query")?;
                 let hits = self.search_all(&query);
                 if !hits.is_empty() {
+                    // A read's subject joins the loaded set as a stub.
+                    for (id, _, _) in &hits {
+                        self.loaded.load_stub(&self.snapshot, id);
+                    }
                     return Ok(json!({
                         "hits": hits
                             .iter()
@@ -2113,7 +2819,10 @@ impl ToolSession {
                     .filter(|(_, c)| c.parent.as_deref() == Some(sec.as_str()))
                     .map(|(r, c)| format!("{}#{} ({})", doc, r, c.title))
                     .collect();
-                Ok(json!({"title": s.title, "raw": s.raw, "children": children}))
+                let reply = json!({"title": s.title, "raw": s.raw, "children": children});
+                self.loaded
+                    .load_stub(&self.snapshot, &format!("{}#{}", doc, sec));
+                Ok(reply)
             }
             "get_entity" => {
                 let id = Self::str_arg(args, "id")?;
@@ -2155,6 +2864,7 @@ impl ToolSession {
                 if e.scope != "public" {
                     v["scope"] = json!(e.scope);
                 }
+                self.loaded.load_stub(&self.snapshot, &rid);
                 Ok(v)
             }
             "diagnostics" => {
@@ -2187,6 +2897,16 @@ impl ToolSession {
                         v
                     })
                     .collect();
+                // The subjects of the listed findings join the loaded set as stubs.
+                let subjects: Vec<String> = list
+                    .iter()
+                    .flat_map(|d| d["subjects"].as_array().cloned().unwrap_or_default())
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .take(8)
+                    .collect();
+                for s in subjects {
+                    self.loaded.load_stub(&self.snapshot, &s);
+                }
                 Ok(json!({"diagnostics": list, "count": list.len()}))
             }
             "upsert_entity" => {
@@ -2233,13 +2953,12 @@ impl ToolSession {
                     let section = mention["section"].as_str().unwrap_or_default();
                     let quote = mention["quote"].as_str().unwrap_or_default();
                     let (doc, sec) = self.resolve_section(section)?;
-                    if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str())
-                    {
-                        if &doc != wd {
+                    if let Some(wd) = self.scope.reconcile_doc() {
+                        if doc != wd {
                             return Err(ToolError::new(
                                 "wrong-document",
                                 format!(
-                                    "mention cites {} but this turn reconciles {}; quote a sentence from {}'s own sections (text this document merely links to cannot anchor a mention here)",
+                                    "mention cites {} but this batch reconciles {}; quote a sentence from {}'s own sections (text this document merely links to cannot anchor a mention here)",
                                     doc, wd, wd
                                 ),
                             ));
@@ -2463,12 +3182,12 @@ impl ToolSession {
                 let section = Self::str_arg(args, "section")?;
                 let quote = Self::str_arg(args, "quote")?;
                 let (doc, sec) = self.resolve_section(&section)?;
-                if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
-                    if &doc != wd {
+                if let Some(wd) = self.scope.reconcile_doc() {
+                    if doc != wd {
                         return Err(ToolError::new(
                             "wrong-document",
                             format!(
-                                "source cites {} but this turn reconciles {}; quote the sentence from {}'s own sections (text this document merely links to cannot anchor a requirement here)",
+                                "source cites {} but this batch reconciles {}; quote the sentence from {}'s own sections (text this document merely links to cannot anchor a requirement here)",
                                 doc, wd, wd
                             ),
                         ));
@@ -2584,7 +3303,7 @@ impl ToolSession {
                     .map(|(rid, _)| rid.clone())
                     .or_else(|| {
                         self.scope
-                            .stale_anchors
+                            .stale_anchors()
                             .iter()
                             .find(|a| {
                                 self.snapshot.graph.requirements.get(*a).is_some_and(|r| {
@@ -2694,12 +3413,12 @@ impl ToolSession {
                         let (doc, sec) = self
                             .resolve_section(&section)
                             .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
-                        if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str()) {
-                            if &doc != wd {
+                        if let Some(wd) = self.scope.reconcile_doc() {
+                            if doc != wd {
                                 return Err(ToolError::new(
                                     "wrong-document",
                                     format!(
-                                        "source cites {} but this turn reconciles {}; quote the sentence from {}'s own sections",
+                                        "source cites {} but this batch reconciles {}; quote the sentence from {}'s own sections",
                                         doc, wd, wd
                                     ),
                                 ));
@@ -2738,17 +3457,22 @@ impl ToolSession {
             }
             "place_anchor" | "orphan_anchor" => {
                 let raw = Self::str_arg(args, "id")?;
+                let scope_proposals = self.scope.proposals();
                 let id = self
                     .canon_entity_id(&raw)
-                    .filter(|i| self.scope.proposals.contains(i))
-                    .or_else(|| self.canon_req_id(&raw).ok().filter(|i| self.scope.proposals.contains(i)))
+                    .filter(|i| scope_proposals.contains(i))
+                    .or_else(|| {
+                        self.canon_req_id(&raw)
+                            .ok()
+                            .filter(|i| scope_proposals.contains(i))
+                    })
                     .ok_or_else(|| {
                         ToolError::new(
                             "unknown-anchor",
                             format!(
-                                "`{}` is not one of this task's proposals ({}); decide only the anchors the work pack lists",
+                                "`{}` is not one of this batch's proposals ({}); decide only the anchors the goal lists",
                                 raw,
-                                self.scope.proposals.join(", ")
+                                scope_proposals.join(", ")
                             ),
                         )
                     })?;
@@ -2756,12 +3480,13 @@ impl ToolSession {
                 // them so the store can tell one entity mention from another. An entity
                 // with several proposed mentions is decided in one call: every one of
                 // them goes to the same section.
+                let pdoc = self.scope.place_doc().or_else(|| self.scope.doc());
                 let proposals: Vec<AnchorProposal> = self
                     .snapshot
                     .status
                     .alignment
                     .iter()
-                    .filter(|b| Some(&b.doc) == self.scope.doc.as_ref())
+                    .filter(|b| Some(&b.doc) == pdoc.as_ref())
                     .flat_map(|b| b.proposals.iter())
                     .filter(|p| p.anchor == id)
                     .cloned()
@@ -2964,16 +3689,29 @@ impl ToolSession {
                     return Err(ToolError::new("note-required", "non-normative requires a note saying why the section states no requirements".into()));
                 }
                 let (doc, sec) = self.resolve_section(&section)?;
-                if self.scope.task == "reconcile-doc"
-                    && !self.scope.target_sections.is_empty()
-                    && !self.scope.target_sections.contains(&sec)
+                // The mark must land on a section a reconcile-section goal of this
+                // batch owns; the rejection names the owning goals' sections.
+                let owned = self.scope.reconcile_scopes();
+                if !owned.is_empty()
+                    && !owned.iter().any(|g| {
+                        g.doc.as_deref() == Some(doc.as_str()) && g.sections.contains(&sec)
+                    })
                 {
+                    let listing: Vec<String> = owned
+                        .iter()
+                        .flat_map(|g| {
+                            g.sections
+                                .iter()
+                                .map(|s| format!("{} ({})", s, g.goal))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect();
                     return Err(ToolError::new(
                         "wrong-section",
                         format!(
-                            "{} is not one of this turn's dirty sections ({})",
+                            "{} is owned by no goal of this batch; the batch's sections: {}",
                             sec,
-                            self.scope.target_sections.join(", ")
+                            listing.join(", ")
                         ),
                     ));
                 }
@@ -3187,12 +3925,22 @@ impl ToolSession {
                             .to_string(),
                         message: crate::llm::truncate(message, 4_000).to_string(),
                         source: c.source,
+                        // The caller fields carry the goal kinds and the batch id.
                         task: if c.task.is_empty() {
-                            self.scope.task.clone()
+                            self.scope.feedback_task()
                         } else {
                             c.task
                         },
-                        target: c.target,
+                        target: if c.target.is_empty() {
+                            self.scope.batch.clone()
+                        } else {
+                            c.target
+                        },
+                        batch: if c.batch.is_empty() {
+                            self.scope.goal_ids()
+                        } else {
+                            c.batch
+                        },
                         model: c.model,
                         codec: c.codec,
                         generation: self.snapshot.status.generation,
@@ -3206,19 +3954,29 @@ impl ToolSession {
                 }))
             }
             "done" => {
-                // Batch gate for the align turn: every proposal is decided.
-                // Mirrors docs/compiler/turns/align-doc.md#finish.
-                let undecided: Vec<String> = self
-                    .scope
-                    .proposals
-                    .iter()
-                    .filter(|a| {
-                        !self.staged.iter().any(|o| {
-                            matches!(o, Op::PlaceAnchor { id, .. } | Op::OrphanAnchor { id, .. } if id == *a)
-                        })
-                    })
-                    .cloned()
-                    .collect();
+                // A done that leaves a mandatory goal neither done nor failed is
+                // rejected naming it; the implicit path commits around it and the
+                // goal stays open for its retry. Mirrors docs/compiler/sessions.md#commit.
+                if !self.implicit_done {
+                    let open: Vec<&str> = self
+                        .scope
+                        .goals
+                        .iter()
+                        .filter(|g| g.mandatory && !self.outcomes.contains_key(&g.goal))
+                        .map(|g| g.goal.as_str())
+                        .collect();
+                    if !open.is_empty() {
+                        return Err(ToolError::new(
+                            "open-goal",
+                            format!(
+                                "goal(s) neither done nor failed: {}; mark_goal_done or mark_goal_failed each, then done",
+                                open.join(", ")
+                            ),
+                        ));
+                    }
+                }
+                // Batch gate: every proposal of the batch is decided.
+                let undecided = self.undecided_proposals(&self.scope.proposals());
                 if !undecided.is_empty() {
                     return Err(ToolError::new(
                         "undecided-proposal",
@@ -3228,44 +3986,9 @@ impl ToolSession {
                         ),
                     ));
                 }
-                // Batch gate: stale anchors are a contract. Each must be re-anchored
-                // (its quote locates again), re-recorded under its natural key, revised,
-                // or deleted; a turn cannot mark coverage around them and walk away. An
-                // anchor the align turn flagged for re-evaluation owes a decision even
-                // though its quote locates.
-                let mut untouched: Vec<String> = Vec::new();
-                for a in &self.scope.stale_anchors {
-                    let Some(r) = self.snapshot.graph.requirements.get(a) else {
-                        continue;
-                    };
-                    let Some(src) = r.source.as_ref() else {
-                        continue;
-                    };
-                    if self
-                        .snapshot
-                        .quote_locates(&src.doc, &src.section, &src.quote)
-                        && !self.snapshot.status.reevaluate.contains(a)
-                    {
-                        continue;
-                    }
-                    let addressed = self.staged.iter().any(|o| match o {
-                        Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => {
-                            id == a
-                        }
-                        // A staged create that resolved to the anchor carries its id;
-                        // the statement-equality fallback covers pre-resolution stages.
-                        Op::CreateRequirement { id, requirement } => {
-                            id == a
-                                || (requirement.anchored_at(&src.doc, &src.section)
-                                    && crate::store::normalize_statement(&requirement.statement)
-                                        == crate::store::normalize_statement(&r.statement))
-                        }
-                        _ => false,
-                    });
-                    if !addressed {
-                        untouched.push(a.clone());
-                    }
-                }
+                // Batch gate: stale anchors are a contract the harness never commits
+                // around, implicit path included.
+                let untouched = self.untouched_stale(&self.scope.stale_anchors());
                 if !untouched.is_empty() {
                     return Err(ToolError::new(
                         "stale-anchor",
@@ -3276,77 +3999,41 @@ impl ToolSession {
                     ));
                 }
                 // Batch gate: an explicit done finishes the coverage contract. Every
-                // dirty section carries a mark, staged or already recorded; the
+                // section of the batch carries a mark, staged or already recorded; the
                 // implicit path commits without one and the section stays unprocessed.
-                // Mirrors docs/compiler/turns.md#commit.
                 if !self.implicit_done {
-                    if let (Some(wd), "reconcile-doc") = (&self.scope.doc, self.scope.task.as_str())
-                    {
-                        let unmarked: Vec<String> = self
-                            .scope
-                            .target_sections
-                            .iter()
-                            .filter(|sec| {
-                                let recorded = self
-                                    .snapshot
-                                    .docs
-                                    .get(wd)
-                                    .map(|d| d.coverage.contains_key(*sec))
-                                    .unwrap_or(false);
-                                let staged = self.staged.iter().any(|o| {
-                                    matches!(o, Op::SetCoverage { doc, section, .. } if doc == wd && section == *sec)
-                                });
-                                !recorded && !staged
-                            })
-                            .cloned()
-                            .collect();
-                        if !unmarked.is_empty() {
-                            return Err(ToolError::new(
-                                "unmarked-section",
-                                format!(
-                                    "dirty section(s) without a coverage mark: {}; for each, set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
-                                    unmarked.join(", ")
-                                ),
-                            ));
+                    for gs in self.scope.reconcile_scopes() {
+                        if let Some(doc) = &gs.doc {
+                            let unmarked = self.unmarked_sections(doc, &gs.sections);
+                            if !unmarked.is_empty() {
+                                return Err(ToolError::new(
+                                    "unmarked-section",
+                                    format!(
+                                        "dirty section(s) without a coverage mark: {}; for each, set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
+                                        unmarked.join(", ")
+                                    ),
+                                ));
+                            }
                         }
                     }
                 }
-                // Batch gate: a `covered` claim is honest only when a requirement is
-                // sourced from that section; a section with nothing to extract is
-                // non-normative with a note, never silently covered. This stops a turn
-                // from dropping a rejected requirement and claiming the section anyway,
-                // and from skimming past declarative prose without extracting.
-                for op in &self.staged {
-                    if let Op::SetCoverage {
-                        doc,
-                        section,
-                        state,
-                        ..
-                    } = op
-                    {
-                        if state != "covered" {
-                            continue;
-                        }
-                        let has_req = self
-                            .snapshot
-                            .graph
-                            .requirements
-                            .values()
-                            .any(|r| r.anchored_at(doc, section))
-                            || self.staged.iter().any(|o| match o {
-                                Op::CreateRequirement { requirement, .. } => {
-                                    requirement.anchored_at(doc, section)
-                                }
-                                _ => false,
-                            });
-                        if !has_req {
-                            return Err(ToolError::new(
-                                "uncovered-claim",
-                                format!(
-                                    "{}#{} is claimed covered but no requirement is sourced from it; extract from its sentences (state the obligation, keep the quote verbatim), or mark the section non-normative with a note",
-                                    doc, section
-                                ),
-                            ));
+                // Batch gate: every covered claim is honest, implicit path included
+                // (finish_implicit drops the offending marks and retries).
+                if let Some(e) = self.dishonest_covered() {
+                    return Err(e);
+                }
+                // Every resolution's gate still holds over the final changeset.
+                let scopes: Vec<GoalScope> = self.scope.goals.clone();
+                for gs in &scopes {
+                    if matches!(self.outcomes.get(&gs.goal), Some(GoalOutcome::Done { .. })) {
+                        self.goal_gate(gs)?;
+                    }
+                }
+                // The union of the batch's kinds' gates over the whole changeset.
+                for kind in self.scope.kinds() {
+                    if let Some(k) = crate::goals::kind(&kind) {
+                        if let Some(v) = k.gates(&self.snapshot, &self.staged).into_iter().next() {
+                            return Err(ToolError::new(&v.rule, v.message));
                         }
                     }
                 }
@@ -4028,17 +4715,27 @@ mod tests {
         );
         ToolSession::new(
             s,
-            WorkScope {
-                task: "reconcile-doc".into(),
-                doc: Some("shop.md".into()),
-                target: "shop.md".into(),
-                target_sections: vec!["/shop".into(), "/shop/cart".into()],
-                stale_anchors: Vec::new(),
-                proposals: Vec::new(),
-            },
+            reconcile_scope("shop.md", &["/shop", "/shop/cart"], &[]),
             64,
             24_000,
         )
+    }
+
+    // A batch of reconcile-section goals, one per section, with the stale anchors on
+    // each section's goal.
+    fn reconcile_scope(doc: &str, sections: &[&str], stale: &[&str]) -> WorkScope {
+        let goals: Vec<Goal> = sections
+            .iter()
+            .map(|sec| Goal {
+                id: format!("g:reconcile-section:{}#{}", doc, sec),
+                kind: "reconcile-section".into(),
+                mandatory: true,
+                target: format!("{}#{}", doc, sec),
+                change: json!({"staleAnchors": stale}),
+                ..Default::default()
+            })
+            .collect();
+        WorkScope::for_batch("b0-1", &goals)
     }
 
     fn plain(name: &str) -> Entity {
@@ -4751,12 +5448,24 @@ mod tests {
             &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}),
         )
         .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "Extracted the cart statement and marked the section."}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop", "justification": "Intro text only."}),
+        )
+        .unwrap();
         t.dispatch("done", &json!({"summary": "reconciled cart"}))
             .unwrap();
         assert!(t.done.is_some());
         assert_eq!(t.staged.len(), 4);
     }
 
+    // done refuses while a mandatory goal is unaddressed, and mark_goal_done rejects
+    // a false claim: the reconcile-section goal whose section carries no mark.
     #[test]
     fn explicit_done_requires_a_mark_per_dirty_section() {
         let mut t = session();
@@ -4775,16 +5484,34 @@ mod tests {
             &json!({"section": "/shop/cart", "state": "covered"}),
         )
         .unwrap();
-        // Extracting from a section and walking away without marking the other dirty
-        // section bounces the explicit done.
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "Extracted and marked."}),
+        )
+        .unwrap();
+        // The other section's goal owes its mark: the claim is rejected naming the gate.
         let err = t
-            .dispatch("done", &json!({"summary": "cart only"}))
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:reconcile-section:shop.md#/shop", "justification": "Nothing here."}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "unmarked-section");
         assert!(err.message.contains("/shop"));
+        // done with a mandatory goal neither done nor failed is rejected naming it.
+        let err = t
+            .dispatch("done", &json!({"summary": "cart only"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "open-goal");
+        assert!(err.message.contains("g:reconcile-section:shop.md#/shop"));
         t.dispatch(
             "set_coverage",
             &json!({"section": "/shop", "state": "non-normative", "note": "intro text only"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop", "justification": "Intro text only."}),
         )
         .unwrap();
         t.dispatch("done", &json!({"summary": "all sections marked"}))
@@ -4935,14 +5662,7 @@ mod tests {
         );
         ToolSession::new(
             s,
-            WorkScope {
-                task: "reconcile-doc".into(),
-                doc: Some("shop.md".into()),
-                target: "shop.md".into(),
-                target_sections: vec!["/shop/cart".into()],
-                stale_anchors: vec!["req:shop-1".into()],
-                proposals: Vec::new(),
-            },
+            reconcile_scope("shop.md", &["/shop/cart"], &["req:shop-1"]),
             64,
             24_000,
         )
@@ -4956,8 +5676,12 @@ mod tests {
             &json!({"section": "/shop/cart", "state": "covered"}),
         )
         .unwrap();
+        let goal = "g:reconcile-section:shop.md#/shop/cart";
         let err = t
-            .dispatch("done", &json!({"summary": "covered around the anchor"}))
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": "Covered."}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "stale-anchor");
         assert!(
@@ -4965,6 +5689,16 @@ mod tests {
             "names the anchor: {}",
             err.message
         );
+        // Failing the goal does not let the batch commit around the anchor.
+        t.dispatch(
+            "mark_goal_failed",
+            &json!({"goal": goal, "reason": "cannot decide the anchor"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch("done", &json!({"summary": "covered around the anchor"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "stale-anchor");
     }
 
     #[test]
@@ -4978,6 +5712,11 @@ mod tests {
         t.dispatch(
             "delete_requirement",
             &json!({"id": "req:shop-1", "reason": "the document dropped the statement"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "The fact is gone; deleted the anchor."}),
         )
         .unwrap();
         t.dispatch("done", &json!({"summary": "anchor deleted"}))
@@ -5001,6 +5740,11 @@ mod tests {
         t.dispatch(
             "set_coverage",
             &json!({"section": "/shop/cart", "state": "covered"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "Re-recorded on the anchor."}),
         )
         .unwrap();
         t.dispatch("done", &json!({"summary": "re-anchored"}))
@@ -5050,6 +5794,11 @@ mod tests {
             &json!({"section": "/shop/cart", "state": "covered"}),
         )
         .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "Reworded onto the anchor."}),
+        )
+        .unwrap();
         t.dispatch("done", &json!({"summary": "re-anchored reworded"}))
             .unwrap();
         assert!(t.done.is_some());
@@ -5080,6 +5829,11 @@ mod tests {
             &json!({"section": "/shop/cart", "state": "covered"}),
         )
         .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:reconcile-section:shop.md#/shop/cart", "justification": "Revised and re-anchored."}),
+        )
+        .unwrap();
         t.dispatch("done", &json!({"summary": "revised and re-anchored"}))
             .unwrap();
         assert!(t.done.is_some());
@@ -5108,7 +5862,7 @@ mod tests {
         let logged = crate::feedback::read(&dir, 10);
         assert_eq!(logged.len(), 1);
         assert_eq!(logged[0]["kind"], "ambiguous");
-        assert_eq!(logged[0]["task"], "reconcile-doc");
+        assert_eq!(logged[0]["task"], "reconcile-section");
         assert_eq!(logged[0]["target"], "shop.md");
         assert_eq!(logged[0]["model"], "test-model");
         assert_eq!(logged[0]["run"], "run-1");
@@ -5140,38 +5894,50 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    // The per-kind goal pages state what the model sees; a toolset change that forgets
-    // the page would let them drift. Every write tool a kind carries must appear on its
-    // page (the read tools are the loaded-set tools the pages name as `load`).
+    // The per-kind goal pages state what the model sees; a toolset change that
+    // forgets the page would let them drift. Every name in a kind's toolset plus the
+    // always-on set must appear on its page, and a new kind cannot ship without one.
     // Mirrors docs/compiler/goals/<kind>.md#tools.
     #[test]
     fn task_docs_name_every_tool() {
-        for (task, doc) in [
-            (
-                "align-doc",
-                include_str!("../../docs/compiler/goals/place-anchors.md"),
-            ),
-            (
-                "reconcile-doc",
-                include_str!("../../docs/compiler/goals/reconcile-section.md"),
-            ),
-            (
-                "review-requirement",
-                include_str!("../../docs/compiler/goals/rejudge-pair.md"),
-            ),
-            (
-                "review-entity",
-                include_str!("../../docs/compiler/goals/review-entity.md"),
-            ),
-        ] {
-            for tool in toolset(task) {
-                if READ_TOOLS.contains(&tool) {
-                    continue;
+        for k in crate::goals::REGISTRY.iter() {
+            if crate::goals::blocked_on_human(k.kind()) {
+                continue;
+            }
+            let doc = match k.kind() {
+                "place-anchors" => include_str!("../../docs/compiler/goals/place-anchors.md"),
+                "reconcile-section" => {
+                    include_str!("../../docs/compiler/goals/reconcile-section.md")
                 }
+                "rejudge-pair" => include_str!("../../docs/compiler/goals/rejudge-pair.md"),
+                "review-entity" => include_str!("../../docs/compiler/goals/review-entity.md"),
+                "retrace" => include_str!("../../docs/compiler/goals/retrace.md"),
+                "conform-instance" => {
+                    include_str!("../../docs/compiler/goals/conform-instance.md")
+                }
+                "bind" => include_str!("../../docs/compiler/goals/bind.md"),
+                "generate" => include_str!("../../docs/compiler/goals/generate.md"),
+                "verify" => include_str!("../../docs/compiler/goals/verify.md"),
+                "declare-edges" => include_str!("../../docs/compiler/goals/declare-edges.md"),
+                "dedupe-candidates" => {
+                    include_str!("../../docs/compiler/goals/dedupe-candidates.md")
+                }
+                "curate-view" => include_str!("../../docs/compiler/goals/curate-view.md"),
+                "split-view" => include_str!("../../docs/compiler/goals/split-view.md"),
+                "abstract-entity" => {
+                    include_str!("../../docs/compiler/goals/abstract-entity.md")
+                }
+                other => panic!("no page wired for kind {}", other),
+            };
+            let mut names: Vec<&str> = k.toolset().to_vec();
+            names.extend(READ_TOOLS);
+            names.extend(GOAL_TOOLS);
+            names.push(FEEDBACK_TOOL);
+            for tool in names {
                 assert!(
                     doc.contains(tool),
                     "the {} page misses tool `{}`",
-                    task,
+                    k.kind(),
                     tool
                 );
             }
@@ -5252,16 +6018,17 @@ mod tests {
                 },
             ],
         });
+        let goal = Goal {
+            id: "g:place-anchors:shop.md".into(),
+            kind: "place-anchors".into(),
+            mandatory: true,
+            target: "shop.md".into(),
+            change: json!({"anchors": ["req:shop-1", "req:shop-2"]}),
+            ..Default::default()
+        };
         ToolSession::new(
             s,
-            WorkScope {
-                task: "align-doc".into(),
-                doc: Some("shop.md".into()),
-                target: "shop.md".into(),
-                target_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: vec!["req:shop-1".into(), "req:shop-2".into()],
-            },
+            WorkScope::for_batch("b0-1", std::slice::from_ref(&goal)),
             64,
             24_000,
         )
@@ -5275,11 +6042,23 @@ mod tests {
             &json!({"id": "req:shop-1", "section": "/shop/basket", "reevaluate": false}),
         )
         .unwrap();
-        let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        let err = s
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:place-anchors:shop.md", "justification": "Both proposals decided."}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "undecided-proposal");
         assert!(err.message.contains("req:shop-2"));
+        let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        assert_eq!(err.rule, "open-goal");
         s.dispatch("orphan_anchor", &json!({"id": "req:shop-2"}))
             .unwrap();
+        s.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:place-anchors:shop.md", "justification": "Both proposals decided."}),
+        )
+        .unwrap();
         assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
         assert_eq!(s.staged.len(), 2);
     }
@@ -5341,20 +6120,165 @@ mod tests {
             },
         );
         s.snapshot.status.reevaluate.push("req:shop-9".into());
-        s.scope.stale_anchors.push("req:shop-9".into());
-        s.scope.target_sections = vec!["/shop/cart".into()];
+        s.scope
+            .goals
+            .retain(|g| g.sections == vec!["/shop/cart".to_string()]);
+        s.scope.goals[0].stale_anchors.push("req:shop-9".into());
         s.dispatch(
             "set_coverage",
             &json!({"section": "/shop/cart", "state": "covered"}),
         )
         .unwrap();
-        let err = s.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+        let goal = "g:reconcile-section:shop.md#/shop/cart";
+        let err = s
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": "Covered."}),
+            )
+            .unwrap_err();
         assert_eq!(err.rule, "stale-anchor");
         s.dispatch(
             "delete_requirement",
             &json!({"id": "req:shop-9", "reason": "meaning changed"}),
         )
         .unwrap();
+        s.dispatch(
+            "mark_goal_done",
+            &json!({"goal": goal, "justification": "Re-judged and removed."}),
+        )
+        .unwrap();
         assert!(s.dispatch("done", &json!({"summary": "x"})).is_ok());
+    }
+
+    // The guard: the second identical call is marked, the third refused; a load of a
+    // loaded target counts; done and the goal claims are exempt.
+    // Mirrors docs/compiler/sessions.md#repeated-calls.
+    #[test]
+    fn repeated_calls_are_marked_then_refused_with_exemptions() {
+        let mut t = session();
+        let args = json!({"query": "cart"});
+        assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
+        assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+        let err = t.dispatch("search", &args).unwrap_err();
+        assert_eq!(err.rule, "repeated-call");
+        // A load of an already loaded target is a repeat whatever its depth.
+        t.dispatch("load", &json!({"target": "ent:customer"}))
+            .unwrap();
+        let v = t
+            .dispatch("load", &json!({"target": "ent:customer", "depth": 2}))
+            .unwrap();
+        assert!(v["repeat"].is_string());
+        let err = t
+            .dispatch("load", &json!({"target": "ent:customer"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "repeated-call");
+        // done, mark_goal_done, and mark_goal_failed are exempt: a repaired claim
+        // legitimately repeats.
+        for _ in 0..4 {
+            let err = t.dispatch("done", &json!({"summary": "x"})).unwrap_err();
+            assert_ne!(err.rule, "repeated-call");
+        }
+    }
+
+    // Past the high-water mark, load and expand refuse naming candidates; reads
+    // still answer. Mirrors docs/compiler/context.md#policy.
+    #[test]
+    fn load_past_the_high_water_mark_names_unload_candidates() {
+        let mut t = session();
+        t.dispatch("load", &json!({"target": "ent:customer"}))
+            .unwrap();
+        t.loaded.high_water = 1;
+        let err = t
+            .dispatch("load", &json!({"target": "shop.md#/shop/cart"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "context-full");
+        assert!(err.message.contains("ent:customer"), "{}", err.message);
+        assert!(
+            t.dispatch("search", &json!({"query": "buy"})).is_ok(),
+            "reads still answer past the mark"
+        );
+    }
+
+    // Auto-load once, the per-session cap, and the inactive marking when the last
+    // node of a kind unloads. Mirrors docs/compiler/sessions.md#skills.
+    #[test]
+    fn skills_auto_load_once_cap_and_go_inactive() {
+        let mut t = session();
+        assert!(
+            t.skills.is_active("extraction"),
+            "the goal kind's skill is active from the first round"
+        );
+        let v = t
+            .dispatch("load", &json!({"target": "shop.md#/shop/cart"}))
+            .unwrap();
+        assert!(v.get("skill").is_none(), "a pinned skill never re-renders");
+        t.dispatch("load_skill", &json!({"name": "judgment"}))
+            .unwrap();
+        t.dispatch("load_skill", &json!({"name": "flow-views"}))
+            .unwrap();
+        t.dispatch("load_skill", &json!({"name": "structural-views"}))
+            .unwrap();
+        let err = t
+            .dispatch("load_skill", &json!({"name": "abstraction"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "skill-cap");
+        let err = t
+            .dispatch("load_skill", &json!({"name": "no-such"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-skill");
+        // Outside a batch nothing pins: the first section auto-loads extraction once,
+        // and unloading the last section marks it inactive without dropping its slot.
+        let snap = session().snapshot;
+        let mut t2 = ToolSession::new(snap, WorkScope::serving("mcp-read"), 64, 24_000);
+        let v = t2
+            .dispatch("load", &json!({"target": "shop.md#/shop/cart"}))
+            .unwrap();
+        assert!(v["skill"]
+            .as_str()
+            .unwrap()
+            .contains("[skill: extraction (active)]"));
+        t2.dispatch("unload", &json!({"target": "shop.md#/shop/cart"}))
+            .unwrap();
+        assert!(!t2.skills.is_active("extraction"));
+        assert!(
+            t2.skills.is_rendered("extraction"),
+            "the rendered text keeps its cap slot"
+        );
+    }
+
+    // The claim tools: an essay justification, a false claim, and a goal outside the
+    // batch are rejected; a failure is always accepted.
+    #[test]
+    fn mark_goal_done_rejects_an_essay_and_a_false_claim() {
+        let mut t = session();
+        let goal = "g:reconcile-section:shop.md#/shop/cart";
+        let essay = "First I read the section. Then I extracted everything. Then I checked the anchors. Finally I marked coverage.";
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": essay}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-justification");
+        // A false claim: the section carries no coverage mark.
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": "Extracted and marked."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unmarked-section");
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:reconcile-section:other.md#/x", "justification": "Done."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-goal");
+        t.dispatch(
+            "mark_goal_failed",
+            &json!({"goal": goal, "reason": "the section contradicts itself"}),
+        )
+        .unwrap();
     }
 }

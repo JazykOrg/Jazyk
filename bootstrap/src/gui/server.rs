@@ -59,7 +59,12 @@ pub fn router(st: SharedState) -> Router {
         .route("/questions", get(api::questions))
         .route("/questions/{id}/answer", post(api::answer_question))
         .route("/docs", get(api::docs))
-        .route("/docs/content", get(api::doc_content).put(docs::doc_write).delete(docs::doc_delete))
+        .route(
+            "/docs/content",
+            get(api::doc_content)
+                .put(docs::doc_write)
+                .delete(docs::doc_delete),
+        )
         .route("/docs/baseline", get(api::doc_baseline))
         .route("/docs/rename", post(docs::doc_rename))
         .route("/gen/pending", get(api::gen_pending))
@@ -67,7 +72,10 @@ pub fn router(st: SharedState) -> Router {
         .route("/verify/pending", get(api::verify_pending))
         .route("/verify/matrix", get(api::verify_matrix))
         .route("/docsgen/{slug}", get(api::docsgen))
-        .route("/chat/sessions", get(chat::list_sessions).post(chat::post_session))
+        .route(
+            "/chat/sessions",
+            get(chat::list_sessions).post(chat::post_session),
+        )
         .route("/chat/sessions/{id}", get(chat::get_session))
         .route("/chat/sessions/{id}/prompt", post(chat::post_prompt))
         .route("/chat/sessions/{id}/cancel", post(chat::cancel))

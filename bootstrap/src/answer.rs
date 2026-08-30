@@ -343,7 +343,7 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
                     "- {}: {} ({})\n",
                     sid,
                     r.statement,
-                    crate::turn::provenance_line(r)
+                    crate::session::provenance_line(r)
                 )),
             }
         } else if let Some(e) = store.graph.entities.get(&sid) {

@@ -233,7 +233,7 @@ pub fn run_all(
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     scopes_wanted: &[String],
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<Value, String> {
     let control = crate::control::Control::load(proj, &store.out);
     let all = pending(proj, store, gs, &control);

@@ -11,9 +11,19 @@ use serde_json::{json, Value};
 pub enum AgentEvent {
     Thought(String),
     Message(String),
-    ToolCallStart { id: String, name: String, args: Value },
-    ToolCallEnd { id: String, result: String, ok: bool },
-    Usage { tokens: u64 },
+    ToolCallStart {
+        id: String,
+        name: String,
+        args: Value,
+    },
+    ToolCallEnd {
+        id: String,
+        result: String,
+        ok: bool,
+    },
+    Usage {
+        tokens: u64,
+    },
 }
 
 pub enum Stop {
@@ -33,7 +43,11 @@ that ends the turn.";
 // ---- codecs (moved from the turn harness, generic wording) ----
 
 enum Action {
-    Call { id: Option<String>, name: String, args: Value },
+    Call {
+        id: Option<String>,
+        name: String,
+        args: Value,
+    },
     Text(String),
     // A reply that reads as a JSON action but does not parse. Ending the turn on it
     // would treat a dropped brace as a finished answer; the loop repairs instead.
@@ -75,12 +89,19 @@ impl Codec for NativeCodec {
         }
         if let Some(calls) = msg["tool_calls"].as_array() {
             for c in calls {
-                let name = c["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = c["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args = match c["function"]["arguments"].as_str() {
                     Some(s) => serde_json::from_str(s).unwrap_or(json!({})),
                     None => c["function"]["arguments"].clone(),
                 };
-                out.push(Action::Call { id: c["id"].as_str().map(|s| s.to_string()), name, args });
+                out.push(Action::Call {
+                    id: c["id"].as_str().map(|s| s.to_string()),
+                    name,
+                    args,
+                });
             }
         }
         out
@@ -105,7 +126,10 @@ impl Codec for TextCodec {
             "\n\nTOOL PROTOCOL: you have no native tool support. To call a tool, reply with EXACTLY ONE JSON object per message, nothing else:\n{\"tool\": \"<name>\", \"args\": { ... }}\nThe result comes back as a message starting with RESULT:. Then reply with your next action. A reply that is not a JSON action ends the turn. Available tools:\n",
         );
         for t in tools {
-            s.push_str(&format!("- {}: {} args schema: {}\n", t.name, t.description, t.parameters));
+            s.push_str(&format!(
+                "- {}: {} args schema: {}\n",
+                t.name, t.description, t.parameters
+            ));
         }
         s
     }
@@ -118,7 +142,11 @@ impl Codec for TextCodec {
             match serde_json::from_str::<Value>(&obj) {
                 Ok(v) => {
                     if let Some(name) = v["tool"].as_str() {
-                        return vec![Action::Call { id: None, name: name.to_string(), args: v["args"].clone() }];
+                        return vec![Action::Call {
+                            id: None,
+                            name: name.to_string(),
+                            args: v["args"].clone(),
+                        }];
                     }
                 }
                 Err(e) => return vec![Action::Malformed(e.to_string())],
@@ -128,7 +156,9 @@ impl Codec for TextCodec {
         // action, not prose: a truncated object must not end the turn as an answer.
         let t = content.trim_start();
         if t.starts_with('{') && t.contains("\"tool\"") {
-            return vec![Action::Malformed("the object is incomplete or unbalanced".to_string())];
+            return vec![Action::Malformed(
+                "the object is incomplete or unbalanced".to_string(),
+            )];
         }
         if content.trim().is_empty() {
             Vec::new()
@@ -182,20 +212,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         }
     };
     let mut codec = codec_for(mode);
-    let system = |codec: &dyn Codec, tools: &[GenericTool]| {
-        json!({"role": "system", "content": format!("{}{}", SYSTEM, codec.system_suffix(tools))})
-    };
-    if a.history.first().map(|m| m["role"] == "system").unwrap_or(false) {
+    let system = |codec: &dyn Codec, tools: &[GenericTool]| json!({"role": "system", "content": format!("{}{}", SYSTEM, codec.system_suffix(tools))});
+    if a.history
+        .first()
+        .map(|m| m["role"] == "system")
+        .unwrap_or(false)
+    {
         a.history[0] = system(codec.as_ref(), a.tools);
     } else {
         a.history.insert(0, system(codec.as_ref(), a.tools));
     }
 
     let mut rounds = 0u32;
-    // Identical calls repeated verbatim get refused: the answer has not changed, and
-    // a looping model should stop paying for the question.
-    let mut repeats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
-    let mut refusals = 0u32;
     let mut called_any = false;
     let mut nudged = false;
     let mut empty_nudges = 0u32;
@@ -207,7 +235,10 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         rounds += 1;
         let step = format!("r{}", rounds);
         let tools_param = codec.tools_param(a.tools);
-        let msg = match a.llm.chat_messages(a.history, tools_param.as_deref(), &a.label, &step) {
+        let msg = match a
+            .llm
+            .chat_messages(a.history, tools_param.as_deref(), &a.label, &step)
+        {
             Ok((m, t)) => {
                 (a.emit)(AgentEvent::Usage { tokens: t });
                 m
@@ -237,7 +268,10 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             a.history[0] = system(codec.as_ref(), a.tools);
             continue;
         }
-        if mode != 2 && llm::tools_mode() == 0 && actions.iter().any(|x| matches!(x, Action::Call { .. })) {
+        if mode != 2
+            && llm::tools_mode() == 0
+            && actions.iter().any(|x| matches!(x, Action::Call { .. }))
+        {
             llm::set_tools_mode(1);
         }
         a.history.push(msg.clone());
@@ -252,10 +286,15 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         // A broken action gets a repair message naming the parse error, three
         // strikes before the turn fails: a dropped brace is a resend, not an
         // answer. Mirrors docs/frontends/acp.md#the-embedded-agent.
-        if let Some(Action::Malformed(err)) = actions.iter().find(|x| matches!(x, Action::Malformed(_))) {
+        if let Some(Action::Malformed(err)) =
+            actions.iter().find(|x| matches!(x, Action::Malformed(_)))
+        {
             malformed_streak += 1;
             if malformed_streak >= 3 {
-                return Stop::Error(format!("the model cannot produce a parseable action ({})", err));
+                return Stop::Error(format!(
+                    "the model cannot produce a parseable action ({})",
+                    err
+                ));
             }
             a.history.push(json!({"role": "user", "content": format!(
                 "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
@@ -274,10 +313,15 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             // stall, not an answer: reasoning models narrate the action they intend
             // and stop, as if the thinking were visible. Name that, at most twice.
             // Mirrors docs/frontends/acp.md#the-embedded-agent.
-            let has_text = actions.iter().any(|x| matches!(x, Action::Text(t) if !t.trim().is_empty()));
-            let has_reasoning = ["reasoning_content", "reasoning"]
+            let has_text = actions
                 .iter()
-                .any(|f| msg[*f].as_str().map(|r| !r.trim().is_empty()).unwrap_or(false));
+                .any(|x| matches!(x, Action::Text(t) if !t.trim().is_empty()));
+            let has_reasoning = ["reasoning_content", "reasoning"].iter().any(|f| {
+                msg[*f]
+                    .as_str()
+                    .map(|r| !r.trim().is_empty())
+                    .unwrap_or(false)
+            });
             if !has_text && has_reasoning && empty_nudges < 2 {
                 empty_nudges += 1;
                 a.history.push(json!({"role": "user", "content":
@@ -317,35 +361,26 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     }
                     called_any = true;
                     call_n += 1;
-                    let call_id = id.clone().unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, call_n));
-                    (a.emit)(AgentEvent::ToolCallStart { id: call_id.clone(), name: name.clone(), args: args.clone() });
-                    let key = format!("{}|{}", name, args);
-                    let seen = {
-                        let c = repeats.entry(key).or_insert(0);
-                        *c += 1;
-                        *c
-                    };
-                    if seen >= 3 {
-                        refusals += 1;
-                        let refusal = json!({"error": {"rule": "repeated-call", "message": format!(
-                            "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have.",
-                            seen, name
-                        )}});
-                        (a.emit)(AgentEvent::ToolCallEnd { id: call_id, result: refusal.to_string(), ok: false });
-                        a.history.push(codec.result_msg(&id, &name, &refusal));
-                        if refusals > 8 {
-                            return Stop::EndTurn;
-                        }
-                        continue;
-                    }
-                    let (mut result, ok) = match (a.dispatch)(&name, &args) {
+                    let call_id = id
+                        .clone()
+                        .unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, call_n));
+                    (a.emit)(AgentEvent::ToolCallStart {
+                        id: call_id.clone(),
+                        name: name.clone(),
+                        args: args.clone(),
+                    });
+                    // The repeated-call guard lives in the tool serving, keyed per
+                    // open batch, so every agent gets the same contract
+                    // (docs/compiler/sessions.md#repeated-calls).
+                    let (result, ok) = match (a.dispatch)(&name, &args) {
                         Ok(v) => (v, true),
                         Err(e) => (e, false),
                     };
-                    if seen == 2 {
-                        result.push_str("\n(repeat: you already made this exact call; this is the same answer. Act on it.)");
-                    }
-                    (a.emit)(AgentEvent::ToolCallEnd { id: call_id, result: result.clone(), ok });
+                    (a.emit)(AgentEvent::ToolCallEnd {
+                        id: call_id,
+                        result: result.clone(),
+                        ok,
+                    });
                     a.history.push(codec.result_msg(&id, &name, &json!(result)));
                 }
             }

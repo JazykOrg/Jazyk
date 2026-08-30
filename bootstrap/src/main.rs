@@ -2,8 +2,8 @@ mod acp;
 mod align;
 mod answer;
 mod benchmark;
-mod board;
 mod bind;
+mod board;
 mod cli;
 mod context;
 mod control;
@@ -25,9 +25,9 @@ mod parallel;
 mod project;
 mod reconcile;
 mod render;
+mod session;
 mod store;
 mod tools;
-mod turn;
 mod verify;
 mod viewer;
 
@@ -239,7 +239,7 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              Bridge flags (set by the ACP bridge when it injects a serving into a\n\
              session; not for standalone servings):\n  \
              --ephemeral          the serving belongs to one session\n  \
-             --only TARGET        begin_compilation accepts only this target\n  \
+             --only ID            begin_goals accepts only this batch (or a goal, selecting its batch)\n  \
              --build-token ID     part of the running internal build\n  \
              --serve-files        add the sandboxed file and command tools\n\n\
              {}",
@@ -428,7 +428,7 @@ fn main() {
                     eprintln!("{}", cmd_usage("mcp").unwrap());
                     2
                 } else if opts.write && !modes.iter().any(|m| m == "graph") {
-                    eprintln!("jazyk: --write applies to the graph toolset only; compile gates writes behind begin_compilation");
+                    eprintln!("jazyk: --write applies to the graph toolset only; compile gates writes behind begin_goals");
                     2
                 } else {
                     let (proj, _llm, out) = cli::resolve(&[], &opts);

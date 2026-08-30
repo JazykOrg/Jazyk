@@ -11,13 +11,16 @@ use std::path::{Path, PathBuf};
 // that owns the session; empty fields are omitted from the record.
 #[derive(Clone, Default)]
 pub struct Caller {
-    // "turn" (a compilation turn) or "mcp" (an external agent).
+    // "session" (a compilation session) or "mcp" (an external agent).
     pub source: String,
-    // The task type, when it differs from the session's work scope (the MCP serving
-    // mode, say). Empty falls back to the scope's task.
+    // The goal kinds of the batch, or the MCP serving mode. Empty falls back to the
+    // scope's own kinds.
     pub task: String,
-    // The work item's target, or the tool call's own name under MCP.
+    // The batch id, or the tool call's own name under MCP.
     pub target: String,
+    // The goal ids of the open batch; empty when none is open. Empty falls back to
+    // the scope's goal ids.
+    pub batch: Vec<String>,
     pub model: String,
     pub codec: String,
     // The run's transcript name under <out>/trace, when the run leaves one.
@@ -40,6 +43,9 @@ pub struct Entry {
     pub task: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub target: String,
+    // The goal ids of the open batch, absent when none is open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub batch: Vec<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -76,8 +82,14 @@ pub fn append(out: &Path, entry: &Entry) {
         return;
     }
     std::fs::create_dir_all(out).ok();
-    let Ok(line) = serde_json::to_string(entry) else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path(out)) {
+    let Ok(line) = serde_json::to_string(entry) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path(out))
+    {
         let _ = writeln!(f, "{}", line);
         let _ = f.flush();
     }
@@ -86,8 +98,13 @@ pub fn append(out: &Path, entry: &Entry) {
 // The log newest first, capped. Malformed lines are skipped, not fatal: the file is
 // appended by concurrent processes.
 pub fn read(out: &Path, limit: usize) -> Vec<Value> {
-    let Ok(text) = std::fs::read_to_string(path(out)) else { return Vec::new() };
-    let mut entries: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).collect();
+    let Ok(text) = std::fs::read_to_string(path(out)) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .collect();
     entries.reverse();
     entries.truncate(limit);
     entries
@@ -115,9 +132,10 @@ mod tests {
                     kind: "confusing".into(),
                     subject: "upsert_requirement".into(),
                     message: (*msg).into(),
-                    source: "turn".into(),
-                    task: "reconcile-doc".into(),
-                    target: "docs/cli.md".into(),
+                    source: "session".into(),
+                    task: "reconcile-section".into(),
+                    target: "b3-1".into(),
+                    batch: vec!["g:reconcile-section:docs/cli.md#/cli".into()],
                     model: "m".into(),
                     codec: "native".into(),
                     generation: 3,

@@ -29,6 +29,11 @@ pub fn read_message<R: BufRead>(r: &mut R) -> Option<Value> {
 // Write one Content-Length framed JSON-RPC message to `w`.
 pub fn write_message<W: Write>(w: &mut W, msg: &Value) {
     let body = serde_json::to_string(msg).unwrap_or_else(|_| "{}".to_string());
-    let _ = write!(w, "Content-Length: {}\r\n\r\n{}", body.as_bytes().len(), body);
+    let _ = write!(
+        w,
+        "Content-Length: {}\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
     let _ = w.flush();
 }

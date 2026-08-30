@@ -11,8 +11,8 @@ use crate::llm::Llm;
 use crate::md;
 use crate::model::*;
 use crate::project::Project;
+use crate::session::{Trace, TraceEvent};
 use crate::store::Store;
-use crate::turn::{Trace, TraceEvent};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -255,7 +255,10 @@ fn justified(store: &Store, subject: &str, p: &Provenance) -> Result<(), String>
             if section_alive(store, &s.doc, &s.section) {
                 Ok(())
             } else {
-                Err(format!("its quote names {}#{}, which no longer exists", s.doc, s.section))
+                Err(format!(
+                    "its quote names {}#{}, which no longer exists",
+                    s.doc, s.section
+                ))
             }
         }
         Provenance::Derived { from, .. } => {
@@ -263,7 +266,10 @@ fn justified(store: &Store, subject: &str, p: &Provenance) -> Result<(), String>
             if !dead.is_empty() {
                 return Err(format!(
                     "it is derived from {}, which no longer exist",
-                    dead.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    dead.iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             if open_proposal_on(store, subject) {
@@ -289,7 +295,11 @@ fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
     let Some(r) = store.graph.requirements.get(rid) else {
         return Vec::new();
     };
-    let ents: BTreeSet<String> = r.entities.iter().map(|e| store.resolve_id(e).to_string()).collect();
+    let ents: BTreeSet<String> = r
+        .entities
+        .iter()
+        .map(|e| store.resolve_id(e).to_string())
+        .collect();
     let doc = r.source.as_ref().map(|s| s.doc.clone()).unwrap_or_default();
     let order = crate::derive::document_order(store);
     let position = |id: &str| order.iter().position(|x| x == id).unwrap_or(usize::MAX);
@@ -316,14 +326,24 @@ fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
                 .iter()
                 .any(|m| m.source.as_ref().is_some_and(|s| s.doc == doc));
             let first = v.members.first().map(|m| position(m)).unwrap_or(usize::MAX);
-            (std::cmp::Reverse(shared), !same_doc, kind_rank(&v.kind), first, vid.clone())
+            (
+                std::cmp::Reverse(shared),
+                !same_doc,
+                kind_rank(&v.kind),
+                first,
+                vid.clone(),
+            )
         })
         .collect();
     ranked.sort();
     let mut ids: Vec<String> = ranked.into_iter().map(|(_, _, _, _, id)| id).collect();
     // The requirement's own cluster (actor and document) outranks every other.
     if let Some(actor) = flow_actor(store, r) {
-        let stem = doc.rsplit('/').next().unwrap_or(&doc).trim_end_matches(".md");
+        let stem = doc
+            .rsplit('/')
+            .next()
+            .unwrap_or(&doc)
+            .trim_end_matches(".md");
         let own = format!(
             "view:usecase/{}-{}",
             crate::derive::entity_slug(&actor),
@@ -359,7 +379,12 @@ fn flow_actor(store: &Store, r: &Requirement) -> Option<String> {
 // The flow placement findings, each with the view the record lands on and the
 // alternatives. Runs only where flow views exist.
 fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, String)> {
-    if !store.graph.views.values().any(|v| goals::is_flow_kind(&v.kind)) {
+    if !store
+        .graph
+        .views
+        .values()
+        .any(|v| goals::is_flow_kind(&v.kind))
+    {
         return Vec::new();
     }
     let placed: BTreeSet<&str> = store
@@ -393,12 +418,18 @@ fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, S
         let (rule, message) = if facet == "behavior" {
             (
                 "unplaced-behavior",
-                format!("{} is a behavior requirement in no flow view and excluded from none", rid),
+                format!(
+                    "{} is a behavior requirement in no flow view and excluded from none",
+                    rid
+                ),
             )
         } else {
             (
                 "unrepresented-failure-mode",
-                format!("{} is a failure-mode requirement no flow branch represents", rid),
+                format!(
+                    "{} is a failure-mode requirement no flow branch represents",
+                    rid
+                ),
             )
         };
         out.push((
@@ -461,15 +492,17 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     "warning",
                     format!("section {}#{} is unprocessed after the build", doc, r),
                 )),
-                Some(c) if c.state == "non-normative" && looks_normative(&sec.raw) => f.push(finding(
-                    "suspicious-non-normative",
-                    &format!("{}#{}", doc, r),
-                    "warning",
-                    format!(
+                Some(c) if c.state == "non-normative" && looks_normative(&sec.raw) => {
+                    f.push(finding(
+                        "suspicious-non-normative",
+                        &format!("{}#{}", doc, r),
+                        "warning",
+                        format!(
                         "section {}#{} is marked non-normative but its text still looks normative",
                         doc, r
                     ),
-                )),
+                    ))
+                }
                 _ => {}
             }
         }
@@ -683,8 +716,13 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     for (rid, r) in &store.graph.requirements {
         let why = match r.provenance() {
             None => Some("it carries no provenance".to_string()),
-            Some(ProvenanceRef::Quote(s)) => justified(store, rid, &Provenance::Quote(s.clone())).err(),
-            Some(_) => r.provenance.as_ref().and_then(|p| justified(store, rid, p).err()),
+            Some(ProvenanceRef::Quote(s)) => {
+                justified(store, rid, &Provenance::Quote(s.clone())).err()
+            }
+            Some(_) => r
+                .provenance
+                .as_ref()
+                .and_then(|p| justified(store, rid, p).err()),
         };
         if let Some(why) = why {
             f.push(finding(
@@ -719,15 +757,23 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         }
         for a in &e.attributes {
             let why = match &a.provenance {
-                Provenance::Quote(s) => (!section_alive(store, &s.doc, &s.section))
-                    .then(|| format!("attribute {} quotes {}#{}, which no longer exists", a.name, s.doc, s.section)),
+                Provenance::Quote(s) => (!section_alive(store, &s.doc, &s.section)).then(|| {
+                    format!(
+                        "attribute {} quotes {}#{}, which no longer exists",
+                        a.name, s.doc, s.section
+                    )
+                }),
                 Provenance::Derived { from, .. } => {
-                    let dead: Vec<&String> = from.iter().filter(|x| !node_alive(store, x)).collect();
+                    let dead: Vec<&String> =
+                        from.iter().filter(|x| !node_alive(store, x)).collect();
                     (!dead.is_empty()).then(|| {
                         format!(
                             "attribute {} is derived from {}, which no longer exist",
                             a.name,
-                            dead.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                            dead.iter()
+                                .map(|s| s.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         )
                     })
                 }
@@ -761,7 +807,10 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     format!(
                         "{} is unjustified: it is derived from {}, which no longer exist",
                         vid,
-                        dead.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                        dead.iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                 ));
             }
@@ -778,7 +827,12 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                 continue;
             }
             let (whole, part) = (&c.a, &c.b);
-            let Some(parent) = store.graph.entities.get(part).and_then(|e| e.parent.clone()) else {
+            let Some(parent) = store
+                .graph
+                .entities
+                .get(part)
+                .and_then(|e| e.parent.clone())
+            else {
                 continue;
             };
             let comparable = parent == *whole
@@ -799,7 +853,9 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     }
     // Conformance, the mechanical part: an instance's attribute names against its type.
     for (inst, ty) in crate::derive::instance_types(store) {
-        let Some(e) = store.graph.entities.get(&inst) else { continue };
+        let Some(e) = store.graph.entities.get(&inst) else {
+            continue;
+        };
         if !store.graph.entities.contains_key(&ty) {
             continue;
         }
@@ -844,7 +900,10 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             .flat_map(|r| r.contributions.iter())
             .filter(|c| &c.b == iface)
             .collect();
-        let dependents = contributions.iter().filter(|c| c.r#type == "dependency").count();
+        let dependents = contributions
+            .iter()
+            .filter(|c| c.r#type == "dependency")
+            .count();
         if dependents == 0 {
             continue;
         }
@@ -865,14 +924,17 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                 "provider-ambiguous",
                 iface,
                 "warning",
-                format!("{} has more than one realizer: {}", iface, realizers.join(", ")),
+                format!(
+                    "{} has more than one realizer: {}",
+                    iface,
+                    realizers.join(", ")
+                ),
             )),
         }
     }
     // A quality facet without a measure.
     for (rid, r) in &store.graph.requirements {
-        if r
-            .facets
+        if r.facets
             .iter()
             .any(|x| x.facet == "quality" && x.measure.as_deref().unwrap_or("").trim().is_empty())
         {
@@ -912,7 +974,11 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
     let norm = crate::derive::normalize_state;
     let states: Vec<String> = m.states.iter().map(|s| norm(s)).collect();
     let entered: BTreeSet<String> = m.transitions.iter().map(|t| norm(&t.to)).collect();
-    let initial: Vec<String> = states.iter().filter(|s| !entered.contains(*s)).cloned().collect();
+    let initial: Vec<String> = states
+        .iter()
+        .filter(|s| !entered.contains(*s))
+        .cloned()
+        .collect();
     if !initial.is_empty() {
         let mut reach: BTreeSet<String> = initial.iter().cloned().collect();
         let mut frontier: Vec<String> = initial.clone();
@@ -932,7 +998,11 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
                 format!(
                     "{}: no path from the initial state reaches {}",
                     m.subject,
-                    unreachable.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    unreachable
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             ));
         }
@@ -947,7 +1017,10 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
             format!(
                 "{}: {} has no outgoing transition (the final state, or a requirements gap)",
                 m.subject,
-                dead.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                dead.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         ));
     }
@@ -977,7 +1050,11 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
             }
         }
     }
-    let triggers: BTreeSet<String> = m.transitions.iter().filter_map(|t| t.trigger.clone()).collect();
+    let triggers: BTreeSet<String> = m
+        .transitions
+        .iter()
+        .filter_map(|t| t.trigger.clone())
+        .collect();
     let mut unhandled: Vec<String> = Vec::new();
     for s in &states {
         for t in &triggers {
@@ -1013,7 +1090,8 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
         justification: String,
     }
     let entries = goals::read_journal(&store.out);
-    let key_of_entity = |name: &str, scope: &str| format!("{}|{}", crate::store::normalize_statement(name), scope);
+    let key_of_entity =
+        |name: &str, scope: &str| format!("{}|{}", crate::store::normalize_statement(name), scope);
     let mut id_key: BTreeMap<String, String> = store
         .graph
         .entities
@@ -1041,7 +1119,9 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
         } else {
             goals::Class::Compile
         };
-        let Some(goal) = goal_of_class(class) else { continue };
+        let Some(goal) = goal_of_class(class) else {
+            continue;
+        };
         let justification = entry
             .resolved_goals
             .iter()
@@ -1060,7 +1140,9 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
                         id_key.insert(id, key.clone());
                         Some(key)
                     }
-                    "DeleteEntity" | "RetractDecree" => id_key.get(body["id"].as_str().unwrap_or("")).cloned(),
+                    "DeleteEntity" | "RetractDecree" => {
+                        id_key.get(body["id"].as_str().unwrap_or("")).cloned()
+                    }
                     "MergeEntities" => id_key.get(body["absorb"].as_str().unwrap_or("")).cloned(),
                     _ => None,
                 };
@@ -1086,8 +1168,16 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
             continue;
         }
         let last = events.last().unwrap();
-        let gc = events.iter().rev().find(|e| e.class == goals::Class::Gc).unwrap();
-        let compile = events.iter().rev().find(|e| e.class == goals::Class::Compile).unwrap();
+        let gc = events
+            .iter()
+            .rev()
+            .find(|e| e.class == goals::Class::Gc)
+            .unwrap();
+        let compile = events
+            .iter()
+            .rev()
+            .find(|e| e.class == goals::Class::Compile)
+            .unwrap();
         let subject = id_key
             .iter()
             .filter(|(id, k)| **k == key && store.graph.entities.contains_key(*id))
@@ -1117,18 +1207,28 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
         let prompt = DiagnosticPrompt {
             question: format!(
                 "`{}` flips between the classes: {} ({}) and {} ({}). Which direction holds?",
-                name, gc.goal, gc.class.name(), compile.goal, compile.class.name()
+                name,
+                gc.goal,
+                gc.class.name(),
+                compile.goal,
+                compile.class.name()
             ),
             options: vec![
                 PromptOption {
                     label: format!("Keep the split ({})", gc.goal),
                     edit: None,
-                    answer: Some(format!("Keep the structure {} derived; the merge is wrong.", gc.goal)),
+                    answer: Some(format!(
+                        "Keep the structure {} derived; the merge is wrong.",
+                        gc.goal
+                    )),
                 },
                 PromptOption {
                     label: format!("Keep the merge ({})", compile.goal),
                     edit: None,
-                    answer: Some(format!("Keep the merge {} made; the split is wrong.", compile.goal)),
+                    answer: Some(format!(
+                        "Keep the merge {} made; the split is wrong.",
+                        compile.goal
+                    )),
                 },
             ],
             freeform: true,
@@ -1149,16 +1249,26 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
             ),
             Some(prompt),
         ));
-        for (goal, gen) in [(&gc.goal, gc.generation), (&compile.goal, compile.generation)] {
-            let Some((kind, target)) = goals::parse_goal_id(goal) else { continue };
-            let class = goals::kind(kind).map(|k| k.class()).unwrap_or(goals::Class::Compile);
+        for (goal, gen) in [
+            (&gc.goal, gc.generation),
+            (&compile.goal, compile.generation),
+        ] {
+            let Some((kind, target)) = goals::parse_goal_id(goal) else {
+                continue;
+            };
+            let class = goals::kind(kind)
+                .map(|k| k.class())
+                .unwrap_or(goals::Class::Compile);
             parked.push(Goal {
                 id: goal.clone(),
                 kind: kind.to_string(),
                 class: class.name().to_string(),
                 mandatory: class == goals::Class::Compile,
                 target: target.to_string(),
-                unit: goals::kind(kind).map(|k| k.unit()).unwrap_or("node").to_string(),
+                unit: goals::kind(kind)
+                    .map(|k| k.unit())
+                    .unwrap_or("node")
+                    .to_string(),
                 change: json!({"unstable": name, "subject": subject}),
                 cause: Some(Cause {
                     generation: gen,
@@ -1166,7 +1276,10 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
                     via: "flip-detection".into(),
                 }),
                 state: GoalState::Parked,
-                hints: vec![format!("parked by flip detection; answer the unstable-derivation prompt on {}", subject)],
+                hints: vec![format!(
+                    "parked by flip detection; answer the unstable-derivation prompt on {}",
+                    subject
+                )],
             });
         }
     }
@@ -1210,7 +1323,10 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
     }
     match g.kind.as_str() {
         "declare-edges" => (
-            g.change["entities"].as_array().map(|a| a.len()).unwrap_or(0) as u64,
+            g.change["entities"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0) as u64,
             1,
             "entities without edges".into(),
         ),
@@ -1227,7 +1343,11 @@ fn burst_measure(g: &Goal) -> (u64, u64, String) {
     }
 }
 
-fn reload(store: &mut Store, out: &Path, parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>) {
+fn reload(
+    store: &mut Store,
+    out: &Path,
+    parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+) {
     *store = Store::load(out);
     store.sync_docs(parsed);
 }
@@ -1283,14 +1403,8 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let mut known: BTreeSet<String> = board.open_goals().iter().map(|g| g.id.clone()).collect();
 
     loop {
-        // The batches the serving can run: not parked this build, every goal claimable
-        // by a per-target work item.
-        let runnable = |b: &crate::board::Batch| {
-            !b.goals.iter().any(|id| parked_ids.contains(id))
-                && b.goals
-                    .iter()
-                    .all(|id| board.goal(id).is_some_and(|g| goals::legacy_task(&g.kind).is_some()))
-        };
+        // The batches the serving can run: none of their goals parked this build.
+        let runnable = |b: &crate::board::Batch| !b.goals.iter().any(|id| parked_ids.contains(id));
         let compile_batches: Vec<crate::board::Batch> = board
             .batches
             .iter()
@@ -1321,7 +1435,7 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         if trace.is_cancelled() || sessions as usize >= cap {
             // Exhaustion parks every open goal the loop could still run.
             for g in board.open_goals() {
-                if !parked_ids.contains(&g.id) && goals::legacy_task(&g.kind).is_some() {
+                if !parked_ids.contains(&g.id) {
                     parked_ids.insert(g.id.clone());
                     parked.push(g.clone());
                     trace.event(TraceEvent::Goal {
@@ -1372,21 +1486,31 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             .and_then(|id| board.goal(id))
             .map(|g| (g.kind.clone(), g.class.clone()))
             .unwrap_or_default();
-        for item in board.work_items(&batch) {
-            sessions += 1;
-            let report = runner.run_item(&item, trace);
-            applied += report.applied;
-            costs.charge(&batch_kind.0, &batch_kind.1, report.tokens);
-            if let Some(e) = report.failed {
-                trace.event(TraceEvent::SessionFailed {
-                    label: batch.id.clone(),
-                    goals: batch.goals.clone(),
-                    attempt: attempts.get(&batch.goals[0]).copied().unwrap_or(0) + 1,
-                    error: e,
-                });
-            } else if report.applied == 0 {
-                trace.line(&batch.id, "no mutations staged");
-            }
+        // One session per batch: the runner resolves the executor, ships the
+        // assembled prompt, and the serving commits under its own gates.
+        let run = crate::acp::runner::BatchRun {
+            id: batch.id.clone(),
+            goals: batch
+                .goals
+                .iter()
+                .filter_map(|id| board.goal(id))
+                .cloned()
+                .collect(),
+            executor: batch.executor.clone(),
+        };
+        sessions += 1;
+        let report = runner.run_item(&run, trace);
+        applied += report.applied;
+        costs.charge(&batch_kind.0, &batch_kind.1, report.tokens);
+        if let Some(e) = report.failed {
+            trace.event(TraceEvent::SessionFailed {
+                label: batch.id.clone(),
+                goals: batch.goals.clone(),
+                attempt: attempts.get(&batch.goals[0]).copied().unwrap_or(0) + 1,
+                error: e,
+            });
+        } else if report.applied == 0 {
+            trace.line(&batch.id, "no mutations staged");
         }
         // The session's commits live on disk; the store catches up, the sweep runs, the
         // board re-derives, and the goals the commit opened are recorded on its entry.
@@ -1399,7 +1523,11 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         let resolved_in_journal: BTreeMap<String, String> = goals::read_journal(out)
             .iter()
             .filter(|e| e.generation > gen_before && e.generation <= gen_after)
-            .flat_map(|e| e.resolved_goals.iter().map(|r| (r.goal.clone(), r.justification.clone())))
+            .flat_map(|e| {
+                e.resolved_goals
+                    .iter()
+                    .map(|r| (r.goal.clone(), r.justification.clone()))
+            })
             .collect();
         for id in &batch.goals {
             let still_open = board.open(id);
@@ -1467,7 +1595,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         if !opened.is_empty() {
             let last_session = goals::read_journal(out)
                 .iter()
-                .filter(|e| e.kind == "session" && e.generation > gen_before && e.generation <= gen_after)
+                .filter(|e| {
+                    e.kind == "session" && e.generation > gen_before && e.generation <= gen_after
+                })
                 .map(|e| e.generation)
                 .max()
                 .unwrap_or(gen_after);
@@ -1490,7 +1620,11 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             staged: applied,
             rounds: 0,
             mode: "done".into(),
-            summary: format!("{} open, {} blocked", board.counts().open, board.counts().blocked),
+            summary: format!(
+                "{} open, {} blocked",
+                board.counts().open,
+                board.counts().blocked
+            ),
         });
     }
 
@@ -1536,7 +1670,9 @@ pub fn finalize(
             None => s.status.parked.push(g),
         }
     }
-    s.status.parked.retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.id));
+    s.status
+        .parked
+        .retain(|p| !s.status.failed.iter().any(|f| f.goal.id == p.id));
     let mut findings = checks(s, proj);
     findings.extend(flips);
     let placement = flow_placement(s);
@@ -1556,30 +1692,46 @@ pub fn finalize(
             .graph
             .diagnostics
             .iter()
-            .find(|(_, d)| d.lifecycle == "open" && d.rule == rule && d.subjects == vec![rid.clone()])
+            .find(|(_, d)| {
+                d.lifecycle == "open" && d.rule == rule && d.subjects == vec![rid.clone()]
+            })
             .map(|(id, _)| id.clone());
         let shared: Vec<String> = s
             .graph
             .requirements
             .get(&rid)
-            .map(|r| r.entities.iter().map(|e| s.resolve_id(e).to_string()).collect())
+            .map(|r| {
+                r.entities
+                    .iter()
+                    .map(|e| s.resolve_id(e).to_string())
+                    .collect()
+            })
             .unwrap_or_default();
         let standing = s.status.changes.iter().any(|c| {
-            c.kind == goals::CHANGE_FLOW_UNPLACED && c.subject == view && c.detail["requirement"] == rid
+            c.kind == goals::CHANGE_FLOW_UNPLACED
+                && c.subject == view
+                && c.detail["requirement"] == rid
         });
         if standing {
             continue;
         }
         index += 1;
         s.status.changes.push(
-            ChangeRecord::new(generation, index, 0, goals::CHANGE_FLOW_UNPLACED, &view, "flow-placement")
-                .with_detail(json!({
-                    "requirement": rid,
-                    "facet": facet,
-                    "diagnostic": diagnostic,
-                    "shared": shared,
-                    "alternatives": alternatives,
-                })),
+            ChangeRecord::new(
+                generation,
+                index,
+                0,
+                goals::CHANGE_FLOW_UNPLACED,
+                &view,
+                "flow-placement",
+            )
+            .with_detail(json!({
+                "requirement": rid,
+                "facet": facet,
+                "diagnostic": diagnostic,
+                "shared": shared,
+                "alternatives": alternatives,
+            })),
         );
         wrote = true;
     }
@@ -1590,10 +1742,12 @@ pub fn finalize(
         .values()
         .filter(|v| goals::is_flow_kind(&v.kind))
         .flat_map(|v| {
-            v.members
-                .iter()
-                .cloned()
-                .chain(v.excluded.iter().filter(|x| !x.note.trim().is_empty()).map(|x| x.id.clone()))
+            v.members.iter().cloned().chain(
+                v.excluded
+                    .iter()
+                    .filter(|x| !x.note.trim().is_empty())
+                    .map(|x| x.id.clone()),
+            )
         })
         .collect();
     let before = s.status.changes.len();
@@ -1844,15 +1998,30 @@ fn parent_of<'a>(entries: &'a [JournalEntry], entry: &JournalEntry) -> Option<&'
         .iter()
         .filter(|e| e.generation < entry.generation)
         .rev()
-        .find(|e| e.opened_goals.iter().any(|o| mine.contains(o.goal.as_str())))
+        .find(|e| {
+            e.opened_goals
+                .iter()
+                .any(|o| mine.contains(o.goal.as_str()))
+        })
 }
 
 fn touches(entry: &JournalEntry, target: &str) -> bool {
-    let goal_target = |g: &str| goals::parse_goal_id(g).map(|(_, t)| t == target || t.contains(&format!("{}~", target)) || t.ends_with(&format!("~{}", target))).unwrap_or(false);
+    let goal_target = |g: &str| {
+        goals::parse_goal_id(g)
+            .map(|(_, t)| {
+                t == target
+                    || t.contains(&format!("{}~", target))
+                    || t.ends_with(&format!("~{}", target))
+            })
+            .unwrap_or(false)
+    };
     entry.batch.iter().any(|g| goal_target(g))
         || entry.resolved_goals.iter().any(|r| goal_target(&r.goal))
         || entry.opened_goals.iter().any(|o| goal_target(&o.goal))
-        || entry.dirtied.iter().any(|d| d == target || d.starts_with(&format!("{}#", target)))
+        || entry
+            .dirtied
+            .iter()
+            .any(|d| d == target || d.starts_with(&format!("{}#", target)))
         || entry.mutations.iter().any(|m| {
             let s = m.to_string();
             s.contains(&format!("\"{}\"", target))
@@ -1876,10 +2045,12 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
     let start: &JournalEntry = if let Some(n) = generation {
         by_gen(n)?
     } else if root.ends_with(".md") && !root.contains(':') {
-        entries
-            .iter()
-            .rev()
-            .find(|e| e.kind == "edit" && e.dirtied.iter().any(|d| d.starts_with(&format!("{}#", root)) || d == root))?
+        entries.iter().rev().find(|e| {
+            e.kind == "edit"
+                && e.dirtied
+                    .iter()
+                    .any(|d| d.starts_with(&format!("{}#", root)) || d == root)
+        })?
     } else {
         let last = entries.iter().rev().find(|e| touches(e, root))?;
         // The last cascade that touched it: back to its root, then forward.
@@ -1933,10 +2104,21 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
     let mut tokens = 0u64;
     let mut recomputes = 0usize;
     let mut by_kind: BTreeMap<String, CostLine> = BTreeMap::new();
-    fn walk(n: &RippleNode, sessions: &mut u64, tokens: &mut u64, recomputes: &mut usize, by_kind: &mut BTreeMap<String, CostLine>, entries: &[JournalEntry]) {
+    fn walk(
+        n: &RippleNode,
+        sessions: &mut u64,
+        tokens: &mut u64,
+        recomputes: &mut usize,
+        by_kind: &mut BTreeMap<String, CostLine>,
+        entries: &[JournalEntry],
+    ) {
         if n.kind == "session" {
             *sessions += 1;
-            let t = entries.iter().find(|e| e.generation == n.generation).map(|e| e.tokens).unwrap_or(0);
+            let t = entries
+                .iter()
+                .find(|e| e.generation == n.generation)
+                .map(|e| e.tokens)
+                .unwrap_or(0);
             *tokens += t;
             if let Some((k, _)) = n.batch.first().and_then(|g| goals::parse_goal_id(g)) {
                 let line = by_kind.entry(k.to_string()).or_default();
@@ -1949,7 +2131,14 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
             walk(c, sessions, tokens, recomputes, by_kind, entries);
         }
     }
-    walk(&root_node, &mut sessions, &mut tokens, &mut recomputes, &mut by_kind, &entries);
+    walk(
+        &root_node,
+        &mut sessions,
+        &mut tokens,
+        &mut recomputes,
+        &mut by_kind,
+        &entries,
+    );
     Some(RippleTree {
         root: root_node,
         sessions,
@@ -1978,13 +2167,22 @@ pub fn render_ripple(tree: &RippleTree) -> String {
         let count = n.children.len();
         for (i, c) in n.children.iter().enumerate() {
             let last = i + 1 == count;
-            out.push_str(&format!("{}{} {}\n", prefix, if last { "└─" } else { "├─" }, line(c)));
+            out.push_str(&format!(
+                "{}{} {}\n",
+                prefix,
+                if last { "└─" } else { "├─" },
+                line(c)
+            ));
             let next = format!("{}{}", prefix, if last { "   " } else { "│  " });
             walk(c, &next, out);
         }
     }
     let mut out = String::new();
-    out.push_str(&format!("{} {}\n", tree.root.kind, line(&tree.root).trim_start_matches(&format!("{} ", tree.root.kind))));
+    out.push_str(&format!(
+        "{} {}\n",
+        tree.root.kind,
+        line(&tree.root).trim_start_matches(&format!("{} ", tree.root.kind))
+    ));
     walk(&tree.root, "", &mut out);
     let gc: usize = tree
         .by_kind
@@ -2022,9 +2220,9 @@ pub fn render_ripple(tree: &RippleTree) -> String {
 mod tests {
     use super::*;
     use crate::model::{hash_hex, DocRecord, Requirement, SourceRef};
-    use serde_json::Value;
     use crate::project::Project;
     use crate::store::Store;
+    use serde_json::Value;
     use std::collections::BTreeMap;
 
     fn seed_doc(store: &mut Store, doc: &str, text: &str) {
@@ -2090,11 +2288,23 @@ mod tests {
         };
         store.graph.requirements.insert(
             "req:gw-1".into(),
-            req("The gateway shall log to `/var/log/gw.log`.", "ent:gw", "docs/gw.md", "/gw", "logs"),
+            req(
+                "The gateway shall log to `/var/log/gw.log`.",
+                "ent:gw",
+                "docs/gw.md",
+                "/gw",
+                "logs",
+            ),
         );
         store.graph.requirements.insert(
             "req:gw-2".into(),
-            req("The gateway shall keep `/tmp/other.log` rotating.", "ent:gw", "docs/gw.md", "/gw", "rotates"),
+            req(
+                "The gateway shall keep `/tmp/other.log` rotating.",
+                "ent:gw",
+                "docs/gw.md",
+                "/gw",
+                "rotates",
+            ),
         );
         let row = |_: ()| ReqRow {
             entity: "ent:gw".into(),
@@ -2121,7 +2331,12 @@ mod tests {
         ledger.save(&proj.out);
 
         let f = drift_checks(&store, &proj);
-        assert_eq!(f.len(), 1, "{:?}", f.iter().map(|x| &x.1).collect::<Vec<_>>());
+        assert_eq!(
+            f.len(),
+            1,
+            "{:?}",
+            f.iter().map(|x| &x.1).collect::<Vec<_>>()
+        );
         let (rule, subject, sev, msg, prompt) = &f[0];
         assert_eq!(rule, "pinned-fact-drift");
         assert_eq!(subject, "req:gw-1");
@@ -2142,13 +2357,19 @@ mod tests {
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "empty-file");
         assert_eq!(hits.len(), 2, "{:?}", hits);
-        assert!(hits.iter().all(|(_, subj, sev, _, _)| sev == "warning" && subj != "full.md"));
+        assert!(hits
+            .iter()
+            .all(|(_, subj, sev, _, _)| sev == "warning" && subj != "full.md"));
     }
 
     #[test]
     fn broken_link_flagged_only_for_missing_md_targets() {
         let mut s = Store::default();
-        seed_doc(&mut s, "a.md", "# A\nSee [b](./b.md) and [gone](./no-such-doc-xyz.md).\n");
+        seed_doc(
+            &mut s,
+            "a.md",
+            "# A\nSee [b](./b.md) and [gone](./no-such-doc-xyz.md).\n",
+        );
         seed_doc(&mut s, "b.md", "# B\ncontent\n");
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "broken-link");
@@ -2160,32 +2381,102 @@ mod tests {
     #[test]
     fn duplicate_requirement_splits_warning_and_info() {
         let mut s = Store::default();
-        s.graph.requirements.insert("req:a-1".into(), req("The system shall archive completed orders.", "ent:one", "a.md", "/a", "archives completed orders"));
-        s.graph.requirements.insert("req:a-2".into(), req("The system shall archive completed orders.", "ent:one", "a.md", "/a", "archives completed orders"));
-        s.graph.requirements.insert("req:b-1".into(), req("The store shall mint every id at creation.", "ent:two", "a.md", "/a", "mints every id at creation"));
-        s.graph.requirements.insert("req:b-2".into(), req("The store shall mint every id at creation.", "ent:two", "b.md", "/b", "the store mints every id"));
-        s.graph.requirements.insert("req:c-1".into(), req("The record shall have an id field.", "ent:three", "c.md", "/c", "- `id` - the identifier"));
-        s.graph.requirements.insert("req:c-2".into(), req("The record shall have a name field.", "ent:three", "c.md", "/c", "- `name` - the display name"));
+        s.graph.requirements.insert(
+            "req:a-1".into(),
+            req(
+                "The system shall archive completed orders.",
+                "ent:one",
+                "a.md",
+                "/a",
+                "archives completed orders",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:a-2".into(),
+            req(
+                "The system shall archive completed orders.",
+                "ent:one",
+                "a.md",
+                "/a",
+                "archives completed orders",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:b-1".into(),
+            req(
+                "The store shall mint every id at creation.",
+                "ent:two",
+                "a.md",
+                "/a",
+                "mints every id at creation",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:b-2".into(),
+            req(
+                "The store shall mint every id at creation.",
+                "ent:two",
+                "b.md",
+                "/b",
+                "the store mints every id",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:c-1".into(),
+            req(
+                "The record shall have an id field.",
+                "ent:three",
+                "c.md",
+                "/c",
+                "- `id` - the identifier",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:c-2".into(),
+            req(
+                "The record shall have a name field.",
+                "ent:three",
+                "c.md",
+                "/c",
+                "- `name` - the display name",
+            ),
+        );
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "duplicate-requirement");
         assert_eq!(hits.len(), 2, "{:?}", hits);
-        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:a-1" && sev == "warning" && msg.contains("keep one")));
-        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:b-1" && sev == "info" && msg.contains("both kept")));
+        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:a-1"
+            && sev == "warning"
+            && msg.contains("keep one")));
+        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:b-1"
+            && sev == "info"
+            && msg.contains("both kept")));
     }
 
     #[test]
     fn normative_signals_catch_prose_without_shall() {
-        assert!(looks_normative("The user management system handles user accounts and authentication.\n"));
-        assert!(looks_normative("Login operation can be performed by unauthenticated.\n"));
-        assert!(looks_normative("# Operations\n- `addProduct` - adds a new product to the inventory\n"));
+        assert!(looks_normative(
+            "The user management system handles user accounts and authentication.\n"
+        ));
+        assert!(looks_normative(
+            "Login operation can be performed by unauthenticated.\n"
+        ));
+        assert!(looks_normative(
+            "# Operations\n- `addProduct` - adds a new product to the inventory\n"
+        ));
         assert!(looks_normative("Sections shall be covered.\n"));
     }
 
     #[test]
     fn navigation_and_changelog_prose_stays_quiet() {
-        assert!(!looks_normative("See the [frontend documentation](./frontend.md) for more information.\n"));
-        assert!(!looks_normative("# Changelog\n- 1.2: fixed typos in the intro\n"));
-        assert!(!looks_normative("# Operations\n\nThe user management system supports the following operations:\n"));
+        assert!(!looks_normative(
+            "See the [frontend documentation](./frontend.md) for more information.\n"
+        ));
+        assert!(!looks_normative(
+            "# Changelog\n- 1.2: fixed typos in the intro\n"
+        ));
+        assert!(!looks_normative(
+            "# Operations\n\nThe user management system supports the following operations:\n"
+        ));
     }
 
     #[test]
@@ -2213,7 +2504,13 @@ mod tests {
         );
         s.graph.requirements.insert(
             "req:x-3".into(),
-            req("Quoted in a dead section.", "ent:order", "shop.md", "/shop/gone", "gone"),
+            req(
+                "Quoted in a dead section.",
+                "ent:order",
+                "shop.md",
+                "/shop/gone",
+                "gone",
+            ),
         );
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "unjustified-fact");
@@ -2221,7 +2518,10 @@ mod tests {
         assert!(subjects.contains(&"req:x-1"), "{:?}", subjects);
         assert!(subjects.contains(&"req:x-2"), "{:?}", subjects);
         assert!(subjects.contains(&"req:x-3"), "{:?}", subjects);
-        assert!(!subjects.contains(&"req:shop-1"), "a quoted fact in a live section is justified");
+        assert!(
+            !subjects.contains(&"req:shop-1"),
+            "a quoted fact in a live section is justified"
+        );
         assert!(hits.iter().all(|h| h.2 == "error"));
     }
 
@@ -2236,14 +2536,25 @@ mod tests {
             Requirement {
                 statement: "The customer returns an item.".into(),
                 entities: vec!["ent:customer".into()],
-                facets: vec![Facet { facet: "behavior".into(), reasoning: "a step".into(), measure: None }],
-                source: Some(SourceRef { doc: "returns.md".into(), section: "/returns".into(), quote: "returns body".into() }),
+                facets: vec![Facet {
+                    facet: "behavior".into(),
+                    reasoning: "a step".into(),
+                    measure: None,
+                }],
+                source: Some(SourceRef {
+                    doc: "returns.md".into(),
+                    section: "/returns".into(),
+                    quote: "returns body".into(),
+                }),
                 ..Default::default()
             },
         );
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
-        assert!(s.graph.views.values().any(|v| v.kind == "use-case"), "the showcase derives a flow view");
+        assert!(
+            s.graph.views.values().any(|v| v.kind == "use-case"),
+            "the showcase derives a flow view"
+        );
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "unplaced-behavior");
         assert_eq!(hits.len(), 1, "{:?}", hits);
@@ -2251,7 +2562,12 @@ mod tests {
         let placement = flow_placement(&s);
         let (_, best, _, facet) = &placement[0];
         assert_eq!(facet, "behavior");
-        assert!(best.as_deref().is_some_and(|v| v.starts_with("view:usecase/customer")), "{:?}", best);
+        assert!(
+            best.as_deref()
+                .is_some_and(|v| v.starts_with("view:usecase/customer")),
+            "{:?}",
+            best
+        );
     }
 
     #[test]
@@ -2260,7 +2576,10 @@ mod tests {
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         let f = checks(&s, &Project::default());
-        assert!(rules_for(&f, "provider-missing").is_empty(), "both interfaces are realized");
+        assert!(
+            rules_for(&f, "provider-missing").is_empty(),
+            "both interfaces are realized"
+        );
         // Drop the realizer of the stock API: the dependency is left without a provider.
         s.graph.requirements.remove("req:shop-4");
         crate::derive::recompute(&mut s, "g2", &mut batch);
@@ -2274,8 +2593,17 @@ mod tests {
             Requirement {
                 statement: "The inventory service also provides the checkout API.".into(),
                 entities: vec!["ent:inventory-service".into(), "ent:checkout-api".into()],
-                edges: vec![ReqEdge { a: "ent:inventory-service".into(), b: "ent:checkout-api".into(), rel_type: Some("realization".into()), cardinality: None }],
-                source: Some(SourceRef { doc: "shop.md".into(), section: "/shop".into(), quote: "The shop.".into() }),
+                edges: vec![ReqEdge {
+                    a: "ent:inventory-service".into(),
+                    b: "ent:checkout-api".into(),
+                    rel_type: Some("realization".into()),
+                    cardinality: None,
+                }],
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "The shop.".into(),
+                }),
                 ..Default::default()
             },
         );
@@ -2292,18 +2620,35 @@ mod tests {
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         let f = checks(&s, &Project::default());
-        assert!(rules_for(&f, "nonconformant-instance").is_empty(), "{:?}", rules_for(&f, "nonconformant-instance"));
-        s.graph.entities.get_mut("ent:ana").unwrap().attributes.push(Attribute {
-            name: "shoe size".into(),
-            r#type: None,
-            value: Some("38".into()),
-            provenance: Provenance::Quote(SourceRef { doc: "shop.md".into(), section: "/shop/examples".into(), quote: "examples".into() }),
-        });
+        assert!(
+            rules_for(&f, "nonconformant-instance").is_empty(),
+            "{:?}",
+            rules_for(&f, "nonconformant-instance")
+        );
+        s.graph
+            .entities
+            .get_mut("ent:ana")
+            .unwrap()
+            .attributes
+            .push(Attribute {
+                name: "shoe size".into(),
+                r#type: None,
+                value: Some("38".into()),
+                provenance: Provenance::Quote(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop/examples".into(),
+                    quote: "examples".into(),
+                }),
+            });
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "nonconformant-instance");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].1, "ent:ana");
-        assert!(hits[0].3.contains("shoe size") && hits[0].3.contains("ent:customer"), "{}", hits[0].3);
+        assert!(
+            hits[0].3.contains("shoe size") && hits[0].3.contains("ent:customer"),
+            "{}",
+            hits[0].3
+        );
         let sm = rules_for(&f, "dead-end-state");
         assert_eq!(sm.len(), 1, "the order machine has final states: {:?}", sm);
         assert!(rules_for(&f, "quality-unmeasured").is_empty());
@@ -2313,13 +2658,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-flip-test-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(dir.join("journal")).unwrap();
         dir
     }
 
-    fn write_entry(dir: &Path, generation: u64, batch: &[&str], mutations: Vec<Value>, justification: &str) {
+    fn write_entry(
+        dir: &Path,
+        generation: u64,
+        batch: &[&str],
+        mutations: Vec<Value>,
+        justification: &str,
+    ) {
         let entry = JournalEntry {
             build: format!("g{}", generation),
             generation,
@@ -2328,7 +2682,11 @@ mod tests {
             mutations,
             resolved_goals: batch
                 .iter()
-                .map(|g| Resolved { goal: g.to_string(), justification: justification.into(), evidence: Value::Null })
+                .map(|g| Resolved {
+                    goal: g.to_string(),
+                    justification: justification.into(),
+                    evidence: Value::Null,
+                })
                 .collect(),
             ..Default::default()
         };
@@ -2345,21 +2703,51 @@ mod tests {
         let mut s = crate::derive::tests::showcase_store();
         s.out = dir.clone();
         let create = |id: &str| json!({"CreateEntity": {"id": id, "entity": {"name": "Order pricing", "scope": "public"}}});
-        write_entry(&dir, 5, &["g:abstract-entity:ent:order"], vec![create("ent:order-pricing")], "pricing statements cohere");
-        write_entry(&dir, 6, &["g:review-entity:ent:order"], vec![json!({"MergeEntities": {"keep": "ent:order", "absorb": "ent:order-pricing", "reason": "one concept"}})], "pricing is the order itself");
+        write_entry(
+            &dir,
+            5,
+            &["g:abstract-entity:ent:order"],
+            vec![create("ent:order-pricing")],
+            "pricing statements cohere",
+        );
+        write_entry(
+            &dir,
+            6,
+            &["g:review-entity:ent:order"],
+            vec![
+                json!({"MergeEntities": {"keep": "ent:order", "absorb": "ent:order-pricing", "reason": "one concept"}}),
+            ],
+            "pricing is the order itself",
+        );
         let (f, parked) = flip_detection(&s);
         assert!(f.is_empty(), "one flip is not yet oscillation: {:?}", f);
         assert!(parked.is_empty());
-        write_entry(&dir, 7, &["g:abstract-entity:ent:order"], vec![create("ent:order-pricing-2")], "pricing statements cohere again");
+        write_entry(
+            &dir,
+            7,
+            &["g:abstract-entity:ent:order"],
+            vec![create("ent:order-pricing-2")],
+            "pricing statements cohere again",
+        );
         let (f, parked) = flip_detection(&s);
         assert_eq!(f.len(), 1, "{:?}", f);
         let (rule, subject, _, msg, prompt) = &f[0];
         assert_eq!(rule, "unstable-derivation");
         assert_eq!(subject, "ent:order");
-        assert!(msg.contains("pricing statements cohere again") && msg.contains("pricing is the order itself"), "{}", msg);
+        assert!(
+            msg.contains("pricing statements cohere again")
+                && msg.contains("pricing is the order itself"),
+            "{}",
+            msg
+        );
         assert_eq!(prompt.as_ref().unwrap().options.len(), 2);
         let ids: BTreeSet<&str> = parked.iter().map(|g| g.id.as_str()).collect();
-        assert_eq!(ids, ["g:abstract-entity:ent:order", "g:review-entity:ent:order"].into_iter().collect());
+        assert_eq!(
+            ids,
+            ["g:abstract-entity:ent:order", "g:review-entity:ent:order"]
+                .into_iter()
+                .collect()
+        );
         assert!(parked.iter().all(|g| g.state == GoalState::Parked));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2374,29 +2762,65 @@ mod tests {
             generation: 87,
             kind: "edit".into(),
             dirtied: vec!["docs/orders.md#/orders/holds".into()],
-            opened_goals: vec![OpenedGoal { goal: "g:reconcile-section:docs/orders.md#/orders/holds".into(), cause: Cause { generation: 87, mutation: 1, via: "section".into() } }],
+            opened_goals: vec![OpenedGoal {
+                goal: "g:reconcile-section:docs/orders.md#/orders/holds".into(),
+                cause: Cause {
+                    generation: 87,
+                    mutation: 1,
+                    via: "section".into(),
+                },
+            }],
             ..Default::default()
         };
-        std::fs::write(dir.join("journal/g87.yaml"), serde_norway::to_string(&edit).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("journal/g87.yaml"),
+            serde_norway::to_string(&edit).unwrap(),
+        )
+        .unwrap();
         let mut session = JournalEntry {
             build: "g88".into(),
             generation: 88,
             kind: "session".into(),
             batch: vec!["g:reconcile-section:docs/orders.md#/orders/holds".into()],
-            mutations: vec![json!({"UpdateRequirement": {"id": "req:orders-6", "statement": "30 days"}})],
-            resolved_goals: vec![Resolved { goal: "g:reconcile-section:docs/orders.md#/orders/holds".into(), justification: "req:orders-6 revised".into(), evidence: Value::Null }],
-            opened_goals: vec![OpenedGoal { goal: "g:rejudge-pair:req:orders-6~req:payment-9".into(), cause: Cause { generation: 88, mutation: 1, via: "entities".into() } }],
+            mutations: vec![
+                json!({"UpdateRequirement": {"id": "req:orders-6", "statement": "30 days"}}),
+            ],
+            resolved_goals: vec![Resolved {
+                goal: "g:reconcile-section:docs/orders.md#/orders/holds".into(),
+                justification: "req:orders-6 revised".into(),
+                evidence: Value::Null,
+            }],
+            opened_goals: vec![OpenedGoal {
+                goal: "g:rejudge-pair:req:orders-6~req:payment-9".into(),
+                cause: Cause {
+                    generation: 88,
+                    mutation: 1,
+                    via: "entities".into(),
+                },
+            }],
             tokens: 9_800,
             ..Default::default()
         };
-        std::fs::write(dir.join("journal/g88.yaml"), serde_norway::to_string(&session).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("journal/g88.yaml"),
+            serde_norway::to_string(&session).unwrap(),
+        )
+        .unwrap();
         session.generation = 89;
         session.build = "g89".into();
         session.batch = vec!["g:rejudge-pair:req:orders-6~req:payment-9".into()];
         session.mutations = Vec::new();
-        session.resolved_goals = vec![Resolved { goal: "g:rejudge-pair:req:orders-6~req:payment-9".into(), justification: "consistent".into(), evidence: Value::Null }];
+        session.resolved_goals = vec![Resolved {
+            goal: "g:rejudge-pair:req:orders-6~req:payment-9".into(),
+            justification: "consistent".into(),
+            evidence: Value::Null,
+        }];
         session.opened_goals = Vec::new();
-        std::fs::write(dir.join("journal/g89.yaml"), serde_norway::to_string(&session).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("journal/g89.yaml"),
+            serde_norway::to_string(&session).unwrap(),
+        )
+        .unwrap();
         let tree = ripple(&s, "g87", false).expect("root generation exists");
         assert_eq!(tree.root.generation, 87);
         assert_eq!(tree.root.children.len(), 1);
@@ -2405,9 +2829,23 @@ mod tests {
         assert_eq!(tree.sessions, 2);
         assert_eq!(tree.tokens, 19_600);
         let text = render_ripple(&tree);
-        assert!(text.contains("edit docs/orders.md#/orders/holds (human) g87"), "{}", text);
-        assert!(text.contains("└─ reconcile-section docs/orders.md#/orders/holds g88: req:orders-6 revised"), "{}", text);
-        assert!(text.contains("└─ rejudge-pair req:orders-6~req:payment-9 g89: consistent"), "{}", text);
+        assert!(
+            text.contains("edit docs/orders.md#/orders/holds (human) g87"),
+            "{}",
+            text
+        );
+        assert!(
+            text.contains(
+                "└─ reconcile-section docs/orders.md#/orders/holds g88: req:orders-6 revised"
+            ),
+            "{}",
+            text
+        );
+        assert!(
+            text.contains("└─ rejudge-pair req:orders-6~req:payment-9 g89: consistent"),
+            "{}",
+            text
+        );
         assert!(text.contains("19k tokens"), "{}", text);
         // A node root finds the last cascade that touched it and starts at its edit.
         let by_node = ripple(&s, "req:orders-6", false).unwrap();
@@ -2428,12 +2866,28 @@ mod tests {
         let board = Board::derive(&s, &proj, &crate::board::tests::control_auto());
         let v = board.verdict();
         assert_eq!(v.state, "incomplete");
-        assert!(v.open >= 4, "every uncovered section is an open goal: {}", v.open);
+        assert!(
+            v.open >= 4,
+            "every uncovered section is an open goal: {}",
+            v.open
+        );
         assert_eq!(
             v.to_string(),
-            format!("incomplete: {} open, 0 failed, {} blocked, 0 optional advised", v.open, v.blocked)
+            format!(
+                "incomplete: {} open, 0 failed, {} blocked, 0 optional advised",
+                v.open, v.blocked
+            )
         );
-        assert!(v.blocked > 0, "the ledger goals wait on the generate release");
-        assert!(board.summary_line().starts_with(&format!("compile: {} goals (", v.open)), "{}", board.summary_line());
+        assert!(
+            v.blocked > 0,
+            "the ledger goals wait on the generate release"
+        );
+        assert!(
+            board
+                .summary_line()
+                .starts_with(&format!("compile: {} goals (", v.open)),
+            "{}",
+            board.summary_line()
+        );
     }
 }

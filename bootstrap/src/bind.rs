@@ -106,7 +106,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "reason": reason,
         "statement": r.statement,
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
-        "provenance": crate::turn::provenance_line(r),
+        "provenance": crate::session::provenance_line(r),
         "factHash": hash_hex(&r.statement),
         "deliverable": gs.deliverable.to_string_lossy(),
         "suggestedTestName": crate::gen::test_name(&rid, &r.statement),
@@ -325,7 +325,7 @@ pub fn run_all(
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     targets: &[String],
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<Value, String> {
     let owed: Vec<Value> = pending(store, gs)
         .into_iter()
@@ -363,14 +363,11 @@ pub fn run_all(
             "bind",
             &format!("{} ({})", rid, t["reason"].as_str().unwrap_or("")),
         );
-        let item = crate::model::WorkItem {
-            task: "bind-requirement".into(),
-            target: rid.clone(),
-            dirty_sections: Vec::new(),
-            stale_anchors: Vec::new(),
-            proposals: Vec::new(),
-        };
-        let out = runner.run_item(&item, trace);
+        let batch = crate::acp::runner::BatchRun::single(
+            crate::model::WorkItem::new("bind-requirement", &rid)
+                .to_goal(crate::model::GoalState::Open),
+        );
+        let out = runner.run_item(&batch, trace);
         if let Some(e) = out.failed {
             trace.line("bind", &format!("{} failed: {}", rid, e));
             failures += 1;

@@ -165,7 +165,7 @@ The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
 ## Tools
 
 The `declare-edges` [toolset](../tools.md#toolsets): the
-[read tools](../tools.md#read-tools), the [goal tools](../tools.md#goal-tools),
+[read tools](../tools.md#read-tools) (`load`, `expand`, `unload`, `graph_status`, `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`), the [goal tools](../tools.md#goal-tools) (`mark_goal_done`, `mark_goal_failed`, `load_skill`, `done`),
 `update_requirement`, and [`report_feedback`](../tools.md#feedback-tool). One write
 tool, one field: the goal declares edges and nothing else. No `report_diagnostic`: a
 sentence the session cannot type is a failed goal with the reason on the requirement,

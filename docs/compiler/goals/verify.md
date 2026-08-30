@@ -143,8 +143,10 @@ land the same row.
 
 An `llm` session's serving runs in `verify` mode ([toolsets](../tools.md#toolsets)):
 
-- The [read tools](../tools.md#read-tools), including the loaded-set tools.
-- The [goal tools](../tools.md#goal-tools).
+- The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`,
+  `graph_status`, `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`.
+- The [goal tools](../tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
+  `load_skill`, `done`.
 - The [verification tools](../tools.md#verification-tools): `verification_tasks`,
   `begin_verification`, `run_tests`, `record_verdict`.
 - [`report_feedback`](../tools.md#feedback-tool).

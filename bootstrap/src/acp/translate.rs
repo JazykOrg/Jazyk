@@ -2,7 +2,7 @@
 // through one translator, so the trace, the transcript, and the GUI panels do not
 // care which agent ran the turn. Mirrors docs/frontends/acp.md#worker-sessions and
 // docs/compiler/turns.md#trace-events.
-use crate::turn::{Trace, TraceEvent};
+use crate::session::{Trace, TraceEvent};
 use agent_client_protocol::schema::v1::{SessionUpdate, ToolCallStatus};
 use std::collections::HashMap;
 
@@ -12,8 +12,9 @@ const FLUSH_AT: usize = 2_000;
 
 pub struct UpdateTranslator {
     label: String,
-    // The turn's document, when the label names one: reconcile turns emit Section
-    // events so the editor bands follow the work (docs/compiler/turns.md#trace-events).
+    // The batch's document, when it has one: reconcile-section sessions emit Section
+    // events so the editor bands follow the work
+    // (docs/compiler/sessions.md#trace-events).
     doc: Option<String>,
     at_section: Option<String>,
     thought: String,
@@ -26,9 +27,16 @@ pub struct UpdateTranslator {
 
 impl UpdateTranslator {
     pub fn new(label: &str) -> UpdateTranslator {
-        let doc = label
-            .strip_prefix("reconcile-doc ")
-            .map(|d| d.to_string());
+        // A goal label still drives the Section events: `reconcile-section
+        // docs/x.md#/ref` names its document. A batch id label carries none; the
+        // runner supplies it through with_doc.
+        let doc =
+            label.strip_prefix("reconcile-section ").map(
+                |t| match crate::model::split_section_ref(t) {
+                    Some((d, _)) => d,
+                    None => t.to_string(),
+                },
+            );
         UpdateTranslator {
             label: label.to_string(),
             doc,
@@ -40,12 +48,23 @@ impl UpdateTranslator {
         }
     }
 
+    // The batch's document, for sessions labeled by their batch id.
+    pub fn with_doc(mut self, doc: Option<String>) -> UpdateTranslator {
+        if doc.is_some() {
+            self.doc = doc;
+        }
+        self
+    }
+
     fn flush_into(&mut self, trace: &Trace) {
         for buf in [&mut self.thought, &mut self.message] {
             let text = buf.trim().to_string();
             buf.clear();
             if !text.is_empty() {
-                trace.event(TraceEvent::ModelText { label: self.label.clone(), text });
+                trace.event(TraceEvent::ModelText {
+                    label: self.label.clone(),
+                    text,
+                });
             }
         }
     }
@@ -57,7 +76,10 @@ impl UpdateTranslator {
                     self.thought.push_str(t);
                     if self.thought.len() > FLUSH_AT {
                         let text = std::mem::take(&mut self.thought);
-                        trace.event(TraceEvent::ModelText { label: self.label.clone(), text });
+                        trace.event(TraceEvent::ModelText {
+                            label: self.label.clone(),
+                            text,
+                        });
                     }
                 }
             }
@@ -66,7 +88,10 @@ impl UpdateTranslator {
                     self.message.push_str(t);
                     if self.message.len() > FLUSH_AT {
                         let text = std::mem::take(&mut self.message);
-                        trace.event(TraceEvent::ModelText { label: self.label.clone(), text });
+                        trace.event(TraceEvent::ModelText {
+                            label: self.label.clone(),
+                            text,
+                        });
                     }
                 }
             }
@@ -78,8 +103,8 @@ impl UpdateTranslator {
                 trace.event(TraceEvent::ToolCall {
                     label: self.label.clone(),
                     name: call.title.clone(),
-                    summary: crate::turn::condense(&args, 160),
-                    full: crate::turn::full_payload(&args),
+                    summary: crate::session::condense(&args, 160),
+                    full: crate::session::full_payload(&args),
                 });
                 // An accepted call that names a section says where the turn is.
                 if let Some(doc) = self.doc.clone() {
@@ -105,18 +130,22 @@ impl UpdateTranslator {
                     .clone()
                     .or_else(|| self.calls.get(id).cloned())
                     .unwrap_or_else(|| id.to_string());
-                let out = u.fields.raw_output.clone().unwrap_or(serde_json::Value::Null);
+                let out = u
+                    .fields
+                    .raw_output
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null);
                 match u.fields.status {
                     Some(ToolCallStatus::Completed) => trace.event(TraceEvent::ToolResult {
                         label: self.label.clone(),
                         name,
-                        summary: crate::turn::condense(&out, 160),
-                        full: crate::turn::full_payload(&out),
+                        summary: crate::session::condense(&out, 160),
+                        full: crate::session::full_payload(&out),
                     }),
                     Some(ToolCallStatus::Failed) => trace.event(TraceEvent::ToolError {
                         label: self.label.clone(),
                         rule: name,
-                        message: crate::turn::condense(&out, 400),
+                        message: crate::session::condense(&out, 400),
                     }),
                     // Pending/in-progress churn stays off the trace; the start row said it.
                     _ => {}
@@ -158,7 +187,9 @@ impl UpdateTranslator {
 // The section a tool call names, when it belongs to this turn's document (moved from
 // the retired turn loop).
 fn named_section(args: &serde_json::Value, doc: &str) -> Option<String> {
-    let raw = args["section"].as_str().or_else(|| args["mention"]["section"].as_str())?;
+    let raw = args["section"]
+        .as_str()
+        .or_else(|| args["mention"]["section"].as_str())?;
     match crate::model::split_section_ref(raw) {
         Some((d, sec)) => (d == doc).then_some(sec),
         None => raw.starts_with('/').then(|| raw.to_string()),

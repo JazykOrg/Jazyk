@@ -389,7 +389,9 @@ fn open_diags_naming<'a>(store: &'a Store, ids: &[&str]) -> Vec<(&'a String, &'a
         .graph
         .diagnostics
         .iter()
-        .filter(|(_, d)| d.lifecycle == "open" && d.subjects.iter().any(|s| ids.contains(&s.as_str())))
+        .filter(|(_, d)| {
+            d.lifecycle == "open" && d.subjects.iter().any(|s| ids.contains(&s.as_str()))
+        })
         .collect()
 }
 
@@ -433,7 +435,8 @@ impl GoalKind for PlaceAnchors {
             for c in &block.changes {
                 *ops.entry(c.op.clone()).or_insert(0) += 1;
             }
-            let anchors: BTreeSet<String> = block.proposals.iter().map(|p| p.anchor.clone()).collect();
+            let anchors: BTreeSet<String> =
+                block.proposals.iter().map(|p| p.anchor.clone()).collect();
             let change = json!({
                 "proposals": block.proposals.len(),
                 "ops": ops,
@@ -533,7 +536,12 @@ impl GoalKind for PlaceAnchors {
             })
             .collect();
         let mut out = Vec::new();
-        for b in store.status.alignment.iter().filter(|b| docs.contains(b.doc.as_str())) {
+        for b in store
+            .status
+            .alignment
+            .iter()
+            .filter(|b| docs.contains(b.doc.as_str()))
+        {
             let undecided: Vec<String> = b
                 .proposals
                 .iter()
@@ -583,7 +591,11 @@ fn anchored_in(store: &Store, doc: &str, section: &str) -> (Vec<String>, Vec<Str
         .graph
         .entities
         .iter()
-        .filter(|(_, e)| e.mentions.iter().any(|m| m.doc == doc && m.section == section))
+        .filter(|(_, e)| {
+            e.mentions
+                .iter()
+                .any(|m| m.doc == doc && m.section == section)
+        })
         .map(|(id, _)| id.clone())
         .collect();
     (reqs, ents)
@@ -620,15 +632,26 @@ pub fn linked_subjects(store: &Store, doc: &str) -> Vec<(String, String, String)
             if m.doc == doc {
                 continue;
             }
-            if crate::md::doc_links(&m.quote, &m.doc).iter().any(|l| l == doc) {
-                out.push((id.clone(), e.name.clone(), format!("{}#{}", m.doc, m.section)));
+            if crate::md::doc_links(&m.quote, &m.doc)
+                .iter()
+                .any(|l| l == doc)
+            {
+                out.push((
+                    id.clone(),
+                    e.name.clone(),
+                    format!("{}#{}", m.doc, m.section),
+                ));
                 break;
             }
         }
     }
     for r in store.graph.requirements.values() {
         let Some(s) = r.source.as_ref() else { continue };
-        if s.doc == doc || !crate::md::doc_links(&s.quote, &s.doc).iter().any(|l| l == doc) {
+        if s.doc == doc
+            || !crate::md::doc_links(&s.quote, &s.doc)
+                .iter()
+                .any(|l| l == doc)
+        {
             continue;
         }
         for e in &r.entities {
@@ -658,8 +681,12 @@ impl GoalKind for ReconcileSection {
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut work: BTreeMap<String, SectionWork> = BTreeMap::new();
         for rec in records_of(store, &[store::CHANGE_SECTION_DIRTY]) {
-            let Some((doc, sec)) = split_section_ref(&rec.subject) else { continue };
-            let Some(record) = store.docs.get(&doc) else { continue };
+            let Some((doc, sec)) = split_section_ref(&rec.subject) else {
+                continue;
+            };
+            let Some(record) = store.docs.get(&doc) else {
+                continue;
+            };
             if !record.sections.contains_key(&sec) {
                 continue;
             }
@@ -675,8 +702,14 @@ impl GoalKind for ReconcileSection {
             w.causes.push(rec.cause());
         }
         for rec in records_of(store, &[store::CHANGE_ANCHOR_STALE]) {
-            let Some((doc, sec)) = split_section_ref(&rec.subject) else { continue };
-            if !store.docs.get(&doc).is_some_and(|r| r.sections.contains_key(&sec)) {
+            let Some((doc, sec)) = split_section_ref(&rec.subject) else {
+                continue;
+            };
+            if !store
+                .docs
+                .get(&doc)
+                .is_some_and(|r| r.sections.contains_key(&sec))
+            {
                 continue;
             }
             let anchors: Vec<String> = str_list(&rec.detail["anchors"])
@@ -695,7 +728,11 @@ impl GoalKind for ReconcileSection {
         for doc in store.docs.keys() {
             let (stale, _) = store.stale_extras(doc);
             for rid in stale {
-                let Some(src) = store.graph.requirements.get(&rid).and_then(|r| r.source.as_ref())
+                let Some(src) = store
+                    .graph
+                    .requirements
+                    .get(&rid)
+                    .and_then(|r| r.source.as_ref())
                 else {
                     continue;
                 };
@@ -734,7 +771,9 @@ impl GoalKind for ReconcileSection {
         }
         let mut out = Vec::new();
         for (full, w) in work {
-            let Some((doc, sec_ref)) = split_section_ref(&full) else { continue };
+            let Some((doc, sec_ref)) = split_section_ref(&full) else {
+                continue;
+            };
             let sec = &store.docs[&doc].sections[&sec_ref];
             let stale: Vec<String> = w.stale.iter().cloned().collect();
             let mut change = json!({});
@@ -789,7 +828,10 @@ impl GoalKind for ReconcileSection {
                         format!(
                             "\"{}\" was quoted \"{}\"",
                             truncate(&r.statement, 80),
-                            truncate(r.source.as_ref().map(|s| s.quote.as_str()).unwrap_or(""), 60)
+                            truncate(
+                                r.source.as_ref().map(|s| s.quote.as_str()).unwrap_or(""),
+                                60
+                            )
                         )
                     })
                     .or_else(|| {
@@ -837,7 +879,9 @@ impl GoalKind for ReconcileSection {
                     sec.raw.lines().count()
                 ));
             }
-            hints.push("skill extraction; upsert_requirement, then set_coverage exactly once".into());
+            hints.push(
+                "skill extraction; upsert_requirement, then set_coverage exactly once".into(),
+            );
             out.push(build_goal(self, &full, true, change, cause, hints));
         }
         out
@@ -864,7 +908,10 @@ impl GoalKind for ReconcileSection {
         let mut lines = Vec::new();
         let mut docs: BTreeSet<String> = BTreeSet::new();
         for g in batch {
-            lines.push(format!("- {} full (section body with the diff marked)", g.target));
+            lines.push(format!(
+                "- {} full (section body with the diff marked)",
+                g.target
+            ));
             for a in str_list(&g.change["staleAnchors"]) {
                 lines.push(format!("- {} full (stale anchor)", a));
             }
@@ -874,7 +921,10 @@ impl GoalKind for ReconcileSection {
         }
         for doc in docs {
             for (id, name, at) in linked_subjects(store, &doc) {
-                lines.push(format!("- linked from {} introduced {} ({}) stub", at, id, name));
+                lines.push(format!(
+                    "- linked from {} introduced {} ({}) stub",
+                    at, id, name
+                ));
             }
             let mut mentioned: Vec<String> = store
                 .graph
@@ -963,7 +1013,10 @@ impl GoalKind for ReconcileSection {
                         if !store.quote_locates(&s.doc, &s.section, &s.quote) {
                             out.push(Violation::new(
                                 "quote-not-found",
-                                format!("{}: the quote does not locate in {}#{}", id, s.doc, s.section),
+                                format!(
+                                    "{}: the quote does not locate in {}#{}",
+                                    id, s.doc, s.section
+                                ),
                             ));
                         }
                     }
@@ -976,7 +1029,10 @@ impl GoalKind for ReconcileSection {
                     if !store.quote_locates(&s.doc, &s.section, &s.quote) {
                         out.push(Violation::new(
                             "quote-not-found",
-                            format!("{}: the quote does not locate in {}#{}", id, s.doc, s.section),
+                            format!(
+                                "{}: the quote does not locate in {}#{}",
+                                id, s.doc, s.section
+                            ),
                         ));
                     }
                 }
@@ -1020,15 +1076,22 @@ impl GoalKind for RejudgePair {
             hints: Vec<String>,
         }
         let mut pairs: BTreeMap<String, PairWork> = BTreeMap::new();
-        for rec in records_of(store, &[store::CHANGE_REQ_CREATED, store::CHANGE_REQ_REVISED]) {
+        for rec in records_of(
+            store,
+            &[store::CHANGE_REQ_CREATED, store::CHANGE_REQ_REVISED],
+        ) {
             let rid = &rec.subject;
-            let Some(req) = store.graph.requirements.get(rid) else { continue };
+            let Some(req) = store.graph.requirements.get(rid) else {
+                continue;
+            };
             let judged = str_list(&rec.detail["judged"]);
             for nbr in store.pair_review_neighbors(rid) {
                 if judged.contains(&nbr) {
                     continue;
                 }
-                let Some(other) = store.graph.requirements.get(&nbr) else { continue };
+                let Some(other) = store.graph.requirements.get(&nbr) else {
+                    continue;
+                };
                 let target = pair_target(rid, &nbr);
                 let shared_ent = shared_entity(store, req, other);
                 let tokens: Vec<String> = content_tokens(store, &req.statement, &req.entities)
@@ -1095,15 +1158,30 @@ impl GoalKind for RejudgePair {
                     hints.push("no open diagnostic on the pair".into());
                 } else {
                     for (id, d) in diags {
-                        hints.push(format!("open {} ({}, {}): {}", id, d.rule, d.severity, truncate(&d.message, 100)));
+                        hints.push(format!(
+                            "open {} ({}, {}): {}",
+                            id,
+                            d.rule,
+                            d.severity,
+                            truncate(&d.message, 100)
+                        ));
                     }
                 }
                 hints.push(format!("load {}; load {}", rid, nbr));
                 hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
                 match pairs.get_mut(&target) {
-                    Some(p) if (p.cause.generation, p.cause.mutation) <= (cause.generation, cause.mutation) => {}
+                    Some(p)
+                        if (p.cause.generation, p.cause.mutation)
+                            <= (cause.generation, cause.mutation) => {}
                     _ => {
-                        pairs.insert(target, PairWork { change, cause, hints });
+                        pairs.insert(
+                            target,
+                            PairWork {
+                                change,
+                                cause,
+                                hints,
+                            },
+                        );
                     }
                 }
             }
@@ -1117,7 +1195,9 @@ impl GoalKind for RejudgePair {
                 continue;
             }
             let deleted = str_list(&rec.detail["deleted"]);
-            let Some(dead) = deleted.first() else { continue };
+            let Some(dead) = deleted.first() else {
+                continue;
+            };
             let did = rec.detail["diagnostic"].as_str().unwrap_or("").to_string();
             if !store
                 .graph
@@ -1190,7 +1270,9 @@ impl GoalKind for RejudgePair {
                 for s in &diagnostic.subjects {
                     let exists = store.graph.requirements.contains_key(s)
                         || store.graph.entities.contains_key(s)
-                        || staged.iter().any(|o| matches!(o, Op::CreateRequirement { id, .. } if id == s));
+                        || staged
+                            .iter()
+                            .any(|o| matches!(o, Op::CreateRequirement { id, .. } if id == s));
                     if !exists {
                         out.push(Violation::new(
                             "unknown-id",
@@ -1347,7 +1429,8 @@ impl GoalKind for ReviewEntity {
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut by_subject: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
         for rec in records_of(store, &[store::CHANGE_ENTITY, store::CHANGE_NODE_DELETED]) {
-            if !rec.subject.starts_with("ent:") || !store.graph.entities.contains_key(&rec.subject) {
+            if !rec.subject.starts_with("ent:") || !store.graph.entities.contains_key(&rec.subject)
+            {
                 continue;
             }
             if rec.kind == store::CHANGE_NODE_DELETED && rec.via != "subjects" {
@@ -1425,7 +1508,11 @@ impl GoalKind for ReviewEntity {
             if !no_edges.is_empty() {
                 hints.push(format!(
                     "multi-entity statements without edges: {}",
-                    no_edges.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    no_edges
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             let mut subjects: Vec<&str> = reqs.iter().map(String::as_str).collect();
@@ -1577,7 +1664,10 @@ pub fn dangling_references(store: &Store, id: &str) -> Vec<String> {
             match &a.provenance {
                 Provenance::Quote(s) => {
                     if !store.quote_locates(&s.doc, &s.section, &s.quote) {
-                        out.push(format!("attributes.{}.provenance {}#{}", a.name, s.doc, s.section));
+                        out.push(format!(
+                            "attributes.{}.provenance {}#{}",
+                            a.name, s.doc, s.section
+                        ));
                     }
                 }
                 Provenance::Derived { from, .. } => {
@@ -1639,7 +1729,10 @@ impl GoalKind for Retrace {
     }
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut by_subject: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
-        for rec in records_of(store, &[store::CHANGE_VIEW_MEMBER_GONE, store::CHANGE_NODE_DELETED]) {
+        for rec in records_of(
+            store,
+            &[store::CHANGE_VIEW_MEMBER_GONE, store::CHANGE_NODE_DELETED],
+        ) {
             let exists = store.graph.views.contains_key(&rec.subject)
                 || store.graph.entities.contains_key(&rec.subject)
                 || store.graph.requirements.contains_key(&rec.subject);
@@ -1692,7 +1785,11 @@ impl GoalKind for Retrace {
                     v.members.len(),
                     v.members
                         .iter()
-                        .map(|m| if dead.contains(m) { format!("{} (deleted)", m) } else { m.clone() })
+                        .map(|m| if dead.contains(m) {
+                            format!("{} (deleted)", m)
+                        } else {
+                            m.clone()
+                        })
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
@@ -1742,15 +1839,16 @@ impl GoalKind for Retrace {
         for op in staged {
             if let Op::CreateEntity { id, entity } = op {
                 if store.graph.redirects.get(id).is_some_and(|t| t.is_empty())
-                    || store
-                        .graph
-                        .redirects
-                        .iter()
-                        .any(|(dead, t)| t.is_empty() && dead == &format!("ent:{}", crate::md::slug(&entity.name)))
+                    || store.graph.redirects.iter().any(|(dead, t)| {
+                        t.is_empty() && dead == &format!("ent:{}", crate::md::slug(&entity.name))
+                    })
                 {
                     out.push(Violation::new(
                         "recreated-node",
-                        format!("{} re-creates a deleted node; point at a survivor instead", id),
+                        format!(
+                            "{} re-creates a deleted node; point at a survivor instead",
+                            id
+                        ),
                     ));
                 }
             }
@@ -1835,7 +1933,9 @@ impl GoalKind for ConformInstance {
                 .map(|t| {
                     t.attributes
                         .iter()
-                        .map(|a| format!("{}: {}", a.name, a.r#type.as_deref().unwrap_or("untyped")))
+                        .map(|a| {
+                            format!("{}: {}", a.name, a.r#type.as_deref().unwrap_or("untyped"))
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -1984,11 +2084,22 @@ impl GoalKind for Bind {
                 hints.push(format!(
                     "suggested test name: {}-{}",
                     crate::gen::req_slug(&rid),
-                    &hash_hex(&store.graph.requirements.get(&rid).map(|r| r.statement.clone()).unwrap_or_default())[..8]
+                    &hash_hex(
+                        &store
+                            .graph
+                            .requirements
+                            .get(&rid)
+                            .map(|r| r.statement.clone())
+                            .unwrap_or_default()
+                    )[..8]
                 ));
                 hints.push(format!(
                     "medium: {}",
-                    ledger.medium.as_ref().map(|m| m.line()).unwrap_or_else(|| "undecided; this session decides it".into())
+                    ledger
+                        .medium
+                        .as_ref()
+                        .map(|m| m.line())
+                        .unwrap_or_else(|| "undecided; this session decides it".into())
                 ));
                 hints.push(format!("load {}", entity));
                 hints.push("begin_binding, then record_binding".into());
@@ -2204,7 +2315,9 @@ impl GoalKind for Verify {
         }
         let entity = goal.change["entity"].as_str().unwrap_or("");
         if board.bind_open_for_entity(entity) > 0 || board.open(&goal_id("bind", &goal.target)) {
-            return Ready::Blocked("binding first: the row's requirement or entity owes a bind".into());
+            return Ready::Blocked(
+                "binding first: the row's requirement or entity owes a bind".into(),
+            );
         }
         if board.open(&goal_id("generate", entity)) {
             return Ready::Blocked(format!("generation first: {} owes a generate", entity));
@@ -2274,43 +2387,63 @@ impl GoalKind for Ratify {
                 .requirements
                 .get(subject)
                 .and_then(|r| r.provenance.clone())
-                .or_else(|| store.graph.entities.get(subject).and_then(|e| e.provenance.clone()))
+                .or_else(|| {
+                    store
+                        .graph
+                        .entities
+                        .get(subject)
+                        .and_then(|e| e.provenance.clone())
+                })
         };
-        let hints_for = |subject: &str, prov: Option<&Provenance>, proposal: Option<&(String, &Diagnostic)>| {
-            let mut hints = Vec::new();
-            match prov {
-                Some(Provenance::Derived { from, reasoning }) => {
-                    hints.push(format!("derived from {}: {}", from.join(", "), truncate(reasoning, 120)));
+        let hints_for =
+            |subject: &str, prov: Option<&Provenance>, proposal: Option<&(String, &Diagnostic)>| {
+                let mut hints = Vec::new();
+                match prov {
+                    Some(Provenance::Derived { from, reasoning }) => {
+                        hints.push(format!(
+                            "derived from {}: {}",
+                            from.join(", "),
+                            truncate(reasoning, 120)
+                        ));
+                    }
+                    Some(Provenance::Decree { author, at, note }) => {
+                        hints.push(format!(
+                            "decree by {} at {}{}",
+                            author,
+                            at,
+                            note.as_ref()
+                                .map(|n| format!(": {}", n))
+                                .unwrap_or_default()
+                        ));
+                    }
+                    _ => {}
                 }
-                Some(Provenance::Decree { author, at, note }) => {
-                    hints.push(format!(
-                        "decree by {} at {}{}",
-                        author,
-                        at,
-                        note.as_ref().map(|n| format!(": {}", n)).unwrap_or_default()
-                    ));
-                }
-                _ => {}
-            }
-            match proposal {
-                Some((did, d)) => {
-                    if let Some(p) = &d.prompt {
-                        hints.push(format!("proposal {}: {}", did, p.question));
-                        for o in &p.options {
-                            if let Some(e) = &o.edit {
-                                hints.push(format!("edit {}#{}: {}", e.doc, e.section, truncate(&e.new_text, 120)));
+                match proposal {
+                    Some((did, d)) => {
+                        if let Some(p) = &d.prompt {
+                            hints.push(format!("proposal {}: {}", did, p.question));
+                            for o in &p.options {
+                                if let Some(e) = &o.edit {
+                                    hints.push(format!(
+                                        "edit {}#{}: {}",
+                                        e.doc,
+                                        e.section,
+                                        truncate(&e.new_text, 120)
+                                    ));
+                                }
                             }
                         }
+                        hints.push(format!("accept (Apply: the edit) or retract, on {}", did));
                     }
-                    hints.push(format!("accept (Apply: the edit) or retract, on {}", did));
+                    None => hints.push(format!("no proposal filed yet for {}", subject)),
                 }
-                None => hints.push(format!("no proposal filed yet for {}", subject)),
-            }
-            hints
-        };
+                hints
+            };
         for rec in records_of(store, &[store::CHANGE_PROVENANCE_PENDING]) {
             let subject = &rec.subject;
-            let Some(prov) = provenance_of(subject) else { continue };
+            let Some(prov) = provenance_of(subject) else {
+                continue;
+            };
             if matches!(prov, Provenance::Quote(_)) {
                 continue;
             }
@@ -2339,18 +2472,24 @@ impl GoalKind for Ratify {
             if d.lifecycle != "open" || d.rule != "ratification-pending" {
                 continue;
             }
-            let Some(subject) = d.subjects.first() else { continue };
+            let Some(subject) = d.subjects.first() else {
+                continue;
+            };
             let id = goal_id("ratify", subject);
             if out.contains_key(&id) {
                 continue;
             }
-            if !store.graph.entities.contains_key(subject) && !store.graph.requirements.contains_key(subject) {
+            if !store.graph.entities.contains_key(subject)
+                && !store.graph.requirements.contains_key(subject)
+            {
                 continue;
             }
             let attribute = store.graph.entities.get(subject).and_then(|e| {
                 e.attributes
                     .iter()
-                    .find(|a| !matches!(a.provenance, Provenance::Quote(_)) && d.message.contains(&a.name))
+                    .find(|a| {
+                        !matches!(a.provenance, Provenance::Quote(_)) && d.message.contains(&a.name)
+                    })
                     .map(|a| a.name.clone())
             });
             let created = d
@@ -2359,7 +2498,8 @@ impl GoalKind for Ratify {
                 .and_then(|b| b.strip_prefix('g'))
                 .and_then(|n| n.parse::<u64>().ok())
                 .unwrap_or(store.status.generation);
-            let change = json!({"provenance": "attribute", "attribute": attribute, "proposal": did});
+            let change =
+                json!({"provenance": "attribute", "attribute": attribute, "proposal": did});
             let mut g = build_goal(
                 self,
                 subject,
@@ -2415,7 +2555,9 @@ impl GoalKind for Answer {
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut out = Vec::new();
         for rec in records_of(store, &[store::CHANGE_PROMPT_UNANSWERED]) {
-            let Some(d) = store.graph.diagnostics.get(&rec.subject) else { continue };
+            let Some(d) = store.graph.diagnostics.get(&rec.subject) else {
+                continue;
+            };
             let Some(p) = d.prompt.as_ref() else { continue };
             if d.lifecycle != "open"
                 || d.answer.is_some()
@@ -2433,7 +2575,13 @@ impl GoalKind for Answer {
             let mut hints = vec![format!("question: {}", p.question)];
             for (i, o) in p.options.iter().enumerate() {
                 hints.push(match &o.edit {
-                    Some(e) => format!("option {}: {} (edit {}#{})", i + 1, o.label, e.doc, e.section),
+                    Some(e) => format!(
+                        "option {}: {} (edit {}#{})",
+                        i + 1,
+                        o.label,
+                        e.doc,
+                        e.section
+                    ),
                     None => format!("option {}: {}", i + 1, o.label),
                 });
             }
@@ -2506,11 +2654,17 @@ impl GoalKind for DeclareEdges {
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut out = Vec::new();
         for rec in records_of(store, &[store::CHANGE_EDGES_MISSING]) {
-            let Some(r) = store.graph.requirements.get(&rec.subject) else { continue };
+            let Some(r) = store.graph.requirements.get(&rec.subject) else {
+                continue;
+            };
             if r.entities.len() < 2 || !r.edges.is_empty() {
                 continue;
             }
-            let ents: Vec<String> = r.entities.iter().map(|e| store.resolve_id(e).to_string()).collect();
+            let ents: Vec<String> = r
+                .entities
+                .iter()
+                .map(|e| store.resolve_id(e).to_string())
+                .collect();
             let change = json!({"entities": ents, "edges": 0});
             let mut hints = vec![
                 format!("load {}", rec.subject),
@@ -2531,7 +2685,14 @@ impl GoalKind for DeclareEdges {
                 }
             }
             hints.push("skill extraction; update_requirement passing only id and edges".into());
-            out.push(build_goal(self, &rec.subject, false, change, Some(rec.cause()), hints));
+            out.push(build_goal(
+                self,
+                &rec.subject,
+                false,
+                change,
+                Some(rec.cause()),
+                hints,
+            ));
         }
         out
     }
@@ -2578,7 +2739,10 @@ impl GoalKind for DeclareEdges {
                     if present {
                         out.push(Violation::new(
                             "field-not-this-goals",
-                            format!("{}: {} is not this goal's to change; pass only id and edges", id, field),
+                            format!(
+                                "{}: {} is not this goal's to change; pass only id and edges",
+                                id, field
+                            ),
                         ));
                     }
                 }
@@ -2587,13 +2751,21 @@ impl GoalKind for DeclareEdges {
                         .graph
                         .requirements
                         .get(id)
-                        .map(|r| r.entities.iter().map(|e| store.resolve_id(e).to_string()).collect())
+                        .map(|r| {
+                            r.entities
+                                .iter()
+                                .map(|e| store.resolve_id(e).to_string())
+                                .collect()
+                        })
                         .unwrap_or_default();
                     for e in edges {
                         if e.rel_type.is_none() {
                             out.push(Violation::new(
                                 "untyped-edge",
-                                format!("{}: edge {}~{} has no type; judging the type is the goal", id, e.a, e.b),
+                                format!(
+                                    "{}: edge {}~{} has no type; judging the type is the goal",
+                                    id, e.a, e.b
+                                ),
                             ));
                         }
                         if e.a == e.b {
@@ -2606,7 +2778,10 @@ impl GoalKind for DeclareEdges {
                             if !listed.contains(&store.resolve_id(end).to_string()) {
                                 out.push(Violation::new(
                                     "bad-edge",
-                                    format!("{}: edge end {} is not among the requirement's entities", id, end),
+                                    format!(
+                                        "{}: edge end {} is not among the requirement's entities",
+                                        id, end
+                                    ),
                                 ));
                             }
                         }
@@ -2803,14 +2978,22 @@ impl GoalKind for DedupeCandidates {
             if !only_a.is_empty() {
                 hints.push(format!(
                     "{} mentions only {}",
-                    only_a.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                    only_a
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     l.a
                 ));
             }
             if !only_b.is_empty() {
                 hints.push(format!(
                     "{} mentions only {}",
-                    only_b.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                    only_b
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     l.b
                 ));
             }
@@ -2833,10 +3016,15 @@ impl GoalKind for DedupeCandidates {
             );
             if pa != pb {
                 for p in [pa, pb].into_iter().flatten() {
-                    hints.push(format!("load {} (a parent; two parents mean two entities)", p));
+                    hints.push(format!(
+                        "load {} (a parent; two parents mean two entities)",
+                        p
+                    ));
                 }
             }
-            hints.push("skill judgment; merge_entities or report_diagnostic duplicate-entity".into());
+            hints.push(
+                "skill judgment; merge_entities or report_diagnostic duplicate-entity".into(),
+            );
             out.push(build_goal(self, &target, false, change, Some(cause), hints));
         }
         out
@@ -2864,7 +3052,12 @@ impl GoalKind for DedupeCandidates {
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {
         let mut out = Vec::new();
         for op in staged {
-            if let Op::MergeEntities { keep, absorb, reason } = op {
+            if let Op::MergeEntities {
+                keep,
+                absorb,
+                reason,
+            } = op
+            {
                 if reason.trim().is_empty() {
                     out.push(Violation::new(
                         "reason-required",
@@ -2874,7 +3067,10 @@ impl GoalKind for DedupeCandidates {
                 if store.is_ancestor(absorb, keep) {
                     out.push(Violation::new(
                         "parent-cycle",
-                        format!("merging {} into {} would make the survivor its own ancestor", absorb, keep),
+                        format!(
+                            "merging {} into {} would make the survivor its own ancestor",
+                            absorb, keep
+                        ),
                     ));
                 }
             }
@@ -2948,13 +3144,15 @@ impl GoalKind for CurateView {
                     }
                     if facet == "failure-mode" {
                         if let Some(req) = store.graph.requirements.get(&rid) {
-                            if let Some(t) = req.transition.as_ref().and_then(|t| t.trigger.clone()) {
+                            if let Some(t) = req.transition.as_ref().and_then(|t| t.trigger.clone())
+                            {
                                 let after = v
                                     .members
                                     .iter()
                                     .find(|m| {
                                         store.graph.requirements.get(*m).is_some_and(|q| {
-                                            q.transition.as_ref().and_then(|x| x.trigger.as_ref()) == Some(&t)
+                                            q.transition.as_ref().and_then(|x| x.trigger.as_ref())
+                                                == Some(&t)
                                         })
                                     })
                                     .cloned();
@@ -3029,7 +3227,10 @@ fn view_gates(store: &Store, staged: &[Op]) -> Vec<Violation> {
                     if n.is_empty() || PLACEHOLDERS.contains(&n.as_str()) {
                         out.push(Violation::new(
                             "note-required",
-                            format!("{}: excluding {} needs a note naming the sentence or the rule", id, x.id),
+                            format!(
+                                "{}: excluding {} needs a note naming the sentence or the rule",
+                                id, x.id
+                            ),
                         ));
                     }
                 }
@@ -3118,8 +3319,13 @@ impl GoalKind for SplitView {
             if is_flow_kind(&v.kind) {
                 let mut last_section: Option<String> = None;
                 for m in &v.members {
-                    let Some(r) = store.graph.requirements.get(m) else { continue };
-                    let sec = r.source.as_ref().map(|s| format!("{}#{}", s.doc, s.section));
+                    let Some(r) = store.graph.requirements.get(m) else {
+                        continue;
+                    };
+                    let sec = r
+                        .source
+                        .as_ref()
+                        .map(|s| format!("{}#{}", s.doc, s.section));
                     if last_section.is_some() && sec != last_section {
                         hints.push(format!("break after {} (section boundary)", m));
                     }
@@ -3147,7 +3353,11 @@ impl GoalKind for SplitView {
                 }
             }
             for (oid, o) in &store.graph.views {
-                let linked = o.query.as_ref().and_then(|q| q.parent.as_ref()).is_some_and(|p| v.collapse.contains(p))
+                let linked = o
+                    .query
+                    .as_ref()
+                    .and_then(|q| q.parent.as_ref())
+                    .is_some_and(|p| v.collapse.contains(p))
                     || v.excluded.iter().any(|x| x.note.contains(oid.as_str()));
                 if linked {
                     hints.push(format!("linked {}", oid));
@@ -3157,7 +3367,14 @@ impl GoalKind for SplitView {
                 hints.push(format!("skill {}", s));
             }
             hints.push("update_view collapse or exclude; upsert_view for sub-views".into());
-            out.push(build_goal(self, &vid, mandatory, threshold_change(&crossed), cause, hints));
+            out.push(build_goal(
+                self,
+                &vid,
+                mandatory,
+                threshold_change(&crossed),
+                cause,
+                hints,
+            ));
         }
         out
     }
@@ -3187,7 +3404,9 @@ impl GoalKind for SplitView {
             .iter()
             .flat_map(|o| match o {
                 Op::CreateView { view, .. } => view.members.clone(),
-                Op::UpdateView { members: Some(m), .. } => m.clone(),
+                Op::UpdateView {
+                    members: Some(m), ..
+                } => m.clone(),
                 Op::UpdateView { add_members, .. } => add_members.clone(),
                 _ => Vec::new(),
             })
@@ -3202,7 +3421,9 @@ impl GoalKind for SplitView {
                 ..
             } = op
             {
-                let Some(v) = store.graph.views.get(id) else { continue };
+                let Some(v) = store.graph.views.get(id) else {
+                    continue;
+                };
                 let after: Vec<String> = match members {
                     Some(m) => m.clone(),
                     None => v
@@ -3286,7 +3507,9 @@ impl GoalKind for AbstractEntity {
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut by_entity: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
         for rec in records_of(store, &[store::CHANGE_THRESHOLD_CROSSED]) {
-            if rec.detail["goal"] == "abstract-entity" && store.graph.entities.contains_key(&rec.subject) {
+            if rec.detail["goal"] == "abstract-entity"
+                && store.graph.entities.contains_key(&rec.subject)
+            {
                 by_entity.entry(rec.subject.clone()).or_default().push(rec);
             }
         }
@@ -3309,7 +3532,12 @@ impl GoalKind for AbstractEntity {
             for (tok, n, section) in cohesion_groups(store, &id) {
                 hints.push(format!("group {} ({} requirements, {})", tok, n, section));
             }
-            for (cid, _) in store.graph.entities.iter().filter(|(_, c)| c.parent.as_deref() == Some(id.as_str())) {
+            for (cid, _) in store
+                .graph
+                .entities
+                .iter()
+                .filter(|(_, c)| c.parent.as_deref() == Some(id.as_str()))
+            {
                 hints.push(format!(
                     "child {} ({} requirements)",
                     cid,
@@ -3319,12 +3547,18 @@ impl GoalKind for AbstractEntity {
             if let Some(m) = e.mentions.first() {
                 let full = format!("{}#{}", m.doc, m.section);
                 let too_large = store.graph.diagnostics.values().any(|d| {
-                    d.lifecycle == "open" && d.rule == "section-too-large" && d.subjects.iter().any(|s| *s == full)
+                    d.lifecycle == "open"
+                        && d.rule == "section-too-large"
+                        && d.subjects.iter().any(|s| *s == full)
                 });
                 hints.push(format!(
                     "load {}{}",
                     full,
-                    if too_large { " (section-too-large filed)" } else { "" }
+                    if too_large {
+                        " (section-too-large filed)"
+                    } else {
+                        ""
+                    }
                 ));
             }
             let composed = store
@@ -3334,10 +3568,20 @@ impl GoalKind for AbstractEntity {
                 .flat_map(|r| r.contributions.iter())
                 .any(|c| c.r#type == "composition" && c.a == id);
             if e.parent.is_none() && !composed {
-                hints.push("root: no parent, no composition stated; a decision prompt is owed".into());
+                hints.push(
+                    "root: no parent, no composition stated; a decision prompt is owed".into(),
+                );
             }
-            hints.push("skill abstraction; upsert_entity, update_requirement, update_entity".into());
-            out.push(build_goal(self, &id, mandatory, threshold_change(&crossed), cause, hints));
+            hints
+                .push("skill abstraction; upsert_entity, update_requirement, update_entity".into());
+            out.push(build_goal(
+                self,
+                &id,
+                mandatory,
+                threshold_change(&crossed),
+                cause,
+                hints,
+            ));
         }
         out
     }
@@ -3348,10 +3592,20 @@ impl GoalKind for AbstractEntity {
         let mut lines = Vec::new();
         for g in batch {
             lines.push(format!("- {} full", g.target));
-            for (cid, _) in store.graph.entities.iter().filter(|(_, c)| c.parent.as_deref() == Some(g.target.as_str())) {
+            for (cid, _) in store
+                .graph
+                .entities
+                .iter()
+                .filter(|(_, c)| c.parent.as_deref() == Some(g.target.as_str()))
+            {
                 lines.push(format!("- {} stub", cid));
             }
-            if let Some(m) = store.graph.entities.get(&g.target).and_then(|e| e.mentions.first()) {
+            if let Some(m) = store
+                .graph
+                .entities
+                .get(&g.target)
+                .and_then(|e| e.mentions.first())
+            {
                 lines.push(format!("- {}#{} full", m.doc, m.section));
             }
             for (vid, v) in &store.graph.views {
@@ -3396,34 +3650,53 @@ impl GoalKind for AbstractEntity {
                         }
                         _ => out.push(Violation::new(
                             "provenance-required",
-                            format!("{}: a sub-entity carries derived provenance (from, reasoning)", id),
+                            format!(
+                                "{}: a sub-entity carries derived provenance (from, reasoning)",
+                                id
+                            ),
                         )),
                     }
                     if entity.definition.as_deref().unwrap_or("").trim().is_empty() {
                         out.push(Violation::new(
                             "definition-required",
-                            format!("{}: the definition is the sentence the documents should gain", id),
+                            format!(
+                                "{}: the definition is the sentence the documents should gain",
+                                id
+                            ),
                         ));
                     }
                     let moved = staged.iter().any(|o| match o {
-                        Op::UpdateRequirement { entities: Some(e), .. } => e.iter().any(|x| x == id),
-                        Op::CreateRequirement { requirement, .. } => requirement.entities.iter().any(|x| x == id),
-                        Op::UpdateEntity { parent: Some(p), .. } => p == id,
+                        Op::UpdateRequirement {
+                            entities: Some(e), ..
+                        } => e.iter().any(|x| x == id),
+                        Op::CreateRequirement { requirement, .. } => {
+                            requirement.entities.iter().any(|x| x == id)
+                        }
+                        Op::UpdateEntity {
+                            parent: Some(p), ..
+                        } => p == id,
                         _ => false,
                     });
                     if !moved {
                         out.push(Violation::new(
                             "nothing-moved",
-                            format!("{}: no requirement re-pointed and no child re-parented under it", id),
+                            format!(
+                                "{}: no requirement re-pointed and no child re-parented under it",
+                                id
+                            ),
                         ));
                     }
                     if let Some(p) = &entity.parent {
-                        let scope_of = |x: &str| store.graph.entities.get(x).map(|e| e.scope.clone());
+                        let scope_of =
+                            |x: &str| store.graph.entities.get(x).map(|e| e.scope.clone());
                         if let Some(ps) = scope_of(p) {
                             if ps != entity.scope {
                                 out.push(Violation::new(
                                     "scope-mismatch",
-                                    format!("{}: a split never crosses a scope ({} is in {})", id, p, ps),
+                                    format!(
+                                        "{}: a split never crosses a scope ({} is in {})",
+                                        id, p, ps
+                                    ),
                                 ));
                             }
                         }
@@ -3433,7 +3706,10 @@ impl GoalKind for AbstractEntity {
                     if !staged_parents.contains(id) {
                         out.push(Violation::new(
                             "target-removed",
-                            format!("{}: an abstraction adds structure; it never deletes or merges", id),
+                            format!(
+                                "{}: an abstraction adds structure; it never deletes or merges",
+                                id
+                            ),
                         ));
                     }
                 }
@@ -3462,12 +3738,20 @@ mod tests {
                 env!("CARGO_MANIFEST_DIR"),
                 k.kind()
             );
-            assert!(std::path::Path::new(&page).exists(), "{} has no page", k.kind());
+            assert!(
+                std::path::Path::new(&page).exists(),
+                "{} has no page",
+                k.kind()
+            );
             if blocked_on_human(k.kind()) {
                 assert!(k.prompt().is_empty());
                 assert!(k.toolset().is_empty());
             } else {
-                assert!(!k.prompt().trim().is_empty(), "{} has no contract paragraph", k.kind());
+                assert!(
+                    !k.prompt().trim().is_empty(),
+                    "{} has no contract paragraph",
+                    k.kind()
+                );
                 assert!(record_kinds(k.kind()).len() > 0 || k.kind() == "bind");
             }
             match k.class() {
@@ -3475,7 +3759,10 @@ mod tests {
                 Class::Gc => assert!(tier(k.kind()).is_none()),
             }
         }
-        assert_eq!(parse_goal_id("g:retrace:view:usecase/holds"), Some(("retrace", "view:usecase/holds")));
+        assert_eq!(
+            parse_goal_id("g:retrace:view:usecase/holds"),
+            Some(("retrace", "view:usecase/holds"))
+        );
         assert_eq!(pair_target("req:b-1", "req:a-1"), "req:a-1~req:b-1");
     }
 
@@ -3494,11 +3781,23 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:backend".into(), ent("backend", &["api.md"]));
-        s.graph.entities.insert("ent:backend-system".into(), ent("backend system", &["deploy.md"]));
-        s.graph.entities.insert("ent:order".into(), ent("Order", &["api.md"]));
-        s.graph.entities.insert("ent:reorder-point".into(), ent("Reorder point", &["deploy.md"]));
-        s.graph.entities.insert("ent:lonely".into(), ent("backend host", &["api.md"]));
+        s.graph
+            .entities
+            .insert("ent:backend".into(), ent("backend", &["api.md"]));
+        s.graph.entities.insert(
+            "ent:backend-system".into(),
+            ent("backend system", &["deploy.md"]),
+        );
+        s.graph
+            .entities
+            .insert("ent:order".into(), ent("Order", &["api.md"]));
+        s.graph.entities.insert(
+            "ent:reorder-point".into(),
+            ent("Reorder point", &["deploy.md"]),
+        );
+        s.graph
+            .entities
+            .insert("ent:lonely".into(), ent("backend host", &["api.md"]));
         let scores = lookalike_scores(&s);
         let pair = scores
             .iter()
@@ -3507,8 +3806,12 @@ mod tests {
         assert!((pair.tokens - 0.67).abs() < 0.01, "{}", pair.tokens);
         assert_eq!(pair.documents, 0.0);
         assert!((pair.score - 0.5).abs() < 0.01);
-        assert!(!scores.iter().any(|l| l.a == "ent:order" || l.b == "ent:reorder-point"));
+        assert!(!scores
+            .iter()
+            .any(|l| l.a == "ent:order" || l.b == "ent:reorder-point"));
         // Same document only: review-entity's to judge, never a candidate.
-        assert!(!scores.iter().any(|l| l.a == "ent:backend" && l.b == "ent:lonely"));
+        assert!(!scores
+            .iter()
+            .any(|l| l.a == "ent:backend" && l.b == "ent:lonely"));
     }
 }

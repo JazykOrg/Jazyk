@@ -58,7 +58,10 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                         src.doc,
                         src.section
                     )),
-                    None => s.push_str(&format!("Provenance: {}", crate::turn::provenance_line(r))),
+                    None => s.push_str(&format!(
+                        "Provenance: {}",
+                        crate::session::provenance_line(r)
+                    )),
                 }
                 let others: Vec<&str> = r
                     .entities

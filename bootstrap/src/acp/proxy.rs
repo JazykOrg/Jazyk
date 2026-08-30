@@ -770,16 +770,30 @@ fn run_command(
                 .into()
         }),
         "status" => {
+            // The verdict with its counts, and the board summary beside it.
+            // Mirrors docs/frontends/acp.md#slash-commands.
             let s = crate::store::Store::load(&st.out);
+            let board = crate::board::Board::compute(proj, &st.out);
+            let c = board.counts();
             format!(
-                "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}",
+                "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}\n{}\nboard: {} open, {} ready, {} blocked, {} parked, {} failed",
                 s.status.generation,
                 s.status.verdict,
                 s.graph.entities.len(),
                 s.graph.requirements.len(),
-                s.open_diag_counts()
+                s.open_diag_counts(),
+                board.summary_line(),
+                c.open,
+                c.ready,
+                c.blocked,
+                c.parked,
+                c.failed
             )
         }
+        "board" => commands::board_text(proj, &st.out),
+        "preview" => commands::preview_text(proj, &st.out, args),
+        "explain" => commands::explain_text(proj, &st.out, args),
+        "ripple" => commands::ripple_text(proj, &st.out, args),
         "release" => {
             crate::control::release(proj, &st.out, None);
             "released: pending compile and generate work is approved".into()
@@ -788,9 +802,16 @@ fn run_command(
             say("compiling…\n".into());
             let trace = narrated_trace(up.clone(), sid.to_string());
             let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
+            // The verdict carries its counts; the board summary rides beside it.
+            let board = crate::board::Board::compute(proj, &st.out);
             format!(
-                "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%",
-                report.verdict, report.sessions, report.applied, report.parked, report.coverage_pct
+                "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%\n{}",
+                report.verdict,
+                report.sessions,
+                report.applied,
+                report.parked,
+                report.coverage_pct,
+                board.summary_line()
             )
         }
         "generate" | "verify" => {
@@ -821,10 +842,10 @@ fn run_command(
     }
 }
 
-// Build progress narrated as message chunks: one line per turn lifecycle event.
-// The machinery of a turn is not news to the person who asked for the build: these
+// Build progress narrated as message chunks: one line per session lifecycle event.
+// The machinery of a batch is not news to the person who asked for the build: these
 // calls get no row. Mirrors docs/frontends/acp.md#slash-commands.
-const LIFECYCLE_TOOLS: &[&str] = &["begin_compilation", "finish_compilation", "done"];
+const LIFECYCLE_TOOLS: &[&str] = &["goals", "begin_goals", "done", "abandon_goals"];
 
 // A row is titled by the decision it carries, not the tool's identifier.
 // Mirrors docs/frontends/acp.md#slash-commands.
@@ -840,10 +861,14 @@ fn call_title(name: &str, input: &str) -> String {
     };
     match name {
         "search" => format!("search: {}", s("query")),
-        "context" => format!("context: {}", s("target")),
+        "load" => format!("load {}", s("target")),
+        "unload" => format!("unload {}", s("target")),
         "expand" => "expand context".into(),
+        "graph_status" => "graph status".into(),
+        "load_skill" => format!("skill {}", s("name")),
         "read_section" => format!("read {}", s("section")),
         "get_entity" => format!("read entity {}", s("id")),
+        "get_view" => format!("read view {}", s("id")),
         "diagnostics" => "read diagnostics".into(),
         "upsert_entity" => format!("entity {}", s("name")),
         "update_entity" => format!("update entity {}", s("id")),
@@ -856,6 +881,13 @@ fn call_title(name: &str, input: &str) -> String {
         "update_diagnostic" => format!("update finding {}", s("id")),
         "resolve_diagnostic" => format!("resolve finding {}", s("id")),
         "set_coverage" => format!("coverage: {} {}", s("section"), s("state")),
+        "upsert_view" => format!("view {} {}", s("kind"), s("title")),
+        "update_view" => format!("update view {}", s("id")),
+        "delete_view" => format!("delete view {}", s("id")),
+        // A goal claim is titled by the goal; the justification rides as the row's
+        // payload. Mirrors docs/frontends/acp.md#slash-commands.
+        "mark_goal_done" => format!("resolved {}", s("goal")),
+        "mark_goal_failed" => format!("failed {}", s("goal")),
         "edit_doc_prose" => format!("edit {}", s("doc")),
         _ => name.replace('_', " "),
     }
@@ -888,8 +920,8 @@ fn result_title(name: &str, output: &str) -> Option<String> {
 // message text, worker reasoning as thought chunks, and each graph tool call as a
 // tool_call row with its result. Ids are namespaced per worker so parallel turns
 // never collide. Mirrors docs/frontends/acp.md#slash-commands.
-fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
-    use crate::turn::TraceEvent;
+fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::session::Trace {
+    use crate::session::TraceEvent;
     use agent_client_protocol::schema::v1::{
         ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     };
@@ -912,8 +944,31 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
         };
         match ev {
+            TraceEvent::Board {
+                goals,
+                kinds,
+                blocked,
+                ..
+            } => {
+                // The board summary the build prints first.
+                // Mirrors docs/frontends/cli.md#jazyk-compile.
+                let per_kind: Vec<String> =
+                    kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
+                let mut line = format!("compile: {} goals", goals);
+                if !per_kind.is_empty() {
+                    line.push_str(&format!(" ({})", per_kind.join(", ")));
+                }
+                if *blocked > 0 {
+                    line.push_str(&format!(", {} blocked", blocked));
+                }
+                line.push('\n');
+                send(text_update(line));
+            }
             TraceEvent::BatchStart {
-                label, class, goals, ..
+                label,
+                class,
+                goals,
+                ..
             } => {
                 send(text_update(format!(
                     "batch {}: {} ({} goal(s))\n",
@@ -1097,7 +1152,7 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             _ => {}
         }
     });
-    crate::turn::Trace::to_sink(crate::turn::TraceLevel::Normal, sink, Default::default())
+    crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, sink, Default::default())
 }
 
 // Recorded runs as read-only sessions: one per transcript under <out>/trace, newest
@@ -1166,6 +1221,37 @@ fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
         let label = ev["label"].as_str().unwrap_or("");
         match ev["kind"].as_str().unwrap_or("") {
             "sessionStart" => updates.push(chunk(format!("▶ {}\n", label))),
+            "batchStart" => updates.push(chunk(format!(
+                "batch {}: {} ({} goal(s))\n",
+                label,
+                ev["class"].as_str().unwrap_or(""),
+                ev["goals"].as_array().map(|a| a.len()).unwrap_or(0)
+            ))),
+            "board" => updates.push(chunk(format!(
+                "compile: {} goals, {} blocked\n",
+                ev["goals"].as_u64().unwrap_or(0),
+                ev["blocked"].as_u64().unwrap_or(0)
+            ))),
+            "goal" => {
+                let tail = ev["justification"]
+                    .as_str()
+                    .or(ev["reason"].as_str())
+                    .map(|t| format!(": {}", t))
+                    .unwrap_or_default();
+                updates.push(chunk(format!(
+                    "{} {}{}\n",
+                    ev["event"].as_str().unwrap_or(""),
+                    ev["goal"].as_str().unwrap_or(""),
+                    tail
+                )));
+            }
+            "gcBurst" => updates.push(chunk(format!(
+                "gc burst: {} {} ({} > {})\n",
+                ev["goalKind"].as_str().unwrap_or(""),
+                ev["target"].as_str().unwrap_or(""),
+                ev["count"].as_u64().unwrap_or(0),
+                ev["limit"].as_u64().unwrap_or(0)
+            ))),
             "modelText" => updates.push(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
                 ContentBlock::from(format!("{}\n", ev["text"].as_str().unwrap_or(""))),
             ))),

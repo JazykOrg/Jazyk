@@ -197,7 +197,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "entity": row.entity,
         "statement": r.statement,
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
-        "provenance": crate::turn::provenance_line(r),
+        "provenance": crate::session::provenance_line(r),
         "factHash": hash_hex(&r.statement),
         "status": status,
         "reason": reason,
@@ -370,7 +370,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
 // are listed as skipped and go through record_verdict.
 // Mirrors docs/compiler/tools.md#verification-tools.
 pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Result<Value, String> {
-    let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
+    let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
     crate::gen::run_build(&store.out, gs, &quiet, "run_tests")
         .map_err(|e| format!("{}; nothing was verified", e))?;
     let ledger = Ledger::load(&store.out);
@@ -962,9 +962,9 @@ pub fn run_all(
     targets: &[String],
     kind: Option<&str>,
     force: bool,
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-    use crate::turn::TraceEvent;
+    use crate::session::TraceEvent;
     // Every prompt this run sends reports under the requirement it is judging.
 
     let selected = select_rows(store, gs, targets, kind, force);

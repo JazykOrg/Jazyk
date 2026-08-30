@@ -12,7 +12,7 @@ pub struct Command {
     pub needs_project: bool,
 }
 
-pub const COMMANDS: [Command; 11] = [
+pub const COMMANDS: [Command; 15] = [
     Command {
         name: "help",
         description: "what jazyk is, and what these commands do",
@@ -50,6 +50,30 @@ pub const COMMANDS: [Command; 11] = [
         needs_project: true,
     },
     Command {
+        name: "board",
+        description: "the goal board as the scheduler would derive it now",
+        hint: None,
+        needs_project: true,
+    },
+    Command {
+        name: "preview",
+        description: "the next session's prompt, exactly as the model would receive it",
+        hint: Some("goal or target, e.g. ent:order"),
+        needs_project: true,
+    },
+    Command {
+        name: "explain",
+        description: "why a goal exists, or what a change to a target would open",
+        hint: Some("goal or target, e.g. g:review-entity:ent:order"),
+        needs_project: true,
+    },
+    Command {
+        name: "ripple",
+        description: "walk a change's cascade through the journal",
+        hint: Some("target, generation, or doc; --back walks upstream"),
+        needs_project: true,
+    },
+    Command {
         name: "questions",
         description: "list the standing questions on open findings",
         hint: None,
@@ -84,7 +108,9 @@ pub const COMMANDS: [Command; 11] = [
 // What this session offers. Outside a project only the two commands that can act
 // there. Mirrors docs/frontends/acp.md#slash-commands.
 pub fn available(in_project: bool) -> impl Iterator<Item = &'static Command> {
-    COMMANDS.iter().filter(move |c| in_project || !c.needs_project)
+    COMMANDS
+        .iter()
+        .filter(move |c| in_project || !c.needs_project)
 }
 
 // Whether a typed word is one of ours. Takes the leading slash as typed.
@@ -101,7 +127,9 @@ pub fn split<'a>(text: &'a str, in_project: bool) -> Option<(&'static str, &'a s
         None => (text, ""),
     };
     let name = word.trim_start_matches('/');
-    available(in_project).find(|c| c.name == name).map(|c| (c.name, rest))
+    available(in_project)
+        .find(|c| c.name == name)
+        .map(|c| (c.name, rest))
 }
 
 pub fn help_text(in_project: bool) -> String {
@@ -142,14 +170,12 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
             "default"
         }
     };
-    let agent = crate::acp::config::resolve_acp(
-        None,
-        &proj.acp,
-        &crate::project::load_global_acp(),
-        |n| std::env::var(n).ok(),
-    )
-    .map(|a| a.name)
-    .unwrap_or_else(|e| format!("unresolved ({})", e));
+    let agent =
+        crate::acp::config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
+            std::env::var(n).ok()
+        })
+        .map(|a| a.name)
+        .unwrap_or_else(|e| format!("unresolved ({})", e));
     let gs = crate::gen::GenSettings::resolve(proj);
     let toml = std::fs::read_to_string(proj.root.join("jazyk.toml")).unwrap_or_default();
     let states = |key: &str| toml.contains(key);
@@ -157,34 +183,68 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
         (
             "acp.agent",
             agent,
-            from("JAZYK_ACP_AGENT", proj.acp.agent.is_some(), global_acp.agent.is_some()),
+            from(
+                "JAZYK_ACP_AGENT",
+                proj.acp.agent.is_some(),
+                global_acp.agent.is_some(),
+            ),
         ),
         (
             "llm.model",
             llm.model.clone(),
-            from("JAZYK_MODEL", proj.llm.model.is_some(), global_llm.model.is_some()),
+            from(
+                "JAZYK_MODEL",
+                proj.llm.model.is_some(),
+                global_llm.model.is_some(),
+            ),
         ),
         (
             "llm.base_url",
             llm.base_url.clone(),
-            from("JAZYK_LLM_BASE_URL", proj.llm.base_url.is_some(), global_llm.base_url.is_some()),
+            from(
+                "JAZYK_LLM_BASE_URL",
+                proj.llm.base_url.is_some(),
+                global_llm.base_url.is_some(),
+            ),
         ),
-        ("workflow.compile", proj.workflow.compile.clone(), from("", states("compile"), false)),
-        ("workflow.generate", proj.workflow.generate.clone(), from("", states("generate"), false)),
-        ("workflow.worker", proj.workflow.worker.clone(), from("", states("worker"), false)),
+        (
+            "workflow.compile",
+            proj.workflow.compile.clone(),
+            from("", states("compile"), false),
+        ),
+        (
+            "workflow.generate",
+            proj.workflow.generate.clone(),
+            from("", states("generate"), false),
+        ),
+        (
+            "workflow.worker",
+            proj.workflow.worker.clone(),
+            from("", states("worker"), false),
+        ),
         (
             "gen.deliverable",
             gs.deliverable.display().to_string(),
             from("", proj.gen_deliverable.is_some(), false),
         ),
-        ("gen.worker", gs.worker.clone(), from("", proj.gen_worker.is_some(), false)),
+        (
+            "gen.worker",
+            gs.worker.clone(),
+            from("", proj.gen_worker.is_some(), false),
+        ),
     ];
     let mut s = format!("{}\n\n", proj.root.display());
     for (k, v, src) in rows {
         s.push_str(&format!("  {:20} {:<40} [{}]\n", k, v, src));
     }
-    s.push_str(&format!("\n  docs glob            {}\n", proj.docs_glob.join(", ")));
-    s.push_str(&format!("  roots                {}\n", proj.roots.join(", ")));
+    s.push_str(&format!(
+        "\n  docs glob            {}\n",
+        proj.docs_glob.join(", ")
+    ));
+    s.push_str(&format!(
+        "  roots                {}\n",
+        proj.roots.join(", ")
+    ));
     s.push_str(
         "\nChange one with `/config <key> <value>`, which edits jazyk.toml in place.\n\
          The bracket is where the value came from: `env` beats `project`, which beats \
@@ -196,7 +256,8 @@ pub fn config_text(proj: &Project, llm: &crate::llm::Llm) -> String {
     s
 }
 
-// The keys `/config` will edit, the same set the chat tool takes.
+// The keys `/config` will edit, the same set the chat tool takes; `executors.<kind>`
+// and `executors.<class>` route sessions of that kind or class to a profile.
 // Mirrors docs/frontends/acp.md#project-tools.
 pub const CONFIG_KEYS: [&str; 8] = [
     "acp.agent",
@@ -209,16 +270,27 @@ pub const CONFIG_KEYS: [&str; 8] = [
     "gen.worker",
 ];
 
+// An editable key: one of CONFIG_KEYS, or an [executors] override per goal kind or
+// class. Mirrors docs/compiler/project-settings.md#executors.
+fn editable_key(key: &str) -> bool {
+    if CONFIG_KEYS.contains(&key) {
+        return true;
+    }
+    key.strip_prefix("executors.")
+        .is_some_and(|k| crate::project::EXECUTOR_KEYS.contains(&k))
+}
+
 pub fn config_set(proj: &Project, args: &str) -> String {
     let (key, value) = match args.split_once(char::is_whitespace) {
         Some((k, v)) => (k.trim(), v.trim()),
         None => (args.trim(), ""),
     };
-    if !CONFIG_KEYS.contains(&key) {
+    if !editable_key(key) {
         return format!(
-            "`{}` is not one of the editable keys:\n  {}",
+            "`{}` is not one of the editable keys:\n  {}\n  executors.<kind|class> (kinds and classes: {})",
             key,
-            CONFIG_KEYS.join("\n  ")
+            CONFIG_KEYS.join("\n  "),
+            crate::project::EXECUTOR_KEYS.join(", ")
         );
     }
     if value.is_empty() {
@@ -231,6 +303,115 @@ pub fn config_set(proj: &Project, args: &str) -> String {
     match std::fs::write(&path, full) {
         Ok(()) => format!("{} = {}\n\njazyk.toml updated.", key, value),
         Err(e) => format!("cannot write {}: {}", path.display(), e),
+    }
+}
+
+// The board as the scheduler would derive it now: the summary line, one line per
+// goal, and the batches. Shared by the proxy, the GUI pane, and the CLI.
+// Mirrors docs/frontends/acp.md#slash-commands.
+pub fn board_text(proj: &Project, out: &std::path::Path) -> String {
+    let board = crate::board::Board::compute(proj, out);
+    let mut s = format!("{}\n", board.summary_line());
+    let rendered = board.render();
+    if rendered.is_empty() {
+        s.push_str(&format!("verdict: {}\n", board.verdict()));
+    } else {
+        s.push_str(&rendered);
+        s.push('\n');
+    }
+    if !board.batches.is_empty() {
+        s.push_str("batches:\n");
+        for b in &board.batches {
+            s.push_str(&format!(
+                "  {}  {} goal(s), {}\n",
+                b.id,
+                b.goals.len(),
+                b.locality
+            ));
+        }
+    }
+    s
+}
+
+// The next session's prompt, exactly as the model would receive it; with a goal or
+// target, the batch that goal would join. Mirrors docs/compiler/sessions.md#preview.
+pub fn preview_text(proj: &Project, out: &std::path::Path, target: &str) -> String {
+    let mut store = crate::store::Store::load(out);
+    let (parsed, _) = crate::reconcile::parse_all(proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(proj, out);
+    let board = crate::board::Board::derive(&store, proj, &control);
+    let target = target.trim();
+    let batch = if target.is_empty() {
+        board.batches.first()
+    } else {
+        board.batches.iter().find(|b| {
+            b.id == target
+                || b.goals
+                    .iter()
+                    .any(|id| id == target || board.goal(id).is_some_and(|g| g.target == target))
+        })
+    };
+    let Some(batch) = batch else {
+        return if target.is_empty() {
+            "no ready batch; /board says why".to_string()
+        } else {
+            format!("no ready batch holds `{}`; /board says why", target)
+        };
+    };
+    let goals: Vec<crate::model::Goal> = batch
+        .goals
+        .iter()
+        .filter_map(|id| board.goal(id))
+        .cloned()
+        .collect();
+    let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
+    let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile);
+    pb.batch = batch.id.clone();
+    crate::session::session_prompt(&store, &goals, &loaded, &skills, &pb)
+}
+
+// Why a goal exists (its change, cause, readiness, blockers), or what a change to a
+// target would open. Mirrors docs/frontends/cli.md#jazyk-explain.
+pub fn explain_text(proj: &Project, out: &std::path::Path, target: &str) -> String {
+    let target = target.trim();
+    if target.is_empty() {
+        return "explain what? pass a goal id (g:...) or a target (an id, a section, a document)"
+            .to_string();
+    }
+    let mut store = crate::store::Store::load(out);
+    let (parsed, _) = crate::reconcile::parse_all(proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(proj, out);
+    let board = crate::board::Board::derive(&store, proj, &control);
+    board
+        .explain(&store, target)
+        .unwrap_or_else(|| format!("`{}` names no goal and no known target", target))
+}
+
+// Walk a change's cascade through the journal, one line per entry.
+// Mirrors docs/frontends/cli.md#jazyk-ripple.
+pub fn ripple_text(_proj: &Project, out: &std::path::Path, args: &str) -> String {
+    let mut back = false;
+    let mut target = String::new();
+    for w in args.split_whitespace() {
+        if w == "--back" {
+            back = true;
+        } else {
+            target = w.to_string();
+        }
+    }
+    if target.is_empty() {
+        return "ripple what? pass a target, a generation (g412), or a document (--back walks upstream)"
+            .to_string();
+    }
+    let store = crate::store::Store::load(out);
+    match crate::reconcile::ripple(&store, &target, back) {
+        Some(tree) => crate::reconcile::render_ripple(&tree),
+        None => format!(
+            "nothing to walk from `{}`; the journal holds no entry touching it",
+            target
+        ),
     }
 }
 
@@ -275,21 +456,22 @@ pub fn known_agents(proj: &Project) -> Vec<(String, String)> {
     let global = crate::project::load_global_acp();
     for (name, p) in proj.acp.agents.iter().chain(global.agents.iter()) {
         if !v.iter().any(|(n, _)| n == name) {
-            v.push((name.clone(), format!("configured: {} {}", p.command, p.args.join(" "))));
+            v.push((
+                name.clone(),
+                format!("configured: {} {}", p.command, p.args.join(" ")),
+            ));
         }
     }
     v
 }
 
 pub fn agent_text(proj: &Project) -> String {
-    let current = crate::acp::config::resolve_acp(
-        None,
-        &proj.acp,
-        &crate::project::load_global_acp(),
-        |n| std::env::var(n).ok(),
-    )
-    .map(|a| a.name)
-    .unwrap_or_default();
+    let current =
+        crate::acp::config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
+            std::env::var(n).ok()
+        })
+        .map(|a| a.name)
+        .unwrap_or_default();
     let mut s = String::from("Agents jazyk can drive:\n");
     for (name, label) in known_agents(proj) {
         let mark = if name == current { "  (current)" } else { "" };
@@ -330,12 +512,10 @@ pub fn agent_set(proj: &Project, name: &str) -> String {
 // moves rather than a questionnaire. Mirrors docs/frontends/acp.md#slash-commands.
 pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
     let mut s = String::new();
-    let agent = crate::acp::config::resolve_acp(
-        None,
-        &proj.acp,
-        &crate::project::load_global_acp(),
-        |n| std::env::var(n).ok(),
-    );
+    let agent =
+        crate::acp::config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
+            std::env::var(n).ok()
+        });
     let toml = std::fs::read_to_string(proj.root.join("jazyk.toml")).unwrap_or_default();
     let states_agent = toml.contains("[acp]");
     match &agent {
@@ -347,7 +527,10 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
             ));
         }
         Ok(a) => s.push_str(&format!("- Agent: {}.\n", a.name)),
-        Err(e) => s.push_str(&format!("- Agent: unresolved ({}). Set `/config acp.agent <name>`.\n", e)),
+        Err(e) => s.push_str(&format!(
+            "- Agent: unresolved ({}). Set `/config acp.agent <name>`.\n",
+            e
+        )),
     }
     if !toml.contains("model") {
         s.push_str(&format!(
@@ -366,7 +549,10 @@ pub fn init_next_steps(proj: &Project, llm: &crate::llm::Llm) -> String {
         s.push_str(&format!(
             "- The root document ({}) is still the placeholder. Describe what you are building \
              there; that prose is the source code.\n",
-            proj.roots.first().map(|s| s.as_str()).unwrap_or("docs/README.md")
+            proj.roots
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("docs/README.md")
         ));
     }
     s.push_str("\nWhen the documents say something, run `/compile`.");
@@ -385,16 +571,27 @@ mod tests {
         assert_eq!(bare, vec!["help", "init"]);
         assert_eq!(available(true).count(), COMMANDS.len());
 
-        assert_eq!(split("/config llm.model qwen3", true), Some(("config", "llm.model qwen3")));
+        assert_eq!(
+            split("/config llm.model qwen3", true),
+            Some(("config", "llm.model qwen3"))
+        );
         assert_eq!(split("/status", true), Some(("status", "")));
-        assert_eq!(split("/status", false), None, "no build command outside a project");
+        assert_eq!(
+            split("/status", false),
+            None,
+            "no build command outside a project"
+        );
         assert_eq!(split("just talking", true), None);
         assert!(is_command("/help", false));
 
         // Every command reaches the person who typed it: help names them all.
         let help = help_text(true);
         for c in COMMANDS {
-            assert!(help.contains(&format!("/{}", c.name)), "{} missing from help", c.name);
+            assert!(
+                help.contains(&format!("/{}", c.name)),
+                "{} missing from help",
+                c.name
+            );
         }
         assert!(help_text(false).contains("not a jazyk project"));
     }
@@ -406,17 +603,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jazyk-cmd-test-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"docs/**/*.md\"]\n").unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
         let proj = Project::load(&dir);
 
         let out = config_set(&proj, "llm.model qwen3.8:27b-mlx");
         assert!(out.contains("updated"), "{}", out);
         let toml = std::fs::read_to_string(dir.join("jazyk.toml")).unwrap();
         assert!(toml.contains("model = \"qwen3.8:27b-mlx\""), "{}", toml);
-        assert!(toml.contains("glob"), "the existing settings survive: {}", toml);
+        assert!(
+            toml.contains("glob"),
+            "the existing settings survive: {}",
+            toml
+        );
 
         let refused = config_set(&proj, "llm.api_key sk-secret");
-        assert!(refused.contains("not one of the editable keys"), "{}", refused);
+        assert!(
+            refused.contains("not one of the editable keys"),
+            "{}",
+            refused
+        );
         let toml = std::fs::read_to_string(dir.join("jazyk.toml")).unwrap();
         assert!(!toml.contains("sk-secret"), "a refused key writes nothing");
         std::fs::remove_dir_all(&dir).ok();

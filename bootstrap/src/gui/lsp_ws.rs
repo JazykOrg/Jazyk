@@ -26,11 +26,17 @@ struct FrameSink {
 impl FrameSink {
     fn drain(&mut self) {
         loop {
-            let Some(header_end) = self.buf.windows(4).position(|w| w == b"\r\n\r\n") else { return };
+            let Some(header_end) = self.buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                return;
+            };
             let header = String::from_utf8_lossy(&self.buf[..header_end]).to_string();
             let Some(len) = header
                 .lines()
-                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|r| r.trim().to_string()))
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|r| r.trim().to_string())
+                })
                 .and_then(|v| v.parse::<usize>().ok())
             else {
                 self.buf.drain(..header_end + 4);
@@ -82,7 +88,9 @@ async fn session(st: SharedState, socket: WebSocket) {
         loop {
             match sub.recv().await {
                 Ok(ev) => {
-                    if ev["type"] == "store.generation" && gen_tx.send(SessionEvent::StoreChanged).is_err() {
+                    if ev["type"] == "store.generation"
+                        && gen_tx.send(SessionEvent::StoreChanged).is_err()
+                    {
                         break;
                     }
                 }
@@ -95,7 +103,10 @@ async fn session(st: SharedState, socket: WebSocket) {
     let (root, out_dir, gs) = (st.proj().root.clone(), st.out.clone(), st.gs().clone());
     let session = tokio::task::spawn_blocking(move || {
         let mut lsp = crate::lsp::Lsp::new(root, out_dir, gs);
-        let mut sink = FrameSink { buf: Vec::new(), tx: out_tx };
+        let mut sink = FrameSink {
+            buf: Vec::new(),
+            tx: out_tx,
+        };
         for ev in in_rx {
             match ev {
                 SessionEvent::Client(v) => {

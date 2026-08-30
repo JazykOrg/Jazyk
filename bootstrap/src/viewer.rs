@@ -294,7 +294,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 let _ = write!(
                     body,
                     "<p class=\"q\">{}</p>",
-                    esc(&crate::turn::provenance_line(r))
+                    esc(&crate::session::provenance_line(r))
                 );
             }
         }

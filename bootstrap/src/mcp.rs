@@ -1,11 +1,12 @@
 // The MCP server: the tool registry served over stdio as line-delimited JSON-RPC.
 // `jazyk mcp <toolsets>` names what the serving is for (compile, generate, verify,
-// graph); compilation holds an open changeset between calls, exactly one at a time.
-// Mirrors docs/frontends/mcp.md.
-use crate::model::WorkItem;
+// graph); compilation claims goal batches and holds an open changeset between calls,
+// exactly one at a time. Mirrors docs/frontends/mcp.md.
+use crate::model::{Goal, OpenedGoal, WorkItem};
 use crate::store::{ProseEdit, Store};
-use crate::tools::{catalog, toolset, ToolSession, WorkScope};
+use crate::tools::{catalog, toolset, toolset_for_kinds, ToolSession, WorkScope};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
@@ -21,12 +22,12 @@ pub struct McpServer {
     // The client name from `initialize`, recorded on feedback entries so an external
     // agent's report is distinguishable from a compilation turn's.
     client: std::sync::Mutex<Option<String>>,
-    // The open compilation task: a ToolSession holding the staged changeset across
-    // calls. Single-flight per serving. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
-    open: std::sync::Mutex<Option<OpenTask>>,
+    // The open goal batch: a ToolSession holding the staged changeset across calls.
+    // Single-flight per serving. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    open: std::sync::Mutex<Option<OpenBatch>>,
     // The session transcript: one event per call under <out>/trace, reviewable beside
     // a build. Mirrors docs/frontends/mcp.md#transcripts.
-    trace: crate::turn::Trace,
+    trace: crate::session::Trace,
     // The agent-run benchmark: the open case's sandbox and the run's accumulated
     // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
     bench: std::sync::Mutex<BenchRun>,
@@ -36,10 +37,16 @@ pub struct McpServer {
     // Bridge-spawned serving flags: this serving belongs to one ACP session.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     bridge: BridgeFlags,
-    // Task kinds whose instructions this serving already delivered: later tasks of
-    // the same kind elide the repeated text. Mirrors
-    // docs/frontends/mcp.md#compilation-over-mcp.
-    seen_kinds: std::sync::Mutex<std::collections::HashSet<String>>,
+    // What this serving already delivered: the agent contract after the first batch,
+    // and each skill payload once. Later batches elide them; full: true repeats.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    delivered: std::sync::Mutex<Delivered>,
+}
+
+#[derive(Default)]
+struct Delivered {
+    contract: bool,
+    skills: BTreeSet<String>,
 }
 
 // Flags of a serving injected into an ACP session by the bridge. Not for standalone
@@ -47,19 +54,19 @@ pub struct McpServer {
 #[derive(Default, Clone)]
 pub struct BridgeFlags {
     // The serving belongs to one session: no worker registration, and end of input
-    // with an open task runs the implicit finish.
+    // with an open batch runs the implicit finish.
     pub ephemeral: bool,
-    // begin_compilation accepts only this target (parallel-wave safety).
+    // begin_goals accepts only this batch id, or the batch holding this goal id.
     pub only: Option<String>,
     // The serving is part of the running internal build: the build-lease refusal and
-    // the release gate do not apply to its target, and leases claim under this id.
+    // the release gate do not apply to its batch, and leases claim under this id.
     pub build_token: Option<String>,
     // Serve the file and command tools, for agents with no editor of their own.
     pub serve_files: bool,
     // Delegate document and settings writes to the spawning process (the IDE proxy).
     pub edit_sink: Option<String>,
-    // The bridge already sent the task's instructions and package as the session
-    // prompt; begin_compilation answers with a short ack instead of repeating them.
+    // The bridge already sent the batch's instructions and package as the session
+    // prompt; begin_goals answers with a short ack instead of repeating them.
     pub packaged: bool,
 }
 
@@ -81,32 +88,34 @@ struct OpenCase {
     gs: crate::gen::GenSettings,
 }
 
-struct OpenTask {
-    item: WorkItem,
+struct OpenBatch {
+    id: String,
+    goals: Vec<Goal>,
+    // Change record ids each goal stood on when claimed; a resolution clears them.
+    records: BTreeMap<String, Vec<String>>,
+    // Open goal ids on the board when claimed; the diff after commit is `opened`.
+    known_open: BTreeSet<String>,
     session: ToolSession,
     rounds: u32,
 }
 
 // The compilation lifecycle: served beside the catalog, implemented on the server
-// because they own the queue and the open changeset.
-const LIFECYCLE: [&str; 4] = [
-    "compilation_tasks",
-    "begin_compilation",
-    "finish_compilation",
-    "abandon_compilation",
-];
+// because they own the board and the open changeset.
+const LIFECYCLE: [&str; 4] = ["goals", "begin_goals", "done", "abandon_goals"];
 
 fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String {
     let mut s = String::from(
-        "This server is one jazyk project's semantic graph: entities and EARS requirements \
+        "This server is one jazyk project's semantic graph: entities and requirements \
          reconciled from prose documentation, consumed by generation and verification. ",
     );
     if modes.iter().any(|m| m == "compile") {
         s.push_str(
-            "COMPILATION LOOP: call compilation_tasks; while a task is ready, begin_compilation, \
-             follow the instructions in the returned package, stage findings with the write tools, \
-             then call done. Its reply names the next ready task; repeat until the queue is empty \
-             and the verdict is converged. ",
+            "GOAL LOOP: call goals for the board; begin_goals claims the next ready batch (or a \
+             named one) and answers with the batch's assembled instructions and its loaded set. \
+             Load context with load, expand, unload, and graph_status, stage findings with the \
+             write tools and view tools, mark each goal with mark_goal_done and a one-line \
+             justification (or mark_goal_failed with a reason), then call done. Its reply names \
+             the next ready batch; repeat until the board is empty and the verdict is converged. ",
         );
     }
     if modes.iter().any(|m| m == "generate") {
@@ -181,9 +190,11 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
     s.push_str(
         "The write tools are: upsert_entity, update_entity, delete_entity, merge_entities, \
          upsert_requirement, update_requirement, delete_requirement, set_coverage, \
-         report_diagnostic, resolve_diagnostic. To wait for new work, call await_changes (a long \
-         poll). A gated task says `awaiting release`; `jazyk release` (or the GUI) approves it. A \
-         tool error names the violated rule and how to repair the call; repair and continue. If any \
+         report_diagnostic, resolve_diagnostic, and the view tools upsert_view, update_view, \
+         delete_view. They stage into the open batch's changeset; outside one they are rejected \
+         toward begin_goals. To wait for new work, call await_changes (a long poll). A gated \
+         batch says `awaiting release`; `jazyk release` (or the GUI) approves it. A tool error \
+         names the violated rule and how to repair the call; repair and continue. If any \
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
          report_feedback: it reaches jazyk's developers, never touches the graph, and is not a \
          substitute for the work.",
@@ -226,10 +237,10 @@ impl McpServer {
             open: std::sync::Mutex::new(None),
             bench: std::sync::Mutex::new(BenchRun::default()),
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            trace: crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet)
+            trace: crate::session::Trace::stderr(crate::session::TraceLevel::Quiet)
                 .with_transcript(&out_for_trace, "mcp"),
             bridge,
-            seen_kinds: std::sync::Mutex::new(std::collections::HashSet::new()),
+            delivered: std::sync::Mutex::new(Delivered::default()),
         }
     }
 
@@ -307,9 +318,19 @@ impl McpServer {
             board.ready_of(&["verify"]),
         );
         let gated = board.gated.len();
+        let counts = board.counts();
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
+            "board": {
+                "open": counts.open,
+                "ready": counts.ready,
+                "blocked": counts.blocked,
+                "parked": counts.parked,
+                "failed": counts.failed,
+                "optional": counts.optional,
+                "byClass": counts.by_class,
+            },
             "compilationTasks": board.open_of(&graph_kinds),
             "bindingTasks": board.open_of(&["bind"]),
             "generationTasks": board.open_of(&["generate"]),
@@ -319,7 +340,7 @@ impl McpServer {
             "verdict": board.verdict.to_string(),
             "openDiagnostics": board.open_diags,
             "next": if c_act > 0 {
-                "compilation_tasks lists the work"
+                "goals lists the board"
             } else if b_act > 0 {
                 "binding_tasks lists the work"
             } else if g_act > 0 {
@@ -454,18 +475,20 @@ impl McpServer {
             .unwrap_or_else(|| format!("agent-{}", std::process::id()))
     }
 
-    fn compilation_tasks(&self) -> Value {
+    // The `goals` tool: the board with readiness sentences, gated and claimedBy, the
+    // batches the scheduler would form, and the verdict with its counts when nothing
+    // is open. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    fn goals_answer(&self) -> Value {
         let mut board = crate::board::Board::compute(&self.project, &self.out);
         // An empty board with a stale `incomplete` verdict settles here: the tail is
         // deterministic and idempotent, and a lister that finds nothing to do may as
         // well say so truthfully. A dangling judged diagnostic settles the same way.
-        // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
         if board.open_mandatory() == 0
             && (!board.verdict.converged() || board.dangling_diags)
             && self.open.lock().unwrap().is_none()
         {
             let mut s = Store::load(&self.out);
-            let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
+            let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
             crate::reconcile::finalize(
                 &mut s,
                 &self.project,
@@ -476,170 +499,218 @@ impl McpServer {
             board = crate::board::Board::compute(&self.project, &self.out);
         }
         let mut v = board.answer();
-        if self.open.lock().unwrap().is_some() {
-            v["openTask"] = json!("a task is already open; done or abandon_compilation first");
+        if let Some(o) = self.open.lock().unwrap().as_ref() {
+            v["openBatch"] = json!(format!(
+                "batch `{}` is already open; done or abandon_goals first",
+                o.id
+            ));
         }
         v
     }
 
-    fn begin_compilation(&self, params: &Value) -> Value {
+    // Claim a goal batch: the named batch, the named goals when one batch holds them
+    // all (one locality, one executor), the --only scope, or the next ready batch.
+    // Opens the changeset and returns the assembled session prompt as `instructions`
+    // and the initially loaded set as `package`.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    fn begin_goals(&self, params: &Value) -> Value {
         if let Some(o) = self.open.lock().unwrap().as_ref() {
-            return json!({"error": {"rule": "task-open", "message": format!(
-                "task `{} {}` is already open with {} staged mutation(s); done or abandon_compilation first",
-                o.item.task, o.item.target, o.session.staged.len())}});
+            return json!({"error": {"rule": "batch-open", "message": format!(
+                "batch `{}` is already open with {} staged mutation(s); done or abandon_goals first",
+                o.id, o.session.staged.len())}});
         }
-        let board = crate::board::Board::compute(&self.project, &self.out);
-        let target = params["arguments"]["task"]
-            .as_str()
-            .or(params["arguments"]["batch"].as_str())
-            .or(params["arguments"]["goal"].as_str());
-        let Some(item) = board.find_item(target) else {
+        // The snapshot and the board derive from the same synced store.
+        let mut store = Store::load(&self.out);
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        store.sync_docs(&parsed);
+        let control = crate::control::Control::load(&self.project, &self.out);
+        let board = crate::board::Board::derive(&store, &self.project, &control);
+        let args = &params["arguments"];
+        let wanted_batch = args["batch"].as_str();
+        let wanted_goals: Vec<String> = args["goals"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let selected = if let Some(bid) = wanted_batch {
+            board.batches.iter().find(|b| b.id == bid)
+        } else if !wanted_goals.is_empty() {
+            // Named goals form one batch only when one scheduled batch already holds
+            // them all: same locality, same tier, executors agreeing.
+            board
+                .batches
+                .iter()
+                .find(|b| wanted_goals.iter().all(|g| b.goals.contains(g)))
+        } else if let Some(only) = &self.bridge.only {
+            board
+                .batches
+                .iter()
+                .find(|b| b.id == *only || b.goals.iter().any(|g| g == only))
+        } else {
+            board.batches.first()
+        };
+        let Some(batch) = selected else {
             let mut v = board.answer();
-            v["error"] = json!({"rule": "no-ready-task", "message": match target {
-                Some(t) => format!("`{}` is not a ready goal; the board above says what is", t),
-                None => "no goal is ready; the board above says why".to_string(),
+            v["error"] = json!({"rule": "no-ready-batch", "message": match (wanted_batch, wanted_goals.is_empty()) {
+                (Some(b), _) => format!("`{}` is not a batch on the current board; pick from the batches above", b),
+                (None, false) => "the named goals do not share one ready batch (one locality, one executor); pick from the batches above".to_string(),
+                _ => "no batch is ready; the board above says why".to_string(),
             }});
             return v;
         };
-        // A bridge serving scoped to one target refuses everything else, so a
-        // confused agent cannot grab a sibling wave's work.
+        let batch = batch.clone();
+        // A bridge serving scoped to one batch (or one of its goals) refuses
+        // everything else, so a confused agent cannot claim the rest of the board.
         if let Some(only) = &self.bridge.only {
-            if item.target != *only {
+            if batch.id != *only && !batch.goals.iter().any(|g| g == only) {
                 return json!({"error": {"rule": "wrong-target", "message": format!(
-                    "this serving is scoped to `{}`; `{}` belongs to another session", only, item.target)}});
+                    "this serving is scoped to `{}`; batch `{}` belongs to another session", only, batch.id)}});
             }
         }
-        // The control plane's claims, in order: a gated task awaits its release, a
-        // running internal build owns the queue, a leased task belongs to its holder.
-        // A serving carrying the build's own token skips the first two: the build
-        // already released this work and holds the coarse lease itself.
+        // The control plane's claims, in order: a gated batch awaits its release, a
+        // running internal build owns the board, a leased batch belongs to its
+        // holder. A serving carrying the build's own token skips the first two.
         // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
         if self.bridge.build_token.is_none() {
-            let gated = board.gated.iter().any(|id| {
-                board.goal(id).is_some_and(|g| {
-                    g.target == item.target
-                        || crate::board::target_doc(&g.target).as_deref() == Some(item.target.as_str())
-                })
-            });
-            if gated {
+            if batch.goals.iter().any(|id| board.gated.contains(id)) {
                 return json!({"error": {"rule": "awaiting-release", "message": format!(
-                    "`{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", item.target)}});
+                    "batch `{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", batch.id)}});
             }
             if let Some(l) = crate::control::build_lease(&self.out) {
                 return json!({"error": {"rule": "build-running", "message": format!(
                     "an internal build is running (lease `{}`, heartbeated every 30s, expires {}s after the last heartbeat). \
                      await_changes returns when it clears. If you were spawned BY that build, its serving carries --build-token and never sees this error; \
-                     seeing it means this serving is a bystander and the queue is not yours yet", l.worker, crate::control::LEASE_TTL_SECS)}});
+                     seeing it means this serving is a bystander and the board is not yours yet", l.worker, crate::control::LEASE_TTL_SECS)}});
             }
         }
-        if let Err(holder) = crate::control::claim(&self.out, &item.target, &self.worker_id()) {
+        if let Err(holder) =
+            crate::control::claim_goals(&self.out, &batch.id, &self.worker_id(), &batch.goals)
+        {
             return json!({"error": {"rule": "claimed", "message": format!(
-                "`{}` is claimed by worker `{}`; pick another task or wait for the lease to lapse", item.target, holder)}});
+                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse", batch.id, holder)}});
         }
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
-            h.refresh(Some(&format!("{} {}", item.task, item.target)));
+            h.refresh(Some(&batch.id));
         }
-        // The task's snapshot: the store with section trees synced against the docs on
-        // disk, in memory. The commit at finish re-syncs its own fresh store.
-        let mut store = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        store.sync_docs(&parsed);
-        let gs = crate::gen::GenSettings::resolve(&self.project);
-        let (instructions, pack) =
-            crate::turn::task_prompt(&store, &item, &self.project.linting, &gs);
-        let scope = match item.task.as_str() {
-            "reconcile-doc" => WorkScope {
-                task: item.task.clone(),
-                doc: Some(item.target.clone()),
-                target: item.target.clone(),
-                target_sections: item.dirty_sections.clone(),
-                stale_anchors: item.stale_anchors.clone(),
-                proposals: Vec::new(),
-            },
-            "align-doc" => WorkScope {
-                task: item.task.clone(),
-                doc: Some(item.target.clone()),
-                target: item.target.clone(),
-                target_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: item.proposals.clone(),
-            },
-            _ => WorkScope {
-                task: item.task.clone(),
-                doc: None,
-                target: item.target.clone(),
-                target_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: Vec::new(),
-            },
+        let goals: Vec<Goal> = batch
+            .goals
+            .iter()
+            .filter_map(|id| board.goal(id))
+            .cloned()
+            .collect();
+        let records: BTreeMap<String, Vec<String>> = goals
+            .iter()
+            .map(|g| (g.id.clone(), board.records_of(&g.id)))
+            .collect();
+        let known_open: BTreeSet<String> =
+            board.open_goals().iter().map(|g| g.id.clone()).collect();
+        // The assembled prompt and the loaded set, before the store moves into the
+        // session. The first batch of a serving ships the agent contract and the
+        // skills in full; later batches elide what the agent already saw.
+        let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
+        let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile);
+        pb.batch = batch.id.clone();
+        let full = args["full"].as_bool() == Some(true);
+        let (include_contract, skip_skills) = {
+            let mut d = self.delivered.lock().unwrap();
+            let include = full || !d.contract;
+            let skip: BTreeSet<String> = if full {
+                BTreeSet::new()
+            } else {
+                skills
+                    .rendered_names()
+                    .into_iter()
+                    .filter(|n| d.skills.contains(n))
+                    .collect()
+            };
+            d.contract = true;
+            d.skills.extend(skills.rendered_names());
+            (include, skip)
         };
-        let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
-        session.gen = crate::gen::GenSettings::resolve(&self.project);
-        session.caller = self.caller(&item.task, &item.target);
-        let write_tools: Vec<&str> = toolset(&item.task)
+        let instructions = crate::session::session_prompt_elided(
+            &store,
+            &goals,
+            &loaded,
+            &skills,
+            &pb,
+            include_contract,
+            &skip_skills,
+        );
+        let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
+        let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);
+        let scope = WorkScope::for_batch(&batch.id, &goals);
+        let kinds = scope.kinds();
+        let kind_refs: Vec<&str> = kinds.iter().map(String::as_str).collect();
+        let write_tools: Vec<&str> = toolset_for_kinds(&kind_refs)
             .into_iter()
             .filter(|t| {
                 !crate::tools::READ_TOOLS.contains(t)
-                    && *t != "done"
+                    && !crate::tools::GOAL_TOOLS.contains(t)
                     && *t != crate::tools::FEEDBACK_TOOL
+            })
+            .collect();
+        let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
+        session.loaded = loaded;
+        session.skills = skills;
+        session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.caller = self.caller(&kinds.join("+"), &batch.id);
+        let goal_rows: Vec<Value> = goals
+            .iter()
+            .map(|g| {
+                json!({"id": g.id, "kind": g.kind, "target": g.target, "mandatory": g.mandatory})
             })
             .collect();
         let reply = if self.bridge.packaged {
             // The bridge already delivered the contract as the session prompt.
             json!({
-                "task": {"kind": item.task, "target": item.target},
-                "note": "changeset open; stage findings with the write tools, then finish with done",
+                "batch": batch.id,
+                "goals": goals.iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
+                "note": "changeset open; stage findings with the write tools, mark each goal, then finish with done",
             })
         } else {
-            // The first task of each kind ships the full contract; later ones elide
-            // it (the agent saw it earlier in this session), which is the bulk of
-            // the reply on review-heavy builds. A client that lost its context asks
-            // for it back with full: true.
-            let seen = !self.seen_kinds.lock().unwrap().insert(item.task.clone());
-            let instructions_field = if seen && params["arguments"]["full"].as_bool() != Some(true)
-            {
-                json!(format!(
-                    "(same contract as the earlier {} task in this session; unchanged. Lost it? begin again with full: true)",
-                    item.task
-                ))
-            } else {
-                json!(instructions)
-            };
             json!({
-                "task": {"kind": item.task, "target": item.target,
-                         "dirtySections": item.dirty_sections.iter().map(|r| format!("{}#{}", item.target, r)).collect::<Vec<_>>(),
-                         "staleAnchors": item.stale_anchors,
-                         "proposals": item.proposals},
-                "instructions": instructions_field,
-                "package": pack,
+                "batch": batch.id,
+                "goals": goal_rows,
+                "instructions": instructions,
+                "package": package,
                 "writeTools": write_tools,
-                "readTools": ["context", "expand", "search", "read_section", "get_entity", "diagnostics"],
+                "readTools": crate::tools::READ_TOOLS.to_vec(),
+                "goalTools": crate::tools::GOAL_TOOLS.to_vec(),
                 "finishTool": "done",
-                "next": "stage findings with the write tools, then done with a one-line summary",
+                "next": "load what the goals name, stage findings, mark each goal with mark_goal_done, then done with a one-line summary",
             })
         };
-        let _ = (&instructions, &pack, &write_tools);
-        *self.open.lock().unwrap() = Some(OpenTask {
-            item,
+        *self.open.lock().unwrap() = Some(OpenBatch {
+            id: batch.id,
+            goals,
+            records,
+            known_open,
             session,
             rounds: 0,
         });
         reply
     }
 
-    fn finish_compilation(&self, params: &Value) -> Value {
+    // The `done` tool: run the batch gates, commit atomically, re-derive the board,
+    // and run the deterministic tail when the board empties.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    fn done_batch(&self, params: &Value) -> Value {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else {
-            return json!({"error": {"rule": "no-open-task", "message": "no compilation task is open; begin_compilation first"}});
+            return json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}});
         };
         let summary = params["arguments"]["summary"]
             .as_str()
             .unwrap_or("")
             .to_string();
-        // The same done gates an in-process turn faces: coverage contract, stale anchors.
+        // The same batch gates an in-process session faces: every goal resolved or
+        // failed, coverage contract, stale anchors, undecided proposals.
         if let Err(e) = o.session.dispatch("done", &json!({"summary": summary})) {
             let v = e.to_value();
-            crate::control::refresh_lease(&self.out, &o.item.target);
+            crate::control::refresh_lease(&self.out, &o.id);
             *open = Some(o); // the changeset stays open; repair and finish again
             return v;
         }
@@ -650,7 +721,7 @@ impl McpServer {
         let graph_kinds = crate::board::Board::graph_kinds();
         if board.ready_of(&graph_kinds) == 0 {
             let mut s2 = Store::load(&self.out);
-            let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
+            let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
             let report = crate::reconcile::finalize(
                 &mut s2,
                 &self.project,
@@ -685,10 +756,10 @@ impl McpServer {
             reply["next"] = json!(board2.answer());
             return reply;
         }
-        // beginNext claims the next ready task in the same call, saving a round trip
-        // per task. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+        // beginNext claims the next ready batch in the same call, saving a round
+        // trip per batch. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
         if params["arguments"]["beginNext"].as_bool() == Some(true) {
-            let began = self.begin_compilation(&json!({"arguments": {}}));
+            let began = self.begin_goals(&json!({"arguments": {}}));
             if began["error"].is_null() {
                 reply["began"] = began;
                 return reply;
@@ -698,66 +769,88 @@ impl McpServer {
         reply
     }
 
-    // Land a task whose done gates passed: release the lease, apply the staged work,
-    // complete reviews, un-park. Shared by finish_compilation and the ephemeral
-    // end-of-input finish.
-    fn commit_open(&self, o: &mut OpenTask) -> Value {
-        crate::control::release_lease(&self.out, &o.item.target);
+    // Land a batch whose gates passed: release the lease, apply the staged work with
+    // the resolutions on the journal entry, clear the resolved goals' records,
+    // persist the failed goals, un-park, and record the goals the commit opened.
+    // Shared by `done` and the ephemeral end-of-input finish.
+    fn commit_open(&self, o: &mut OpenBatch) -> Value {
+        crate::control::release_lease(&self.out, &o.id);
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(""));
         }
         let staged = std::mem::take(&mut o.session.staged);
+        let commit = o.session.commit(o.rounds, 0);
+        let resolved_ids: Vec<String> = commit.resolved.iter().map(|r| r.goal.clone()).collect();
         let mut s = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         s.sync_docs(&parsed);
-        let mut reply = json!({"committed": true, "applied": 0});
+        let mut reply = json!({"committed": true, "batch": o.id, "applied": 0});
+        let mut generation = None;
         if !staged.is_empty() {
-            let report = s.apply(staged, &o.item.commit(o.rounds, 0));
+            let report = s.apply(staged, &commit);
+            generation = Some(report.generation);
             reply["applied"] = json!(report.applied);
+            reply["generation"] = json!(report.generation);
             if !report.skipped.is_empty() {
                 reply["skipped"] = json!(report.skipped);
             }
         }
-        // A finished review resolves its goal: the records it stood on clear. A pair
-        // judged from one end covers its mirror: when two changed requirements are
-        // each other's only neighbor, the reverse pair would judge the same pair again.
-        match o.item.task.as_str() {
-            "review-entity" => {
-                let ids = s
-                    .status
-                    .change_ids(&crate::store::ENTITY_REVIEW_KINDS, &o.item.target);
-                s.clear_changes(&ids);
-            }
-            "review-requirement" => {
-                let rid = o.item.target.clone();
-                let judged: std::collections::BTreeSet<String> =
-                    s.pair_review_neighbors(&rid).into_iter().collect();
-                let mut ids = s.status.change_ids(&crate::store::REQ_REVIEW_KINDS, &rid);
-                for r in s.status.changed_subjects(&crate::store::REQ_REVIEW_KINDS) {
-                    if r == rid || !judged.contains(&r) {
-                        continue;
-                    }
-                    let nbrs = s.pair_review_neighbors(&r);
-                    if !nbrs.is_empty() && nbrs.iter().all(|n| n == &rid) {
-                        ids.extend(s.status.change_ids(&crate::store::REQ_REVIEW_KINDS, &r));
-                    }
-                }
-                s.clear_changes(&ids);
-            }
-            _ => {}
+        // A resolution clears the change records its goal stood on, mutations or not.
+        if !resolved_ids.is_empty() {
+            let clear: Vec<String> = resolved_ids
+                .iter()
+                .flat_map(|id| o.records.get(id).cloned().unwrap_or_default())
+                .collect();
+            s.clear_changes(&clear);
+            reply["resolved"] = json!(resolved_ids);
         }
-        // A resumed parked item is no longer parked.
-        let goal_id = o.item.goal_id();
-        if s.status.parked.iter().any(|p| p.id == goal_id) {
-            s.status.parked.retain(|p| p.id != goal_id);
+        // Failed goals persist by id with their change payloads, so they survive
+        // re-derivation. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+        let failed = o.session.failed_goals();
+        for (id, reason) in &failed {
+            if let Some(g) = o.goals.iter().find(|g| g.id == *id) {
+                s.status.failed.retain(|f| f.goal.id != *id);
+                s.status.failed.push(crate::model::FailedGoal {
+                    goal: g.clone(),
+                    reason: reason.clone(),
+                });
+            }
+        }
+        if !failed.is_empty() {
+            reply["failed"] = json!(failed.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+        }
+        // A resumed parked goal is no longer parked.
+        let batch_ids: BTreeSet<&String> = o.goals.iter().map(|g| &g.id).collect();
+        let parked_before = s.status.parked.len();
+        s.status.parked.retain(|p| !batch_ids.contains(&p.id));
+        if !failed.is_empty() || parked_before != s.status.parked.len() {
             s.save_status();
+        }
+        // The board re-derives; the goals this commit opened land on its journal
+        // entry. Mirrors docs/compiler/graph.md#journal.
+        let board = crate::board::Board::compute(&self.project, &self.out);
+        let opened: Vec<OpenedGoal> = board
+            .open_goals()
+            .iter()
+            .filter(|g| !o.known_open.contains(&g.id))
+            .map(|g| OpenedGoal {
+                goal: g.id.clone(),
+                cause: g.cause.clone().unwrap_or_default(),
+            })
+            .collect();
+        if !opened.is_empty() {
+            reply["opened"] = json!(opened.iter().map(|x| x.goal.clone()).collect::<Vec<_>>());
+            if let Some(g) = generation {
+                let mut s2 = Store::load(&self.out);
+                s2.record_opened_goals(g, opened);
+            }
         }
         reply
     }
 
-    // End of input with an open task: the agent's session ended without the finishing
-    // call. Valid staged work still lands, under the same gates the budget path uses.
-    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    // End of input with an open batch: the agent's session ended without the
+    // finishing call. Valid staged work still lands, under the same gates the budget
+    // path uses. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     fn eof_finish(&self) {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else { return };
@@ -765,34 +858,35 @@ impl McpServer {
             .finish_implicit("(implicit: the agent session ended)")
         {
             let reply = self.commit_open(&mut o);
-            self.trace.event(crate::turn::TraceEvent::SessionDone {
-                label: format!("{} {}", o.item.task, o.item.target),
-                goals: vec![o.item.goal_id()],
+            self.trace.event(crate::session::TraceEvent::SessionDone {
+                label: o.id.clone(),
+                goals: o.goals.iter().map(|g| g.id.clone()).collect(),
                 staged: reply["applied"].as_u64().unwrap_or(0) as usize,
                 rounds: o.rounds,
                 mode: "implicit".into(),
                 summary: String::new(),
             });
         } else {
-            crate::control::release_lease(&self.out, &o.item.target);
+            crate::control::release_lease(&self.out, &o.id);
         }
     }
 
-    fn abandon_compilation(&self, params: &Value) -> Value {
+    fn abandon_goals(&self, params: &Value) -> Value {
         let mut open = self.open.lock().unwrap();
         let Some(o) = open.take() else {
-            return json!({"error": {"rule": "no-open-task", "message": "no compilation task is open"}});
+            return json!({"error": {"rule": "no-open-batch", "message": "no batch is open"}});
         };
-        crate::control::release_lease(&self.out, &o.item.target);
+        crate::control::release_lease(&self.out, &o.id);
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(""));
         }
         let reason = params["arguments"]["reason"].as_str().unwrap_or("");
         json!({
-            "abandoned": format!("{} {}", o.item.task, o.item.target),
+            "abandoned": o.id,
+            "goals": o.goals.iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
             "dropped": o.session.staged.len(),
             "reason": reason,
-            "note": "the staged changeset is gone; the task stays in the queue",
+            "note": "the staged changeset is gone; the goals return to open",
         })
     }
 
@@ -898,33 +992,16 @@ impl McpServer {
                 });
             }
             _ => {
-                let (instructions, pack) = crate::turn::task_prompt(&store, &item, &case.lint, &gs);
-                reply["instructions"] = json!(instructions);
-                reply["package"] = json!(pack);
+                let goal = item.to_goal(crate::model::GoalState::Open);
+                reply["instructions"] =
+                    json!(crate::session::preview(&store, std::slice::from_ref(&goal)));
                 if case.task_type == "generate-entity" {
                     reply["deliverableDir"] = json!(gs.deliverable.to_string_lossy());
                     reply["note"] = json!("write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open");
                 }
             }
         }
-        let scope = match item.task.as_str() {
-            "reconcile-doc" => WorkScope {
-                task: item.task.clone(),
-                doc: Some(item.target.clone()),
-                target: item.target.clone(),
-                target_sections: item.dirty_sections.clone(),
-                stale_anchors: Vec::new(),
-                proposals: Vec::new(),
-            },
-            _ => WorkScope {
-                task: item.task.clone(),
-                doc: None,
-                target: item.target.clone(),
-                target_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: Vec::new(),
-            },
-        };
+        let scope = WorkScope::from_item(&item);
         let mut session = ToolSession::new(
             store.clone(),
             scope,
@@ -953,7 +1030,7 @@ impl McpServer {
         };
         let case = &cases[o.idx];
         // Turn cases face the same done gates a turn does; a rejection keeps the case
-        // open, same contract as finish_compilation.
+        // open, same contract as done on a batch.
         if case.task_type == "reconcile-doc" || case.task_type.starts_with("review-") {
             let summary = params["arguments"]["summary"]
                 .as_str()
@@ -1176,28 +1253,42 @@ impl McpServer {
                     .collect();
                 if self.modes.iter().any(|m| m == "compile") {
                     tools.push(json!({
-                        "name": "compilation_tasks",
-                        "description": "The compilation task queue: align-document tasks (anchors to place after a document reshuffle), reconcile-document tasks by document level, then review tasks, each ready or blocked with the reason. Zero tasks carries the build verdict. Next: begin_compilation.",
+                        "name": "goals",
+                        "description": "The goal board: every goal with its kind, class, readiness (ready, or the blocking reason as a sentence), gated and claimedBy, plus the batches the scheduler would form. Zero open goals carries the build verdict with its counts. Next: begin_goals.",
                         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
                     }));
                     tools.push(json!({
-                        "name": "begin_compilation",
-                        "description": "Claim the named task (or the first ready one) and open its changeset. Returns the task's instructions and work package: dirty section bodies, statements already extracted, known entities, stale anchors. Stage findings with the write tools, then done. One task open at a time.",
-                        "inputSchema": {"type": "object", "properties": {"task": {"type": "string", "description": "target from compilation_tasks, e.g. docs/api.md or req:api-1"}, "full": {"type": "boolean", "description": "repeat the instructions even when this session already saw them"}}, "additionalProperties": false}
+                        "name": "begin_goals",
+                        "description": "Claim the named batch (batch, an id from goals), the named goals as one batch (goals, when one scheduled batch holds them all), or the next ready batch. Opens the changeset and returns the assembled session prompt as instructions and the initially loaded set as package. One batch open at a time.",
+                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string", "description": "a batch id from goals, e.g. b412-1"}, "goals": {"type": "array", "items": {"type": "string"}, "description": "goal ids sharing one locality and one executor"}, "full": {"type": "boolean", "description": "repeat the agent contract and the skills even when this serving already delivered them"}}, "additionalProperties": false}
                     }));
-                    // One finish verb: `done` is the only listed completion tool.
-                    // finish_compilation stays dispatchable for older clients but is
-                    // not advertised; two listed names made models wonder which is
-                    // which. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
                     tools.push(json!({
                         "name": "done",
-                        "description": "Finish the open task: run the done gates (every dirty section marked, every stale anchor resolved) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again. The reply names the next ready task (beginNext: true also claims it in the same call); the finish that empties the queue reports the verdict.",
+                        "description": "Finish the open batch: run the batch gates (every goal marked done or failed, every dirty section marked, every stale anchor addressed) and commit the changeset atomically. A gate failure names the repair and keeps the changeset open; repair and call done again. The reply names the next ready batch (beginNext: true also claims it in the same call); the finish that empties the board reports the verdict with its counts.",
                         "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}, "beginNext": {"type": "boolean"}}, "required": ["summary"], "additionalProperties": false}
                     }));
                     tools.push(json!({
-                        "name": "abandon_compilation",
-                        "description": "Drop the open changeset without committing. The task stays in the queue.",
+                        "name": "abandon_goals",
+                        "description": "Drop the open changeset without committing. The batch's goals return to open.",
                         "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                }
+                // A ledger session's serving answers the protocol line's lifecycle
+                // calls with acknowledgements; the ledger records are the commit.
+                // Mirrors docs/compiler/tools.md#compilation-tools.
+                if !self.modes.iter().any(|m| m == "compile")
+                    && self.bridge.only.is_some()
+                    && self.modes.iter().any(|m| m == "generate" || m == "verify")
+                {
+                    tools.push(json!({
+                        "name": "begin_goals",
+                        "description": "Acknowledge the batch this serving already holds. The work runs through the ledger tools; finish with done.",
+                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string"}}, "additionalProperties": false}
+                    }));
+                    tools.push(json!({
+                        "name": "done",
+                        "description": "Acknowledge the end of the batch. The ledger records (record_binding, record_generation, record_verdict) are the commit; a row recorded resolves its goal.",
+                        "inputSchema": {"type": "object", "properties": {"summary": {"type": "string"}}, "additionalProperties": false}
                     }));
                 }
                 if self.modes.iter().any(|m| m == "benchmark") {
@@ -1306,14 +1397,14 @@ impl McpServer {
                 // The transcript row: the call under its task's label, condensed the
                 // same way a turn's rows are. Mirrors docs/frontends/mcp.md#transcripts.
                 let label = match self.open.lock().unwrap().as_ref() {
-                    Some(o) => format!("{} {}", o.item.task, o.item.target),
+                    Some(o) => o.id.clone(),
                     None => format!("mcp {}", self.modes.join(",")),
                 };
-                self.trace.event(crate::turn::TraceEvent::ToolCall {
+                self.trace.event(crate::session::TraceEvent::ToolCall {
                     label: label.clone(),
                     name: name.clone(),
-                    summary: crate::turn::condense(&params["arguments"], 160),
-                    full: crate::turn::full_payload(&params["arguments"]),
+                    summary: crate::session::condense(&params["arguments"], 160),
+                    full: crate::session::full_payload(&params["arguments"]),
                 });
                 let reply = self.tool_call(&name, params, &label);
                 if let Ok(v) = &reply {
@@ -1321,7 +1412,7 @@ impl McpServer {
                     let text = v["content"][0]["text"].as_str().unwrap_or_default();
                     let parsed: Value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
                     if is_err {
-                        self.trace.event(crate::turn::TraceEvent::ToolError {
+                        self.trace.event(crate::session::TraceEvent::ToolError {
                             label,
                             rule: parsed["error"]["rule"]
                                 .as_str()
@@ -1333,11 +1424,11 @@ impl McpServer {
                                 .to_string(),
                         });
                     } else {
-                        self.trace.event(crate::turn::TraceEvent::ToolResult {
+                        self.trace.event(crate::session::TraceEvent::ToolResult {
                             label,
                             name: name.clone(),
-                            summary: crate::turn::condense(&parsed, 160),
-                            full: crate::turn::full_payload(&parsed),
+                            summary: crate::session::condense(&parsed, 160),
+                            full: crate::session::full_payload(&parsed),
                         });
                     }
                 }
@@ -1368,43 +1459,63 @@ impl McpServer {
                         }
                         if self.open.lock().unwrap().is_some() {
                             return Ok(text_result(
-                                json!({"error": {"rule": "task-open",
-                                "message": "a task is open; awaiting changes now is a stall. Finish it with done (or abandon_compilation), then await."}}),
+                                json!({"error": {"rule": "batch-open",
+                                "message": "a batch is open; awaiting changes now is a stall. Finish it with done (or abandon_goals), then await."}}),
                                 true,
                             ));
                         }
                         return Ok(text_result(self.await_changes(params), false));
                     }
-                    "compilation_tasks" if self.modes.iter().any(|m| m == "compile") => {
-                        let v = self.compilation_tasks();
+                    "goals" if self.modes.iter().any(|m| m == "compile" || m == "chat") => {
+                        let v = self.goals_answer();
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    "begin_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        let v = self.begin_compilation(params);
+                    "begin_goals" if self.modes.iter().any(|m| m == "compile" || m == "chat") => {
+                        let v = self.begin_goals(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    "finish_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        let v = self.finish_compilation(params);
-                        let is_err = !v["error"].is_null();
-                        return Ok(text_result(v, is_err));
-                    }
-                    // `done` is what every task's instructions say; on a compile
-                    // serving it is the same finish. One verb everywhere.
+                    // `done` is what every batch's instructions say; on a compile
+                    // serving it is the finish. One verb everywhere.
                     "done"
-                        if self.modes.iter().any(|m| m == "compile")
-                            && self.bench.lock().unwrap().open.is_none()
-                            && self.open.lock().unwrap().is_some() =>
+                        if self.modes.iter().any(|m| m == "compile" || m == "chat")
+                            && self.bench.lock().unwrap().open.is_none() =>
                     {
-                        let v = self.finish_compilation(params);
+                        if self.open.lock().unwrap().is_none() {
+                            return Ok(text_result(
+                                json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}}),
+                                true,
+                            ));
+                        }
+                        let v = self.done_batch(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }
-                    "abandon_compilation" if self.modes.iter().any(|m| m == "compile") => {
-                        let v = self.abandon_compilation(params);
+                    "abandon_goals" if self.modes.iter().any(|m| m == "compile" || m == "chat") => {
+                        let v = self.abandon_goals(params);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
+                    }
+                    // A ledger session's serving already holds its batch: the
+                    // lifecycle calls answer with acknowledgements, and the ledger
+                    // records are the commit.
+                    // Mirrors docs/compiler/tools.md#compilation-tools.
+                    "goals" | "begin_goals" | "done" | "abandon_goals"
+                        if self.bridge.only.is_some()
+                            && self.modes.iter().any(|m| m == "generate" || m == "verify") =>
+                    {
+                        let only = self.bridge.only.clone().unwrap_or_default();
+                        let v = match name.as_str() {
+                            "begin_goals" => json!({"batch": only,
+                                "note": "this serving already holds its batch; work through the ledger tools, then done"}),
+                            "done" => json!({"ok": true, "batch": only,
+                                "note": "the ledger records are the commit for this batch; a row recorded resolves its goal"}),
+                            "abandon_goals" => json!({"abandoned": only,
+                                "note": "nothing was staged here; unrecorded rows stay owed"}),
+                            _ => crate::board::Board::compute(&self.project, &self.out).answer(),
+                        };
+                        return Ok(text_result(v, false));
                     }
                     "benchmark_cases" if self.modes.iter().any(|m| m == "benchmark") => {
                         return Ok(text_result(self.benchmark_cases(), false))
@@ -1562,23 +1673,26 @@ impl McpServer {
                         };
                     }
                 }
-                // Graph writes stage into the open task's changeset. Mirrors
+                // Graph writes and goal tools stage into the open batch's changeset,
+                // narrowed to the union of the batch's goal kinds' toolsets. Mirrors
                 // docs/frontends/mcp.md#compilation-over-mcp.
                 let mut open = self.open.lock().unwrap();
                 if let Some(o) = open.as_mut() {
-                    let allowed = toolset(&o.item.task);
+                    let kinds = o.session.scope.kinds();
+                    let kind_refs: Vec<&str> = kinds.iter().map(String::as_str).collect();
+                    let allowed = toolset_for_kinds(&kind_refs);
                     if is_graph_write && !allowed.contains(&name.as_str()) {
                         return Ok(text_result(
                             json!({"error": {"rule": "wrong-toolset", "message": format!(
-                                "`{}` is not part of a {} task; this task's write tools: {}",
-                                name, o.item.task,
-                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && **t != "done" && **t != crate::tools::FEEDBACK_TOOL).cloned().collect::<Vec<_>>().join(", "))}}),
+                                "`{}` is not part of a {} batch; this batch's write tools: {}",
+                                name, kinds.join("+"),
+                                allowed.iter().filter(|t| !crate::tools::READ_TOOLS.contains(t) && !crate::tools::GOAL_TOOLS.contains(t) && **t != crate::tools::FEEDBACK_TOOL).cloned().collect::<Vec<_>>().join(", "))}}),
                             true,
                         ));
                     }
                     o.rounds += 1;
-                    // Activity on the open task keeps its lease alive.
-                    crate::control::refresh_lease(&self.out, &o.item.target);
+                    // Activity on the open batch keeps its lease alive.
+                    crate::control::refresh_lease(&self.out, &o.id);
                     return match o.session.dispatch(&name, &args) {
                         Ok(v) => Ok(text_result(v, false)),
                         Err(e) => Ok(text_result(e.to_value(), true)),
@@ -1586,11 +1700,62 @@ impl McpServer {
                 }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile") {
                     return Ok(text_result(
-                        json!({"error": {"rule": "no-open-task", "message": "no compilation task is open; begin_compilation first, then stage writes into it"}}),
+                        json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first, then stage writes into it"}}),
                         true,
                     ));
                 }
                 drop(open);
+
+                // The ledger task tools answer from the board: the open bind,
+                // generate, and verify goals, which the ledger lifecycles claim and
+                // recording resolves. Mirrors
+                // docs/frontends/mcp.md#generation-and-verification-over-mcp.
+                if matches!(
+                    name.as_str(),
+                    "binding_tasks" | "generation_tasks" | "verification_tasks"
+                ) {
+                    let kind = match name.as_str() {
+                        "binding_tasks" => "bind",
+                        "generation_tasks" => "generate",
+                        _ => "verify",
+                    };
+                    let board = crate::board::Board::compute(&self.project, &self.out);
+                    let rows: Vec<Value> = board
+                        .goals
+                        .iter()
+                        .filter(|g| g.kind == kind)
+                        .map(|g| {
+                            let mut v = json!({
+                                "goal": g.id,
+                                "reason": g.change["reason"],
+                                "state": g.state,
+                                "gated": board.gated.contains(&g.id),
+                            });
+                            if kind == "generate" {
+                                v["entity"] = json!(g.target);
+                            } else {
+                                v["requirement"] = json!(g.target);
+                                v["entity"] = g.change["entity"].clone();
+                            }
+                            v
+                        })
+                        .collect();
+                    let begin = match kind {
+                        "bind" => "begin_binding",
+                        "generate" => "begin_generation",
+                        _ => "begin_verification (or run_tests for programmatic rows)",
+                    };
+                    let reply = json!({
+                        "tasks": rows,
+                        "count": rows.len(),
+                        "next": if rows.is_empty() {
+                            "nothing owed".to_string()
+                        } else {
+                            format!("{} claims one row; recording it resolves its goal", begin)
+                        },
+                    });
+                    return Ok(text_result(reply, false));
+                }
 
                 // The control plane over the stateless generation lifecycle: manual
                 // mode gates begins behind a release, begin claims the entity's
@@ -1684,18 +1849,7 @@ impl McpServer {
                         true,
                     ));
                 }
-                let scope = WorkScope {
-                    task: if is_write {
-                        "mcp-write".into()
-                    } else {
-                        "mcp-read".into()
-                    },
-                    doc: None,
-                    target: String::new(),
-                    target_sections: Vec::new(),
-                    stale_anchors: Vec::new(),
-                    proposals: Vec::new(),
-                };
+                let scope = WorkScope::serving(if is_write { "mcp-write" } else { "mcp-read" });
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1704,16 +1858,14 @@ impl McpServer {
                 match session.dispatch(&name, &args) {
                     Ok(v) => {
                         if is_graph_write && !session.staged.is_empty() {
-                            // Legacy graph --write: each call commits as its own changeset.
+                            // graph --write: each call commits as its own changeset.
+                            // The commit writes its change records, so the next
+                            // build derives the goals the write opened.
                             let mut s = Store::load(&self.out);
-                            let wi = WorkItem {
-                                task: "mcp".into(),
-                                target: name.clone(),
-                                dirty_sections: vec![],
-                                stale_anchors: vec![],
-                                proposals: Vec::new(),
-                            };
-                            let report = s.apply(session.staged, &wi.commit(1, 0));
+                            let report = s.apply(
+                                session.staged,
+                                &crate::store::Commit::session(Vec::new(), 1, 0),
+                            );
                             let mut v = v;
                             v["committed"] = json!(report.applied);
                             if !report.skipped.is_empty() {
@@ -1774,14 +1926,8 @@ impl McpServer {
         if let Some(e) = edit {
             snapshot.absorb_doc_edit(&e.doc, &e.full);
         }
-        let scope = WorkScope {
-            task: "mcp-write".into(),
-            doc: None,
-            target: target.to_string(),
-            target_sections: Vec::new(),
-            stale_anchors: Vec::new(),
-            proposals: Vec::new(),
-        };
+        let mut scope = WorkScope::serving("mcp-write");
+        scope.target = target.to_string();
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1926,14 +2072,8 @@ impl McpServer {
         let mut snapshot = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         snapshot.sync_docs(&parsed);
-        let scope = WorkScope {
-            task: "mcp-write".into(),
-            doc: None,
-            target: target.clone(),
-            target_sections: Vec::new(),
-            stale_anchors: Vec::new(),
-            proposals: Vec::new(),
-        };
+        let mut scope = WorkScope::serving("mcp-write");
+        scope.target = target.clone();
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
@@ -1971,7 +2111,7 @@ impl McpServer {
         };
         let Some(src) = r.source.as_ref() else {
             return json!({"error": {"rule": "not-quoted", "message": format!(
-                "{} has no sentence in the documents yet ({}); ratify or retract it instead of revising prose", rid, crate::turn::provenance_line(r))}});
+                "{} has no sentence in the documents yet ({}); ratify or retract it instead of revising prose", rid, crate::session::provenance_line(r))}});
         };
         let (doc, section, old_quote) = (src.doc.clone(), src.section.clone(), src.quote.clone());
         let statement = args["statement"]
@@ -2085,7 +2225,7 @@ impl McpServer {
         };
         let Some(src) = r.source.as_ref() else {
             return json!({"error": {"rule": "not-quoted", "message": format!(
-                "{} has no sentence in the documents ({}); retract the decree or derivation instead", rid, crate::turn::provenance_line(r))}});
+                "{} has no sentence in the documents ({}); retract the decree or derivation instead", rid, crate::session::provenance_line(r))}});
         };
         let (doc, section, old_quote) = (src.doc.clone(), src.section.clone(), src.quote.clone());
         drop(store);
@@ -2392,6 +2532,129 @@ mod tests {
         // The prose form is refused now that the fact is decreed.
         let v = server.revise_requirement(&json!({"id": "req:pay-1", "new_text": "x"}));
         assert_eq!(v["error"]["rule"], "not-quoted");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The compile serving claims goal batches: begin_goals claims the next ready
+    // batch under a per-batch lease naming its goals, done without a mark per
+    // mandatory goal refuses with open-goal, and abandon_goals releases the claim.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    #[test]
+    fn begin_goals_claims_the_next_batch_and_done_wants_marks() {
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        std::fs::create_dir_all(&out).unwrap();
+        let control = crate::control::Control {
+            compile: "auto".into(),
+            ..Default::default()
+        };
+        control.save(&out);
+        let server = McpServer::new(project, out.clone(), vec!["compile".into()], false);
+
+        let v = server.begin_goals(&json!({"arguments": {}}));
+        assert!(v["error"].is_null(), "{}", v);
+        // The batch id is b<generation>-<n>: the sync that absorbed the fresh
+        // document bumped the generation before the board derived.
+        let batch = v["batch"].as_str().unwrap().to_string();
+        assert!(batch.starts_with('b') && batch.contains('-'), "{}", batch);
+        let instructions = v["instructions"].as_str().unwrap();
+        assert!(instructions.contains("## Goals"), "{}", instructions);
+        assert!(
+            instructions.contains(&batch),
+            "the protocol line names the batch"
+        );
+        assert!(v["package"].as_str().unwrap().contains("## Loaded"));
+        // The claim is a per-batch lease naming its goals.
+        let leases = crate::control::leases(&out);
+        let lease = leases.get(&batch).expect("a batch lease");
+        assert!(
+            !lease.goals.is_empty() && lease.goals.iter().all(|g| g.starts_with("g:")),
+            "{:?}",
+            lease.goals
+        );
+        // A second begin refuses while the batch is open.
+        let again = server.begin_goals(&json!({"arguments": {}}));
+        assert_eq!(again["error"]["rule"], "batch-open");
+        // done without a mark per mandatory goal refuses with open-goal and keeps
+        // the changeset open.
+        let d = server.done_batch(&json!({"arguments": {"summary": "did nothing"}}));
+        assert_eq!(d["error"]["rule"], "open-goal", "{}", d);
+        let a = server.abandon_goals(&json!({"arguments": {"reason": "test"}}));
+        assert_eq!(a["abandoned"], json!(batch));
+        assert!(crate::control::leases(&out).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The compile serving lists the goal lifecycle, the view tools, and the goal
+    // tools; a raw write tool outside an open batch is rejected toward begin_goals.
+    // Mirrors docs/compiler/tools.md#toolsets.
+    #[test]
+    fn compile_serving_lists_goal_and_view_tools_and_gates_writes() {
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let server = McpServer::new(project, out, vec!["compile".into()], false);
+        let names = tool_names(&server);
+        for t in [
+            "goals",
+            "begin_goals",
+            "done",
+            "abandon_goals",
+            "upsert_view",
+            "update_view",
+            "delete_view",
+            "mark_goal_done",
+            "mark_goal_failed",
+            "load_skill",
+            "load",
+            "unload",
+            "graph_status",
+        ] {
+            assert!(names.iter().any(|n| n == t), "{} missing: {:?}", t, names);
+        }
+        for legacy in [
+            "compilation_tasks",
+            "begin_compilation",
+            "finish_compilation",
+            "abandon_compilation",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == legacy),
+                "{} should be gone",
+                legacy
+            );
+        }
+        // A raw write outside an open batch is rejected toward begin_goals.
+        let r = server
+            .handle(
+                "tools/call",
+                &json!({"name": "upsert_entity", "arguments": {"name": "Thing",
+                    "mention": {"section": "docs/a.md#/a", "quote": "x"}}}),
+            )
+            .unwrap();
+        assert_eq!(r["isError"], true);
+        let text = r["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("no-open-batch") && text.contains("begin_goals"),
+            "{}",
+            text
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

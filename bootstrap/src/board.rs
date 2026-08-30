@@ -86,7 +86,11 @@ fn referents(store: &Store, id: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(e) = store.graph.entities.get(id) {
         out.extend(e.parent.iter().cloned());
-        out.extend(e.mentions.iter().map(|m| format!("{}#{}", m.doc, m.section)));
+        out.extend(
+            e.mentions
+                .iter()
+                .map(|m| format!("{}#{}", m.doc, m.section)),
+        );
         out.extend(from_of(&e.provenance));
         for a in &e.attributes {
             match &a.provenance {
@@ -111,7 +115,11 @@ fn referents(store: &Store, id: &str) -> Vec<String> {
     } else if let Some(v) = store.graph.views.get(id) {
         out.extend(v.members.iter().map(|m| store.resolve_id(m).to_string()));
         out.extend(v.collapse.iter().map(|m| store.resolve_id(m).to_string()));
-        out.extend(v.excluded.iter().map(|x| store.resolve_id(&x.id).to_string()));
+        out.extend(
+            v.excluded
+                .iter()
+                .map(|x| store.resolve_id(&x.id).to_string()),
+        );
         out.extend(from_of(&v.provenance));
     } else if id.contains('#') {
         out.extend(parent_section(store, id));
@@ -140,8 +148,12 @@ fn referrers(store: &Store, id: &str) -> Vec<String> {
         }
         for (rid, r) in &store.graph.requirements {
             let hit = r.entities.iter().any(|e| store.resolve_id(e) == id)
-                || r.edges.iter().any(|e| store.resolve_id(&e.a) == id || store.resolve_id(&e.b) == id)
-                || r.transition.as_ref().is_some_and(|t| store.resolve_id(&t.subject) == id)
+                || r.edges
+                    .iter()
+                    .any(|e| store.resolve_id(&e.a) == id || store.resolve_id(&e.b) == id)
+                || r.transition
+                    .as_ref()
+                    .is_some_and(|t| store.resolve_id(&t.subject) == id)
                 || names(&r.provenance);
             if hit {
                 out.push(rid.clone());
@@ -184,9 +196,16 @@ fn referrers(store: &Store, id: &str) -> Vec<String> {
         out.extend(rec.sections.keys().map(|r| format!("{}#{}", id, r)));
         return out;
     }
-    if store.graph.entities.contains_key(id) || store.graph.requirements.contains_key(id) || store.graph.views.contains_key(id) {
+    if store.graph.entities.contains_key(id)
+        || store.graph.requirements.contains_key(id)
+        || store.graph.views.contains_key(id)
+    {
         for (vid, v) in &store.graph.views {
-            let listed = v.members.iter().chain(v.collapse.iter()).any(|m| store.resolve_id(m) == id)
+            let listed = v
+                .members
+                .iter()
+                .chain(v.collapse.iter())
+                .any(|m| store.resolve_id(m) == id)
                 || v.excluded.iter().any(|x| store.resolve_id(&x.id) == id)
                 || names(&v.provenance);
             if listed {
@@ -231,7 +250,11 @@ pub fn cone(store: &Store, target: &str) -> Cone {
             docs.insert(n.clone());
         }
         if let Some(e) = store.graph.entities.get(n) {
-            sections.extend(e.mentions.iter().map(|m| format!("{}#{}", m.doc, m.section)));
+            sections.extend(
+                e.mentions
+                    .iter()
+                    .map(|m| format!("{}#{}", m.doc, m.section)),
+            );
         }
         if let Some(r) = store.graph.requirements.get(n) {
             if let Some(s) = &r.source {
@@ -256,7 +279,10 @@ fn target_exists(store: &Store, target: &str) -> bool {
         return target_exists(store, a) && target_exists(store, b);
     }
     if let Some((doc, sec)) = split_section_ref(target) {
-        return store.docs.get(&doc).is_some_and(|r| r.sections.contains_key(&sec));
+        return store
+            .docs
+            .get(&doc)
+            .is_some_and(|r| r.sections.contains_key(&sec));
     }
     if target.contains(':') {
         return store.graph.entities.contains_key(target)
@@ -342,7 +368,12 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
     match g.kind.as_str() {
         "reconcile-section" => {
             let body = split_section_ref(&g.target)
-                .and_then(|(d, s)| store.docs.get(&d).and_then(|r| r.sections.get(&s).map(|x| x.raw.len())))
+                .and_then(|(d, s)| {
+                    store
+                        .docs
+                        .get(&d)
+                        .and_then(|r| r.sections.get(&s).map(|x| x.raw.len()))
+                })
                 .unwrap_or(0);
             body + 1_200
         }
@@ -360,7 +391,12 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
         "review-entity" => 1_500 + 140 * store.requirements_referencing(&g.target).len(),
         "abstract-entity" => 1_500 + 160 * store.requirements_referencing(&g.target).len(),
         "curate-view" | "split-view" | "retrace" => {
-            let members = store.graph.views.get(&g.target).map(|v| v.members.len()).unwrap_or(0);
+            let members = store
+                .graph
+                .views
+                .get(&g.target)
+                .map(|v| v.members.len())
+                .unwrap_or(0);
             1_200 + 90 * members
         }
         "dedupe-candidates" => 2_400,
@@ -435,7 +471,8 @@ impl Board {
             match goals.iter_mut().find(|g| g.id == f.goal.id) {
                 Some(g) => {
                     let same = g.change == f.goal.change
-                        || g.cause.as_ref().map(|c| c.generation) <= f.goal.cause.as_ref().map(|c| c.generation);
+                        || g.cause.as_ref().map(|c| c.generation)
+                            <= f.goal.cause.as_ref().map(|c| c.generation);
                     if same {
                         g.state = GoalState::Failed {
                             reason: f.reason.clone(),
@@ -465,8 +502,14 @@ impl Board {
                 if !matches!(g.kind.as_str(), "reconcile-section" | "place-anchors") {
                     continue;
                 }
-                let Some(doc) = target_doc(&g.target) else { continue };
-                let current = store.docs.get(&doc).map(|r| r.content_hash.as_str()).unwrap_or_default();
+                let Some(doc) = target_doc(&g.target) else {
+                    continue;
+                };
+                let current = store
+                    .docs
+                    .get(&doc)
+                    .map(|r| r.content_hash.as_str())
+                    .unwrap_or_default();
                 if control.released.compile.get(&doc).map(String::as_str) != Some(current) {
                     gated.insert(g.id.clone());
                 }
@@ -502,7 +545,9 @@ impl Board {
                 .status
                 .changes
                 .iter()
-                .filter(|c| kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str()))
+                .filter(|c| {
+                    kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str())
+                })
                 .map(|c| c.id.clone())
                 .collect();
             records.insert(g.id.clone(), ids);
@@ -621,7 +666,11 @@ impl Board {
                 if let Some(d) = target_doc(&g.target) {
                     keys.push(d);
                 }
-                if let Some(l) = keys.iter().find_map(|k| leases.get(k)) {
+                let hit = keys
+                    .iter()
+                    .find_map(|k| leases.get(k))
+                    .or_else(|| leases.values().find(|l| l.goals.iter().any(|x| x == &g.id)));
+                if let Some(l) = hit {
                     claimed.insert(g.id.clone(), l.worker.clone());
                 }
             }
@@ -709,7 +758,10 @@ impl Board {
 
     // Mandatory goals still open or parked: what keeps a build from converging.
     pub fn open_mandatory(&self) -> usize {
-        self.goals.iter().filter(|g| is_open(g) && g.mandatory).count()
+        self.goals
+            .iter()
+            .filter(|g| is_open(g) && g.mandatory)
+            .count()
     }
 
     // Open goals of the named kinds; the graph kinds are everything but the ledger's.
@@ -848,7 +900,11 @@ impl Board {
                     if !current.is_empty() {
                         batches.push(Batch {
                             id: String::new(),
-                            class: if class == 0 { Class::Compile } else { Class::Gc },
+                            class: if class == 0 {
+                                Class::Compile
+                            } else {
+                                Class::Gc
+                            },
                             tier: if class == 0 { Some(tier) } else { None },
                             goals: std::mem::take(current),
                             executor: exec.clone(),
@@ -860,7 +916,8 @@ impl Board {
                     let g = self.goal(&id).unwrap();
                     let cost = estimate(store, g);
                     let is_section = g.kind == "reconcile-section";
-                    let max_sections = (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
+                    let max_sections =
+                        (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
                     let over = !current.is_empty()
                         && (size + cost > limits::CONTEXT_BUDGET
                             || (is_section && sections >= max_sections));
@@ -881,7 +938,10 @@ impl Board {
         // Compile tiers first, then GC; within a tier, batches holding parked goals
         // first, then document level and path.
         let rank = |b: &Batch| {
-            let parked = b.goals.iter().any(|id| matches!(self.goal(id).map(|g| &g.state), Some(GoalState::Parked)));
+            let parked = b
+                .goals
+                .iter()
+                .any(|id| matches!(self.goal(id).map(|g| &g.state), Some(GoalState::Parked)));
             let level = b
                 .goals
                 .first()
@@ -1042,14 +1102,19 @@ impl Board {
             );
             s.push_str(&format!("  change: {}\n", condense_change(&g.change)));
             if let Some(c) = &g.cause {
-                s.push_str(&format!("  cause:  g{} mutation {} via {}\n", c.generation, c.mutation, c.via));
+                s.push_str(&format!(
+                    "  cause:  g{} mutation {} via {}\n",
+                    c.generation, c.mutation, c.via
+                ));
             }
             let tier = goals::tier(&g.kind)
                 .map(|t| format!("tier {}", t))
                 .unwrap_or_else(|| "gc (waits for its cone)".into());
             match self.readiness.get(&g.id) {
                 Some(Ready::Ready) => s.push_str(&format!("  ready:  {}; ready now\n", tier)),
-                Some(Ready::Blocked(r)) => s.push_str(&format!("  ready:  {}; waits: {}\n", tier, r)),
+                Some(Ready::Blocked(r)) => {
+                    s.push_str(&format!("  ready:  {}; waits: {}\n", tier, r))
+                }
                 None => {}
             }
             let blockers = self.cone_blockers(&g.id);
@@ -1073,7 +1138,10 @@ impl Board {
         }
         let recomputed = recomputed_by_change(store, target);
         if !recomputed.is_empty() {
-            s.push_str(&format!("  recomputed at commit: {}\n", recomputed.join(", ")));
+            s.push_str(&format!(
+                "  recomputed at commit: {}\n",
+                recomputed.join(", ")
+            ));
         }
         Some(s)
     }
@@ -1111,7 +1179,10 @@ impl Board {
             })
             .collect();
         rows.sort();
-        rows.into_iter().map(|(_, r)| r).collect::<Vec<_>>().join("\n")
+        rows.into_iter()
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // ---- the per-target work item the serving claims ----
@@ -1121,8 +1192,13 @@ impl Board {
         let mut items: Vec<WorkItem> = Vec::new();
         for id in &batch.goals {
             let Some(g) = self.goal(id) else { continue };
-            let Some(item) = self.work_item(g) else { continue };
-            match items.iter_mut().find(|i| i.task == item.task && i.target == item.target) {
+            let Some(item) = self.work_item(g) else {
+                continue;
+            };
+            match items
+                .iter_mut()
+                .find(|i| i.task == item.task && i.target == item.target)
+            {
                 Some(existing) => {
                     for s in item.dirty_sections {
                         if !existing.dirty_sections.contains(&s) {
@@ -1152,7 +1228,11 @@ impl Board {
                     dirty_sections: vec![sec],
                     stale_anchors: g.change["staleAnchors"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     proposals: Vec::new(),
                 }
@@ -1164,7 +1244,11 @@ impl Board {
                 stale_anchors: Vec::new(),
                 proposals: g.change["anchors"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
             },
             "rejudge-pair" => {
@@ -1195,7 +1279,8 @@ impl Board {
                     }
                     let b = self.batches.iter().find(|b| b.goals.contains(&g.id))?;
                     return self.work_items(b).into_iter().find(|i| {
-                        self.work_item(g).is_some_and(|w| w.task == i.task && w.target == i.target)
+                        self.work_item(g)
+                            .is_some_and(|w| w.task == i.task && w.target == i.target)
                     });
                 }
                 for b in &self.batches {
@@ -1252,7 +1337,12 @@ fn entity_depth(store: &Store, id: &str) -> usize {
 
 fn section_order(store: &Store, target: &str) -> usize {
     split_section_ref(target)
-        .and_then(|(d, s)| store.docs.get(&d).and_then(|r| r.sections.get(&s).map(|x| x.lines[0])))
+        .and_then(|(d, s)| {
+            store
+                .docs
+                .get(&d)
+                .and_then(|r| r.sections.get(&s).map(|x| x.lines[0]))
+        })
         .unwrap_or(usize::MAX)
 }
 
@@ -1362,7 +1452,13 @@ pub fn opened_by_change(store: &Store, target: &str) -> Vec<(String, String, Str
             .graph
             .views
             .iter()
-            .filter(|(_, v)| !v.default && v.members.iter().chain(v.collapse.iter()).any(|m| store.resolve_id(m) == id))
+            .filter(|(_, v)| {
+                !v.default
+                    && v.members
+                        .iter()
+                        .chain(v.collapse.iter())
+                        .any(|m| store.resolve_id(m) == id)
+            })
             .map(|(vid, _)| vid.clone())
             .collect()
     };
@@ -1386,7 +1482,11 @@ pub fn opened_by_change(store: &Store, target: &str) -> Vec<(String, String, Str
     if store.docs.contains_key(target) {
         if let Some(rec) = store.docs.get(target) {
             for r in rec.sections.keys() {
-                push("reconcile-section", &format!("{}#{}", target, r), "section-dirty");
+                push(
+                    "reconcile-section",
+                    &format!("{}#{}", target, r),
+                    "section-dirty",
+                );
             }
         }
         return out;
@@ -1432,11 +1532,118 @@ pub fn opened_by_change(store: &Store, target: &str) -> Vec<(String, String, Str
     out
 }
 
+// The bubbling preview: the goals a staged changeset will open at commit, derived
+// over the snapshot plus the staged ops, one human line each. The tool serving
+// appends these to a mutating reply. Mirrors docs/compiler/reconciler.md#bubbling.
+pub fn staged_opens(store: &Store, staged: &[crate::store::Op]) -> Vec<String> {
+    use crate::store::Op;
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |kind: &str, target: &str, why: &str| {
+        let line = format!("{} {} ({})", kind, target, why);
+        if !out.contains(&line) && out.len() < 12 {
+            out.push(line);
+        }
+    };
+    let views_listing = |id: &str| -> Vec<String> {
+        store
+            .graph
+            .views
+            .iter()
+            .filter(|(_, v)| {
+                !v.default
+                    && v.members
+                        .iter()
+                        .chain(v.collapse.iter())
+                        .any(|m| store.resolve_id(m) == id)
+            })
+            .map(|(vid, _)| vid.clone())
+            .collect()
+    };
+    let derived_from = |id: &str| -> Vec<String> {
+        let names = |p: &Option<crate::model::Provenance>| match p {
+            Some(crate::model::Provenance::Derived { from, .. }) => {
+                from.iter().any(|f| store.resolve_id(f) == id)
+            }
+            _ => false,
+        };
+        let mut v: Vec<String> = store
+            .graph
+            .entities
+            .iter()
+            .filter(|(_, e)| names(&e.provenance))
+            .map(|(eid, _)| eid.clone())
+            .collect();
+        v.extend(
+            store
+                .graph
+                .requirements
+                .iter()
+                .filter(|(_, r)| r.source.is_none() && names(&r.provenance))
+                .map(|(rid, _)| rid.clone()),
+        );
+        v
+    };
+    for op in staged {
+        match op {
+            Op::DeleteRequirement { id, .. } => {
+                for v in views_listing(id) {
+                    push("retrace", &v, "member gone");
+                }
+                for n in derived_from(id) {
+                    push("retrace", &n, "justification gone");
+                }
+                if let Some(r) = store.graph.requirements.get(id) {
+                    for e in &r.entities {
+                        push("review-entity", store.resolve_id(e), "statement gone");
+                    }
+                }
+            }
+            Op::DeleteEntity { id, .. } => {
+                for v in views_listing(id) {
+                    push("retrace", &v, "member gone");
+                }
+                for n in derived_from(id) {
+                    push("retrace", &n, "justification gone");
+                }
+            }
+            Op::UpdateRequirement { id, statement, .. } if statement.is_some() => {
+                for n in store.pair_review_neighbors(id) {
+                    push("rejudge-pair", &goals::pair_target(id, &n), "revised");
+                }
+                if let Some(r) = store.graph.requirements.get(id) {
+                    for e in &r.entities {
+                        push("review-entity", store.resolve_id(e), "requirements changed");
+                    }
+                }
+            }
+            Op::MergeEntities { keep, .. } => {
+                push("review-entity", store.resolve_id(keep), "merged");
+            }
+            Op::CreateRequirement { id, requirement } => {
+                if store.graph.requirements.contains_key(id) {
+                    for n in store.pair_review_neighbors(id) {
+                        push("rejudge-pair", &goals::pair_target(id, &n), "revised");
+                    }
+                }
+                for e in &requirement.entities {
+                    push("review-entity", store.resolve_id(e), "requirements changed");
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 // The derived data a commit touching the target recomputes.
 pub fn recomputed_by_change(store: &Store, target: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let ids: Vec<String> = match store.graph.requirements.get(target) {
-        Some(r) => r.entities.iter().map(|e| store.resolve_id(e).to_string()).collect(),
+        Some(r) => r
+            .entities
+            .iter()
+            .map(|e| store.resolve_id(e).to_string())
+            .collect(),
         None => vec![target.to_string()],
     };
     for id in &ids {
@@ -1450,7 +1657,12 @@ pub fn recomputed_by_change(store: &Store, target: &str) -> Vec<String> {
             out.push(sm);
         }
         for (vid, v) in &store.graph.views {
-            if v.default && v.members.iter().any(|m| store.resolve_id(m) == id || m == target) && !out.contains(vid) {
+            if v.default
+                && v.members
+                    .iter()
+                    .any(|m| store.resolve_id(m) == id || m == target)
+                && !out.contains(vid)
+            {
                 out.push(vid.clone());
             }
         }
@@ -1470,7 +1682,14 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn record(store: &mut Store, generation: u64, kind: &str, subject: &str, via: &str, detail: Value) {
+    pub(crate) fn record(
+        store: &mut Store,
+        generation: u64,
+        kind: &str,
+        subject: &str,
+        via: &str,
+        detail: Value,
+    ) {
         let mut batch = RecordBatch::new(generation);
         batch.push(0, kind, subject, via, detail);
         for r in batch.records() {
@@ -1533,19 +1752,37 @@ pub(crate) mod tests {
     fn a_clean_store_derives_zero_goals() {
         let s = settled_store();
         let b = derive(&s);
-        assert!(b.open_goals().is_empty(), "{:?}", b.open_goals().iter().map(|g| &g.id).collect::<Vec<_>>());
+        assert!(
+            b.open_goals().is_empty(),
+            "{:?}",
+            b.open_goals().iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         let v = b.verdict();
         assert!(v.converged());
         assert_eq!(v.open, 0);
-        assert!(v.blocked > 0, "the ledger goals ride as blocked on the generate release");
-        assert!(b.summary_line().starts_with("compile: 0 goals, "), "{}", b.summary_line());
+        assert!(
+            v.blocked > 0,
+            "the ledger goals ride as blocked on the generate release"
+        );
+        assert!(
+            b.summary_line().starts_with("compile: 0 goals, "),
+            "{}",
+            b.summary_line()
+        );
         assert!(b.batches.is_empty());
     }
 
     #[test]
     fn goals_keep_their_identity_across_two_derivations_of_one_record() {
         let mut s = settled_store();
-        record(&mut s, 7, store::CHANGE_ENTITY, "ent:order", "entities", json!({"requirements": ["req:shop-5"]}));
+        record(
+            &mut s,
+            7,
+            store::CHANGE_ENTITY,
+            "ent:order",
+            "entities",
+            json!({"requirements": ["req:shop-5"]}),
+        );
         let a = derive(&s);
         let b = derive(&s);
         let ga = a.goal("g:review-entity:ent:order").expect("derived");
@@ -1577,9 +1814,18 @@ pub(crate) mod tests {
             "limits",
             json!({"limit": "requirements-per-entity", "count": 54, "soft": 50, "hard": 80, "level": "soft", "goal": "abstract-entity"}),
         );
-        record(&mut s, 10, store::CHANGE_SECTION_DIRTY, "shop.md#/shop/orders", "section", json!({"added": 1}));
+        record(
+            &mut s,
+            10,
+            store::CHANGE_SECTION_DIRTY,
+            "shop.md#/shop/orders",
+            "section",
+            json!({"added": 1}),
+        );
         let b = derive(&s);
-        let gc = b.goal("g:abstract-entity:ent:order").expect("gc goal derived");
+        let gc = b
+            .goal("g:abstract-entity:ent:order")
+            .expect("gc goal derived");
         assert!(!gc.mandatory);
         assert_eq!(gc.class, "gc");
         let blockers = b.cone_blockers(&gc.id);
@@ -1593,12 +1839,24 @@ pub(crate) mod tests {
         // goal is ready.
         s.docs.get_mut("shop.md").unwrap().coverage.insert(
             "/shop/orders".into(),
-            Coverage { state: "covered".into(), note: None, claimed_by: Some("g11".into()) },
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: Some("g11".into()),
+            },
         );
         let b = derive(&s);
         assert!(b.cone_blockers("g:abstract-entity:ent:order").is_empty());
-        assert!(b.is_ready("g:abstract-entity:ent:order"), "{:?}", b.readiness.get("g:abstract-entity:ent:order"));
-        assert!(b.lapsed.iter().any(|id| id.starts_with("c10-")), "the dirty record lapsed: {:?}", b.lapsed);
+        assert!(
+            b.is_ready("g:abstract-entity:ent:order"),
+            "{:?}",
+            b.readiness.get("g:abstract-entity:ent:order")
+        );
+        assert!(
+            b.lapsed.iter().any(|id| id.starts_with("c10-")),
+            "the dirty record lapsed: {:?}",
+            b.lapsed
+        );
         assert_eq!(b.batches.len(), 1);
         assert_eq!(b.batches[0].id, "b3-1");
         assert_eq!(b.batches[0].class, Class::Gc);
@@ -1615,7 +1873,14 @@ pub(crate) mod tests {
             "limits",
             json!({"limit": "members-per-structural-view", "count": 23, "soft": 20, "hard": 30, "level": "soft", "goal": "split-view"}),
         );
-        s.graph.views.insert("view:class/public".into(), View { kind: "class".into(), title: "Public".into(), ..Default::default() });
+        s.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                ..Default::default()
+            },
+        );
         let b = derive(&s);
         let g = b.goal("g:split-view:view:class/public").unwrap();
         assert!(!g.mandatory);
@@ -1652,7 +1917,11 @@ pub(crate) mod tests {
             },
         );
         let b = derive(&s);
-        let sections: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "reconcile-section").collect();
+        let sections: Vec<&Goal> = b
+            .goals
+            .iter()
+            .filter(|g| g.kind == "reconcile-section")
+            .collect();
         assert!(sections.len() >= 5, "{}", sections.len());
         // No roots: documents are levels in path order, other.md before shop.md.
         assert!(b.is_ready("g:reconcile-section:other.md#/other"));
@@ -1680,12 +1949,28 @@ pub(crate) mod tests {
     fn cones_walk_up_and_down_never_sideways() {
         let s = crate::derive::tests::showcase_store();
         let c = cone(&s, "ent:order-item");
-        assert!(c.nodes.contains("ent:order-service"), "parent chain is upward");
-        assert!(c.nodes.contains("req:shop-6"), "the requirement naming it is downward");
-        assert!(c.sections.contains("shop.md#/shop"), "its anchoring section");
-        assert!(!c.nodes.contains("ent:customer"), "a sibling reached sideways is out: {:?}", c.nodes);
+        assert!(
+            c.nodes.contains("ent:order-service"),
+            "parent chain is upward"
+        );
+        assert!(
+            c.nodes.contains("req:shop-6"),
+            "the requirement naming it is downward"
+        );
+        assert!(
+            c.sections.contains("shop.md#/shop"),
+            "its anchoring section"
+        );
+        assert!(
+            !c.nodes.contains("ent:customer"),
+            "a sibling reached sideways is out: {:?}",
+            c.nodes
+        );
         let top = cone(&s, "ent:shop");
-        assert!(top.nodes.contains("ent:order"), "the system's cone holds its descendants");
+        assert!(
+            top.nodes.contains("ent:order"),
+            "the system's cone holds its descendants"
+        );
         assert!(top.nodes.contains("req:shop-1"));
     }
 
@@ -1695,7 +1980,11 @@ pub(crate) mod tests {
         let b = derive(&s);
         let text = b.explain(&s, "ent:customer").expect("known target");
         assert!(text.contains("review-entity"), "{}", text);
-        assert!(text.contains("conform-instance") && text.contains("ent:ana"), "{}", text);
+        assert!(
+            text.contains("conform-instance") && text.contains("ent:ana"),
+            "{}",
+            text
+        );
         assert!(b.explain(&s, "ent:nope").is_none());
     }
 }

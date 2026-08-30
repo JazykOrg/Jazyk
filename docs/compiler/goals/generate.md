@@ -196,13 +196,15 @@ same debt and lands on the entity's ledger entry. See
 
 The session's serving runs in `generate` mode ([toolsets](../tools.md#toolsets)):
 
-- The [read tools](../tools.md#read-tools), including the loaded-set tools `load`,
-  `expand`, `unload`, `graph_status` ([context](../context.md#tools)).
+- The [read tools](../tools.md#read-tools): the loaded-set tools `load`, `expand`,
+  `unload`, `graph_status`, and the lookups `search`, `read_section`, `get_entity`,
+  `get_view`, `diagnostics` ([context](../context.md#tools)).
 - The [goal tools](../tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
   `load_skill`, `done`.
 - The [generation tools](../tools.md#generation-tools): `generation_tasks`,
   `begin_generation`, `record_generation({entity, factHash, manifest, choices?})`.
-- The [binding tools](../tools.md#binding-tools) and `run_tests`.
+- The [binding tools](../tools.md#binding-tools) `binding_tasks`, `begin_binding`,
+  `record_binding`, and `run_tests`.
 - [`report_feedback`](../tools.md#feedback-tool).
 - The file and command tools below when the agent's profile sets
   [`serve_files`](../project-settings.md#acp).

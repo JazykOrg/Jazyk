@@ -3,7 +3,7 @@
 // lock and the LLM budget, so serializing them is the point.
 // Mirrors docs/frontends/gui.md#jobs.
 use super::state::SharedState;
-use crate::turn::{Trace, TraceEvent, TraceLevel};
+use crate::session::{Trace, TraceEvent, TraceLevel};
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};

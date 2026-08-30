@@ -4,7 +4,7 @@
 // temperature and streaming fallbacks, pacing, and retry policy.
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -59,7 +59,9 @@ pub fn set_verbose(on: bool) {
 }
 fn verbose() -> bool {
     if !VERBOSE_INIT.load(Ordering::Relaxed) {
-        let on = std::env::var("JAZYK_VERBOSE").map(|v| !v.is_empty() && v != "0").unwrap_or(false);
+        let on = std::env::var("JAZYK_VERBOSE")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false);
         set_verbose(on);
     }
     VERBOSE.load(Ordering::Relaxed)
@@ -80,7 +82,10 @@ fn semaphore() -> &'static Semaphore {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(6)
             .max(1);
-        Semaphore { permits: Mutex::new(n), cv: Condvar::new() }
+        Semaphore {
+            permits: Mutex::new(n),
+            cv: Condvar::new(),
+        }
     })
 }
 // Minimum gap between request starts, so tight failure loops cannot hammer an endpoint.
@@ -198,7 +203,7 @@ pub struct Llm {
     // behavior (notices to stderr, no structured events). A runner attaches its own
     // trace with `with_trace`, so every prompt, reply, and retry reaches the frontend
     // that started the work (docs/compiler/turns.md#trace-events).
-    pub trace: Option<crate::turn::Trace>,
+    pub trace: Option<crate::session::Trace>,
 }
 
 // Per message, in the recorded prompt. Packs are context-budgeted well below this;
@@ -216,7 +221,11 @@ fn recorded(messages: &[Value]) -> Value {
                     for k in ["content", "reasoning_content", "reasoning"] {
                         if let Some(s) = o.get(k).and_then(|v| v.as_str()) {
                             if s.len() > MESSAGE_CAP {
-                                let cut = format!("{} … [{} chars total]", truncate(s, MESSAGE_CAP), s.len());
+                                let cut = format!(
+                                    "{} … [{} chars total]",
+                                    truncate(s, MESSAGE_CAP),
+                                    s.len()
+                                );
                                 o.insert(k.to_string(), json!(cut));
                             }
                         }
@@ -238,8 +247,11 @@ fn tool_names(tools: Option<&[Value]>) -> Vec<String> {
 
 impl Llm {
     // A client that reports into this trace. Cheap: the trace is a handle.
-    pub fn with_trace(&self, trace: &crate::turn::Trace) -> Llm {
-        Llm { trace: Some(trace.clone()), ..self.clone() }
+    pub fn with_trace(&self, trace: &crate::session::Trace) -> Llm {
+        Llm {
+            trace: Some(trace.clone()),
+            ..self.clone()
+        }
     }
 
     // What the endpoint says it can serve, for a client that offers the user a
@@ -284,7 +296,7 @@ impl Llm {
         }
     }
 
-    fn event(&self, ev: crate::turn::TraceEvent) {
+    fn event(&self, ev: crate::session::TraceEvent) {
         if let Some(t) = &self.trace {
             t.event(ev);
         }
@@ -310,7 +322,7 @@ impl Llm {
         }
         // The prompt as sent, recorded once for the whole call: retries resend it
         // unchanged, and a retry says so on its own row.
-        self.event(crate::turn::TraceEvent::LlmRequest {
+        self.event(crate::session::TraceEvent::LlmRequest {
             label: label.to_string(),
             step: step.to_string(),
             model: self.model.clone(),
@@ -325,12 +337,20 @@ impl Llm {
                     // A streaming probe that succeeds after a non-streaming failure
                     // sticks for the run.
                     if try_stream && !STREAM_REQUIRED.swap(true, Ordering::Relaxed) {
-                        self.note(label, "streaming retry succeeded; using SSE for the rest of the run");
+                        self.note(
+                            label,
+                            "streaming retry succeeded; using SSE for the rest of the run",
+                        );
                     }
                     if verbose() {
-                        eprintln!("[jazyk] ✓ {} {} ({} ms)", label, step, started.elapsed().as_millis());
+                        eprintln!(
+                            "[jazyk] ✓ {} {} ({} ms)",
+                            label,
+                            step,
+                            started.elapsed().as_millis()
+                        );
                     }
-                    self.event(crate::turn::TraceEvent::LlmResponse {
+                    self.event(crate::session::TraceEvent::LlmResponse {
                         label: label.to_string(),
                         step: step.to_string(),
                         ms: started.elapsed().as_millis() as u64,
@@ -345,7 +365,10 @@ impl Llm {
                     if e.to_lowercase().contains("stream must be set to true")
                         && !STREAM_REQUIRED.swap(true, Ordering::Relaxed)
                     {
-                        self.note(label, "endpoint requires streaming; switching to SSE for the rest of the run");
+                        self.note(
+                            label,
+                            "endpoint requires streaming; switching to SSE for the rest of the run",
+                        );
                         continue;
                     }
                     // A provider that rejects reasoning fields echoed back in the
@@ -373,7 +396,10 @@ impl Llm {
                     // A model that rejects `temperature` answers 400 (often wrapped by a
                     // proxy). Drop the parameter once, sticky for the run, and retry.
                     let looks_400 = e.contains("400") || e.to_lowercase().contains("temperature");
-                    if looks_400 && self.temperature.is_some() && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed) {
+                    if looks_400
+                        && self.temperature.is_some()
+                        && !TEMP_UNSUPPORTED.swap(true, Ordering::Relaxed)
+                    {
                         self.note(label, "model rejected the request (likely temperature); retrying without it for the rest of the run");
                         continue;
                     }
@@ -402,8 +428,12 @@ impl Llm {
                         }
                         // A rate limit is not a hiccup: pause before retrying instead of
                         // hammering the window shut.
-                        let wait = if last.to_lowercase().contains("rate limit") { 20 } else { 5 };
-                        let ev = crate::turn::TraceEvent::LlmRetry {
+                        let wait = if last.to_lowercase().contains("rate limit") {
+                            20
+                        } else {
+                            5
+                        };
+                        let ev = crate::session::TraceEvent::LlmRetry {
                             label: label.to_string(),
                             step: step.to_string(),
                             attempt: attempt as u32 + 1,
@@ -430,25 +460,52 @@ impl Llm {
             }
         }
         if verbose() {
-            eprintln!("[jazyk] ✗ {} {} ({} ms): {}", label, step, started.elapsed().as_millis(), truncate(&last, 120));
+            eprintln!(
+                "[jazyk] ✗ {} {} ({} ms): {}",
+                label,
+                step,
+                started.elapsed().as_millis(),
+                truncate(&last, 120)
+            );
         }
         // The caller reports the failure itself (a failed turn, a failed entity); this
         // only keeps the structured record complete for a reader of the transcript.
         if let Some(t) = &self.trace {
-            t.line(label, &format!("llm call failed after {} ms: {}", started.elapsed().as_millis(), truncate(&last, 400)));
+            t.line(
+                label,
+                &format!(
+                    "llm call failed after {} ms: {}",
+                    started.elapsed().as_millis(),
+                    truncate(&last, 400)
+                ),
+            );
         }
         Err(last)
     }
 
     // Simple one-shot text chat (no history, no tools). Used by small utility paths.
     #[allow(dead_code)]
-    pub fn chat(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
-        let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
+    pub fn chat(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+    ) -> Result<String, String> {
+        let messages = [
+            json!({"role": "system", "content": system}),
+            json!({"role": "user", "content": user}),
+        ];
         let (msg, _tokens) = self.chat_messages(&messages, None, label, step)?;
         Ok(msg["content"].as_str().unwrap_or("").to_string())
     }
 
-    fn chat_once(&self, messages: &[Value], tools: Option<&[Value]>, streaming: bool) -> Result<(Value, u64), String> {
+    fn chat_once(
+        &self,
+        messages: &[Value],
+        tools: Option<&[Value]>,
+        streaming: bool,
+    ) -> Result<(Value, u64), String> {
         // History goes out as-is, reasoning fields included, so a reasoning model keeps
         // its chain across rounds. Stripped only under the sticky rejection fallback.
         let outgoing: Vec<Value> = if REASONING_UNSUPPORTED.load(Ordering::Relaxed) {
@@ -511,7 +568,11 @@ impl Llm {
             Ok(r) => r,
             Err(ureq::Error::Status(code, r)) => {
                 let text = r.into_string().unwrap_or_default();
-                return Err(format!("http error: HTTP {} :: {}", code, truncate(&text, 300)));
+                return Err(format!(
+                    "http error: HTTP {} :: {}",
+                    code,
+                    truncate(&text, 300)
+                ));
             }
             Err(ureq::Error::Transport(t)) => {
                 return Err(format!("transport: {}", t));
@@ -519,7 +580,11 @@ impl Llm {
         };
 
         if streaming {
-            return read_stream_message(BufReader::new(resp.into_reader()), max_completion_tokens(), call_timeout());
+            return read_stream_message(
+                BufReader::new(resp.into_reader()),
+                max_completion_tokens(),
+                call_timeout(),
+            );
         }
 
         // The same wall clock the stream path enforces: per-read timeouts bound the
@@ -547,11 +612,14 @@ impl Llm {
             .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
         let msg = v["choices"][0]["message"].clone();
         if msg.is_null() {
-            return Err(format!("no message in response :: {}", truncate(&resp_body, 300)));
+            return Err(format!(
+                "no message in response :: {}",
+                truncate(&resp_body, 300)
+            ));
         }
-        let tokens = v["usage"]["completion_tokens"]
-            .as_u64()
-            .unwrap_or_else(|| (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4));
+        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
+            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
+        });
         SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
         Ok((msg, tokens))
     }
@@ -566,7 +634,11 @@ impl Llm {
 // `max_tokens` streams a looping model forever otherwise), and the whole call has a
 // wall-clock deadline (per-read timeouts reset on every chunk, so a live stream never
 // trips them).
-fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duration) -> Result<(Value, u64), String> {
+fn read_stream_message<R: BufRead>(
+    reader: R,
+    cap_tokens: u64,
+    deadline: Duration,
+) -> Result<(Value, u64), String> {
     struct TcAcc {
         id: String,
         name: String,
@@ -602,7 +674,9 @@ fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duratio
         }
         {
             let line = line.trim_end_matches('\r').to_string();
-            let Some(data) = line.strip_prefix("data:") else { continue };
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
             let data = data.trim();
             if data.is_empty() {
                 continue;
@@ -610,7 +684,9 @@ fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duratio
             if data == "[DONE]" {
                 break;
             }
-            let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(data) else {
+                continue;
+            };
             if let Some(u) = v["usage"]["completion_tokens"].as_u64() {
                 usage_tokens = Some(u);
             }
@@ -628,7 +704,11 @@ fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duratio
                 for tc in calls {
                     let idx = tc["index"].as_u64().unwrap_or(0) as usize;
                     while tcs.len() <= idx {
-                        tcs.push(TcAcc { id: String::new(), name: String::new(), args: String::new() });
+                        tcs.push(TcAcc {
+                            id: String::new(),
+                            name: String::new(),
+                            args: String::new(),
+                        });
                     }
                     if let Some(id) = tc["id"].as_str() {
                         tcs[idx].id = id.to_string();
@@ -644,7 +724,8 @@ fn read_stream_message<R: BufRead>(reader: R, cap_tokens: u64, deadline: Duratio
         }
     }
 
-    if content.is_empty() && tcs.is_empty() && reasoning_content.is_empty() && reasoning.is_empty() {
+    if content.is_empty() && tcs.is_empty() && reasoning_content.is_empty() && reasoning.is_empty()
+    {
         return Err("empty stream response".to_string());
     }
     let tokens = usage_tokens.unwrap_or_else(|| {
@@ -730,7 +811,11 @@ mod tests {
     use super::*;
 
     fn sse(chunks: &[&str]) -> String {
-        chunks.iter().map(|c| format!("data: {}\n\n", c)).collect::<String>() + "data: [DONE]\n\n"
+        chunks
+            .iter()
+            .map(|c| format!("data: {}\n\n", c))
+            .collect::<String>()
+            + "data: [DONE]\n\n"
     }
 
     #[test]
@@ -741,7 +826,8 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"Recording it."}}]}"#,
             r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"done","arguments":"{}"}}]}}]}"#,
         ]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (msg, _tokens) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["reasoning_content"], "the section states a fact");
         assert_eq!(msg["content"], "Recording it.");
         assert_eq!(msg["tool_calls"][0]["function"]["name"], "done");
@@ -750,7 +836,8 @@ mod tests {
     #[test]
     fn stream_keeps_reasoning_field_variant() {
         let body = sse(&[r#"{"choices":[{"delta":{"reasoning":"thinking"}}]}"#]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (msg, _tokens) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["reasoning"], "thinking");
         assert!(msg.get("reasoning_content").is_none());
     }
@@ -767,7 +854,8 @@ mod tests {
     #[test]
     fn stream_without_reasoning_adds_no_field() {
         let body = sse(&[r#"{"choices":[{"delta":{"content":"plain"}}]}"#]);
-        let (msg, _tokens) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        let (msg, _tokens) =
+            read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
         assert_eq!(msg["content"], "plain");
         assert!(msg.get("reasoning_content").is_none());
         assert!(msg.get("reasoning").is_none());

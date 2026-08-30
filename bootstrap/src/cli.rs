@@ -1,10 +1,10 @@
 // CLI command implementations. Mirrors docs/frontends/cli.md.
-use crate::context::{self, Focus};
+use crate::context;
 use crate::llm::{self, Llm};
 use crate::project::{self, Project};
 use crate::reconcile;
+use crate::session::{Trace, TraceLevel};
 use crate::store::Store;
-use crate::turn::{Trace, TraceLevel};
 use std::path::PathBuf;
 
 #[derive(Clone)]
@@ -1130,32 +1130,24 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
     }
 }
 
+// `jazyk context <target>`: exactly what `load` renders, then the status block.
+// Mirrors docs/frontends/cli.md#jazyk-context.
 pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
     let (_proj, _llm, out) = resolve(paths, opts);
     let store = Store::load(&out);
-    let focus = opts.focus.as_deref().map(Focus::parse).unwrap_or_default();
-    let budget = opts.budget.unwrap_or(12_000);
-    if target.starts_with("h:") {
-        match context::expand(&store, target, budget) {
-            Ok(pack) => {
-                println!("{}", pack.pack);
-                0
-            }
-            Err(e) => {
-                eprintln!("jazyk: {}", e);
-                1
-            }
+    let depth = opts
+        .focus
+        .as_deref()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+    match context::cli_context(&store, target, depth, &[]) {
+        Ok(s) => {
+            println!("{}", s);
+            0
         }
-    } else {
-        match context::assemble(&store, target, &focus, budget) {
-            Ok(pack) => {
-                println!("{}", pack.pack);
-                0
-            }
-            Err(e) => {
-                eprintln!("jazyk: {}", e);
-                1
-            }
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            1
         }
     }
 }
@@ -1190,7 +1182,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     let store = Store::load(&out);
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
-    use crate::turn::TraceEvent;
+    use crate::session::TraceEvent;
     let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> =
         std::sync::Arc::new(|ev| match ev {
             TraceEvent::GenEntityDone { entity, files } => {
@@ -1288,7 +1280,7 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
         return 0;
     }
     // Render the worker events on the historical CLI output format.
-    use crate::turn::TraceEvent;
+    use crate::session::TraceEvent;
     let sink: std::sync::Arc<dyn Fn(&TraceEvent) + Send + Sync> =
         std::sync::Arc::new(|ev| match ev {
             TraceEvent::VerifyRowDone {

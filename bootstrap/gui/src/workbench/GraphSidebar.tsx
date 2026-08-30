@@ -1,13 +1,13 @@
 // The graph sidebar: one text filter plus facet lists over the live shards
 // (docs/frontends/gui.md#graph). A row opens the node in the inspector and
-// focuses it on the map.
+// focuses it on the map; a view row overlays the view.
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router'
-import { useCoverage, useGraph, useMatrix } from '../lib/queries'
+import { useCoverage, useGraph, useMatrix, useViews } from '../lib/queries'
 import { verifyClass } from '../components/Chip'
 import { reverseIndex } from '../components/Cards'
 
-const LISTS = ['entities', 'requirements', 'diagnostics', 'coverage'] as const
+const LISTS = ['entities', 'requirements', 'views', 'diagnostics', 'coverage'] as const
 type ListKind = (typeof LISTS)[number]
 const WINDOW = 200
 
@@ -22,6 +22,7 @@ export default function GraphSidebar() {
   const graph = useGraph()
   const matrix = useMatrix()
   const coverage = useCoverage()
+  const views = useViews()
   const rows = matrix.data?.rows ?? {}
   const revIdx = useMemo(
     () => (graph.data ? reverseIndex(graph.data) : new Map<string, string[]>()),
@@ -40,6 +41,15 @@ export default function GraphSidebar() {
     const next = new URLSearchParams(sp)
     next.set('node', id)
     next.set('focus', id)
+    setSp(next)
+  }
+
+  // A view row overlays the view and opens it in the inspector.
+  const overlayView = (id: string) => {
+    const next = new URLSearchParams(sp)
+    next.set('node', id)
+    next.set('view', id)
+    next.delete('focus')
     setSp(next)
   }
 
@@ -101,7 +111,9 @@ export default function GraphSidebar() {
               className={`wb-list-row mono${node === id ? ' active' : ''}`}
               onClick={() => openAndFocus(id)}
             >
-              {e.name} <span className="sub">{id} · {(revIdx.get(id) ?? []).length} req</span>
+              {e.name}
+              {e.stereotype ? ` «${e.stereotype}»` : ''}{' '}
+              <span className="sub">{id} · {(revIdx.get(id) ?? []).length} req</span>
             </a>
           ),
         )}
@@ -109,20 +121,52 @@ export default function GraphSidebar() {
       {g && list === 'requirements' &&
         windowed(
           Object.entries(g.requirements)
-            .filter(([id, r]) => !q || `${id} ${r.ears}`.toLowerCase().includes(q))
+            .filter(([id, r]) => !q || `${id} ${r.statement}`.toLowerCase().includes(q))
             .sort(([a], [b]) => a.localeCompare(b)),
           ([id, r]) => (
             <a
               key={id}
               className={`wb-list-row${node === id ? ' active' : ''}`}
-              title={r.ears}
+              title={r.statement}
               onClick={() => openAndFocus(id)}
             >
               <span className={`mono ${verifyClass(rows[id]?.status)}`}>●</span>{' '}
-              <span className="mono">{id}</span> <span className="sub">{r.ears}</span>
+              <span className="mono">{id}</span> <span className="sub">{r.statement}</span>
             </a>
           ),
         )}
+
+      {list === 'views' && (
+        <>
+          {!views.data && <p className="muted wb-side-pad">loading…</p>}
+          {(views.data?.views ?? []).length > 0 &&
+            // Grouped by kind, default views marked, member count and limits state.
+            [...new Set((views.data?.views ?? []).map((v) => v.kind))].sort().map((kind) => (
+              <div key={kind}>
+                <div className="wb-explorer-label" style={{ paddingTop: 6 }}>{kind}</div>
+                {(views.data?.views ?? [])
+                  .filter((v) => v.kind === kind)
+                  .filter((v) => !q || `${v.id} ${v.title}`.toLowerCase().includes(q))
+                  .map((v) => {
+                    const over = v.limits.some((l) => l.over)
+                    return (
+                      <a
+                        key={v.id}
+                        className={`wb-list-row${node === v.id ? ' active' : ''}`}
+                        onClick={() => overlayView(v.id)}
+                      >
+                        {v.title}
+                        {v.default && <span className="chip sev-none">default</span>}{' '}
+                        <span className={`sub ${over ? 'v-stale' : ''}`}>
+                          {v.members} members · {v.edges} edges{over ? ' · over limit' : ''}
+                        </span>
+                      </a>
+                    )
+                  })}
+              </div>
+            ))}
+        </>
+      )}
 
       {g && list === 'diagnostics' &&
         windowed(

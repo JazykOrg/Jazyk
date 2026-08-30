@@ -13,15 +13,36 @@ type WireEvent = {
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const num = (v: unknown) => (typeof v === 'number' ? v : 0)
 
-// The events that say where a build is working, into the turn-progress slice. The
-// files tree and the editor render it in place (docs/frontends/gui.md#files).
+// The document a goal target names: `doc.md`, or the doc half of `doc.md#/ref`.
+function targetDoc(target: string): string | null {
+  const doc = target.includes('#') ? target.slice(0, target.indexOf('#')) : target
+  return doc.endsWith('.md') ? doc : null
+}
+
+// The events that say where a build is working, into the session-progress slice.
+// The files tree and the editor render it in place (docs/frontends/gui.md#files).
 function applyProgress(ev: TraceEvent) {
   const app = useApp.getState()
   switch (ev.kind) {
-    case 'waveStart':
-      app.turnsQueued(str(ev.task), Array.isArray(ev.items) ? (ev.items as string[]) : [])
+    case 'batchStart': {
+      // One queued entry per batch, keyed by the batch id the session events use.
+      const goals = Array.isArray(ev.goals) ? (ev.goals as { id?: string; kind?: string; target?: string }[]) : []
+      const sectionGoals = goals.filter((g) => g.kind === 'reconcile-section')
+      const first = goals[0]
+      const doc = goals.map((g) => targetDoc(str(g.target))).find((d) => d !== null) ?? null
+      app.queueSession({
+        label: str(ev.label),
+        task: str(first?.kind ?? ev.class),
+        target: str(first?.target),
+        doc,
+        sections: sectionGoals
+          .map((g) => str(g.target))
+          .filter((t) => t.includes('#'))
+          .map((t) => t.slice(t.indexOf('#') + 1)),
+      })
       break
-    case 'turnStart':
+    }
+    case 'sessionStart':
       app.turnStarted({
         label: str(ev.label),
         task: str(ev.task),
@@ -33,14 +54,18 @@ function applyProgress(ev: TraceEvent) {
     case 'section':
       app.turnSection(str(ev.label), str(ev.section))
       break
-    case 'turnDone': {
+    case 'sessionDone': {
       const summary = str(ev.summary)
       const staged = `${num(ev.staged)} staged · ${num(ev.rounds)} rounds`
       app.turnEnded(str(ev.label), 'done', summary ? `${staged} · ${summary}` : staged)
       break
     }
-    case 'turnFailed':
+    case 'sessionFailed':
       app.turnEnded(str(ev.label), 'failed', str(ev.error))
+      break
+    case 'goal':
+      // Resolved cards turn into their justification and linger on the board.
+      app.noteGoal(str(ev.goal), str(ev.event), str(ev.justification) || str(ev.reason))
       break
   }
 }
@@ -51,13 +76,26 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
   switch (ev.type) {
     case 'store.generation': {
       app.setLastCommit(ev.generation as number)
-      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview'])
+      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'preview', 'explain'])
         qc.invalidateQueries({ queryKey: [key] })
       qc.invalidateQueries({ queryKey: ['node'] })
       break
     }
     case 'store.lock':
       qc.invalidateQueries({ queryKey: ['status'] })
+      break
+    // The board was re-derived; the cards refetch (docs/frontends/gui.md#events).
+    case 'board.changed':
+      qc.invalidateQueries({ queryKey: ['board'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+      break
+    case 'goal.opened':
+      app.noteGoal(str(ev.goal), 'opened', '')
+      qc.invalidateQueries({ queryKey: ['board'] })
+      break
+    case 'goal.resolved':
+      app.noteGoal(str(ev.goal), 'resolved', str(ev.justification))
+      qc.invalidateQueries({ queryKey: ['board'] })
       break
     case 'docs.changed':
       qc.invalidateQueries({ queryKey: ['docs'] })
@@ -98,8 +136,9 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
     }
     case 'job.finished':
       app.turnsSettle()
+      app.clearGoalNotes()
       app.setJobState(ev.jobId as number, ev.state as string, ev.result as Job['result'])
-      for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable', 'benchmarks'])
+      for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable', 'benchmarks', 'board', 'views'])
         qc.invalidateQueries({ queryKey: [key] })
       break
     // The chat pane (docs/frontends/gui.md#chat).
@@ -180,9 +219,9 @@ export function startEventStream(qc: QueryClient) {
     }
   }
 
-  // Seed job state so the Build view knows about jobs from before this page load.
-  // A build already running also replays its events through the progress slice, so
-  // a reload (or a healed connection) shows where it is, not an empty tree.
+  // Seed job state so the activity view knows about jobs from before this page
+  // load. A build already running also replays its events through the progress
+  // slice, so a reload (or a healed connection) shows where it is, not an empty tree.
   const seed = () =>
     get<{ jobs: Job[] }>(`/api/jobs`)
       .then((r) => {
@@ -214,7 +253,7 @@ export function startEventStream(qc: QueryClient) {
     }
   })
 
-  // Finished turns linger, then fade; one ticker retires them.
+  // Finished sessions linger, then fade; one ticker retires them.
   const sweep = window.setInterval(() => useApp.getState().turnsSweep(), 1000)
 
   connect()

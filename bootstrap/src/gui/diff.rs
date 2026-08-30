@@ -24,6 +24,10 @@ fn kind_of(id: &str) -> &'static str {
         "entity"
     } else if id.starts_with("req:") {
         "requirement"
+    } else if id.starts_with("view:") {
+        "view"
+    } else if id.starts_with("sm:") {
+        "state-machine"
     } else if id.starts_with("diag:") {
         "diagnostic"
     } else {
@@ -47,10 +51,13 @@ impl Replay {
             }
             "update_entity" => {
                 if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
-                    for k in ["name", "definition"] {
+                    for k in ["name", "definition", "stereotype", "parent", "provenance"] {
                         if !m[k].is_null() {
                             node.insert(k.into(), m[k].clone());
                         }
+                    }
+                    if !m["set_attributes"].is_null() {
+                        node.insert("attributes".into(), m["set_attributes"].clone());
                     }
                     if let Some(aliases) = m["add_aliases"].as_array() {
                         let list = node.entry("aliases").or_insert_with(|| json!([]));
@@ -72,9 +79,47 @@ impl Replay {
             }
             "update_requirement" => {
                 if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
-                    for k in ["statement", "entities", "edges"] {
+                    for k in [
+                        "statement",
+                        "entities",
+                        "edges",
+                        "transition",
+                        "facets",
+                        "source",
+                        "provenance",
+                    ] {
                         if !m[k].is_null() {
                             node.insert(k.into(), m[k].clone());
+                        }
+                    }
+                }
+            }
+            "create_view" => {
+                self.nodes.insert(id, m["view"].clone());
+            }
+            "update_view" => {
+                if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
+                    for k in ["title", "members", "query", "collapse"] {
+                        if !m[k].is_null() {
+                            node.insert(k.into(), m[k].clone());
+                        }
+                    }
+                    // Any mutation on a default view makes it curated.
+                    node.insert("default".into(), json!(false));
+                }
+            }
+            "ratify_provenance" => {
+                if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
+                    node.insert("source".into(), m["source"].clone());
+                    node.remove("provenance");
+                }
+            }
+            "bump_limit" => {
+                if let Some(Value::Object(node)) = self.nodes.get_mut(&id) {
+                    let limits = node.entry("limits").or_insert_with(|| json!({}));
+                    if let Some(o) = limits.as_object_mut() {
+                        if let Some(l) = m["limit"].as_str() {
+                            o.insert(l.to_string(), m["value"].clone());
                         }
                     }
                 }
@@ -89,7 +134,7 @@ impl Replay {
                     node.insert("triage".into(), m["triage"].clone());
                 }
             }
-            "delete_entity" | "delete_requirement" => {
+            "delete_entity" | "delete_requirement" | "delete_view" | "retract_decree" => {
                 self.nodes.remove(&id);
             }
             "merge_entities" => {

@@ -10,6 +10,8 @@ import { useApp } from './lib/store'
 import { useInspector } from './lib/nav'
 import Explorer from './workbench/Explorer'
 import GraphSidebar from './workbench/GraphSidebar'
+import BoardSidebar from './workbench/BoardSidebar'
+import Board from './routes/Board'
 import WorkSidebar from './workbench/WorkSidebar'
 import DocEditor from './workbench/DocEditor'
 import DelivFile from './workbench/DelivFile'
@@ -31,6 +33,7 @@ import './workbench/workbench.css'
 const RAIL = [
   ['/files', '▤', 'files'],
   ['/graph', '⬡', 'graph'],
+  ['/board', '▦', 'board'],
   ['/work', '⚒', 'work'],
   ['/benchmarks', '⚖', 'bench'],
   ['/feedback', '⚑', 'feedback'],
@@ -39,6 +42,7 @@ const RAIL = [
 
 function railMode(pathname: string): string {
   if (pathname.startsWith('/graph')) return '/graph'
+  if (pathname.startsWith('/board')) return '/board'
   if (pathname.startsWith('/work')) return '/work'
   if (pathname.startsWith('/benchmarks')) return '/benchmarks'
   if (pathname.startsWith('/feedback')) return '/feedback'
@@ -106,6 +110,7 @@ export default function App() {
         <aside className="wb-side">
           {mode === '/files' && <Explorer />}
           {mode === '/graph' && <GraphSidebar />}
+          {mode === '/board' && <BoardSidebar />}
           {mode === '/work' && <WorkSidebar />}
           {mode === '/benchmarks' && (
             <div className="wb-side-pad muted">
@@ -152,6 +157,7 @@ export default function App() {
                 <Route path="/files/docs/*" element={<DocEditor />} />
                 <Route path="/files/deliverable/*" element={<DelivFile />} />
                 <Route path="/graph" element={<MapCenter />} />
+                <Route path="/board" element={<Scroll><Board /></Scroll>} />
                 <Route path="/work" element={<Scroll><Work /></Scroll>} />
                 <Route path="/work/gen/:id" element={<Scroll><GenTask /></Scroll>} />
                 <Route path="/work/verify" element={<Scroll><VerifyMatrix /></Scroll>} />

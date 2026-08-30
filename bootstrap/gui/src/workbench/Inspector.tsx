@@ -1,11 +1,12 @@
 // The inspector: the detail pane for one selection, opened from anywhere,
 // replacing nothing (docs/frontends/gui.md#inspector). Driven by ?node=; with no
-// selection it shows the open center item's ties (a deliverable file's owners and
-// sites, a document's links into the deliverable).
+// selection it shows the open center item's ties. Every rendered element walks to
+// the sentence behind it: an arrow to its relationship, the relationship to its
+// requirements, each requirement to its quote.
 import { Link, useLocation } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { get, type VerifyRow } from '../lib/api'
-import { useContextPack, useGraph, useJournal, useMatrix } from '../lib/queries'
+import { useContextPack, useExplain, useGraph, useJournal, useMatrix, useView } from '../lib/queries'
 import { useDocDelivLinks } from '../lib/links'
 import { delivHref } from '../lib/nav'
 import { useResolveId } from '../components/NodeLink'
@@ -15,13 +16,15 @@ import { VerifyChip } from '../components/Chip'
 import {
   DiagnosticCard,
   EntityCard,
+  ProvenanceLine,
   RelationshipCard,
   RequirementCard,
   aggClass,
   reverseIndex,
 } from '../components/Cards'
+import { entryLabel } from '../lib/api'
 import type { FileResp } from './DelivFile'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 function VerifyLine({ id, row }: { id: string; row?: VerifyRow }) {
   return (
@@ -77,6 +80,8 @@ function EntityFiles({ id }: { id: string }) {
   )
 }
 
+// The journal entries that touched this node: from a fact, to the entry that
+// landed it, to the goals that entry resolved and opened.
 function JournalHits({ id }: { id: string }) {
   const journal = useJournal(200)
   const hits = (journal.data?.entries ?? []).filter((e) =>
@@ -87,11 +92,143 @@ function JournalHits({ id }: { id: string }) {
     <>
       <h2>journal</h2>
       {hits.slice(0, 8).map((e) => (
-        <p key={e.generation} className="oneline mono" style={{ margin: '2px 0' }}>
-          <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {e.workItem.task} ·{' '}
-          {e.workItem.target}
+        <div key={e.generation} style={{ margin: '2px 0' }}>
+          <p className="oneline mono" style={{ margin: 0 }}>
+            <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {entryLabel(e)}
+          </p>
+          {(e.resolved_goals ?? []).slice(0, 2).map((r) => (
+            <p key={r.goal} className="muted oneline" style={{ margin: '0 0 0 12px' }}>
+              ✓ {r.goal}: {r.justification}
+            </p>
+          ))}
+        </div>
+      ))}
+    </>
+  )
+}
+
+// The ripple from a target, fetched on demand.
+function RipplePane({ target }: { target: string }) {
+  const [open, setOpen] = useState(false)
+  const q = useQuery({
+    queryKey: ['ripple', target],
+    queryFn: () => get<{ text: string }>(`/api/ripple?target=${encodeURIComponent(target)}`),
+    enabled: open && target !== '',
+    staleTime: 5_000,
+  })
+  return (
+    <>
+      <p className="row" style={{ margin: '4px 0' }}>
+        <button onClick={() => setOpen(!open)}>{open ? 'hide ripple' : 'ripple'}</button>
+      </p>
+      {open && q.isLoading && <p className="muted">walking the journal…</p>}
+      {open && q.error && <p className="muted">no cascade touches this target</p>}
+      {open && q.data && <pre className="pack">{q.data.text}</pre>}
+    </>
+  )
+}
+
+// A goal from a board card: kind, class, target, change, cause, state, hints, and
+// its explanation. Mirrors docs/frontends/gui.md#inspector.
+function GoalDetail({ id }: { id: string }) {
+  const explain = useExplain(id)
+  if (explain.isLoading) return <p className="muted">explaining…</p>
+  if (!explain.data) return <p className="muted">the board holds no goal {id}</p>
+  const g = explain.data.goal as { target?: string } | undefined
+  return (
+    <>
+      <pre className="pack">{explain.data.text}</pre>
+      {g?.target && <RipplePane target={g.target} />}
+    </>
+  )
+}
+
+// A view: kind, title, members in order, exclusions with notes, the query, the
+// collapse set, provenance, limits state, the overlay action, and its diagram.
+function ViewDetailPane({ id }: { id: string }) {
+  const view = useView(id)
+  if (view.isLoading) return <p className="muted">resolving the view…</p>
+  if (view.error) return <p className="error-inline">{view.error.message}</p>
+  const v = view.data
+  if (!v) return null
+  return (
+    <>
+      <div className="card">
+        <h3>
+          {v.title} <span className="chip sev-info">{v.kind}</span>
+          {v.default && <span className="chip sev-none" title="recomputed on every commit; any edit makes it curated">default</span>}
+        </h3>
+        {v.default && (
+          <p className="muted" style={{ margin: '2px 0' }}>
+            editing this view clears its default mark; the recompute leaves it alone from
+            that commit on
+          </p>
+        )}
+        <p style={{ margin: '4px 0' }}>
+          <Link to={`/graph?view=${encodeURIComponent(id)}`}>overlay on the map →</Link>
+        </p>
+        {v.provenance && <ProvenanceLine p={v.provenance} />}
+        {(v.limits ?? []).map((l) => (
+          <p key={l.limit} className={`mono ${l.overHard ? 'v-bad' : l.over ? 'v-stale' : 'muted'}`} style={{ margin: '1px 0' }}>
+            {l.limit}: {l.count} / {l.soft} soft, {l.hard} hard
+          </p>
+        ))}
+      </div>
+      <h2>members</h2>
+      {v.members.map((m) => (
+        <p key={m.id} style={{ margin: '2px 0' }}>
+          <NodeLink id={m.id} />
+          {m.node === 'entity' && m.stereotype && <span className="chip sev-info">«{m.stereotype}»</span>}
+          {m.hidden && <span className="chip sev-none" title="hidden by the collapse set">collapsed away</span>}
+          {m.node === 'requirement' && <span className="muted"> {m.statement}</span>}
         </p>
       ))}
+      {(v.excluded ?? []).length > 0 && (
+        <>
+          <h2>excluded</h2>
+          {v.excluded.map((x) => (
+            <p key={x.id} style={{ margin: '2px 0' }}>
+              <NodeLink id={x.id} /> <span className="muted">{x.note}</span>
+            </p>
+          ))}
+        </>
+      )}
+      {v.query && (
+        <>
+          <h2>query</h2>
+          <pre className="pack">{JSON.stringify(v.query, null, 2)}</pre>
+        </>
+      )}
+      {(v.arrows ?? []).length > 0 && (
+        <>
+          <h2>arrows</h2>
+          {v.arrows.map((a, i) => (
+            <details key={i} style={{ margin: '2px 0' }}>
+              <summary className="mono">
+                <NodeLink id={a.a} /> →{a.type}→ <NodeLink id={a.b} />
+                {a.lifted && <span className="chip sev-none" title="lifted from hidden descendants">lifted: {a.count}</span>}
+              </summary>
+              {a.concrete.map((c, j) => (
+                <p key={j} className="mono" style={{ margin: '1px 0 1px 12px' }}>
+                  <NodeLink id={c.a} /> →{c.type}→ <NodeLink id={c.b} />{' '}
+                  {c.requirements.map((q) => (
+                    <span key={q} style={{ marginRight: 4 }}>
+                      <NodeLink id={q} />
+                    </span>
+                  ))}
+                </p>
+              ))}
+            </details>
+          ))}
+        </>
+      )}
+      {v.svg && (
+        <details>
+          <summary>diagram</summary>
+          <div className="view-svg" dangerouslySetInnerHTML={{ __html: v.svg }} />
+        </details>
+      )}
+      {v.renderError && <p className="muted">renderer: {v.renderError}</p>}
     </>
   )
 }
@@ -110,16 +247,77 @@ function NodeDetail({ id }: { id: string }) {
   const g = graph.data
   const rows = matrix.data?.rows ?? {}
 
+  if (id.startsWith('g:')) return <GoalDetail id={id} />
+  if (id.startsWith('view:')) return <ViewDetailPane id={id} />
+
+  const machine = g.stateMachines?.[id]
+  if (machine) {
+    return (
+      <div className="card">
+        <h3>
+          <NodeLink id={id} /> <span className="chip sev-info">state machine</span>
+        </h3>
+        <p style={{ margin: '2px 0' }}>
+          subject <NodeLink id={machine.subject} />
+        </p>
+        <p className="mono" style={{ margin: '2px 0' }}>
+          states: {machine.states.join(', ')}
+          {machine.initial && <span className="muted"> (initial: {machine.initial})</span>}
+        </p>
+        {machine.transitions.map((t, i) => (
+          <p key={i} className="mono" style={{ margin: '1px 0' }}>
+            {t.from} → {t.to}
+            {t.trigger && <span className="muted"> on {t.trigger}</span>}
+            {t.guard && <span className="muted"> [{t.guard}]</span>} <NodeLink id={t.requirement} />
+          </p>
+        ))}
+      </div>
+    )
+  }
+
   const entity = g.entities[id]
   if (entity) {
     const reqIds = revIdx.get(id) ?? []
     const rels = Object.entries(g.relationships).filter(([, r]) => r.members.includes(id))
+    const views = Object.entries(g.views ?? {}).filter(([, v]) => (v.members ?? []).includes(id))
+    const children = Object.entries(g.entities).filter(([, e]) => e.parent === id)
+    const myMachine = Object.entries(g.stateMachines ?? {}).find(([, m]) => m.subject === id)
     const diags = Object.entries(g.diagnostics).filter(
       ([, d]) => (d.subjects ?? []).includes(id) && d.triage !== 'suppressed',
     )
     return (
       <>
-        <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} />
+        <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} editable />
+        {children.length > 0 && (
+          <>
+            <h2>children</h2>
+            {children.map(([cid]) => (
+              <p key={cid} style={{ margin: '2px 0' }}>
+                <NodeLink id={cid} />
+              </p>
+            ))}
+          </>
+        )}
+        {views.length > 0 && (
+          <>
+            <h2>views</h2>
+            {views.map(([vid, v]) => (
+              <p key={vid} style={{ margin: '2px 0' }}>
+                <NodeLink id={vid} /> <Link to={`/graph?view=${encodeURIComponent(vid)}`}>overlay</Link>
+                {v.default && <span className="chip sev-none">default</span>}
+              </p>
+            ))}
+          </>
+        )}
+        {myMachine && (
+          <>
+            <h2>state machine</h2>
+            <p style={{ margin: '2px 0' }}>
+              <NodeLink id={myMachine[0]} />{' '}
+              <span className="muted mono">{myMachine[1].states.join(' · ')}</span>
+            </p>
+          </>
+        )}
         <EntityFiles id={id} />
         <h2>verification</h2>
         {reqIds.length === 0 && <p className="muted">no requirements reference this entity</p>}
@@ -148,11 +346,12 @@ function NodeDetail({ id }: { id: string }) {
         )}
         {pack.data && (
           <>
-            <h2>context pack</h2>
+            <h2>loaded</h2>
             <pre className="pack">{pack.data.pack}</pre>
           </>
         )}
         <JournalHits id={id} />
+        <RipplePane target={id} />
       </>
     )
   }
@@ -162,11 +361,12 @@ function NodeDetail({ id }: { id: string }) {
     const row = rows[id]
     return (
       <>
-        <RequirementCard id={id} r={req} row={row} />
+        <RequirementCard id={id} r={req} row={row} editable />
         <ImplementedIn id={id} />
         <h2>verification</h2>
         <VerifyLine id={id} row={row} />
         <JournalHits id={id} />
+        <RipplePane target={id} />
       </>
     )
   }
@@ -257,7 +457,7 @@ function DocTies({ path }: { path: string }) {
   const graph = useGraph()
   const files = [...(links.docToFiles.get(path) ?? [])]
   const reqs = Object.entries(graph.data?.requirements ?? {}).filter(
-    ([, r]) => r.source.doc === path,
+    ([, r]) => r.source?.doc === path,
   )
   return (
     <>

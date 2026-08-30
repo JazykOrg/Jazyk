@@ -1,6 +1,8 @@
 // Router assembly, session-token check, bind with port fallback, graceful shutdown.
 use super::state::SharedState;
-use super::{api, assets, chat, deliverable, diff, docs, events, jobs, lsp_ws};
+use super::{
+    api, assets, board_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, views_api,
+};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -44,6 +46,13 @@ pub fn router(st: SharedState) -> Router {
         .route("/project", get(api::project))
         .route("/status", get(api::status))
         .route("/graph", get(api::graph))
+        .route("/board", get(board_api::board))
+        .route("/preview", get(board_api::preview))
+        .route("/explain", get(board_api::explain))
+        .route("/ripple", get(board_api::ripple))
+        .route("/views", get(views_api::views))
+        .route("/views/{id}", get(views_api::view))
+        .route("/facts/{id}/edit", post(facts::edit_fact))
         .route("/entities/{id}", get(api::entity))
         .route("/requirements/{id}", get(api::requirement))
         .route("/search", get(api::search))
@@ -68,7 +77,7 @@ pub fn router(st: SharedState) -> Router {
         .route("/docs/baseline", get(api::doc_baseline))
         .route("/docs/rename", post(docs::doc_rename))
         .route("/gen/pending", get(api::gen_pending))
-        .route("/gen/task/{id}", get(api::gen_task))
+        .route("/gen/package/{id}", get(api::gen_package))
         .route("/verify/pending", get(api::verify_pending))
         .route("/verify/matrix", get(api::verify_matrix))
         .route("/docsgen/{slug}", get(api::docsgen))

@@ -216,7 +216,7 @@ impl JobManager {
     }
 
     // Best effort: a queued job cancels immediately, a running one stops at its next
-    // boundary (between waves, entities, or rows). In-flight LLM calls finish.
+    // boundary (between sessions, entities, or rows). In-flight LLM calls finish.
     pub fn cancel(&self, st: &SharedState, id: u64) -> Option<Value> {
         let mut inner = self.inner.lock().unwrap();
         let job = inner.jobs.get(&id)?;

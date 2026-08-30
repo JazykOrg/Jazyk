@@ -5,15 +5,19 @@ import {
   getOr404,
   type BenchmarkModels,
   type BenchmarkTable,
+  type BoardData,
   type Deliverable,
   type DocInfo,
   type DocRecord,
   type FeedbackEntry,
   type Graph,
   type JournalEntry,
+  type PreviewData,
   type Project,
   type Status,
   type VerifyRow,
+  type ViewDetail,
+  type ViewInfo,
 } from './api'
 
 const opts = { placeholderData: keepPreviousData, staleTime: 5_000 }
@@ -26,6 +30,41 @@ export const useProject = () =>
 
 export const useGraph = () =>
   useQuery({ queryKey: ['graph'], queryFn: () => get<Graph>('/api/graph'), ...opts })
+
+// The goal board as the reconciler derives it (docs/frontends/gui.md#board).
+export const useBoard = () =>
+  useQuery({ queryKey: ['board'], queryFn: () => get<BoardData>('/api/board'), ...opts })
+
+export const useViews = () =>
+  useQuery({ queryKey: ['views'], queryFn: () => get<{ views: ViewInfo[] }>('/api/views'), ...opts })
+
+// One view resolved for drawing: members, lifted arrows, steps, the machine, the picture.
+export const useView = (id: string) =>
+  useQuery({
+    queryKey: ['views', id],
+    queryFn: () => get<ViewDetail>(`/api/views/${encodeURIComponent(id)}`),
+    enabled: id !== '',
+    ...opts,
+  })
+
+// The next session's prompt; target '' previews the first ready batch.
+export const usePreview = (target: string, enabled = true) =>
+  useQuery({
+    queryKey: ['preview', target],
+    queryFn: () => get<PreviewData>(`/api/preview${target ? `?goal=${encodeURIComponent(target)}` : ''}`),
+    enabled,
+    ...opts,
+  })
+
+export const useExplain = (target: string) =>
+  useQuery({
+    queryKey: ['explain', target],
+    queryFn: () => getOr404<{ target: string; text: string; goal?: Record<string, unknown> }>(
+      `/api/explain?target=${encodeURIComponent(target)}`,
+    ),
+    enabled: target !== '',
+    ...opts,
+  })
 
 export const useDocs = () =>
   useQuery({ queryKey: ['docs'], queryFn: () => get<{ docs: DocInfo[] }>('/api/docs'), ...opts })
@@ -120,12 +159,14 @@ export const useDelivBaseline = (path: string) =>
     ...opts,
   })
 
-export const useContextPack = (target: string) =>
+// What `load` renders for a target, with its expansion handles.
+export const useContextPack = (target: string, depth = 1) =>
   useQuery({
-    queryKey: ['node', 'context', target],
+    queryKey: ['node', 'context', target, depth],
     queryFn: () =>
-      get<{ pack: string; handles: { handle: string; description: string }[] }>(
-        `/api/context?target=${encodeURIComponent(target)}`,
+      get<{ target: string; pack: string; handles: string[] }>(
+        `/api/context?target=${encodeURIComponent(target)}&depth=${depth}`,
       ),
+    enabled: target !== '',
     ...opts,
   })

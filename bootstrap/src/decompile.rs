@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 // The drafting contract, served as begin_decompile instructions and as the internal
-// worker's system prompt. Mirrors docs/consumers/decompile.md#draft-tasks.
+// worker's system prompt. Mirrors docs/consumers/decompile.md#draft-goals.
 pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/decompile-contract.md").into()
 }
@@ -60,7 +60,7 @@ pub fn unratified(store: &Store) -> Vec<String> {
 // Scopes and tasks.
 
 // Group the unclaimed report by top-level directory under the deliverable. A scope is
-// the unit one draft task covers. Root-level files gather under ".".
+// the unit one draft goal covers. Root-level files gather under ".".
 pub fn scopes(proj: &Project, store: &Store, gs: &GenSettings) -> BTreeMap<String, Vec<String>> {
     let mut by_scope: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in crate::bind::unclaimed(proj, store, gs) {
@@ -83,9 +83,10 @@ fn scope_released(control: &crate::control::Control, scope: &str) -> bool {
         .any(|s| s == scope || s == "." || scope.starts_with(&format!("{}/", s)))
 }
 
-// Draft tasks, derived from the unclaimed report. Always gated until a decompile
-// release names the scope; there is no auto mode.
-// Mirrors docs/compiler/reconciler.md#the-task-queue.
+// Draft goals, derived from the unclaimed report and never from the dirty set:
+// decompilation stays outside the goal board. Always gated until a decompile release
+// names the scope; there is no auto mode.
+// Mirrors docs/consumers/decompile.md#triggering.
 pub fn pending(
     proj: &Project,
     store: &Store,
@@ -113,7 +114,7 @@ pub fn pending(
         .collect()
 }
 
-// The package for one draft task: the inventory slice, the test files with their
+// The package for one draft goal: the inventory slice, the test files with their
 // content, and the drafting contract. Mirrors docs/compiler/tools.md#decompilation-tools.
 pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Result<Value, String> {
     let by_scope = scopes(proj, store, gs);
@@ -226,7 +227,7 @@ pub fn submit(
 // The built-in draft worker: one scope per LLM reply, the file-reply protocol the
 // pipeline generation worker uses. An attached agent over `jazyk mcp decompile` is
 // the better worker; this one keeps the command usable without one.
-// Mirrors docs/consumers/decompile.md#draft-tasks.
+// Mirrors docs/consumers/decompile.md#draft-goals.
 pub fn run_all(
     proj: &Project,
     store: &Store,

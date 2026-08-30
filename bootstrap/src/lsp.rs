@@ -5,7 +5,7 @@
 use crate::context::{self, Focus};
 use crate::jsonrpc::{read_message, write_message};
 use crate::md;
-use crate::model::Entity;
+use crate::model::{Diagnostic, Entity, VIEW_KINDS};
 use crate::store::Store;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -305,13 +305,15 @@ impl Lsp {
                 (Some(p), Some(a)) if a.status == "failed" => Some(p.question.clone()),
                 _ => None,
             };
+            let message = match &question {
+                Some(q) => format!("{}: {}\nQ: {}", d.rule, d.message, q),
+                None => format!("{}: {}", d.rule, d.message),
+            };
+            let mut pushed = false;
             for subject in &d.subjects {
                 let anchor = self.subject_anchor(subject, doc);
                 let Some(range) = anchor else { continue };
-                let message = match &question {
-                    Some(q) => format!("{}: {}\nQ: {}", d.rule, d.message, q),
-                    None => format!("{}: {}", d.rule, d.message),
-                };
+                pushed = true;
                 items.push(json!({
                     "range": self.range(range),
                     "severity": severity,
@@ -320,6 +322,21 @@ impl Lsp {
                     "message": message,
                     "data": { "jazykDiag": did }
                 }));
+            }
+            // A prompted proposal whose subject sits nowhere in the documents (a
+            // ratification proposal on a derived fact) anchors at its edit target,
+            // so the question still sits inline where the sentence would land.
+            if !pushed {
+                if let Some(range) = self.prompt_edit_anchor(d, doc) {
+                    items.push(json!({
+                        "range": self.range(range),
+                        "severity": severity,
+                        "source": "jazyk",
+                        "code": d.rule,
+                        "message": message,
+                        "data": { "jazykDiag": did }
+                    }));
+                }
             }
         }
         let msg = json!({
@@ -347,6 +364,37 @@ impl Lsp {
         if let Some((sdoc, sec)) = crate::model::split_section_ref(&resolved) {
             if sdoc == doc {
                 let s = self.store.docs.get(doc)?.sections.get(&sec)?;
+                return Some((s.lines[0], 0, s.lines[0], 0));
+            }
+        }
+        None
+    }
+
+    // Where a prompted diagnostic's suggested edit anchors inside `doc`: the located
+    // `old_text`, else the first line of the target section. This is how a
+    // ratification-pending or decision prompt on an unquoted fact reaches the editor.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn prompt_edit_anchor(
+        &self,
+        d: &Diagnostic,
+        doc: &str,
+    ) -> Option<(usize, usize, usize, usize)> {
+        let p = d.prompt.as_ref()?;
+        for o in &p.options {
+            let Some(e) = o.edit.as_ref().filter(|e| e.doc == doc) else {
+                continue;
+            };
+            if !e.old_text.is_empty() {
+                if let Some(r) = md::locate(&self.doc_text(doc), &e.old_text) {
+                    return Some(r);
+                }
+            }
+            if let Some(s) = self
+                .store
+                .docs
+                .get(doc)
+                .and_then(|rec| rec.sections.get(&e.section))
+            {
                 return Some((s.lines[0], 0, s.lines[0], 0));
             }
         }
@@ -384,6 +432,137 @@ impl Lsp {
         }
         let (_, id) = best?;
         self.store.graph.entities.get(&id).map(|e| (id, e))
+    }
+
+    // ---- rendered views ----
+
+    // The rendered `.svg` of a view, only when the build output exists on disk. The
+    // hover never renders a view itself. Mirrors docs/frontends/lsp.md#capabilities.
+    fn view_svg_path(&self, view_id: &str) -> Option<PathBuf> {
+        let rel = view_id.strip_prefix("view:")?;
+        let (kind, slug) = rel.split_once('/')?;
+        let p = self
+            .out
+            .join("diagrams")
+            .join(kind)
+            .join(format!("{}.svg", slug));
+        p.exists().then_some(p)
+    }
+
+    // The most relevant view of an entity, chosen deterministically: a view whose
+    // slug is the entity's own (state, then component, then object), else the
+    // smallest view listing the entity as a member, ties broken by the kind catalog
+    // order, then by id. None when nothing qualifies: nothing is invented.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn most_relevant_view(&self, id: &str) -> Option<(String, String, String)> {
+        let slug = id.strip_prefix("ent:").unwrap_or(id);
+        let g = &self.store.graph;
+        let own = [
+            (
+                "state",
+                g.state_machines.values().any(|m| m.subject == id)
+                    || g.views.contains_key(&format!("view:state/{}", slug)),
+            ),
+            (
+                "component",
+                g.views.contains_key(&format!("view:component/{}", slug)),
+            ),
+            (
+                "object",
+                g.views.contains_key(&format!("view:object/{}", slug)),
+            ),
+        ];
+        for (kind, holds) in own {
+            if !holds {
+                continue;
+            }
+            let vid = format!("view:{}/{}", kind, slug);
+            if self.view_svg_path(&vid).is_some() {
+                let title = g
+                    .views
+                    .get(&vid)
+                    .map(|v| v.title.clone())
+                    .or_else(|| g.entities.get(id).map(|e| e.name.clone()))
+                    .unwrap_or_else(|| slug.to_string());
+                return Some((vid, kind.to_string(), title));
+            }
+        }
+        let mut best: Option<(usize, usize, String)> = None;
+        for (vid, v) in &g.views {
+            if !v.members.iter().any(|m| self.store.resolve_id(m) == id) {
+                continue;
+            }
+            if self.view_svg_path(vid).is_none() {
+                continue;
+            }
+            let pos = VIEW_KINDS
+                .iter()
+                .position(|k| *k == v.kind)
+                .unwrap_or(usize::MAX);
+            let key = (v.members.len(), pos, vid.clone());
+            if best.as_ref().map(|b| key < *b).unwrap_or(true) {
+                best = Some(key);
+            }
+        }
+        let (_, _, vid) = best?;
+        let v = &g.views[&vid];
+        Some((vid.clone(), v.kind.clone(), v.title.clone()))
+    }
+
+    // The image of a rendered view as a markdown image line, plus the entity's page
+    // link when the page exists. Empty when neither exists.
+    fn entity_hover_head(&self, id: &str) -> String {
+        let mut head = String::new();
+        if let Some((vid, kind, title)) = self.most_relevant_view(id) {
+            if let Some(svg) = self.view_svg_path(&vid) {
+                head.push_str(&format!("![{} ({})]({})\n", title, kind, path_to_uri(&svg)));
+            }
+        }
+        let slug = id.strip_prefix("ent:").unwrap_or(id);
+        let page = self.out.join("docsgen").join(format!("{}.md", slug));
+        if page.exists() {
+            head.push_str(&format!(
+                "[{}: requirements document]({})\n",
+                id,
+                path_to_uri(&page)
+            ));
+        }
+        head
+    }
+
+    // The image of the smallest flow view listing a requirement as a member, so the
+    // step shows in its flow above the card. Same tie rule as for entities.
+    fn flow_view_image(&self, rid: &str) -> Option<String> {
+        const FLOW: [&str; 4] = ["use-case", "activity", "sequence", "communication"];
+        let mut best: Option<(usize, usize, String)> = None;
+        for (vid, v) in &self.store.graph.views {
+            if !FLOW.contains(&v.kind.as_str()) {
+                continue;
+            }
+            if !v.members.iter().any(|m| self.store.resolve_id(m) == rid) {
+                continue;
+            }
+            if self.view_svg_path(vid).is_none() {
+                continue;
+            }
+            let pos = VIEW_KINDS
+                .iter()
+                .position(|k| *k == v.kind)
+                .unwrap_or(usize::MAX);
+            let key = (v.members.len(), pos, vid.clone());
+            if best.as_ref().map(|b| key < *b).unwrap_or(true) {
+                best = Some(key);
+            }
+        }
+        let (_, _, vid) = best?;
+        let v = &self.store.graph.views[&vid];
+        let svg = self.view_svg_path(&vid)?;
+        Some(format!(
+            "![{} ({})]({})\n\n",
+            v.title,
+            v.kind,
+            path_to_uri(&svg)
+        ))
     }
 
     // ---- request handlers ----
@@ -452,6 +631,11 @@ impl Lsp {
                     stale
                 ));
             }
+            // Above the text: the most relevant view's rendering and the page link.
+            let head = self.entity_hover_head(&id);
+            if !head.is_empty() {
+                value = format!("{}\n{}", head, value);
+            }
             return json!({ "contents": { "kind": "markdown", "value": value } });
         }
         // No entity under the cursor: a requirement's quote, maybe.
@@ -483,13 +667,18 @@ impl Lsp {
             Some(row) => crate::verify::status_of(&self.store, rid, row, &self.gen),
             None => ("missing".to_string(), "not-generated".to_string()),
         };
-        let mut s = format!(
+        let mut s = String::new();
+        // The smallest flow view listing this requirement sits above the card.
+        if let Some(img) = self.flow_view_image(rid) {
+            s.push_str(&img);
+        }
+        s.push_str(&format!(
             "**`{}`** · {} {}\n\n{}\n\n",
             rid,
             status_glyph(&status),
             status,
             r.statement
-        );
+        ));
         if let Some(link) = self.docsgen_link(rid, r) {
             s.push_str(&format!("[the requirement →]({})\n\n", link));
         }
@@ -785,11 +974,15 @@ impl Lsp {
             {
                 continue;
             }
-            let intersects = d.subjects.iter().any(|s| {
-                self.subject_anchor(s, &doc)
-                    .map(|(sl, _, el, _)| sl <= end && el >= start)
-                    .unwrap_or(false)
-            });
+            let in_range = |r: (usize, usize, usize, usize)| r.0 <= end && r.2 >= start;
+            let intersects = d
+                .subjects
+                .iter()
+                .any(|s| self.subject_anchor(s, &doc).map(in_range).unwrap_or(false))
+                || self
+                    .prompt_edit_anchor(d, &doc)
+                    .map(in_range)
+                    .unwrap_or(false);
             if !intersects {
                 continue;
             }
@@ -1077,6 +1270,34 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
                         "[jazyk-build]   {} {}",
                         m["op"].as_str().unwrap_or("?"),
                         m["id"].as_str().unwrap_or("")
+                    );
+                }
+                // One line per goal the entry resolved (with its justification) or
+                // opened (with its cause), so the log mirrors the journal's goal
+                // movements. Mirrors docs/frontends/lsp.md#build-activity-in-the-log.
+                let resolved = entry["resolved_goals"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                for r in &resolved {
+                    eprintln!(
+                        "[jazyk-build]   resolved {} ({})",
+                        r["goal"].as_str().unwrap_or("?"),
+                        r["justification"].as_str().unwrap_or("")
+                    );
+                }
+                let opened = entry["opened_goals"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                for o in &opened {
+                    let c = &o["cause"];
+                    eprintln!(
+                        "[jazyk-build]   opened {} (cause c{}-{} via {})",
+                        o["goal"].as_str().unwrap_or("?"),
+                        c["generation"].as_u64().unwrap_or(0),
+                        c["mutation"].as_u64().unwrap_or(0),
+                        c["via"].as_str().unwrap_or("")
                     );
                 }
             }
@@ -1382,6 +1603,143 @@ mod tests {
         // The refresh inside the command republished without the resolved finding.
         assert!(applied.contains("publishDiagnostics"), "{}", applied);
         assert!(!applied.contains("Which bound holds?"), "{}", applied);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    fn lsp_at(root: std::path::PathBuf, out: std::path::PathBuf, store: Store) -> Lsp {
+        Lsp {
+            root,
+            out: out.clone(),
+            store,
+            generation: 0,
+            gen: GenSettings {
+                deliverable: out.join("product"),
+                worker: "agentic".into(),
+                code: Vec::new(),
+            },
+            overlay: HashMap::new(),
+            next_srv_id: 1,
+        }
+    }
+
+    fn write_svg(out: &std::path::Path, kind: &str, slug: &str) {
+        let dir = out.join("diagrams").join(kind);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{}.svg", slug)), "<svg/>").unwrap();
+    }
+
+    // The most-relevant-view rule: the entity's own state view first, else the
+    // smallest view listing it as a member, ties by catalog order then id, and a
+    // view without a rendered .svg never wins. Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn most_relevant_view_prefers_own_state_then_smallest_with_catalog_ties() {
+        use crate::model::{Entity, StateMachine, View};
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-view-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        write_svg(&out, "state", "order");
+        write_svg(&out, "class", "tie");
+        write_svg(&out, "object", "tie");
+        write_svg(&out, "class", "big");
+
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        for (id, name) in [("ent:order", "Order"), ("ent:cart", "Cart")] {
+            store.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: name.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        store.graph.state_machines.insert(
+            "sm:order".into(),
+            StateMachine {
+                subject: "ent:order".into(),
+                states: vec!["placed".into(), "paid".into()],
+                initial: Some("placed".into()),
+                transitions: vec![],
+            },
+        );
+        let view = |kind: &str, title: &str, members: &[&str]| View {
+            kind: kind.into(),
+            title: title.into(),
+            members: members.iter().map(|m| m.to_string()).collect(),
+            ..Default::default()
+        };
+        store
+            .graph
+            .views
+            .insert("view:class/tie".into(), view("class", "Tie", &["ent:cart"]));
+        store.graph.views.insert(
+            "view:object/tie".into(),
+            view("object", "Tie", &["ent:cart"]),
+        );
+        store.graph.views.insert(
+            "view:class/big".into(),
+            view("class", "Big", &["ent:cart", "ent:order", "ent:x"]),
+        );
+        let lsp = lsp_at(tmp.clone(), out.clone(), store);
+
+        // The entity's own state view wins outright.
+        let (vid, kind, _) = lsp.most_relevant_view("ent:order").unwrap();
+        assert_eq!(vid, "view:state/order");
+        assert_eq!(kind, "state");
+        // Smallest member view wins; the one-member tie breaks by catalog order
+        // (class before object).
+        let (vid, _, _) = lsp.most_relevant_view("ent:cart").unwrap();
+        assert_eq!(vid, "view:class/tie");
+        // Without its rendering the class view never wins; the object view does.
+        std::fs::remove_file(out.join("diagrams/class/tie.svg")).unwrap();
+        let (vid, _, _) = lsp.most_relevant_view("ent:cart").unwrap();
+        assert_eq!(vid, "view:object/tie");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // The requirement card says the statement and embeds the smallest flow view
+    // listing the requirement. Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn requirement_card_embeds_the_smallest_flow_view_and_statement() {
+        use crate::model::View;
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        write_svg(&out, "usecase", "all");
+        write_svg(&out, "sequence", "one");
+
+        let r = requirement();
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        store
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), r.clone());
+        let view = |kind: &str, title: &str, members: &[&str]| View {
+            kind: kind.into(),
+            title: title.into(),
+            members: members.iter().map(|m| m.to_string()).collect(),
+            ..Default::default()
+        };
+        store.graph.views.insert(
+            "view:usecase/all".into(),
+            view("use-case", "All", &["req:shop-1", "req:shop-2"]),
+        );
+        store.graph.views.insert(
+            "view:sequence/one".into(),
+            view("sequence", "One", &["req:shop-1"]),
+        );
+        let lsp = lsp_at(tmp.clone(), out.clone(), store);
+        let card = lsp.requirement_card("req:shop-1", &r);
+        assert!(card.contains("The Cart shall hold items."), "{}", card);
+        assert!(card.contains("![One (sequence)]"), "{}", card);
+        assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

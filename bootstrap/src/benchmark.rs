@@ -13,19 +13,19 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 const CASE_FILES: [&str; 15] = [
-    include_str!("../../docs/benchmark/cases/turn-extract.md"),
-    include_str!("../../docs/benchmark/cases/turn-navigation.md"),
-    include_str!("../../docs/benchmark/cases/turn-declarative.md"),
-    include_str!("../../docs/benchmark/cases/turn-density.md"),
-    include_str!("../../docs/benchmark/cases/turn-edges.md"),
-    include_str!("../../docs/benchmark/cases/turn-reuse.md"),
-    include_str!("../../docs/benchmark/cases/turn-converge.md"),
-    include_str!("../../docs/benchmark/cases/turn-repair.md"),
-    include_str!("../../docs/benchmark/cases/turn-review.md"),
-    include_str!("../../docs/benchmark/cases/turn-review-duplicate.md"),
-    include_str!("../../docs/benchmark/cases/turn-review-lookalike.md"),
-    include_str!("../../docs/benchmark/cases/turn-review-lint.md"),
-    include_str!("../../docs/benchmark/cases/turn-steps.md"),
+    include_str!("../../docs/benchmark/cases/extract.md"),
+    include_str!("../../docs/benchmark/cases/navigation.md"),
+    include_str!("../../docs/benchmark/cases/declarative.md"),
+    include_str!("../../docs/benchmark/cases/density.md"),
+    include_str!("../../docs/benchmark/cases/edges.md"),
+    include_str!("../../docs/benchmark/cases/reuse.md"),
+    include_str!("../../docs/benchmark/cases/converge.md"),
+    include_str!("../../docs/benchmark/cases/repair.md"),
+    include_str!("../../docs/benchmark/cases/review.md"),
+    include_str!("../../docs/benchmark/cases/review-duplicate.md"),
+    include_str!("../../docs/benchmark/cases/review-lookalike.md"),
+    include_str!("../../docs/benchmark/cases/review-lint.md"),
+    include_str!("../../docs/benchmark/cases/steps.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
@@ -124,8 +124,15 @@ pub fn parse_cases() -> Vec<Case> {
                     .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
                     .collect(),
                 tier,
-                task_type: v["task"]["type"].as_str().unwrap_or_default().to_string(),
-                target: v["task"]["target"].as_str().unwrap_or_default().to_string(),
+                // Cases key on goal kinds (docs/benchmark/cases.md#case-format); the
+                // harness's internal task names still drive the legacy loop.
+                task_type: match v["goal"]["kind"].as_str().unwrap_or_default() {
+                    "reconcile-section" => "reconcile-doc".to_string(),
+                    "generate" => "generate-entity".to_string(),
+                    "verify" => "verify-requirement".to_string(),
+                    other => other.to_string(),
+                },
+                target: v["goal"]["target"].as_str().unwrap_or_default().to_string(),
                 docs: obj(&v["given"]["docs"])
                     .into_iter()
                     .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
@@ -840,7 +847,7 @@ fn run_traced_filtered(
         cases.retain(|c| filter.contains(&c.name));
     }
     let trace = Trace::stderr(TraceLevel::Quiet);
-    println!("jazyk benchmark — model {} at {}", llm.model, llm.base_url);
+    println!("jazyk benchmark: model {} at {}", llm.model, llm.base_url);
     // One tiny completion before grading: a dead or misrouted endpoint fails one
     // probe, not every case under both codecs.
     if let Err(e) = llm.chat(
@@ -1367,13 +1374,13 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        assert_eq!(cases.len(), 17); // fifteen files; turn-review and verify-judge hold two blocks each
+        assert_eq!(cases.len(), 17); // fifteen files; review and verify-judge hold two blocks each
                                      // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
         assert_eq!(gen.task_type, "generate-entity");
         assert_eq!(gen.par_rounds, 10);
-        let steps = cases.iter().find(|c| c.name == "turn-steps").unwrap();
+        let steps = cases.iter().find(|c| c.name == "steps").unwrap();
         assert_eq!(steps.checks.len(), 5); // an inner fence must not sever the asserts
         assert!(
             steps.docs["docs/dedupe.md"].contains("remember the line"),
@@ -1386,15 +1393,15 @@ mod tests {
             .find(|c| c.name == "verify-judge-pass")
             .unwrap();
         assert!(!vp.deliverable.is_empty());
-        assert!(cases.iter().any(|c| c.name == "turn-declarative"));
-        assert!(cases.iter().any(|c| c.name == "turn-review-clean"));
-        let extract = cases.iter().find(|c| c.name == "turn-extract").unwrap();
+        assert!(cases.iter().any(|c| c.name == "declarative"));
+        assert!(cases.iter().any(|c| c.name == "review-clean"));
+        let extract = cases.iter().find(|c| c.name == "extract").unwrap();
         assert_eq!(extract.task_type, "reconcile-doc");
         assert_eq!(extract.checks.len(), 6);
         // Tier defaults to extraction; the five review cases declare theirs.
         assert_eq!(extract.tier, "extraction");
         assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 5);
-        let lint = cases.iter().find(|c| c.name == "turn-review-lint").unwrap();
+        let lint = cases.iter().find(|c| c.name == "review-lint").unwrap();
         assert_eq!(lint.lint.warnings.len(), 1);
         // Every embedded pattern must compile, or a case is unwinnable.
         for case in &cases {
@@ -1459,7 +1466,7 @@ mod tests {
     #[test]
     fn sandbox_seeds_fixture() {
         let cases = parse_cases();
-        let converge = cases.iter().find(|c| c.name == "turn-converge").unwrap();
+        let converge = cases.iter().find(|c| c.name == "converge").unwrap();
         let tmp = std::env::temp_dir().join("jazyk-bench-test");
         let s = sandbox(converge, &tmp);
         assert!(s.graph.entities.contains_key("ent:cart"));

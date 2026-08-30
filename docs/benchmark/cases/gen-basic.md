@@ -1,6 +1,6 @@
 # gen-basic
 
-Grades the generation turn end to end: the model gets a fixture graph (one entity,
+Grades the generation session end to end: the model gets a fixture graph (one entity,
 three requirements naming a small shell deliverable) and an empty temp deliverable. It
 must write the product and its tests with the file tools, record an honest manifest,
 and produce falsifiable tests. The falsifiability check is the heart: the harness runs
@@ -15,8 +15,8 @@ description: Generate a small shell deliverable with an honest manifest and fals
 tier: generation
 par:
   rounds: 10
-task:
-  type: generate-entity
+goal:
+  kind: generate
   target: ent:greeter
 given:
   docs:

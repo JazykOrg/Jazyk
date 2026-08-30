@@ -2,11 +2,11 @@ $schema: http://json-schema.org/draft-07/schema#
 $id: https://jazyk.org/schemas/case.json
 title: Jazyk Benchmark Case
 description: >-
-  One benchmark case: a sandbox fixture, one turn to run, and deterministic assertions
-  over the staged mutations and the resulting graph. Embedded as a fenced yaml block in
-  a case file under cases/
+  One benchmark case: a sandbox fixture, one goal to run in one session, and
+  deterministic assertions over the staged mutations and the resulting state. Embedded
+  as a fenced yaml block in a case file under cases/
 type: object
-required: [name, description, task, given, assert]
+required: [name, description, goal, given, assert]
 additionalProperties: false
 properties:
   name:
@@ -17,25 +17,34 @@ properties:
     type: string
   tier:
     description: >-
-      The verdict tier the case gates. The verdict is the highest tier whose cases all
-      pass
+      The tier the case gates. Tier scores and workflow verdicts derive from these
     type: string
-    enum: [extraction, review]
+    enum: [extraction, review, generation, verification]
     default: extraction
-  task:
-    description: The turn the harness runs
+  par:
+    description: The effort a competent model needs; efficiency compares against it
     type: object
-    required: [type, target]
     additionalProperties: false
     properties:
-      type:
-        description: The task type of the turn
+      rounds:
+        description: Rounds a competent model needs. Defaults per tier when omitted
+        type: integer
+        minimum: 1
+  goal:
+    description: The goal the harness runs
+    type: object
+    required: [kind, target]
+    additionalProperties: false
+    properties:
+      kind:
+        description: The goal kind of the session
         type: string
-        enum: [reconcile-doc, review-entity]
+        enum: [reconcile-section, review-entity, generate, verify]
       target:
         description: >-
-          The work item target. A document path for reconcile-doc, an entity id for
-          review-entity
+          The goal's target. A document path for reconcile-section (the session holds
+          every section of that document as one batch), an entity id for review-entity
+          and generate, a requirement id for verify
         type: string
   given:
     description: The fixture the sandbox store is seeded from
@@ -49,7 +58,7 @@ properties:
         additionalProperties:
           type: string
       graph:
-        description: Graph nodes pre-seeded before the turn runs
+        description: Graph nodes pre-seeded before the session runs
         type: object
         additionalProperties: false
         properties:
@@ -59,7 +68,10 @@ properties:
             additionalProperties:
               type: object
           requirements:
-            description: Map of requirement id to requirement fields
+            description: >-
+              Map of requirement id to requirement fields. A requirement carries
+              statement, entities, and source, plus edges, transition, and facets
+              where the case needs them
             type: object
             additionalProperties:
               type: object
@@ -69,8 +81,15 @@ properties:
             additionalProperties:
               type: string
               enum: [covered, non-normative]
+      deliverable:
+        description: >-
+          Verification cases: map of deliverable-relative path to content, the
+          implementing files the judged row names
+        type: object
+        additionalProperties:
+          type: string
       lint:
-        description: Project lint rules the turn runs under
+        description: Project lint rules the session runs under
         type: object
         additionalProperties: false
         properties:
@@ -116,6 +135,16 @@ definitions:
         $ref: '#/definitions/diagnosticAbsent'
       coverageSet:
         $ref: '#/definitions/coverageSet'
+      generationRecorded:
+        $ref: '#/definitions/generationRecorded'
+      rowPerRequirement:
+        $ref: '#/definitions/rowPerRequirement'
+      testsPass:
+        $ref: '#/definitions/testsPass'
+      testFalsifiable:
+        $ref: '#/definitions/testFalsifiable'
+      verdictIs:
+        $ref: '#/definitions/verdictIs'
   entityExists:
     description: An entity with this exact name or alias exists in the resulting graph
     type: object
@@ -193,7 +222,7 @@ definitions:
         description: The relationship type the derived edge must carry
         type: string
   mutationCount:
-    description: The number of mutations staged by the turn is within bounds
+    description: The number of mutations staged by the session is within bounds
     type: object
     minProperties: 1
     additionalProperties: false
@@ -226,7 +255,7 @@ definitions:
       rule:
         type: string
   coverageSet:
-    description: The section's coverage state equals state after the turn
+    description: The section's coverage state equals state after the session
     type: object
     required: [section, state]
     additionalProperties: false
@@ -237,3 +266,45 @@ definitions:
       state:
         type: string
         enum: [unprocessed, covered, non-normative]
+  generationRecorded:
+    description: >-
+      The target entity's ledger entry landed: files recorded, every file exists,
+      the factHash is current
+    type: object
+    additionalProperties: false
+    properties: {}
+  rowPerRequirement:
+    description: Every requirement of the target entity has a ledger row
+    type: object
+    additionalProperties: false
+    properties: {}
+  testsPass:
+    description: Every recorded programmatic test row passes as recorded
+    type: object
+    additionalProperties: false
+    properties: {}
+  testFalsifiable:
+    description: >-
+      The requirement's recorded command passes as recorded and fails after the
+      harness replaces the mandated string in the product files
+    type: object
+    required: [requirement, replace]
+    additionalProperties: false
+    properties:
+      requirement:
+        description: The requirement whose test is broken and rerun
+        type: string
+      replace:
+        description: The mandated exact string the harness replaces to break the product
+        type: string
+  verdictIs:
+    description: The requirement's ledger row carries this verdict
+    type: object
+    required: [requirement, verdict]
+    additionalProperties: false
+    properties:
+      requirement:
+        type: string
+      verdict:
+        type: string
+        enum: [pass, fail]

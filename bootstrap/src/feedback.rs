@@ -74,7 +74,7 @@ pub fn path(out: &Path) -> PathBuf {
     out.join("feedback.jsonl")
 }
 
-// Append one record. Best effort: a feedback write never fails a turn.
+// Append one record. Best effort: a feedback write never fails a session.
 pub fn append(out: &Path, entry: &Entry) {
     // No out directory means no project (a bare session in a test or a probe); the
     // record has nowhere to live, and a relative path would litter the cwd.

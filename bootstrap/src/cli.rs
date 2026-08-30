@@ -16,8 +16,11 @@ pub struct Options {
     pub verbose: bool,
     pub quiet: bool,
     pub write: bool,
-    pub focus: Option<String>,
-    pub budget: Option<usize>,
+    // `jazyk context`: neighbor depth and the handles to follow before printing.
+    pub depth: Option<u32>,
+    pub expand: Vec<String>,
+    // `jazyk ripple --back`: walk causes instead of consequences.
+    pub back: bool,
     pub force: bool,
     pub kind: Option<String>,
     pub list: bool,
@@ -52,8 +55,9 @@ impl Default for Options {
             verbose: false,
             quiet: false,
             write: false,
-            focus: None,
-            budget: None,
+            depth: None,
+            expand: Vec::new(),
+            back: false,
             force: false,
             kind: None,
             list: false,
@@ -634,11 +638,10 @@ fn trace_for(opts: &Options) -> Trace {
     })
 }
 
-fn print_report(r: &reconcile::BuildReport) {
-    println!(
-        "jazyk: {}; {} goal(s), {} session(s), {} mutation(s), {} parked; {} error(s), {} warning(s); coverage {}%",
-        r.verdict, r.goals, r.sessions, r.applied, r.parked, r.errors, r.warnings, r.coverage_pct
-    );
+// The build's last line: the verdict with its counts, e.g. `converged, 2 blocked,
+// 1 optional advised`. Mirrors docs/frontends/cli.md#jazyk-compile.
+fn verdict_line(r: &reconcile::BuildReport) -> String {
+    r.verdict.clone()
 }
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
@@ -649,7 +652,7 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
     let trace = trace_for(opts).with_transcript(&out, "compile");
     let report = reconcile::compile(&proj, &llm, &out, &trace);
     trace.finish_transcript("done", &serde_json::json!(report));
-    print_report(&report);
+    println!("{}", verdict_line(&report));
     if report.converged() {
         0
     } else {
@@ -662,7 +665,7 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
     let trace = trace_for(opts).with_transcript(&out, "compile");
     let report = reconcile::compile(&proj, &llm, &out, &trace);
     trace.finish_transcript("done", &serde_json::json!(report));
-    print_report(&report);
+    println!("{}", verdict_line(&report));
     let store = Store::load(&out);
     let mut errors = 0;
     for d in store.graph.diagnostics.values() {
@@ -881,6 +884,89 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     0
 }
 
+// One watch-loop build: goal lines instead of the tool-row trace, unless --verbose
+// asked for the whole thing. Mirrors docs/frontends/cli.md#jazyk-watch.
+fn watch_build(paths: &[String], opts: &Options) -> i32 {
+    if opts.verbose {
+        return run_compile(paths, opts);
+    }
+    let (proj, llm, out) = resolve(paths, opts);
+    let level = if opts.quiet {
+        TraceLevel::Quiet
+    } else {
+        TraceLevel::Normal
+    };
+    let sink: std::sync::Arc<dyn Fn(&crate::session::TraceEvent) + Send + Sync> =
+        std::sync::Arc::new(goal_line);
+    let trace = Trace::to_sink(level, sink, Default::default()).with_transcript(&out, "compile");
+    let report = reconcile::compile(&proj, &llm, &out, &trace);
+    trace.finish_transcript("done", &serde_json::json!(report));
+    println!("{}", verdict_line(&report));
+    if report.converged() {
+        0
+    } else {
+        1
+    }
+}
+
+// One line per goal event, the watch rendering: what opened (with its cause), what
+// session took it, and how it ended (resolved with its justification, failed with
+// its reason, parked). Board summaries and gc bursts print as in compile.
+// Mirrors docs/frontends/cli.md#jazyk-watch.
+fn goal_line(ev: &crate::session::TraceEvent) {
+    use crate::session::TraceEvent;
+    match ev {
+        TraceEvent::Board {
+            goals,
+            kinds,
+            blocked,
+            ..
+        } => {
+            let per_kind: Vec<String> = kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
+            let mut s = format!("compile: {} goals", goals);
+            if !per_kind.is_empty() {
+                s.push_str(&format!(" ({})", per_kind.join(", ")));
+            }
+            if *blocked > 0 {
+                s.push_str(&format!(", {} blocked", blocked));
+            }
+            eprintln!("{}", s);
+        }
+        TraceEvent::GcBurst {
+            goal_kind,
+            target,
+            count,
+            limit,
+            ..
+        } => eprintln!("gc burst: {} {} ({} > {})", goal_kind, target, count, limit),
+        TraceEvent::SessionStart { label, goals, .. } => {
+            for g in goals {
+                eprintln!("taken    {}  {}", g, label);
+            }
+        }
+        TraceEvent::Goal {
+            goal,
+            event,
+            cause,
+            justification,
+            reason,
+            ..
+        } => {
+            let tail = match (cause, justification, reason) {
+                (Some(c), _, _) => format!("  (g{} via {})", c.generation, c.via),
+                (_, Some(j), _) => format!("  {}", j),
+                (_, _, Some(r)) => format!("  {}", r),
+                _ => String::new(),
+            };
+            eprintln!("{:<8} {}{}", event, goal, tail);
+        }
+        TraceEvent::SessionFailed { label, error, .. } => {
+            eprintln!("[{}] session failed: {}", label, error)
+        }
+        _ => {}
+    }
+}
+
 pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(paths, opts);
     let fingerprint = |proj: &Project| -> String {
@@ -919,7 +1005,7 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
                     let fp = fingerprint(&proj);
                     if fp != last {
                         last = fp;
-                        run_compile(paths, opts);
+                        watch_build(paths, opts);
                     }
                     std::thread::sleep(std::time::Duration::from_secs(2));
                 }
@@ -939,7 +1025,7 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     let mut backoff = std::time::Duration::from_secs(30);
     let max_backoff = std::time::Duration::from_secs(300);
     let mut last = fingerprint(&proj);
-    run_compile(paths, opts);
+    watch_build(paths, opts);
     loop {
         let retry_due = if incomplete(&out) {
             eprintln!(
@@ -960,7 +1046,7 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         };
         if retry_due {
             backoff = (backoff * 2).min(max_backoff);
-            run_compile(paths, opts);
+            watch_build(paths, opts);
             continue;
         }
         // Debounce: editors save in bursts; let the burst finish.
@@ -970,23 +1056,47 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
         if fp != last {
             last = fp;
             backoff = std::time::Duration::from_secs(30);
-            run_compile(paths, opts);
+            watch_build(paths, opts);
         }
     }
     0
 }
 
+// status.yaml and the board: the store version, the last verdict with its counts,
+// the live board counts, coverage, diagnostics, the last build's cost, and the
+// unclaimed report. Mirrors docs/frontends/cli.md#jazyk-status.
 pub fn run_status(paths: &[String], opts: &Options) -> i32 {
-    let (_proj, _llm, out) = resolve(paths, opts);
+    let (proj, _llm, out) = resolve(paths, opts);
     let store = Store::load(&out);
     let s = &store.status;
-    println!("generation: {}", s.generation);
-    println!("verdict:    {}", s.verdict);
+    println!("store: version {}, generation {}", s.version, s.generation);
+    println!("verdict: {}", s.verdict);
+    // The board is derived from disk the same way compile derives it, so on a tree
+    // with pending edits this shows the goals the next build will run.
+    let board = crate::board::Board::compute(&proj, &out);
+    let counts = board.counts();
+    let open_of = |class: &str| {
+        board
+            .goals
+            .iter()
+            .filter(|g| {
+                matches!(
+                    g.state,
+                    crate::model::GoalState::Open | crate::model::GoalState::Parked
+                ) && g.mandatory
+                    && g.class == class
+            })
+            .count()
+    };
     println!(
-        "graph:      {} entities, {} requirements, {} relationships",
-        store.graph.entities.len(),
-        store.graph.requirements.len(),
-        store.graph.relationships.len()
+        "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional",
+        counts.open,
+        open_of("compile"),
+        open_of("gc"),
+        counts.blocked,
+        counts.parked,
+        counts.failed,
+        counts.optional
     );
     let (mut total, mut covered) = (0usize, 0usize);
     for rec in store.docs.values() {
@@ -1000,10 +1110,15 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
             }
         }
     }
-    println!("coverage:   {}/{} sections", covered, total);
+    let pct = if total == 0 {
+        100
+    } else {
+        covered * 100 / total
+    };
+    println!("coverage: {}% ({} of {} sections)", pct, covered, total);
     let mut by_sev: std::collections::BTreeMap<&str, usize> = Default::default();
     for d in store.graph.diagnostics.values() {
-        if d.lifecycle == "open" {
+        if d.lifecycle == "open" && d.triage.as_deref() != Some("suppressed") {
             *by_sev.entry(d.severity.as_str()).or_default() += 1;
         }
     }
@@ -1014,28 +1129,39 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         } else {
             by_sev
                 .iter()
-                .map(|(k, v)| format!("{} {}", v, k))
+                .map(|(k, v)| format!("{} {}{}", v, k, if *v == 1 { "" } else { "s" }))
                 .collect::<Vec<_>>()
                 .join(", ")
         }
     );
-    println!(
-        "spent:      {} sessions, {} rounds, {} tokens",
-        s.spent.sessions, s.spent.rounds, s.spent.tokens
-    );
-    if !s.parked.is_empty() {
-        println!("parked:");
-        for p in &s.parked {
-            println!("  - {}", p.id);
+    // The last build's cost, with the biggest goal kind's share beside the totals.
+    let c = &s.costs;
+    if c.sessions > 0 || c.tokens > 0 {
+        let tokens = if c.tokens >= 1000 {
+            format!("{}k", c.tokens / 1000)
+        } else {
+            c.tokens.to_string()
+        };
+        let mut line = format!("cost: {} sessions, {} tokens", c.sessions, tokens);
+        if let Some((kind, l)) = c.by_kind.iter().max_by_key(|(_, l)| (l.tokens, l.sessions)) {
+            let share = if c.tokens > 0 {
+                l.tokens * 100 / c.tokens
+            } else {
+                l.sessions * 100 / c.sessions.max(1)
+            };
+            if share > 0 {
+                line.push_str(&format!(" ({}% {})", share, kind));
+            }
         }
+        println!("{}", line);
     }
     // The unclaimed report: deliverable files no binding names, the decompilation
     // worklist. Mirrors docs/consumers/bind.md#the-unclaimed-report.
-    let gs = crate::gen::GenSettings::resolve(&_proj);
-    let un = crate::bind::unclaimed(&_proj, &store, &gs);
+    let gs = crate::gen::GenSettings::resolve(&proj);
+    let un = crate::bind::unclaimed(&proj, &store, &gs);
     if !un.is_empty() {
         println!(
-            "unclaimed:  {} file(s) no binding names (`jazyk decompile` drafts docs for them)",
+            "unclaimed: {} file(s) no binding names (`jazyk decompile` drafts docs for them)",
             un.len()
         );
         for f in un.iter().take(8) {
@@ -1046,6 +1172,191 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         }
     }
     0
+}
+
+// The next session's prompt, exactly as the model would receive it. With a goal or a
+// target, the batch that goal would join; a goal that is not ready renders behind a
+// `not ready:` line; blocked-on-human kinds print what the human owes instead.
+// Mirrors docs/frontends/cli.md#jazyk-preview.
+pub fn run_preview(args: &[String], opts: &Options) -> i32 {
+    let (proj, _llm, out) = resolve(&[], opts);
+    let mut store = Store::load(&out);
+    let (parsed, _) = reconcile::parse_all(&proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(&proj, &out);
+    let board = crate::board::Board::derive(&store, &proj, &control);
+    let target = args.first().map(String::as_str).unwrap_or("").trim();
+
+    if target.is_empty() {
+        // The batch the scheduler would claim next.
+        let Some(batch) = board.batches.first() else {
+            if board.open_goals().is_empty() {
+                eprintln!(
+                    "jazyk: nothing to preview; the board is empty ({})",
+                    board.verdict()
+                );
+            } else {
+                eprintln!(
+                    "jazyk: no ready batch; `jazyk explain` says what every open goal waits for"
+                );
+            }
+            return 1;
+        };
+        let goals = batch_goals(&board, batch);
+        print!("{}", crate::session::preview(&store, &goals));
+        return 0;
+    }
+
+    // A goal id, a batch id, or a target with goals on it.
+    let goal = board.goal(target).cloned().or_else(|| {
+        let on_target: Vec<&crate::model::Goal> =
+            board.goals.iter().filter(|g| g.target == target).collect();
+        on_target
+            .iter()
+            .find(|g| board.is_ready(&g.id))
+            .or_else(|| on_target.first())
+            .map(|g| (*g).clone())
+    });
+    if goal.is_none() {
+        if let Some(batch) = board.batches.iter().find(|b| b.id == target) {
+            let goals = batch_goals(&board, batch);
+            print!("{}", crate::session::preview(&store, &goals));
+            return 0;
+        }
+    }
+    let Some(goal) = goal else {
+        eprintln!(
+            "jazyk: no goal on `{}`; `jazyk explain` lists the board",
+            target
+        );
+        return 1;
+    };
+    // ratify and answer have no session: print the human path instead of a prompt.
+    if crate::goals::blocked_on_human(&goal.kind) {
+        println!("{} is blocked on a human; no session runs for it", goal.id);
+        println!("  owed: {}", crate::session::gate_line(&goal.kind));
+        println!("  change: {}", crate::session::change_line(&goal));
+        for h in &goal.hints {
+            println!("  hint: {}", h);
+        }
+        return 1;
+    }
+    // The batch the goal joins; a goal in no scheduled batch renders alone, behind
+    // the readiness reason.
+    if let Some(batch) = board
+        .batches
+        .iter()
+        .find(|b| b.goals.iter().any(|id| id == &goal.id))
+    {
+        let goals = batch_goals(&board, batch);
+        print!("{}", crate::session::preview(&store, &goals));
+        return 0;
+    }
+    let reason = match board.readiness.get(&goal.id) {
+        Some(crate::goals::Ready::Blocked(r)) => r.clone(),
+        _ if board.gated.contains(&goal.id) => {
+            "gated, awaiting release (`jazyk release`, or the GUI)".to_string()
+        }
+        _ => match board.claimed.get(&goal.id) {
+            Some(w) => format!("claimed by {}", w),
+            None => "not scheduled in a ready batch".to_string(),
+        },
+    };
+    println!("not ready: {}", reason);
+    print!("{}", crate::session::preview(&store, &[goal]));
+    0
+}
+
+fn batch_goals(
+    board: &crate::board::Board,
+    batch: &crate::board::Batch,
+) -> Vec<crate::model::Goal> {
+    batch
+        .goals
+        .iter()
+        .filter_map(|id| board.goal(id))
+        .cloned()
+        .collect()
+}
+
+// Why a goal exists, what a change to a target would open, or the whole board.
+// Mirrors docs/frontends/cli.md#jazyk-explain.
+pub fn run_explain(args: &[String], opts: &Options) -> i32 {
+    let (proj, _llm, out) = resolve(&[], opts);
+    let mut store = Store::load(&out);
+    let (parsed, _) = reconcile::parse_all(&proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(&proj, &out);
+    let board = crate::board::Board::derive(&store, &proj, &control);
+    let target = args.first().map(String::as_str).unwrap_or("").trim();
+    if target.is_empty() {
+        println!("{}", board.summary_line());
+        let rendered = board.render();
+        if rendered.is_empty() {
+            println!("verdict: {}", board.verdict());
+        } else {
+            println!("{}", rendered);
+        }
+        return 0;
+    }
+    match board.explain(&store, target) {
+        Some(s) => {
+            print!("{}", s);
+            0
+        }
+        None => {
+            eprintln!("jazyk: `{}` names no goal and no known target", target);
+            1
+        }
+    }
+}
+
+// The ripple DAG rooted at a change, rendered from the journal.
+// Mirrors docs/frontends/cli.md#jazyk-ripple.
+pub fn run_ripple(args: &[String], opts: &Options) -> i32 {
+    let (_proj, _llm, out) = resolve(&[], opts);
+    let store = Store::load(&out);
+    match ripple_text_for(&store, args.first().map(String::as_str), opts.back) {
+        Ok(text) => {
+            print!("{}", text);
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            1
+        }
+    }
+}
+
+// The rendered ripple for a root; without one, the last build (the journal from just
+// after the previous build's checks entry), so a bare `jazyk ripple` is the
+// whole-build report.
+fn ripple_text_for(store: &Store, root: Option<&str>, back: bool) -> Result<String, String> {
+    let root = match root {
+        Some(r) => r.to_string(),
+        None => {
+            let entries = crate::goals::read_journal(&store.out);
+            if entries.is_empty() {
+                return Err("nothing to walk; the journal is empty".to_string());
+            }
+            let start = match entries.iter().rposition(|e| e.kind == "checks") {
+                Some(i) => entries[..i]
+                    .iter()
+                    .rposition(|e| e.kind == "checks")
+                    .map(|p| p + 1)
+                    .unwrap_or(0),
+                None => 0,
+            };
+            format!("g{}", entries[start].generation)
+        }
+    };
+    match crate::reconcile::ripple(store, &root, back) {
+        Some(tree) => Ok(crate::reconcile::render_ripple(&tree)),
+        None => Err(format!(
+            "nothing to walk from `{}`; the journal holds no entry touching it",
+            root
+        )),
+    }
 }
 
 // Decompilation: release the named scopes and draft documents for them, or dispatch
@@ -1088,7 +1399,7 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
         .collect();
     if control.worker != "internal" && !agents.is_empty() {
         println!(
-            "jazyk: released {} scope(s) for decompilation — dispatched to agent(s): {}",
+            "jazyk: released {} scope(s) for decompilation; dispatched to agent(s): {}",
             wanted.len(),
             agents.join(", ")
         );
@@ -1114,7 +1425,7 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
     match result {
         Ok(sum) => {
             println!(
-                "jazyk: decompile done — {} drafted, {} failure(s); drafts carry `unratified` until edited, `jazyk compile` extracts them",
+                "jazyk: decompile done: {} draft session(s) landed, {} failure(s); drafts carry `unratified` until edited, `jazyk compile` extracts them",
                 sum["drafted"], sum["failures"]
             );
             if sum["failures"].as_u64().unwrap_or(0) > 0 {
@@ -1131,16 +1442,13 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
 }
 
 // `jazyk context <target>`: exactly what `load` renders, then the status block.
+// `--expand HANDLE` follows the named handles first, as `expand` would.
 // Mirrors docs/frontends/cli.md#jazyk-context.
 pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
     let (_proj, _llm, out) = resolve(paths, opts);
     let store = Store::load(&out);
-    let depth = opts
-        .focus
-        .as_deref()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1);
-    match context::cli_context(&store, target, depth, &[]) {
+    let depth = opts.depth.unwrap_or(1);
+    match context::cli_context(&store, target, depth, &opts.expand) {
         Ok(s) => {
             println!("{}", s);
             0
@@ -1212,7 +1520,10 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
                 b["failures"].as_u64().unwrap_or(0),
             );
             if bound + bfail > 0 {
-                println!("jazyk: bind — {} bound, {} failure(s)", bound, bfail);
+                println!(
+                    "jazyk: bind: {} bind goal(s) resolved, {} failure(s)",
+                    bound, bfail
+                );
             }
         }
         Err(e) => {
@@ -1227,7 +1538,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
     match result {
         Ok(sum) => {
             println!(
-                "jazyk: gen done — {} regenerated, {} unchanged, {} failure(s)",
+                "jazyk: gen done: {} generate goal(s) resolved, {} unchanged, {} failure(s)",
                 sum["regenerated"], sum["skipped"], sum["failures"]
             );
             if sum["failures"].as_u64().unwrap_or(0) > 0 {
@@ -1260,23 +1571,30 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
     let gs = crate::gen::GenSettings::resolve(&proj);
     if opts.audit {
         let r = crate::verify::audit(&store, &gs);
-        println!("jazyk: audit — {}", r);
+        println!("jazyk: audit: {}", r);
         return 0;
     }
     if opts.list {
+        // One row per requirement: id, statement, status.
+        // Mirrors docs/frontends/cli.md#jazyk-test.
         let selected =
             crate::verify::select_rows(&store, &gs, targets, opts.kind.as_deref(), opts.force);
         for r in &selected {
+            let rid = r["requirement"].as_str().unwrap_or("");
+            let statement = store
+                .graph
+                .requirements
+                .get(store.resolve_id(rid))
+                .map(|q| q.statement.clone())
+                .unwrap_or_default();
             println!(
-                "{:24} {:18} {:13} {} ({})",
-                r["requirement"].as_str().unwrap_or(""),
-                r["status"].as_str().unwrap_or(""),
-                r["test"]["kind"].as_str().unwrap_or(""),
-                r["test"]["run"].as_str().unwrap_or(""),
-                r["reason"].as_str().unwrap_or("")
+                "{:24} {:60} {}",
+                rid,
+                llm::truncate(&statement, 58),
+                r["status"].as_str().unwrap_or("")
             );
         }
-        println!("jazyk: {} row(s)", selected.len());
+        println!("jazyk: {} verify goal(s)", selected.len());
         return 0;
     }
     // Render the worker events on the historical CLI output format.
@@ -1345,10 +1663,11 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
                 sum["runnerFailed"].as_u64().unwrap_or(0),
             );
             if sum["rows"].as_u64().unwrap_or(0) == 0 {
-                println!("jazyk: nothing to do; every targeted row is verified");
+                println!("jazyk: nothing to do; every targeted verify goal is verified");
             } else {
                 println!(
-                    "jazyk: test done — {} verified, {} failing, {} stale, {} skipped{}",
+                    "jazyk: test done: {} verify goal(s); {} verified, {} failing, {} stale, {} skipped{}",
+                    sum["rows"],
                     verified,
                     failing,
                     stale,
@@ -1464,6 +1783,158 @@ mod tests {
         assert_eq!(r.model, "llama3.1");
         assert_eq!(r.base_url, "http://localhost:11434/v1");
         assert_eq!(r.temperature, Some(0.0));
+    }
+
+    // The help text names the goal commands and carries no em dash anywhere; the
+    // top line says goal-based. Mirrors docs/frontends/cli.md#help.
+    #[test]
+    fn help_lists_the_goal_commands() {
+        let usage = crate::top_usage();
+        for cmd in ["preview", "explain", "ripple"] {
+            assert!(usage.contains(cmd), "`{}` missing from the top usage", cmd);
+        }
+        assert!(usage.contains("goal-based"), "{}", usage);
+        assert!(!usage.contains('\u{2014}'), "em dash in the top usage");
+        for cmd in [
+            "compile", "check", "watch", "status", "preview", "explain", "ripple", "context",
+            "monitor", "release", "gen", "test", "mcp", "docsgen",
+        ] {
+            let u = crate::cmd_usage(cmd).expect(cmd);
+            assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);
+        }
+    }
+
+    // The verdict line the build prints last carries the counts, in both shapes.
+    // Mirrors docs/frontends/cli.md#jazyk-compile.
+    #[test]
+    fn the_verdict_line_renders_its_counts() {
+        let v = crate::model::Verdict {
+            state: "converged".into(),
+            blocked: 2,
+            optional: 1,
+            ..Default::default()
+        };
+        let r = reconcile::BuildReport {
+            verdict: v.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(verdict_line(&r), "converged, 2 blocked, 1 optional advised");
+
+        let v = crate::model::Verdict {
+            state: "incomplete".into(),
+            open: 3,
+            failed: 1,
+            blocked: 2,
+            optional: 5,
+        };
+        let r = reconcile::BuildReport {
+            verdict: v.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            verdict_line(&r),
+            "incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised"
+        );
+    }
+
+    // A three-generation journal (an edit, a session resolving its goal and opening
+    // another, a session resolving that one) renders as one indented cascade, and a
+    // bare `jazyk ripple` roots at the same place: the last build.
+    // Mirrors docs/frontends/cli.md#jazyk-ripple.
+    #[test]
+    fn ripple_renders_a_three_generation_cascade() {
+        use crate::model::{Cause, JournalEntry, OpenedGoal, Resolved};
+        let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("journal")).unwrap();
+        let sec = "g:reconcile-section:docs/orders.md#/orders/holds";
+        let pair = "g:rejudge-pair:req:orders-6~req:payment-9";
+        let g1 = JournalEntry {
+            build: "g1".into(),
+            generation: 1,
+            kind: "edit".into(),
+            dirtied: vec!["docs/orders.md#/orders/holds".into()],
+            opened_goals: vec![OpenedGoal {
+                goal: sec.into(),
+                cause: Cause {
+                    generation: 1,
+                    mutation: 0,
+                    via: "section-dirty".into(),
+                },
+            }],
+            ..Default::default()
+        };
+        let g2 = JournalEntry {
+            build: "g2".into(),
+            generation: 2,
+            kind: "session".into(),
+            batch: vec![sec.into()],
+            resolved_goals: vec![Resolved {
+                goal: sec.into(),
+                justification: "req:orders-6 revised (quote, statement)".into(),
+                evidence: serde_json::Value::Null,
+            }],
+            opened_goals: vec![OpenedGoal {
+                goal: pair.into(),
+                cause: Cause {
+                    generation: 2,
+                    mutation: 1,
+                    via: "entities".into(),
+                },
+            }],
+            tokens: 21_000,
+            ..Default::default()
+        };
+        let g3 = JournalEntry {
+            build: "g3".into(),
+            generation: 3,
+            kind: "session".into(),
+            batch: vec![pair.into()],
+            resolved_goals: vec![Resolved {
+                goal: pair.into(),
+                justification: "consistent".into(),
+                evidence: serde_json::Value::Null,
+            }],
+            tokens: 8_000,
+            ..Default::default()
+        };
+        for (n, e) in [(1, &g1), (2, &g2), (3, &g3)] {
+            std::fs::write(
+                dir.join("journal").join(format!("g{}.yaml", n)),
+                serde_norway::to_string(e).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut store = Store::default();
+        store.out = dir.clone();
+
+        let text = ripple_text_for(&store, Some("g1"), false).unwrap();
+        assert!(
+            text.starts_with("edit docs/orders.md#/orders/holds (human) g1"),
+            "{}",
+            text
+        );
+        assert!(
+            text.contains(
+                "└─ reconcile-section docs/orders.md#/orders/holds g2: req:orders-6 revised"
+            ),
+            "{}",
+            text
+        );
+        assert!(
+            text.contains("└─ rejudge-pair req:orders-6~req:payment-9 g3: consistent"),
+            "{}",
+            text
+        );
+        assert!(text.contains("2 sessions"), "{}", text);
+        assert!(text.contains("29k tokens"), "{}", text);
+        assert!(text.contains("nothing parked or failed"), "{}", text);
+
+        // No root names the last build, which is this whole cascade.
+        assert_eq!(ripple_text_for(&store, None, false).unwrap(), text);
+        // An unknown root is an error, not an empty tree.
+        assert!(ripple_text_for(&store, Some("ent:ghost"), false).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

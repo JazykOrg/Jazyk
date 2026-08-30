@@ -60,36 +60,43 @@ fn load_dotenv() {
 
 fn top_usage() -> String {
     let mut s = String::new();
-    s.push_str("jazyk — natural language compiler (turn-based)\n\n");
+    s.push_str("jazyk: natural language compiler (goal-based)\n\n");
     s.push_str("usage:\n");
     s.push_str("  jazyk init                     scaffold a project (jazyk.toml, docs/, deliverable/) here\n");
-    s.push_str("  jazyk compile [path...]        reconcile the graph with the documents\n");
+    s.push_str("  jazyk compile [path...]        run one build: sessions resolve goals until the board converges\n");
     s.push_str(
         "  jazyk check [path...]          compile, exit non-zero on error diagnostics (CI)\n",
     );
-    s.push_str("  jazyk watch [path...]          recompile on change\n");
-    s.push_str("  jazyk status                   summarize the last build\n");
-    s.push_str("  jazyk context <target>         print a context pack (ent:…, req:…, doc.md#/ref, or h:… handle)\n");
+    s.push_str("  jazyk watch [path...]          recompile on change, one line per goal\n");
+    s.push_str(
+        "  jazyk status                   the store version, the last verdict, the board counts\n",
+    );
+    s.push_str("  jazyk preview [goal|target]    the next session's prompt, exactly as the model receives it\n");
+    s.push_str(
+        "  jazyk explain [goal|target]    why a goal exists, or what a change to a target opens\n",
+    );
+    s.push_str("  jazyk ripple [root] [--back]   walk a change's cascade through the journal (id, g412, or doc)\n");
+    s.push_str("  jazyk context <target>         what the `load` tool renders (--depth N, --expand HANDLE)\n");
     s.push_str("  jazyk query <text>             search entities\n");
-    s.push_str("  jazyk gen [entity...]          generate the deliverable and its tests from the graph (--force)\n");
-    s.push_str("  jazyk test [target...]         run verification (--kind programmatic|llm, --list, --audit, --force)\n");
+    s.push_str("  jazyk gen [entity...]          resolve the bind and generate goals into the deliverable (--force)\n");
+    s.push_str("  jazyk test [target...]         resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)\n");
     s.push_str("  jazyk decompile [path...]      draft docs describing what unclaimed code does\n");
     s.push_str(
-        "  jazyk docsgen                  render per-entity requirements documents on demand\n",
+        "  jazyk docsgen                  render per-entity requirements documents and their diagrams\n",
     );
     s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
     s.push_str(
         "  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n",
     );
-    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready tasks as the docs change; --once exits at the first\n  jazyk release [compile|generate]  approve pending changes in manual mode without running anything\n");
+    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready and blocked goals as the state changes; --once exits at the first\n  jazyk release [compile|generate]  approve gated goals in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
     s.push_str("  jazyk benchmark [case...]      grade the configured agent and model\n");
     s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
-    s.push_str("         --verbose, -v   full context packs and payloads in the trace\n");
-    s.push_str("         --quiet, -q     only the final summary\n");
-    s.push_str("         --focus k=n,…   context hop quotas (parents, mentions, requirements)\n");
-    s.push_str("         --budget N      context size budget in characters\n");
+    s.push_str(
+        "         --verbose, -v   the full session trace: prompts, payloads, the goal cascade\n",
+    );
+    s.push_str("         --quiet, -q     only the board summary, gc bursts, and the verdict\n");
     s.push_str("         --help, -h      print help and exit\n");
     s
 }
@@ -114,50 +121,124 @@ fn cmd_usage(cmd: &str) -> Option<String> {
             .to_string(),
         "compile" => format!(
             "usage: jazyk compile [path...]\n\n\
-             Reconcile the graph with the documents, running turns to a fixed point.\n\
-             Explicit paths skip project discovery and run ad hoc on those files.\n\n\
+             Run one build. The reconciler derives the goal board from the documents\n\
+             and the graph; sessions resolve ready goals batch by batch until the\n\
+             board converges. Prints the board summary first, a `gc burst:` line as\n\
+             each burst starts, goal lines as goals resolve or fail, and the verdict\n\
+             with its counts last. Explicit paths skip project discovery and run ad\n\
+             hoc on those files.\n\n\
              options:\n  \
-             --verbose, -v   full context packs and payloads in the trace\n  \
-             --quiet, -q     only the final summary\n\
+             --verbose, -v   every session's prompt, the goal cascade, raw payloads\n  \
+             --quiet, -q     only the board summary, gc bursts, and the verdict\n\
              {}\n\n\
-             exit: 0 on convergence, non-zero when work was parked",
+             exit: 0 on converged, 1 on incomplete, 2 on a usage error",
             COMMON_LLM
         ),
         "check" => format!(
             "usage: jazyk check [path...]\n\n\
-             Compile, then exit non-zero if open diagnostics of severity error exist.\n\
-             The CI gate.\n\n\
+             Compile, then exit non-zero if the build ends incomplete or open\n\
+             diagnostics of severity error remain. The CI gate.\n\n\
              options:\n  \
-             --verbose, -v   full context packs and payloads in the trace\n  \
-             --quiet, -q     only the final summary\n\
-             {}",
+             --verbose, -v   every session's prompt, the goal cascade, raw payloads\n  \
+             --quiet, -q     only the board summary, gc bursts, and the verdict\n\
+             {}\n\n\
+             exit: 0 converged and clean, 1 otherwise",
             COMMON_LLM
         ),
         "watch" => format!(
             "usage: jazyk watch [path...]\n\n\
              Recompile on file change. Event bursts debounce, and a fingerprint over the\n\
              matched documents decides whether a build runs. An incomplete build retries\n\
-             on its own with backoff until a file change resets it.\n\n\
+             on its own with backoff until a file change resets it. Per build: the board\n\
+             summary, one line per goal (opened with its cause, taken by a session,\n\
+             resolved with its justification, failed, parked), and the verdict.\n\n\
              options:\n  \
-             --verbose, -v   full context packs and payloads in the trace\n  \
-             --quiet, -q     only the final summary\n\
+             --verbose, -v   the full compile trace instead of goal lines\n  \
+             --quiet, -q     only the board summary, gc bursts, and the verdict\n\
              {}",
             COMMON_LLM
         ),
         "status" => format!(
             "usage: jazyk status\n\n\
-             Summarize the last build: generation counter, coverage percentage, open\n\
-             diagnostics by severity, parked work.\n\n\
+             Summarize status.yaml and the board: the store version and generation, the\n\
+             last verdict with its counts, the live board counts (derived from disk the\n\
+             way compile derives them), coverage, open diagnostics by severity, the\n\
+             last build's cost, and the unclaimed report.\n\n\
+             {}",
+            COMMON_OUT
+        ),
+        "preview" => format!(
+            "usage: jazyk preview [goal|target]\n\n\
+             Render the next session's prompt exactly as the model would receive it:\n\
+             the agent contract, the active skills, the project block, the goals\n\
+             block, the loaded set with its handles, and the protocol line. With a\n\
+             goal id, the batch that goal would join; with a target, the batch of the\n\
+             first goal on it; without an argument, the batch the scheduler would\n\
+             claim next. A goal that is not ready renders behind a `not ready:` line.\n\
+             `ratify` and `answer` goals have no session; preview prints what the\n\
+             human owes instead. Makes no LLM call and writes nothing.\n\n\
+             {}\n\n\
+             exit: 0 when a prompt was rendered, 1 when nothing rendered (the reason prints)",
+            COMMON_OUT
+        ),
+        "explain" => format!(
+            "usage: jazyk explain [goal|target]\n\n\
+             For a goal: the change record that produced it, its cause, its class and\n\
+             whether it is mandatory, its readiness, what blocks it, and its hints.\n\
+             For a target (a node id, a section reference, a document path): the cone\n\
+             of goals a change to it would open, plus the derived data a commit would\n\
+             recompute. Without an argument: the whole board, one line per goal.\n\
+             Makes no LLM call and writes nothing.\n\n\
+             {}\n\n\
+             exit: 0; 1 when the goal or target is unknown",
+            COMMON_OUT
+        ),
+        "ripple" => format!(
+            "usage: jazyk ripple [target|generation|doc] [--back]\n\n\
+             Print the ripple DAG rooted at a change: every generation the root led\n\
+             to, the goals each generation opened and the sessions that resolved\n\
+             them, with causes and one-line justifications. A generation (g412, or\n\
+             412) roots the whole-build report with its cost totals; a document path\n\
+             roots at the last edit entry that dirtied it; a node id roots at the\n\
+             last cascade that touched it. Without an argument, the last build.\n\
+             Parked and failed goals print after the tree.\n\n\
+             options:\n  \
+             --back   walk causes instead of consequences, back to the human edit\n\
+             {}\n\n\
+             exit: 0; 1 when the root is unknown",
+            COMMON_OUT
+        ),
+        "monitor" => format!(
+            "usage: jazyk monitor [--json] [--once]\n\n\
+             Watch the docs, the ledger, and the control plane; perform nothing. On\n\
+             every state change print the ready goals on the board and which MCP tool\n\
+             claims them (`goals`, then `begin_goals`), with blocked goals and their\n\
+             reasons, then go quiet until the next change. Gated goals print as\n\
+             awaiting release.\n\n\
+             options:\n  \
+             --json   one JSON object per notice instead of text\n  \
+             --once   block until a goal is claimable, print that notice, exit 0\n\
+             {}",
+            COMMON_OUT
+        ),
+        "release" => format!(
+            "usage: jazyk release [compile|generate]\n\n\
+             Record a release: approve the gated goals for the named stage (both when\n\
+             unnamed) without running anything. The watchers wake, whichever worker\n\
+             is attached does the work. The generate stage covers binding too;\n\
+             decompilation releases through `jazyk decompile`.\n\n\
              {}",
             COMMON_OUT
         ),
         "context" => format!(
-            "usage: jazyk context <ent:…|req:…|doc.md#/ref|h:…>\n\n\
-             Print the rendered context pack for a target, with its expansion handles.\n\
-             What this prints is exactly what a turn sees.\n\n\
+            "usage: jazyk context <ent:…|req:…|view:…|doc.md#/ref|h:…> [--depth N] [--expand HANDLE]...\n\n\
+             Print what the `load` tool renders for a target: the target in full, its\n\
+             edges, each neighbor as a stub, and the status block of the loaded set\n\
+             with its handles. Exactly what a session sees, under the same context\n\
+             budget.\n\n\
              options:\n  \
-             --focus k=n,…   context hop quotas (parents, mentions, requirements)\n  \
-             --budget N      context size budget in characters (default 12000)\n\
+             --depth N        neighbor depth (default 1)\n  \
+             --expand HANDLE  follow the named handle before printing (repeatable)\n\
              {}",
             COMMON_OUT
         ),
@@ -169,10 +250,11 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "gen" => format!(
             "usage: jazyk gen [entity...]\n\n\
-             Generate the deliverable and its tests from the graph, and record the\n\
-             manifest in the ledger. With no arguments, cover every entity that has at\n\
-             least one requirement, leaf entities first, skipping entities whose facts\n\
-             are unchanged.\n\n\
+             Run the built-in generation worker over the ledger goals: resolve owed\n\
+             bind goals first, then the generate goals, one bounded session per\n\
+             entity, and record the manifest in the ledger. With no arguments, cover\n\
+             every entity that has at least one requirement, leaf entities first,\n\
+             skipping entities whose facts are unchanged.\n\n\
              options:\n  \
              --force   regenerate even when facts are unchanged\n\
              {}",
@@ -180,11 +262,11 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "test" => format!(
             "usage: jazyk test [target...]\n\n\
-             Run verification over the generation ledger. Entity ids select their\n\
-             requirements' rows; requirement ids select rows directly.\n\n\
+             Run verification over the ledger: the verify goals. Entity ids select\n\
+             their requirements' rows; requirement ids select rows directly.\n\n\
              options:\n  \
              --kind programmatic|llm   only rows of this kind\n  \
-             --list                    print the derived status table without running\n  \
+             --list                    print the status table (id, statement, status) without running\n  \
              --audit                   rebuild the ledger from the artifact markers\n  \
              --force                   also rerun verified rows\n\
              {}\n\n\
@@ -205,7 +287,8 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         "docsgen" => format!(
             "usage: jazyk docsgen\n\n\
              Render the per-entity requirements documents into <out>/docsgen/ without\n\
-             compiling.\n\n\
+             compiling. The diagrams they embed re-render with them, skipped for\n\
+             unchanged .puml content, so every image link resolves.\n\n\
              {}",
             COMMON_OUT
         ),
@@ -232,10 +315,10 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         "mcp" => format!(
             "usage: jazyk mcp <toolsets>\n\n\
              Serve the tool registry over stdio as an MCP server. <toolsets> is a comma\n\
-             list of: compile (perform compilation tasks), generate (the binding and\n\
-             generation workflows), verify (the verification workflow), decompile\n\
-             (draft docs for unclaimed code), graph (read tools; --write adds raw\n\
-             write tools).\n\n\
+             list of: compile (claim goal batches: goals, begin_goals, done), generate\n\
+             (the binding and generation workflows), verify (the verification\n\
+             workflow), decompile (draft docs for unclaimed code), graph (read tools;\n\
+             --write adds raw write tools).\n\n\
              Bridge flags (set by the ACP bridge when it injects a serving into a\n\
              session; not for standalone servings):\n  \
              --ephemeral          the serving belongs to one session\n  \
@@ -298,13 +381,15 @@ fn main() {
                 i += 1;
                 opts.out = args.get(i).cloned();
             }
-            "--focus" => {
+            "--depth" => {
                 i += 1;
-                opts.focus = args.get(i).cloned();
+                opts.depth = args.get(i).and_then(|s| s.parse::<u32>().ok());
             }
-            "--budget" => {
+            "--expand" => {
                 i += 1;
-                opts.budget = args.get(i).and_then(|s| s.parse::<usize>().ok());
+                if let Some(h) = args.get(i) {
+                    opts.expand.push(h.clone());
+                }
             }
             "--kind" => {
                 i += 1;
@@ -344,6 +429,7 @@ fn main() {
                 i += 1;
                 opts.edit_sink = args.get(i).cloned();
             }
+            "--back" => opts.back = true,
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,
@@ -391,6 +477,9 @@ fn main() {
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),
         "status" => cli::run_status(&positional, &opts),
+        "preview" => cli::run_preview(&positional, &opts),
+        "explain" => cli::run_explain(&positional, &opts),
+        "ripple" => cli::run_ripple(&positional, &opts),
         "context" => match positional.first() {
             Some(target) => cli::run_context(&positional[1..], &opts, target),
             None => {
@@ -461,12 +550,22 @@ fn main() {
         "docsgen" => {
             let (proj, _llm, out) = cli::resolve(&[], &opts);
             let store = store::Store::load(&out);
+            // The diagrams the pages embed render first, skipped for unchanged .puml
+            // content, so every image link resolves. Mirrors
+            // docs/frontends/cli.md#jazyk-docsgen.
+            let dr = render::render_all(&store, &out);
             let n = docsgen::write_all(&store, &gen::GenSettings::resolve(&proj));
-            println!(
-                "jazyk: docsgen — {} requirements document(s) in {}",
+            let mut line = format!(
+                "jazyk: docsgen: {} requirements document(s) in {}; diagrams: {} drawn, {} unchanged",
                 n,
-                out.join("docsgen").display()
+                out.join("docsgen").display(),
+                dr.rendered.len(),
+                dr.skipped.len()
             );
+            if !dr.failed.is_empty() {
+                line.push_str(&format!(", {} failed", dr.failed.len()));
+            }
+            println!("{}", line);
             0
         }
         "viewer" => cli::run_viewer(&opts),

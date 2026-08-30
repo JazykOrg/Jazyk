@@ -98,9 +98,29 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
     const kind = String(event.kind ?? '')
     const label = String(event.label ?? '')
     switch (kind) {
-      case 'turnStart':
+      case 'batchStart': {
+        const goals = Array.isArray(event.goals)
+          ? (event.goals as { kind?: string; target?: string }[])
+          : []
+        rows.push({
+          key: `b${seq}`,
+          kind: 'marker',
+          text: `▷ ${label}: ${goals.map((g) => `${g.kind} ${g.target}`).join(' · ')}`,
+        })
+        break
+      }
+      case 'sessionStart':
         rows.push({ key: `s${seq}`, kind: 'marker', text: `▶ ${label}` })
         break
+      case 'goal': {
+        const tail = String(event.justification ?? event.reason ?? '')
+        rows.push({
+          key: `g${seq}`,
+          kind: 'marker',
+          text: `${event.event === 'resolved' ? '✓' : '◈'} ${String(event.event ?? '')} ${String(event.goal ?? '')}${tail ? `: ${tail}` : ''}`,
+        })
+        break
+      }
       case 'modelText':
         rows.push({ key: `m${seq}`, kind: 'thought', text: String(event.text ?? '') })
         break
@@ -132,10 +152,10 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
           detail: String(event.message ?? ''),
         })
         break
-      case 'turnDone':
+      case 'sessionDone':
         rows.push({ key: `d${seq}`, kind: 'marker', text: `✓ ${label}` })
         break
-      case 'turnFailed':
+      case 'sessionFailed':
         rows.push({ key: `f${seq}`, kind: 'marker', text: `✗ ${label}: ${String(event.error ?? '')}` })
         break
       default:
@@ -312,6 +332,31 @@ function OpenPane({ close }: { close: () => void }) {
   )
 }
 
+// The loaded-set panel: the status block as the serving renders it, re-rendered
+// live on every mutating tool reply and in full on graph_status, the same cadence
+// the model sees. Read-only. Mirrors docs/frontends/gui.md#chat.
+function extractLoaded(texts: string[]): string | null {
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const t = texts[i]
+    const at = t.lastIndexOf('## Loaded')
+    if (at >= 0) return t.slice(at)
+  }
+  return null
+}
+
+function LoadedPanel({ block }: { block: string | null }) {
+  const [open, setOpen] = useState(true)
+  if (!block) return null
+  return (
+    <div className="chat-plan" style={{ borderTop: '1px solid var(--line)' }}>
+      <button className="chat-toggle" onClick={() => setOpen(!open)}>
+        {open ? '▾' : '▸'} loaded set
+      </button>
+      {open && <pre style={{ margin: 0, maxHeight: 180, overflow: 'auto', fontSize: 11 }}>{block}</pre>}
+    </div>
+  )
+}
+
 function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -360,6 +405,18 @@ function ChatView({ id }: { id: string }) {
 
   const rows = useMemo(() => chatRows(updates ?? []), [updates])
   const running = info?.state === 'running'
+  // The loaded set as the agent's tool replies rendered it, newest wins.
+  const loadedBlock = useMemo(
+    () =>
+      extractLoaded(
+        (updates ?? []).map(({ update }) => {
+          const u = update as { fields?: { rawOutput?: unknown }; rawOutput?: unknown }
+          const raw = u.fields?.rawOutput ?? u.rawOutput
+          return typeof raw === 'string' ? raw : ''
+        }),
+      ),
+    [updates],
+  )
 
   const send = async () => {
     const t = text.trim()
@@ -373,6 +430,7 @@ function ChatView({ id }: { id: string }) {
   return (
     <>
       <Transcript rows={rows} follow />
+      <LoadedPanel block={loadedBlock} />
       {(info?.pending ?? []).map((ask) => (
         <PermissionAsk key={ask.id} sessionId={id} ask={ask as never} />
       ))}
@@ -452,6 +510,17 @@ function FollowView({ jobId }: { jobId: number }) {
     () => Object.values(turns).sort((a, b) => a.since - b.since),
     [turns],
   )
+  // The loaded-set panel beside the transcript: the last status block a tool
+  // reply carried (condensed on mutating replies, full on graph_status).
+  const loadedBlock = useMemo(
+    () =>
+      extractLoaded(
+        trace
+          .filter((r) => r.jobId === jobId && r.event.kind === 'toolResult')
+          .map((r) => `${String(r.event.full ?? '')}\n${String(r.event.summary ?? '')}`),
+      ),
+    [trace, jobId],
+  )
 
   // Follow mode: the editor shows what the agent is touching. Section events name
   // the place; the doc route reveals it.
@@ -479,11 +548,12 @@ function FollowView({ jobId }: { jobId: number }) {
             <span className="plan-mark">
               {t.state === 'done' ? '✓' : t.state === 'failed' ? '✗' : t.state === 'running' ? '●' : '○'}
             </span>{' '}
-            {t.label}
+            {t.label} <span className="muted">{t.task} {t.target}</span>
           </div>
         ))}
       </div>
       <Transcript rows={rows} follow />
+      <LoadedPanel block={loadedBlock} />
     </>
   )
 }

@@ -145,6 +145,54 @@ fn entry_summary(g: u64, entry: &Value) -> Value {
     })
 }
 
+// Re-derive the board off the calling thread and emit board.changed with the
+// counts; the client refetches GET /api/board for the cards.
+// Mirrors docs/frontends/gui.md#events.
+pub fn emit_board_changed(st: &SharedState) {
+    let st = st.clone();
+    std::thread::spawn(move || {
+        let board = crate::board::Board::compute(&st.proj(), &st.out);
+        st.events.emit(
+            "board.changed",
+            json!({
+                "counts": board.counts(),
+                "verdict": board.verdict().to_string(),
+            }),
+        );
+    });
+}
+
+// One event per resolved and opened goal of a committed changeset, from the
+// journal entries at commit, so a build run anywhere moves the board.
+fn emit_goal_events(st: &SharedState, entries: &[Value]) {
+    for entry in entries {
+        let generation = entry["generation"].clone();
+        let batch = entry["batch"].clone();
+        for r in entry["resolvedGoals"].as_array().into_iter().flatten() {
+            st.events.emit(
+                "goal.resolved",
+                json!({
+                    "goal": r["goal"],
+                    "justification": r["justification"],
+                    "generation": generation,
+                    "batch": batch,
+                }),
+            );
+        }
+        for o in entry["openedGoals"].as_array().into_iter().flatten() {
+            st.events.emit(
+                "goal.opened",
+                json!({
+                    "goal": o["goal"],
+                    "cause": o["cause"],
+                    "generation": generation,
+                    "batch": batch,
+                }),
+            );
+        }
+    }
+}
+
 // Recompute the worklist sizes and emit pending.changed when they moved.
 pub fn recompute_pending(st: &SharedState) {
     let store = crate::store::Store::load(&st.out);
@@ -196,6 +244,8 @@ pub fn spawn_store_watcher(st: SharedState) {
                 "store.generation",
                 json!({ "generation": gen_now, "entries": entries }),
             );
+            emit_goal_events(&st, &entries);
+            emit_board_changed(&st);
             let st2 = st.clone();
             tokio::task::spawn_blocking(move || recompute_pending(&st2));
         }
@@ -238,6 +288,7 @@ pub fn spawn_control_watcher(st: SharedState) {
                 last = now;
                 st.events
                     .emit("control.changed", super::api::workers_snapshot(&st));
+                emit_board_changed(&st);
             }
         }
     });
@@ -311,6 +362,8 @@ pub fn spawn_docs_watcher(st: SharedState) {
                 "docs.changed",
                 json!({ "docs": changed, "graphStale": graph_stale }),
             );
+            // A save opens goals before any build: the board derives from disk.
+            emit_board_changed(&st);
             super::jobs_hook_on_docs_changed(&st);
         }
     });

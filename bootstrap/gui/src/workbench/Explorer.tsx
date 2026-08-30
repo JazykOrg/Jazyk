@@ -56,6 +56,20 @@ function DiagBadge({ doc }: { doc: DocInfo }) {
   return <span className={`ide-diag mono ${cls}`}>{total}</span>
 }
 
+// Open goals on the document, as a count badge (docs/frontends/gui.md#files).
+function GoalBadge({ doc }: { doc: DocInfo }) {
+  const total = Object.values(doc.goals ?? {}).reduce((a, b) => a + b, 0)
+  if (total === 0) return null
+  const title = Object.entries(doc.goals ?? {})
+    .map(([k, n]) => `${n} ${k}`)
+    .join(', ')
+  return (
+    <span className="ide-diag mono sev-info" title={title}>
+      {total}g
+    </span>
+  )
+}
+
 function InlineInput({
   initial,
   placeholder,
@@ -170,6 +184,7 @@ function DocLevel({
               <Link to={`/files/docs/${d.path}`} className="ide-doc">
                 <span className="ide-doc-name">{d.path.split('/').pop()}</span>
                 <DiagBadge doc={d} />
+                <GoalBadge doc={d} />
                 {d.stale && <span className="dot-stale" title="stale against the graph" />}
               </Link>
               <span className="ide-row-actions">

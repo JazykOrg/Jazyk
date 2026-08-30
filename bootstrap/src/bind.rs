@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-// The bind contract, served as begin_binding instructions and as the internal turn's
-// package preamble. Mirrors docs/consumers/bind.md#the-bind-task.
+// The bind contract, served as begin_binding instructions and as the internal
+// session's package preamble. Mirrors docs/consumers/bind.md#the-bind-goal.
 pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/bind-contract.md").into()
 }
@@ -41,7 +41,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
             .map(|e| store.resolve_id(e).to_string())
             .unwrap_or_default();
         out.push(json!({
-            "kind": "bind-requirement",
+            "kind": "bind",
             "requirement": rid,
             "entity": entity,
             "reason": reason,
@@ -316,9 +316,9 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
     }
 }
 
-// The built-in bind worker: each owed bind runs as a bind-requirement turn with read,
-// file, and command tools over the deliverable, the same harness the generation turn
-// uses. Success is the ledger's word: the turn must have left record_binding's row
+// The built-in bind worker: each owed bind runs as a session with read, file, and
+// command tools over the deliverable, the same harness the generation session uses.
+// Success is the ledger's word: the session must have left record_binding's row
 // with the current statement hash. Mirrors docs/consumers/bind.md#when-binding-runs.
 pub fn run_all(
     store: &Store,
@@ -363,10 +363,18 @@ pub fn run_all(
             "bind",
             &format!("{} ({})", rid, t["reason"].as_str().unwrap_or("")),
         );
-        let batch = crate::acp::runner::BatchRun::single(
-            crate::model::WorkItem::new("bind-requirement", &rid)
-                .to_goal(crate::model::GoalState::Open),
-        );
+        let batch = crate::acp::runner::BatchRun::single(crate::model::Goal {
+            id: format!("g:bind:{}", rid),
+            kind: "bind".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: rid.clone(),
+            unit: "requirement".into(),
+            change: json!({"goal": "bind", "reason": t["reason"]}),
+            cause: None,
+            state: crate::model::GoalState::Open,
+            hints: Vec::new(),
+        });
         let out = runner.run_item(&batch, trace);
         if let Some(e) = out.failed {
             trace.line("bind", &format!("{} failed: {}", rid, e));

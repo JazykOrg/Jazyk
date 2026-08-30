@@ -220,7 +220,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 // Anything else is a reasoning-first reply and is read from its conclusion: the
 // later of PASS or FAIL wins, so quoting the criteria's own words on the way there
 // never flips the verdict.
-// Mirrors docs/compiler/turns/verify-requirement.md.
+// Mirrors docs/compiler/goals/verify.md#the-one-shot-form.
 fn parse_verdict(reply: &str) -> Option<bool> {
     let first = reply
         .lines()
@@ -670,7 +670,7 @@ pub fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     // The judge contract puts the verdict on the first line; a reasoning-first reply
-    // is read from its conclusion. Mirrors docs/compiler/turns/verify-requirement.md.
+    // is read from its conclusion. Mirrors docs/compiler/goals/verify.md#the-one-shot-form.
     #[test]
     fn verdict_parse_reads_the_verdict_line_then_the_conclusion() {
         assert_eq!(parse_verdict("PASS\nAll criteria met."), Some(true));

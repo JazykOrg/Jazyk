@@ -79,12 +79,31 @@ export interface SourceRef {
   quote: string
 }
 
+// One-key map naming the provenance kind (docs/compiler/model.md#provenance).
+export interface Provenance {
+  quote?: SourceRef
+  derived?: { from: string[]; reasoning: string }
+  decree?: { author: string; at: string; note?: string }
+}
+
+export interface Attribute {
+  name: string
+  type?: string
+  value?: string
+  provenance?: Provenance
+}
+
 export interface Entity {
   name: string
   aliases?: string[]
   definition?: string
   scope?: string
+  stereotype?: string
+  parent?: string
+  attributes?: Attribute[]
   mentions?: SourceRef[]
+  provenance?: Provenance
+  limits?: Record<string, number>
   confidence?: number
   reasoning?: string
   created?: string
@@ -95,23 +114,249 @@ export interface ReqEdge {
   a: string
   b: string
   type?: string
+  cardinality?: string
+}
+
+export interface Transition {
+  subject: string
+  from: string
+  to: string
+  trigger?: string
+  guard?: string
+}
+
+export interface Facet {
+  facet: string
+  reasoning: string
+  measure?: string
 }
 
 export interface Requirement {
-  ears: string
+  statement: string
   entities?: string[]
   edges?: ReqEdge[]
-  source: SourceRef
+  transition?: Transition
+  facets?: Facet[]
+  // Exactly one of source (the quote form) or provenance (derived | decree).
+  source?: SourceRef
+  provenance?: Provenance
   confidence?: number
   reasoning?: string
   created?: string
   updated?: string
 }
 
-export interface Relationship {
+// One direction-and-type group with the requirements behind it.
+export interface Contribution {
+  a: string
+  b: string
   type: string
-  members: string[]
+  cardinality?: string
   requirements: string[]
+}
+
+export interface Relationship {
+  members: string[]
+  contributions: Contribution[]
+}
+
+export interface ViewQuery {
+  scope?: string
+  parent?: string
+  stereotype?: string
+  depth?: number
+}
+
+export interface View {
+  kind: string
+  title: string
+  members?: string[]
+  excluded?: { id: string; note: string }[]
+  query?: ViewQuery
+  collapse?: string[]
+  provenance?: Provenance
+  default?: boolean
+  limits?: Record<string, number>
+  created?: string
+  updated?: string
+}
+
+export interface StateTransition {
+  from: string
+  to: string
+  trigger?: string
+  guard?: string
+  requirement: string
+}
+
+export interface StateMachine {
+  subject: string
+  states: string[]
+  initial?: string
+  transitions: StateTransition[]
+}
+
+export interface Cause {
+  generation: number
+  mutation: number
+  via?: string
+}
+
+// open | parked as strings; blocked and failed carry their payload.
+export type GoalState = 'open' | 'parked' | { blocked: { on: string } } | { failed: { reason: string } }
+
+export interface Goal {
+  id: string
+  kind: string
+  class: string
+  mandatory: boolean
+  target: string
+  unit?: string
+  change?: unknown
+  cause?: Cause
+  state: GoalState
+  hints?: string[]
+}
+
+export interface Verdict {
+  state: string
+  open?: number
+  failed?: number
+  blocked?: number
+  optional?: number
+}
+
+export function verdictText(v: Verdict | undefined | null): string {
+  if (!v || !v.state) return 'no build yet'
+  if (v.state === 'converged') {
+    let s = 'converged'
+    if (v.blocked) s += `, ${v.blocked} blocked`
+    if (v.optional) s += `, ${v.optional} optional advised`
+    return s
+  }
+  return `${v.state}: ${v.open ?? 0} open, ${v.failed ?? 0} failed, ${v.blocked ?? 0} blocked, ${v.optional ?? 0} optional advised`
+}
+
+export interface Counts {
+  open: number
+  parked: number
+  failed: number
+  blocked: number
+  optional: number
+  ready: number
+  gated: number
+  claimed: number
+  by_class: Record<string, number>
+  by_kind: Record<string, number>
+}
+
+// One goal as GET /api/board serves it (docs/frontends/gui.md#board).
+export interface BoardGoal extends Goal {
+  ready: boolean
+  gated: boolean
+  tier?: number | null
+  blockedBy?: string
+  claimedBy?: string
+  batch?: string
+}
+
+export interface BoardBatch {
+  id: string
+  class: string
+  tier?: number | null
+  executor?: string | null
+  locality: string
+  goals: { id: string; kind: string; target: string; mandatory: boolean }[]
+}
+
+export interface BoardData {
+  generation: number
+  goals: BoardGoal[]
+  batches: BoardBatch[]
+  counts: Counts
+  verdict: string
+  summary: string
+  note?: string
+  next?: string
+}
+
+export interface PreviewData {
+  batch: BoardBatch | null
+  prompt: string | null
+  toolset?: string[]
+  executor?: string
+  executorError?: string
+  humanBlocked?: boolean
+  note?: string
+}
+
+export interface LimitState {
+  limit: string
+  count: number
+  soft: number
+  hard: number
+  over: boolean
+  overHard: boolean
+}
+
+export interface ViewInfo {
+  id: string
+  kind: string
+  title: string
+  default: boolean
+  members: number
+  edges: number
+  limits: LimitState[]
+}
+
+export interface ViewMember {
+  id: string
+  node: 'entity' | 'requirement' | 'gone'
+  name?: string
+  stereotype?: string
+  parent?: string
+  hidden?: boolean
+  statement?: string
+  entities?: string[]
+  transition?: Transition
+}
+
+export interface ViewArrow {
+  a: string
+  b: string
+  type: string
+  lifted: boolean
+  count: number
+  cardinality?: string
+  requirements: string[]
+  concrete: { a: string; b: string; type: string; cardinality?: string; requirements: string[] }[]
+  rel: string
+}
+
+export interface ViewStep {
+  requirement: string
+  statement: string
+  participants: { id: string; name: string }[]
+  transition?: Transition
+}
+
+export interface ViewDetail {
+  id: string
+  kind: string
+  title: string
+  default: boolean
+  members: ViewMember[]
+  excluded: { id: string; note: string }[]
+  collapse: string[]
+  query?: ViewQuery
+  provenance?: Provenance
+  limits: LimitState[]
+  arrows: ViewArrow[]
+  steps: ViewStep[]
+  machines: { id: string; machine: StateMachine }[]
+  puml?: string | null
+  svg?: string | null
+  renderError?: string | null
 }
 
 export interface Diagnostic {
@@ -122,6 +367,8 @@ export interface Diagnostic {
   reasoning?: string
   lifecycle?: string
   triage?: string | null
+  prompt?: { question: string; options?: { label: string; edit?: unknown; answer?: string }[]; freeform?: boolean }
+  answer?: { status?: string; text?: string } | null
   created?: string
   updated?: string
 }
@@ -130,17 +377,28 @@ export interface Graph {
   generation: number
   entities: Record<string, Entity>
   requirements: Record<string, Requirement>
+  views: Record<string, View>
   relationships: Record<string, Relationship>
+  stateMachines: Record<string, StateMachine>
   diagnostics: Record<string, Diagnostic>
   redirects: Record<string, string>
 }
 
 export interface Status {
+  version?: number
   generation: number
-  verdict: string
-  spent: { turns: number; rounds: number; tokens: number }
-  parked: { task: string; target: string }[]
-  counts: { entities: number; requirements: number; relationships: number }
+  verdict: Verdict
+  spent: { sessions: number; rounds: number; tokens: number }
+  parked: Goal[]
+  failed?: { goal: Goal; reason: string }[]
+  costs?: {
+    sessions?: number
+    tokens?: number
+    by_kind?: Record<string, { sessions: number; tokens: number }>
+    by_class?: Record<string, { sessions: number; tokens: number }>
+  }
+  board?: Counts
+  counts: { entities: number; requirements: number; relationships: number; views?: number }
   coverage: { covered: number; total: number }
   diagnostics: Record<string, number>
 }
@@ -151,6 +409,8 @@ export interface Project {
   docsGlob: string[]
   roots: string[]
   deliverable: string
+  executors?: Record<string, string>
+  budgets?: Record<string, number>
   llm: { model: string; baseUrl: string }
   version: string
 }
@@ -161,6 +421,8 @@ export interface DocInfo {
   graphHash: string | null
   stale: boolean
   diagnostics?: Record<string, number>
+  // Open goals on this document, counted by kind.
+  goals?: Record<string, number>
 }
 
 export interface Section {
@@ -183,10 +445,25 @@ export interface DocRecord {
 export interface JournalEntry {
   generation: number
   build: string
-  workItem: { task: string; target: string; dirtySections?: string[]; staleAnchors?: string[] }
+  // session | edit | align | gc | settle-diagnostics | checks | decree | dual-write
+  // | ratify | triage | answer
+  kind?: string
+  batch?: string[]
+  author?: string
+  note?: string
+  dirtied?: string[]
   mutations: Record<string, unknown>[]
+  resolved_goals?: { goal: string; justification: string; evidence?: unknown }[]
+  opened_goals?: { goal: string; cause: Cause }[]
   rounds: number
   tokens: number
+}
+
+// One line naming a journal entry: its kind, or the batch's goals.
+export function entryLabel(e: JournalEntry): string {
+  if (e.kind === 'session' && (e.batch ?? []).length > 0) return (e.batch ?? []).join(', ')
+  if (e.kind === 'edit') return `edit ${(e.dirtied ?? [])[0] ?? ''} (human)`
+  return e.kind || 'changeset'
 }
 
 // One line of the feedback log: what a model found ambiguous, wrong, or confusing

@@ -232,6 +232,20 @@ pub struct EntityGen {
     pub requirements: Vec<String>,
     #[serde(default)]
     pub files: Vec<String>,
+    // The unattached remainder, measured at record time: how much of what this
+    // entity's generation produced no requirement claims.
+    // Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unattached: Option<Unattached>,
+}
+
+// Generated mass attached to no requirement: owned files no row names, significant
+// lines outside every site's run, and their share of the entity's significant lines.
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct Unattached {
+    pub files: u64,
+    pub lines: u64,
+    pub ratio: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -946,6 +960,11 @@ pub fn mark(
         })
         .unwrap_or_default();
 
+    // Validate the invented choices before any side effect: the scope grades the
+    // severity, and the tool layer stages one invented-choice diagnostic per entry
+    // from this validated set. Mirrors docs/consumers/gen.md#invented-choices.
+    let choices = parse_choices(store, manifest)?;
+
     // Validate the manifest's test rows before any side effect: a rejection must
     // leave the deliverable untouched, or the retry sees files already stripped.
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
@@ -1056,13 +1075,14 @@ pub fn mark(
         }
     }
     ledger.entities.insert(
-        slug,
+        slug.clone(),
         EntityGen {
             fact_hash: fact_hash_seen
                 .map(String::from)
                 .unwrap_or_else(|| fact_hash(store, id)),
             requirements: reqs_of_sorted(store, id),
             files: files.clone(),
+            unattached: None,
         },
     );
     let mut seeded = 0;
@@ -1157,13 +1177,473 @@ pub fn mark(
             seeded += 1;
         }
     }
+    // The deliverable itself measures how much was invented: owned mass no
+    // requirement claims, recorded on the entity's entry so the grade and the
+    // measure read together. Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    let unattached = measure_unattached(&ledger, gs, &slug);
+    if let Some(e) = ledger.entities.get_mut(&slug) {
+        e.unattached = Some(unattached.clone());
+    }
     ledger.save(&store.out);
-    let mut reply = json!({"marked": id, "files": files.len(), "tests": seeded});
+    let mut reply = json!({
+        "marked": id, "files": files.len(), "tests": seeded,
+        "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio},
+    });
+    if !choices.is_empty() {
+        reply["choices"] = json!(choices.len());
+    }
     if pruned > 0 {
         reply["prunedRows"] = json!(pruned);
         reply["note"] = json!("pruned ledger row(s) whose requirement left the graph");
     }
     Ok(reply)
+}
+
+// The unattached remainder for one entity, over the files it owns: files no
+// requirement row names, and significant lines outside every site's run. A site's
+// run starts at its head line and ends before the next site in the same file, or at
+// the end of the file, so the unattached lines of a file with sites are the ones
+// before its first site; a file with none is unattached whole. Test artifacts are
+// claimed by their rows and excluded, support files never enter an entity's list.
+// Mirrors docs/consumers/gen.md#the-unattached-remainder.
+pub fn measure_unattached(ledger: &Ledger, gs: &GenSettings, slug: &str) -> Unattached {
+    let Some(e) = ledger.entities.get(slug) else {
+        return Unattached::default();
+    };
+    let mut named: std::collections::BTreeSet<&str> = Default::default();
+    let mut artifacts: std::collections::BTreeSet<&str> = Default::default();
+    let mut first_site: BTreeMap<&str, usize> = BTreeMap::new();
+    for row in ledger.requirements.values() {
+        for f in &row.files {
+            named.insert(f);
+        }
+        artifacts.insert(row.test.artifact.as_str());
+        for s in &row.sites {
+            let e = first_site.entry(s.file.as_str()).or_insert(s.line);
+            *e = (*e).min(s.line);
+        }
+    }
+    let files = e
+        .files
+        .iter()
+        .filter(|f| !named.contains(f.as_str()) && !artifacts.contains(f.as_str()))
+        .count() as u64;
+    let (mut significant, mut lines) = (0u64, 0u64);
+    for f in &e.files {
+        if artifacts.contains(f.as_str()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(gs.deliverable.join(f)) else {
+            continue;
+        };
+        let covered_from = first_site.get(f.as_str()).copied();
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim();
+            if t.is_empty() || is_comment_line(t) {
+                continue;
+            }
+            significant += 1;
+            if covered_from.map(|start| i + 1 < start).unwrap_or(true) {
+                lines += 1;
+            }
+        }
+    }
+    let ratio = if significant == 0 {
+        0.0
+    } else {
+        ((lines as f64 / significant as f64) * 100.0).round() / 100.0
+    };
+    Unattached {
+        files,
+        lines,
+        ratio,
+    }
+}
+
+// A comment by leader alone: anchoring never parses the medium, and neither does
+// this measure. Covers the common comment syntaxes; a shebang counts as a comment.
+fn is_comment_line(trimmed: &str) -> bool {
+    ["//", "#", "--", ";", "*", "/*", "*/", "<!--"]
+        .iter()
+        .any(|lead| trimmed.starts_with(lead))
+}
+
+// ---- invented choices ----
+// Anything the deliverable needed that the documents do not state. The manifest
+// carries the choices; the harness grades each by the scope of the invention and
+// files one invented-choice diagnostic per entry.
+// Mirrors docs/consumers/gen.md#invented-choices.
+
+#[derive(Clone)]
+pub struct Choice {
+    pub choice: String,
+    // product | behavior | detail.
+    pub scope: String,
+    pub reasoning: String,
+    pub requirements: Vec<String>,
+}
+
+// The severity a scope grades: the invention of the product is an error, of an
+// observable behavior a warning, of a cosmetic detail a suppressible info.
+pub fn severity_for_scope(scope: &str) -> &'static str {
+    match scope {
+        "product" => "error",
+        "behavior" => "warning",
+        _ => "info",
+    }
+}
+
+// Parse and validate the manifest's `choices`. Rejections name the fix; requirement
+// references resolve through redirects and must exist.
+pub fn parse_choices(store: &Store, manifest: &Value) -> Result<Vec<Choice>, String> {
+    let Some(list) = manifest["choices"].as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for c in list {
+        let text = c["choice"]
+            .as_str()
+            .or_else(|| c["message"].as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(
+                "a choices entry needs `choice`: the invented choice in one sentence".into(),
+            );
+        }
+        let scope = c["scope"].as_str().unwrap_or("").trim().to_lowercase();
+        if !matches!(scope.as_str(), "product" | "behavior" | "detail") {
+            return Err(format!(
+                "choice `{}` has scope `{}`; it must be `product`, `behavior`, or `detail`",
+                crate::llm::truncate(&text, 60),
+                scope
+            ));
+        }
+        let reasoning = c["reasoning"]
+            .as_str()
+            .or_else(|| c["reason"].as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mut raw: Vec<String> = c["requirements"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(r) = c["requirement"].as_str() {
+            raw.push(r.to_string());
+        }
+        let mut requirements = Vec::new();
+        for r in raw {
+            let rid = store.resolve_id(&r).to_string();
+            if !store.graph.requirements.contains_key(&rid) {
+                return Err(format!("unknown requirement `{}` in choices", r));
+            }
+            if !requirements.contains(&rid) {
+                requirements.push(rid);
+            }
+        }
+        out.push(Choice {
+            choice: text,
+            scope,
+            reasoning,
+            requirements,
+        });
+    }
+    Ok(out)
+}
+
+// The mutations the tool layer stages for one entity's invented set: one
+// invented-choice diagnostic per new choice (severity by scope, subjects the entity
+// plus the requirements the choice fills in, the message naming the unattached
+// remainder), and a resolve for every open one the new record omits, so a
+// regeneration under better documents clears its own debt while a repeated choice
+// keeps its diagnostic and its triage. The prompt proposes the sentence for the
+// governing section (the requirement's source, else the entity's first mention) with
+// an answer option to keep the choice unstated.
+// Mirrors docs/consumers/gen.md#invented-choices.
+pub fn choice_ops(
+    store: &Store,
+    id: &str,
+    choices: &[Choice],
+    unattached: Option<&Unattached>,
+) -> Vec<crate::store::Op> {
+    use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
+    let mut ops = Vec::new();
+    let open: Vec<(String, String)> = store
+        .graph
+        .diagnostics
+        .iter()
+        .filter(|(_, d)| {
+            d.lifecycle == "open"
+                && d.rule == "invented-choice"
+                && d.subjects.iter().any(|s| store.resolve_id(s) == id)
+        })
+        .map(|(did, d)| (did.clone(), d.message.clone()))
+        .collect();
+    for (did, message) in &open {
+        if !choices.iter().any(|c| message.contains(&c.choice)) {
+            ops.push(crate::store::Op::ResolveDiagnostic {
+                id: did.clone(),
+                reason: "re-recorded without this choice".into(),
+            });
+        }
+    }
+    let measure = unattached
+        .map(|u| {
+            format!(
+                " Unattached remainder on the entity: {} file(s), {} line(s), ratio {:.2}.",
+                u.files, u.lines, u.ratio
+            )
+        })
+        .unwrap_or_default();
+    for c in choices {
+        if open.iter().any(|(_, m)| m.contains(&c.choice)) {
+            continue;
+        }
+        let mut subjects = vec![id.to_string()];
+        subjects.extend(c.requirements.iter().cloned());
+        let anchor = c
+            .requirements
+            .iter()
+            .find_map(|rid| {
+                store
+                    .graph
+                    .requirements
+                    .get(rid)
+                    .and_then(|r| r.source.as_ref())
+                    .map(|s| (s.doc.clone(), s.section.clone()))
+            })
+            .or_else(|| {
+                store
+                    .graph
+                    .entities
+                    .get(id)
+                    .and_then(|e| e.mentions.first())
+                    .map(|m| (m.doc.clone(), m.section.clone()))
+            });
+        let mut options = Vec::new();
+        if let Some((doc, section)) = anchor {
+            options.push(PromptOption {
+                label: format!("Insert into {} {}", doc, section),
+                edit: Some(SuggestedEdit {
+                    doc,
+                    section,
+                    old_text: String::new(),
+                    new_text: c.choice.clone(),
+                }),
+                answer: None,
+            });
+        }
+        options.push(PromptOption {
+            label: "Keep the choice unstated".into(),
+            edit: None,
+            answer: Some("keep unstated".into()),
+        });
+        ops.push(crate::store::Op::ReportDiagnostic {
+            id: String::new(),
+            diagnostic: Diagnostic {
+                rule: "invented-choice".into(),
+                severity: severity_for_scope(&c.scope).into(),
+                subjects,
+                message: format!("Invented ({}): {}{}", c.scope, c.choice, measure),
+                reasoning: (!c.reasoning.is_empty()).then(|| c.reasoning.clone()),
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: Some(DiagnosticPrompt {
+                    question: "Should the documents state this choice?".into(),
+                    options,
+                    freeform: true,
+                }),
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        });
+    }
+    ops
+}
+
+// ---- grouping by component ----
+// Where the graph carries containment, a component and its subtree generate as one
+// group; the goal stays per entity, the group is derived at batch time, never
+// stored. Mirrors docs/consumers/gen.md#grouping-by-component.
+
+// A system: a containment root with at least one child (the match that derives the
+// default component view), or an entity the documents stereotype as one.
+pub fn is_system(store: &Store, id: &str) -> bool {
+    let Some(e) = store.graph.entities.get(id) else {
+        return false;
+    };
+    if e.stereotype
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("system"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    e.parent.is_none()
+        && store
+            .graph
+            .entities
+            .values()
+            .any(|c| c.parent.as_deref() == Some(id))
+}
+
+// The group root an entity generates under: the direct child of a system, the
+// «service»-like tier of the containment tree. A system generates alone, and so
+// does a parentless entity without children.
+pub fn group_root(store: &Store, id: &str) -> String {
+    if is_system(store, id) {
+        return id.to_string();
+    }
+    let mut cur = id.to_string();
+    // Bounded walk: the store refuses parent cycles, the bound keeps this total.
+    for _ in 0..64 {
+        let Some(parent) = store
+            .graph
+            .entities
+            .get(&cur)
+            .and_then(|e| e.parent.clone())
+        else {
+            return cur;
+        };
+        if is_system(store, &parent) {
+            return cur;
+        }
+        cur = parent;
+    }
+    cur
+}
+
+// A group is its root plus every descendant through `parent`, in tree order.
+pub fn group_members(store: &Store, root: &str) -> Vec<String> {
+    let mut members = vec![root.to_string()];
+    let mut i = 0;
+    while i < members.len() {
+        let cur = members[i].clone();
+        for (cid, e) in &store.graph.entities {
+            if e.parent.as_deref() == Some(cur.as_str()) && !members.iter().any(|m| m == cid) {
+                members.push(cid.clone());
+            }
+        }
+        i += 1;
+    }
+    members
+}
+
+// Leaf-first order over the per-direction contributions and the containment tree:
+// every contribution's acted-on side first (the part, the dependency, the
+// interface), and a child before its parent (the part before the whole). Ties by
+// id; a cycle breaks at the entity with the fewest pending prerequisites.
+// Mirrors docs/consumers/gen.md#order-from-relationships.
+pub fn generation_order(store: &Store, targets: &[String]) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
+    let prereqs = |id: &str, emitted: &std::collections::BTreeSet<String>| -> usize {
+        let mut n = 0;
+        for rel in store.graph.relationships.values() {
+            for c in &rel.contributions {
+                if c.a == id && c.b != id && set.contains(c.b.as_str()) && !emitted.contains(&c.b) {
+                    n += 1;
+                }
+            }
+        }
+        for (cid, e) in &store.graph.entities {
+            if e.parent.as_deref() == Some(id)
+                && set.contains(cid.as_str())
+                && !emitted.contains(cid)
+            {
+                n += 1;
+            }
+        }
+        n
+    };
+    let mut remaining: Vec<String> = targets.to_vec();
+    let mut emitted: std::collections::BTreeSet<String> = Default::default();
+    let mut out = Vec::new();
+    while !remaining.is_empty() {
+        let (i, _) = remaining
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, id)| (prereqs(id, &emitted), (*id).clone()))
+            .unwrap();
+        let id = remaining.remove(i);
+        emitted.insert(id.clone());
+        out.push(id);
+    }
+    out
+}
+
+// ---- ledger-stale change records ----
+// One record per requirement or entity the ledger and the graph disagree about,
+// derived from the same pending predicates the goals read, with the resolving goal
+// and the reason in `detail`, so the board derives the bind, generate, and verify
+// goals from them. Mirrors docs/compiler/goals/bind.md#created-when,
+// docs/compiler/goals/generate.md#created-when, docs/compiler/goals/verify.md#created-when.
+pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model::ChangeRecord> {
+    let generation = store.status.generation;
+    let mut index = store
+        .status
+        .changes
+        .iter()
+        .filter(|c| c.generation == generation)
+        .map(|c| c.mutation)
+        .max()
+        .unwrap_or(0);
+    let mut out: Vec<crate::model::ChangeRecord> = Vec::new();
+    let mut push = |index: &mut usize, subject: String, detail: Value| {
+        *index += 1;
+        out.push(crate::model::ChangeRecord {
+            id: format!("c{}-{}", generation, index),
+            generation,
+            mutation: *index,
+            kind: crate::goals::CHANGE_LEDGER_STALE.to_string(),
+            subject,
+            via: "ledger".into(),
+            detail,
+        });
+    };
+    let bind_owed: std::collections::BTreeSet<String> = crate::bind::pending(store, gs)
+        .iter()
+        .filter_map(|p| p["requirement"].as_str().map(String::from))
+        .collect();
+    for p in crate::bind::pending(store, gs) {
+        push(
+            &mut index,
+            p["requirement"].as_str().unwrap_or_default().to_string(),
+            json!({"goal": "bind", "reason": p["reason"], "entity": p["entity"]}),
+        );
+    }
+    for p in pending(store, gs) {
+        let reason = if p["reason"] == "unimplemented-bindings" {
+            json!("unimplemented")
+        } else {
+            json!("facts-changed")
+        };
+        push(
+            &mut index,
+            p["entity"].as_str().unwrap_or_default().to_string(),
+            json!({"goal": "generate", "reason": reason, "changed": p["changed"]}),
+        );
+    }
+    for p in crate::verify::pending(store, gs, Some("stale"), None) {
+        if p["status"] == "unimplemented" || p["reason"] == "not-generated" {
+            continue;
+        }
+        if bind_owed.contains(p["requirement"].as_str().unwrap_or_default()) {
+            continue;
+        }
+        push(
+            &mut index,
+            p["requirement"].as_str().unwrap_or_default().to_string(),
+            json!({"goal": "verify", "reason": p["reason"], "kind": p["test"]["kind"], "entity": p["entity"]}),
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1538,6 +2018,243 @@ mod tests {
         assert!(!ledger.requirements.contains_key("req:gone-1"));
         assert!(ledger.requirements.contains_key("req:shop-1"));
     }
+
+    // Part before whole: a parent's children generate first, and a system's direct
+    // child roots its subtree as one group.
+    // Mirrors docs/consumers/gen.md#grouping-by-component.
+    #[test]
+    fn children_generate_before_their_parent_and_groups_derive_from_containment() {
+        let mut s = Store::default();
+        for (id, parent) in [
+            ("ent:sys", None),
+            ("ent:svc", Some("ent:sys")),
+            ("ent:svc-part", Some("ent:svc")),
+            ("ent:other", Some("ent:sys")),
+        ] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    parent: parent.map(String::from),
+                    ..Default::default()
+                },
+            );
+        }
+        // The system is the containment root; its direct children root the groups.
+        assert!(is_system(&s, "ent:sys"));
+        assert!(!is_system(&s, "ent:svc"));
+        assert_eq!(group_root(&s, "ent:svc-part"), "ent:svc");
+        assert_eq!(group_root(&s, "ent:svc"), "ent:svc");
+        assert_eq!(group_root(&s, "ent:sys"), "ent:sys");
+        assert_eq!(
+            group_members(&s, "ent:svc"),
+            vec!["ent:svc".to_string(), "ent:svc-part".to_string()]
+        );
+        // Order: every child before its parent, the system last.
+        let order = generation_order(
+            &s,
+            &[
+                "ent:sys".into(),
+                "ent:svc".into(),
+                "ent:svc-part".into(),
+                "ent:other".into(),
+            ],
+        );
+        let pos = |id: &str| order.iter().position(|x| x == id).unwrap();
+        assert!(pos("ent:svc-part") < pos("ent:svc"), "{:?}", order);
+        assert!(pos("ent:svc") < pos("ent:sys"), "{:?}", order);
+        assert!(pos("ent:other") < pos("ent:sys"), "{:?}", order);
+    }
+
+    // One invented-choice diagnostic per manifest entry, graded by the scope of the
+    // invention, with the proposal prompt and the measure in the message.
+    // Mirrors docs/consumers/gen.md#invented-choices.
+    #[test]
+    fn invented_choices_stage_one_graded_diagnostic_per_scope() {
+        let out = std::env::temp_dir().join(format!("jazyk-choice-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        s.docs.insert(
+            "shop.md".into(),
+            DocRecord {
+                content_hash: hash_hex("# Shop\n\nholds\n"),
+                sections: crate::md::parse_sections("# Shop\n\nholds\n"),
+                coverage: Default::default(),
+            },
+        );
+        s.graph.requirements.insert(
+            "req:shop-2".into(),
+            Requirement {
+                statement: "The Cart shall print items.".into(),
+                entities: vec!["ent:cart".into()],
+                edges: vec![],
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn hold() {}\n").ok();
+        // Distinct subject sets: the store's sticky rule merges open diagnostics
+        // with one rule and one subject set, so the requirements a choice fills in
+        // are what keep its diagnostic its own.
+        let manifest = serde_json::json!({
+            "files": ["src/cart.rs"],
+            "tests": [],
+            "choices": [
+                {"choice": "The product is a command-line cart simulator.", "scope": "product",
+                 "reasoning": "no statement names the medium"},
+                {"choice": "The cart rejects a 21st item.", "scope": "behavior",
+                 "reasoning": "no stated limit", "requirements": ["req:shop-1"]},
+                {"choice": "Items print in green.", "scope": "detail", "reasoning": "cosmetic",
+                 "requirements": ["req:shop-2"]},
+            ],
+        });
+        let reply = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert_eq!(reply["choices"], 3);
+        let choices = parse_choices(&s, &manifest).unwrap();
+        let ledger = Ledger::load(&out);
+        let ops = choice_ops(
+            &s,
+            "ent:cart",
+            &choices,
+            ledger.entities["cart"].unattached.as_ref(),
+        );
+        assert_eq!(ops.len(), 3);
+        let report = s.apply(ops, &crate::store::Commit::store("session"));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let staged: Vec<&Diagnostic> = s
+            .graph
+            .diagnostics
+            .values()
+            .filter(|d| d.rule == "invented-choice")
+            .collect();
+        assert_eq!(staged.len(), 3);
+        for want in ["error", "warning", "info"] {
+            assert!(staged.iter().any(|d| d.severity == want), "{}", want);
+        }
+        let behavior = staged.iter().find(|d| d.severity == "warning").unwrap();
+        assert!(behavior.subjects.contains(&"ent:cart".to_string()));
+        assert!(behavior.subjects.contains(&"req:shop-1".to_string()));
+        assert!(
+            behavior.message.contains("Unattached remainder"),
+            "{}",
+            behavior.message
+        );
+        let p = behavior.prompt.as_ref().unwrap();
+        let edit = p.options[0].edit.as_ref().unwrap();
+        assert_eq!(edit.doc, "shop.md");
+        assert_eq!(edit.section, "/shop");
+        assert_eq!(edit.old_text, "");
+        assert_eq!(edit.new_text, "The cart rejects a 21st item.");
+        assert_eq!(p.options[1].answer.as_deref(), Some("keep unstated"));
+        assert!(p.freeform);
+        // A repeated choice keeps its diagnostic; an omitted one resolves.
+        let again = parse_choices(
+            &s,
+            &serde_json::json!({"choices": [
+                {"choice": "The cart rejects a 21st item.", "scope": "behavior", "reasoning": "still unstated"},
+            ]}),
+        )
+        .unwrap();
+        let ops = choice_ops(&s, "ent:cart", &again, None);
+        let reports = ops
+            .iter()
+            .filter(|o| matches!(o, crate::store::Op::ReportDiagnostic { .. }))
+            .count();
+        let resolves = ops
+            .iter()
+            .filter(|o| matches!(o, crate::store::Op::ResolveDiagnostic { .. }))
+            .count();
+        assert_eq!(reports, 0);
+        assert_eq!(resolves, 2);
+        // A bad scope is rejected before any side effect.
+        let bad = serde_json::json!({"files": [], "tests": [], "choices": [{"choice": "x", "scope": "huge"}]});
+        assert!(mark(&s, "ent:cart", None, &bad, &gs)
+            .unwrap_err()
+            .contains("scope"));
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // The unattached remainder on a two-file fixture: one owned file no row names,
+    // and the significant lines outside every site's run.
+    // Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    #[test]
+    fn unattached_remainder_counts_unnamed_files_and_lines_outside_site_runs() {
+        let out = std::env::temp_dir().join(format!("jazyk-unattached-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        // Two significant lines sit before the first site's run.
+        std::fs::write(
+            gs.deliverable.join("src/cart.rs"),
+            "// header comment\nuse std::fmt;\nfn helper() {}\n// req:shop-1 hash:12345678\nfn hold(i: Item) {}\nfn hold_more() {}\n",
+        )
+        .ok();
+        // A second owned file no requirement row names: unattached whole.
+        std::fs::write(
+            gs.deliverable.join("src/extra.rs"),
+            "fn extra() {}\n\n// note\nfn more() {}\n",
+        )
+        .ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .ok();
+        let manifest = serde_json::json!({
+            "files": ["src/cart.rs", "src/extra.rs", "tests/cart.rs"],
+            "tests": [{
+                "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+                "artifact": "tests/cart.rs", "name": name,
+                "run": format!("cargo test {}", name), "files": ["src/cart.rs"],
+            }],
+        });
+        let reply = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        // src/extra.rs is the file slice; the lines are its two significant lines
+        // plus src/cart.rs's two before the first site. The test artifact is claimed
+        // by its row and never counts.
+        assert_eq!(reply["unattached"]["files"], 1);
+        assert_eq!(reply["unattached"]["lines"], 4);
+        let ledger = Ledger::load(&out);
+        let u = ledger.entities["cart"].unattached.as_ref().unwrap();
+        assert_eq!(u.files, 1);
+        assert_eq!(u.lines, 4);
+        assert!(u.ratio > 0.5 && u.ratio < 1.0, "{}", u.ratio);
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // An unbound requirement yields a ledger-stale change record naming its goal,
+    // so the board derives bind (and generate for the entity) from it.
+    // Mirrors docs/compiler/goals/bind.md#created-when.
+    #[test]
+    fn an_unbound_requirement_yields_a_ledger_stale_record() {
+        let out = std::env::temp_dir().join(format!("jazyk-stale-rec-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        let records = ledger_stale_records(&s, &gs);
+        let bind = records
+            .iter()
+            .find(|r| r.detail["goal"] == "bind")
+            .expect("a bind record");
+        assert_eq!(bind.kind, "ledger-stale");
+        assert_eq!(bind.subject, "req:shop-1");
+        assert_eq!(bind.via, "ledger");
+        assert_eq!(bind.detail["reason"], "unbound");
+        assert!(bind.id.starts_with('c'), "{}", bind.id);
+        let g = records
+            .iter()
+            .find(|r| r.detail["goal"] == "generate")
+            .expect("a generate record");
+        assert_eq!(g.subject, "ent:cart");
+        assert_eq!(g.detail["reason"], "facts-changed");
+        std::fs::remove_dir_all(&out).ok();
+    }
 }
 
 // ---- the built-in worker ----
@@ -1556,7 +2273,7 @@ pub fn run_all(
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
     use crate::session::TraceEvent;
-    let mut targets: Vec<String> = if entities.is_empty() {
+    let targets: Vec<String> = if entities.is_empty() {
         store
             .graph
             .entities
@@ -1593,29 +2310,11 @@ pub fn run_all(
         }
     }
 
-    // Leaf-first ordering: repeatedly emit the entity with the fewest ungenerated
-    // neighbors over the relationship graph (ties by name).
-    let neighbors = |id: &str| -> Vec<String> {
-        store
-            .graph
-            .relationships
-            .values()
-            .filter(|r| r.members.iter().any(|m| m == id))
-            .flat_map(|r| r.members.iter().filter(|m| *m != id).cloned())
-            .collect()
-    };
-    let mut ordered: Vec<String> = Vec::new();
-    while !targets.is_empty() {
-        let (i, _) = targets
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, id)| {
-                let pending = neighbors(id).iter().filter(|n| targets.contains(n)).count();
-                (pending, (*id).clone())
-            })
-            .unwrap();
-        ordered.push(targets.remove(i));
-    }
+    // Leaf-first over the per-direction contributions and the containment tree: the
+    // part before the whole, the dependency before the dependent, so a group's parts
+    // land before the entity that composes them
+    // (docs/consumers/gen.md#grouping-by-component).
+    let ordered = generation_order(store, &targets);
 
     std::fs::create_dir_all(&gs.deliverable).ok();
     let pending_set: std::collections::BTreeSet<String> = pending(store, gs)
@@ -1651,7 +2350,7 @@ pub fn run_all(
         let result = if gs.worker == "pipeline" {
             gen_one(store, runner, gs, id, &task)
         } else {
-            gen_turn(store, runner, gs, id, trace)
+            gen_session(store, runner, gs, id, trace)
         };
         match result {
             Ok(files) => {
@@ -1699,20 +2398,29 @@ pub fn run_all(
 // its module and the entry point in a single answer has written both, and folding the
 // second into the first leaves a file that cannot parse.
 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-// The agentic worker: one entity as a generation turn on the harness, with the file
-// and command tools. Success is the ledger's word, never the model's: the turn must
-// have left record_generation's mark with current facts and existing files.
-// Mirrors docs/compiler/turns.md#generation-turns.
-fn gen_turn(
+// The agentic worker: one entity as a generation session on the harness, with the
+// file and command tools. Success is the ledger's word, never the model's: the
+// session must have left record_generation's mark with current facts and existing
+// files. Mirrors docs/compiler/sessions.md#generation-sessions.
+fn gen_session(
     store: &Store,
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     id: &str,
     trace: &crate::session::Trace,
 ) -> Result<usize, String> {
-    let batch = crate::acp::runner::BatchRun::single(
-        crate::model::WorkItem::new("generate-entity", id).to_goal(crate::model::GoalState::Open),
-    );
+    let batch = crate::acp::runner::BatchRun::single(crate::model::Goal {
+        id: format!("g:generate:{}", id),
+        kind: "generate".into(),
+        class: "compile".into(),
+        mandatory: true,
+        target: id.to_string(),
+        unit: "entity".into(),
+        change: serde_json::json!({"goal": "generate"}),
+        cause: None,
+        state: crate::model::GoalState::Open,
+        hints: Vec::new(),
+    });
     let report = runner.run_item(&batch, trace);
     if let Some(e) = report.failed {
         return Err(e);
@@ -1724,11 +2432,11 @@ fn gen_turn(
             Ok(e.files.len())
         }
         Some(e) if e.fact_hash != hash => Err(format!(
-            "the turn recorded factHash {} but the graph says {}; the task package carries the current one",
+            "the session recorded factHash {} but the graph says {}; the goal package carries the current one",
             e.fact_hash, hash
         )),
-        Some(_) => Err("the turn recorded files that do not exist under the deliverable".into()),
-        None => Err("the turn ended without record_generation; nothing landed in the ledger".into()),
+        Some(_) => Err("the session recorded files that do not exist under the deliverable".into()),
+        None => Err("the session ended without record_generation; nothing landed in the ledger".into()),
     }
 }
 
@@ -2171,7 +2879,7 @@ pub fn gen_one(
             || (!name.is_empty() && run.contains(name))
     };
     let manifest_user = format!(
-        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nRecorded run commands already in use (reuse this toolchain, never introduce a second test runner): {}\nBuild already recorded for this deliverable: {}\nThe build's entry point and its current content (rewrite it in supportFiles so it includes your part; empty when there is no build yet): {}\nTest names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {}\nEach programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"build\": {{\"run\": \"...\", \"cwd\": \".\", \"produces\": [\"...\"]}}, \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles.\n{} Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
+        "Files written so far for entity {}: {:?} under the deliverable directory `{}`.\nRecorded run commands already in use (reuse this toolchain, never introduce a second test runner): {}\nBuild already recorded for this deliverable: {}\nThe build's entry point and its current content (rewrite it in supportFiles so it includes your part; empty when there is no build yet): {}\nTest names the harness found in the tests file (declare each of these programmatic with its run command; declare a requirement whose name is absent as llm): {}\nEach programmatic run command must invoke the tests artifact and select only that test: the command text must reference the tests file path or the testName. A command that only runs the product is invalid.\nReturn ONLY a JSON object, no prose:\n{{\"supportFiles\": [{{\"path\": \"...\", \"content\": \"...\"}}], \"build\": {{\"run\": \"...\", \"cwd\": \".\", \"produces\": [\"...\"]}}, \"tests\": [{{\"requirement\": \"req:...\", \"kind\": \"programmatic\"|\"llm\", \"label\": \"your words\", \"name\": \"the testName\", \"run\": \"exact command executed from the deliverable directory that runs only that test\", \"cwd\": \".\"}}], \"choices\": [{{\"choice\": \"one sentence\", \"scope\": \"product\"|\"behavior\"|\"detail\", \"reasoning\": \"...\", \"requirements\": [\"req:...\"]}}]}}\nsupportFiles are build or configuration files required for the run commands to execute (empty array if none are needed or they already exist). choices lists what you had to invent because no statement decides it: the choice in one sentence, its scope (product, behavior, or detail), your reasoning, and the requirements it fills in when any exist; an empty array when you invented nothing. A run command that cannot execute from a fresh checkout of the deliverable is a defect: if it needs a runner or build file no listed file provides (a package.json for npx jest, a Cargo.toml for cargo test), you MUST return that file in supportFiles.\n{} Every requirement must appear once in tests. Requirements and test names:\n{}\n\nThe tests file `{}`:\n{}\n",
         id,
         files,
         task["deliverable"].as_str().unwrap_or_default(),
@@ -2379,7 +3087,7 @@ pub fn gen_one(
         ) {
             if let Ok(mut v) = parse_manifest(&reply2) {
                 // Merge over the first answer: a retry that forgot a field keeps it.
-                for key in ["supportFiles", "build"] {
+                for key in ["supportFiles", "build", "choices"] {
                     let dropped = match &v[key] {
                         serde_json::Value::Null => true,
                         serde_json::Value::Array(a) => a.is_empty(),
@@ -2526,6 +3234,11 @@ pub fn gen_one(
         .is_empty()
     {
         manifest["build"] = manifest_json["build"].clone();
+    }
+    // The invented choices ride the manifest; mark validates them and the tool layer
+    // stages their diagnostics (docs/consumers/gen.md#invented-choices).
+    if manifest_json["choices"].is_array() {
+        manifest["choices"] = manifest_json["choices"].clone();
     }
     crate::gen::mark(store, id, task["factHash"].as_str(), &manifest, gs)?;
     // A regeneration replaces the file set: files the previous generation recorded

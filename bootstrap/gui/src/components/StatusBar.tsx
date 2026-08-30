@@ -1,6 +1,7 @@
 // The persistent status bar: read-only project state, every segment links into
 // the app. The run controls live in the activity panel's control line.
 import { Link } from 'react-router'
+import { verdictText } from '../lib/api'
 import { useProject, useStatus } from '../lib/queries'
 import { useApp } from '../lib/store'
 
@@ -12,6 +13,7 @@ export default function StatusBar() {
 
   const diag = s?.diagnostics ?? {}
   const cov = s?.coverage
+  const board = s?.board
   return (
     <footer className="statusbar mono">
       {s && (
@@ -28,26 +30,25 @@ export default function StatusBar() {
           </a>
           <a
             href="#activity"
-            className={s.verdict === 'incomplete' ? 'v-stale' : ''}
+            className={s.verdict?.state === 'incomplete' ? 'v-stale' : ''}
             title="last verdict"
             onClick={(e) => {
               e.preventDefault()
               setActivityOpen(true)
             }}
           >
-            {s.verdict || 'no build'}
+            {verdictText(s.verdict)}
           </a>
+          {board && (board.open > 0 || board.blocked > 0) && (
+            <Link to="/board" title="the goal board">
+              {board.open} open goal{board.open === 1 ? '' : 's'}
+              {board.blocked > 0 ? `, ${board.blocked} blocked` : ''}
+            </Link>
+          )}
           {s.parked.length > 0 && (
-            <a
-              href="#activity"
-              className="v-stale"
-              onClick={(e) => {
-                e.preventDefault()
-                setActivityOpen(true)
-              }}
-            >
+            <Link to="/board?state=parked" className="v-stale">
               {s.parked.length} parked
-            </a>
+            </Link>
           )}
           {cov && (
             <Link to="/graph?list=coverage" title="covered sections">
@@ -65,8 +66,8 @@ export default function StatusBar() {
             )}
             {!diag.error && !diag.warning && !diag.info && <span className="muted"> no diagnostics</span>}
           </Link>
-          <span className="muted" title="tokens spent">
-            {s.spent.turns} turns · {Math.round(s.spent.tokens / 1000)}k tok
+          <span className="muted" title="sessions and tokens spent">
+            {s.spent.sessions} sessions · {Math.round(s.spent.tokens / 1000)}k tok
           </span>
         </>
       )}

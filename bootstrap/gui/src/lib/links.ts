@@ -26,7 +26,10 @@ export function useDocDelivLinks(): DocDelivLinks {
     const files = deliv.data?.files
     if (!g || !files) return EMPTY
     const reqToDoc = new Map<string, string>()
-    for (const [rid, r] of Object.entries(g.requirements)) reqToDoc.set(rid, r.source.doc)
+    for (const [rid, r] of Object.entries(g.requirements)) {
+      // Only quote-provenanced requirements anchor in a document.
+      if (r.source) reqToDoc.set(rid, r.source.doc)
+    }
     const resolve = (id: string): string => {
       let cur = id
       const seen = new Set<string>()

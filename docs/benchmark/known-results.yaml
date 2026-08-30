@@ -14,9 +14,9 @@
 # - qwen3.8:27b-mlx via Ollama: best local model graded so far. Native pass 56/56,
 #   every case 1.0, but three cases finished on the sticky text downgrade after
 #   ollama's tool-channel XML errors, so the native verdict withholds compilation.
-#   Text pass 55/56: the one miss is turn-density paraphrasing the `addProduct`
+#   Text pass 55/56: the one miss is density paraphrasing the `addProduct`
 #   identifier out of the statement text; an identifier-preservation prompt rule landed
-#   after this run and a filtered rerun re-graded turn-density 1.00 on both codecs. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
+#   after this run and a filtered rerun re-graded density 1.00 on both codecs. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
 #   this entry is the post-fix-loop record. Slow: ~7-8 tok/s, a full two-codec
 #   grading takes hours.
 results:
@@ -34,120 +34,120 @@ results:
           parRounds: 10
           score: 1.0
           tier: generation
-        turn-converge:
+        converge:
           calls: 0
           checks: 3/3
           efficiency: 1.0
           fail: ''
-          name: turn-converge
+          name: converge
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-declarative:
+        declarative:
           calls: 11
           checks: 6/6
           efficiency: 0.55
           fail: ''
-          name: turn-declarative
+          name: declarative
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-density:
+        density:
           calls: 17
           checks: 6/6
           efficiency: 0.35
           fail: ''
-          name: turn-density
+          name: density
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-edges:
+        edges:
           calls: 10
           checks: 6/6
           efficiency: 0.6
           fail: ''
-          name: turn-edges
+          name: edges
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-extract:
+        extract:
           calls: 13
           checks: 6/6
           efficiency: 0.46
           fail: ''
-          name: turn-extract
+          name: extract
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-repair:
+        repair:
           calls: 7
           checks: 2/2
           efficiency: 0.86
           fail: ''
-          name: turn-repair
+          name: repair
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-reuse:
+        reuse:
           calls: 6
           checks: 2/2
           efficiency: 1.0
           fail: ''
-          name: turn-reuse
+          name: reuse
           parRounds: 6
           score: 1.0
           tier: extraction
-        turn-review:
+        review:
           calls: 1
           checks: 1/1
           efficiency: 1.0
           fail: ''
-          name: turn-review
+          name: review
           parRounds: 3
           score: 1.0
           tier: review
-        turn-review-clean:
+        review-clean:
           calls: 0
           checks: 1/1
           efficiency: 1.0
           fail: ''
-          name: turn-review-clean
+          name: review-clean
           parRounds: 3
           score: 1.0
           tier: review
-        turn-review-duplicate:
+        review-duplicate:
           calls: 1
           checks: 3/3
           efficiency: 1.0
           fail: ''
-          name: turn-review-duplicate
+          name: review-duplicate
           parRounds: 3
           score: 1.0
           tier: review
-        turn-review-lint:
+        review-lint:
           calls: 1
           checks: 2/2
           efficiency: 1.0
           fail: ''
-          name: turn-review-lint
+          name: review-lint
           parRounds: 3
           score: 1.0
           tier: review
-        turn-review-lookalike:
+        review-lookalike:
           calls: 3
           checks: 3/3
           efficiency: 1.0
           fail: ''
-          name: turn-review-lookalike
+          name: review-lookalike
           parRounds: 3
           score: 1.0
           tier: review
-        turn-steps:
+        steps:
           calls: 10
           checks: 5/5
           efficiency: 0.8
           fail: ''
-          name: turn-steps
+          name: steps
           parRounds: 8
           score: 1.0
           tier: extraction
@@ -197,7 +197,7 @@ results:
           rounds: 3
           score: 0.0
           tokens: 1865
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -205,7 +205,7 @@ results:
           rounds: 1
           score: 1.0
           tokens: 454
-        turn-declarative:
+        declarative:
           checks: 4/6
           efficiency: 0.25
           fail: 'coverageSet: docs/ledger.md#/ledger/entries coverage is unprocessed, expected covered'
@@ -213,7 +213,7 @@ results:
           rounds: 24
           score: 0.67
           tokens: 11655
-        turn-density:
+        density:
           checks: 1/6
           efficiency: 0.46
           fail: 'requirementCount: 0 requirements, min 6'
@@ -221,7 +221,7 @@ results:
           rounds: 13
           score: 0.17
           tokens: 8468
-        turn-edges:
+        edges:
           checks: 0/6
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -229,7 +229,7 @@ results:
           rounds: 8
           score: 0.0
           tokens: 6480
-        turn-extract:
+        extract:
           checks: 4/6
           efficiency: 0.35
           fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:cart'
@@ -237,7 +237,7 @@ results:
           rounds: 17
           score: 0.67
           tokens: 7987
-        turn-repair:
+        repair:
           checks: 1/2
           efficiency: 0.5
           fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:shopping-cart'
@@ -245,7 +245,7 @@ results:
           rounds: 12
           score: 0.5
           tokens: 8625
-        turn-reuse:
+        reuse:
           checks: 2/2
           efficiency: 0.86
           fail: ''
@@ -253,7 +253,7 @@ results:
           rounds: 7
           score: 1.0
           tokens: 4291
-        turn-review:
+        review:
           checks: 0/1
           efficiency: 0.0
           fail: 'turn aborted: three consecutive replies without a usable tool call'
@@ -261,7 +261,7 @@ results:
           rounds: 3
           score: 0.0
           tokens: 2033
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -269,7 +269,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 1051
-        turn-review-duplicate:
+        review-duplicate:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -277,7 +277,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 665
-        turn-review-lint:
+        review-lint:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -285,7 +285,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 1811
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -293,7 +293,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 940
-        turn-steps:
+        steps:
           checks: 5/5
           efficiency: 1.0
           fail: ''
@@ -340,7 +340,7 @@ results:
           rounds: 3
           score: 0.0
           tokens: 1261
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -348,7 +348,7 @@ results:
           rounds: 1
           score: 1.0
           tokens: 554
-        turn-declarative:
+        declarative:
           checks: 4/6
           efficiency: 0.26
           fail: 'entityExists: no entity named "Entry"'
@@ -356,7 +356,7 @@ results:
           rounds: 23
           score: 0.67
           tokens: 7202
-        turn-density:
+        density:
           checks: 5/6
           efficiency: 0.33
           fail: 'requirementExists: no requirement matching `addProduct` on ent:inventory-system'
@@ -364,7 +364,7 @@ results:
           rounds: 18
           score: 0.83
           tokens: 5881
-        turn-edges:
+        edges:
           checks: 6/6
           efficiency: 0.5
           fail: ''
@@ -372,7 +372,7 @@ results:
           rounds: 12
           score: 1.0
           tokens: 4470
-        turn-extract:
+        extract:
           checks: 6/6
           efficiency: 0.43
           fail: ''
@@ -380,7 +380,7 @@ results:
           rounds: 14
           score: 1.0
           tokens: 3849
-        turn-repair:
+        repair:
           checks: 2/2
           efficiency: 0.75
           fail: ''
@@ -388,7 +388,7 @@ results:
           rounds: 8
           score: 1.0
           tokens: 3629
-        turn-reuse:
+        reuse:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -396,7 +396,7 @@ results:
           rounds: 6
           score: 1.0
           tokens: 2230
-        turn-review:
+        review:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -404,7 +404,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 1041
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -412,7 +412,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 1397
-        turn-review-duplicate:
+        review-duplicate:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -420,7 +420,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 850
-        turn-review-lint:
+        review-lint:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -428,7 +428,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 1217
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -436,7 +436,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 1303
-        turn-steps:
+        steps:
           checks: 0/5
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -488,7 +488,7 @@ results:
           rounds: 10
           score: 0.25
           tokens: 1866
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -496,7 +496,7 @@ results:
           rounds: 6
           score: 1.0
           tokens: 392
-        turn-declarative:
+        declarative:
           checks: 6/6
           efficiency: 0.55
           fail: ''
@@ -504,7 +504,7 @@ results:
           rounds: 11
           score: 1.0
           tokens: 1787
-        turn-density:
+        density:
           checks: 2/6
           efficiency: 0.25
           fail: 'requirementCount: 3 requirements, min 6'
@@ -512,7 +512,7 @@ results:
           rounds: 24
           score: 0.33
           tokens: 3447
-        turn-edges:
+        edges:
           checks: 1/6
           efficiency: 0.25
           fail: 'entityExists: no entity named "User Management"'
@@ -520,7 +520,7 @@ results:
           rounds: 24
           score: 0.17
           tokens: 2434
-        turn-extract:
+        extract:
           checks: 3/6
           efficiency: 1.0
           fail: 'entityExists: no entity named "Product"'
@@ -528,7 +528,7 @@ results:
           rounds: 6
           score: 0.5
           tokens: 776
-        turn-repair:
+        repair:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -536,7 +536,7 @@ results:
           rounds: 6
           score: 1.0
           tokens: 640
-        turn-reuse:
+        reuse:
           checks: 1/2
           efficiency: 0.55
           fail: 'requirementExists: no requirement matching `places an order` on ent:customer'
@@ -544,7 +544,7 @@ results:
           rounds: 11
           score: 0.5
           tokens: 688
-        turn-review:
+        review:
           checks: 0/1
           efficiency: 0.43
           fail: 'diagnosticExists: no open contradiction diagnostic on ent:abc'
@@ -552,7 +552,7 @@ results:
           rounds: 7
           score: 0.0
           tokens: 540
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 0.38
           fail: ''
@@ -560,7 +560,7 @@ results:
           rounds: 8
           score: 1.0
           tokens: 425
-        turn-review-duplicate:
+        review-duplicate:
           checks: 3/3
           efficiency: 0.43
           fail: ''
@@ -568,7 +568,7 @@ results:
           rounds: 7
           score: 1.0
           tokens: 425
-        turn-review-lint:
+        review-lint:
           checks: 2/2
           efficiency: 0.43
           fail: ''
@@ -576,7 +576,7 @@ results:
           rounds: 7
           score: 1.0
           tokens: 413
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 0.75
           fail: ''
@@ -584,7 +584,7 @@ results:
           rounds: 4
           score: 1.0
           tokens: 295
-        turn-steps:
+        steps:
           checks: 5/5
           efficiency: 0.57
           fail: ''
@@ -631,7 +631,7 @@ results:
           rounds: 6
           score: 0.0
           tokens: 12390
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 0.75
           fail: ''
@@ -639,7 +639,7 @@ results:
           rounds: 8
           score: 1.0
           tokens: 306
-        turn-declarative:
+        declarative:
           checks: 1/6
           efficiency: 0.25
           fail: 'entityExists: no entity named "Entry"'
@@ -647,7 +647,7 @@ results:
           rounds: 24
           score: 0.17
           tokens: 1781
-        turn-density:
+        density:
           checks: 1/6
           efficiency: 0.25
           fail: 'requirementCount: 0 requirements, min 6'
@@ -655,7 +655,7 @@ results:
           rounds: 24
           score: 0.17
           tokens: 1765
-        turn-edges:
+        edges:
           checks: 0/6
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -663,7 +663,7 @@ results:
           rounds: 9
           score: 0.0
           tokens: 422
-        turn-extract:
+        extract:
           checks: 0/6
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -671,7 +671,7 @@ results:
           rounds: 19
           score: 0.0
           tokens: 1148
-        turn-repair:
+        repair:
           checks: 1/2
           efficiency: 0.67
           fail: 'requirementExists: no requirement matching `empt(y|ies|ied)` on ent:shopping-cart'
@@ -679,7 +679,7 @@ results:
           rounds: 9
           score: 0.5
           tokens: 452
-        turn-reuse:
+        reuse:
           checks: 0/2
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -687,7 +687,7 @@ results:
           rounds: 9
           score: 0.0
           tokens: 315
-        turn-review:
+        review:
           checks: 1/1
           efficiency: 0.38
           fail: ''
@@ -695,7 +695,7 @@ results:
           rounds: 8
           score: 1.0
           tokens: 370
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 0.23
           fail: ''
@@ -703,7 +703,7 @@ results:
           rounds: 13
           score: 1.0
           tokens: 562
-        turn-review-duplicate:
+        review-duplicate:
           checks: 2/3
           efficiency: 0.75
           fail: 'requirementCount: 2 requirements, max 1'
@@ -711,7 +711,7 @@ results:
           rounds: 4
           score: 0.67
           tokens: 114
-        turn-review-lint:
+        review-lint:
           checks: 1/2
           efficiency: 0.23
           fail: 'diagnosticExists: no open lint diagnostic on any subject'
@@ -719,7 +719,7 @@ results:
           rounds: 13
           score: 0.5
           tokens: 600
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 0.6
           fail: ''
@@ -727,7 +727,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 193
-        turn-steps:
+        steps:
           checks: 0/5
           efficiency: 0.0
           fail: 'turn aborted: three consecutive rounds with rejected tool calls'
@@ -779,7 +779,7 @@ results:
           rounds: 24
           score: 1.0
           tokens: 10825
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -787,7 +787,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 1446
-        turn-declarative:
+        declarative:
           checks: 6/6
           efficiency: 1.0
           fail: ''
@@ -795,7 +795,7 @@ results:
           rounds: 4
           score: 1.0
           tokens: 2235
-        turn-density:
+        density:
           checks: 6/6
           efficiency: 0.33
           fail: endpoint or model rejected native tool calls
@@ -803,7 +803,7 @@ results:
           rounds: 18
           score: 1.0
           tokens: 3519
-        turn-edges:
+        edges:
           checks: 6/6
           efficiency: 0.46
           fail: endpoint or model rejected native tool calls
@@ -811,7 +811,7 @@ results:
           rounds: 13
           score: 1.0
           tokens: 1782
-        turn-extract:
+        extract:
           checks: 6/6
           efficiency: 1.0
           fail: ''
@@ -819,7 +819,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 2567
-        turn-navigation:
+        navigation:
           checks: 4/4
           efficiency: 1.0
           fail: ''
@@ -827,7 +827,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 540
-        turn-repair:
+        repair:
           checks: 2/2
           efficiency: 0.5
           fail: endpoint or model rejected native tool calls
@@ -835,7 +835,7 @@ results:
           rounds: 12
           score: 1.0
           tokens: 3235
-        turn-reuse:
+        reuse:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -843,7 +843,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 1514
-        turn-review:
+        review:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -851,7 +851,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 708
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -859,7 +859,7 @@ results:
           rounds: 1
           score: 1.0
           tokens: 391
-        turn-review-duplicate:
+        review-duplicate:
           checks: 3/3
           efficiency: 0.75
           fail: ''
@@ -867,7 +867,7 @@ results:
           rounds: 4
           score: 1.0
           tokens: 1087
-        turn-review-lint:
+        review-lint:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -875,7 +875,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 1012
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -883,7 +883,7 @@ results:
           rounds: 3
           score: 1.0
           tokens: 1012
-        turn-steps:
+        steps:
           checks: 5/5
           efficiency: 1.0
           fail: ''
@@ -930,7 +930,7 @@ results:
           rounds: 16
           score: 1.0
           tokens: 4153
-        turn-converge:
+        converge:
           checks: 3/3
           efficiency: 1.0
           fail: ''
@@ -938,7 +938,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 1136
-        turn-declarative:
+        declarative:
           checks: 6/6
           efficiency: 0.4
           fail: ''
@@ -946,7 +946,7 @@ results:
           rounds: 15
           score: 1.0
           tokens: 1662
-        turn-density:
+        density:
           checks: 5/6
           efficiency: 0.29
           fail: 'requirementExists: no requirement matching `addProduct` on ent:inventory-system'
@@ -954,7 +954,7 @@ results:
           rounds: 21
           score: 0.83
           tokens: 5746
-        turn-edges:
+        edges:
           checks: 6/6
           efficiency: 0.67
           fail: ''
@@ -962,7 +962,7 @@ results:
           rounds: 9
           score: 1.0
           tokens: 1290
-        turn-extract:
+        extract:
           checks: 6/6
           efficiency: 0.38
           fail: ''
@@ -970,7 +970,7 @@ results:
           rounds: 16
           score: 1.0
           tokens: 4291
-        turn-navigation:
+        navigation:
           checks: 4/4
           efficiency: 0.75
           fail: ''
@@ -978,7 +978,7 @@ results:
           rounds: 4
           score: 1.0
           tokens: 817
-        turn-repair:
+        repair:
           checks: 2/2
           efficiency: 0.6
           fail: ''
@@ -986,7 +986,7 @@ results:
           rounds: 10
           score: 1.0
           tokens: 2766
-        turn-reuse:
+        reuse:
           checks: 2/2
           efficiency: 0.75
           fail: ''
@@ -994,7 +994,7 @@ results:
           rounds: 8
           score: 1.0
           tokens: 1442
-        turn-review:
+        review:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -1002,7 +1002,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 511
-        turn-review-clean:
+        review-clean:
           checks: 1/1
           efficiency: 1.0
           fail: ''
@@ -1010,7 +1010,7 @@ results:
           rounds: 1
           score: 1.0
           tokens: 354
-        turn-review-duplicate:
+        review-duplicate:
           checks: 3/3
           efficiency: 0.6
           fail: ''
@@ -1018,7 +1018,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 1153
-        turn-review-lint:
+        review-lint:
           checks: 2/2
           efficiency: 1.0
           fail: ''
@@ -1026,7 +1026,7 @@ results:
           rounds: 2
           score: 1.0
           tokens: 876
-        turn-review-lookalike:
+        review-lookalike:
           checks: 3/3
           efficiency: 0.6
           fail: ''
@@ -1034,7 +1034,7 @@ results:
           rounds: 5
           score: 1.0
           tokens: 1255
-        turn-steps:
+        steps:
           checks: 5/5
           efficiency: 0.8
           fail: ''

@@ -2,15 +2,18 @@
 // stream, and the language server over WebSocket. Mirrors docs/frontends/gui.md.
 mod api;
 mod assets;
+mod board_api;
 mod chat;
 mod deliverable;
 mod diff;
 mod docs;
 mod events;
+mod facts;
 mod jobs;
 mod lsp_ws;
 mod server;
 mod state;
+mod views_api;
 
 use state::SharedState;
 
@@ -195,11 +198,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
             Some(t) => format!("http://127.0.0.1:{}/#token={}", addr.port(), t),
             None => format!("http://127.0.0.1:{}/", addr.port()),
         };
-        println!(
-            "jazyk: gui — serving {} at {}",
-            st.proj().root.display(),
-            url
-        );
+        println!("jazyk: gui serving {} at {}", st.proj().root.display(), url);
         if !gopts.no_open {
             if let Err(e) = open::that_detached(&url) {
                 eprintln!(

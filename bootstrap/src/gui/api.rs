@@ -52,10 +52,22 @@ pub async fn project(State(st): State<SharedState>) -> Json<Value> {
     }))
 }
 
-// The `jazyk status` summary as JSON: status.yaml plus counts derived from the shards.
+// The `jazyk status` summary as JSON: status.yaml plus counts derived from the
+// shards and the board counts. Mirrors docs/frontends/gui.md#api.
 pub async fn status(State(st): State<SharedState>) -> Json<Value> {
-    let store = load_store(&st).await;
-    Json(status_value(&store))
+    let proj = st.proj();
+    let out = st.out.clone();
+    Json(
+        tokio::task::spawn_blocking(move || {
+            let store = Store::load(&out);
+            let mut v = status_value(&store);
+            let board = crate::board::Board::compute(&proj, &out);
+            v["board"] = json!(board.counts());
+            v
+        })
+        .await
+        .expect("status task panicked"),
+    )
 }
 
 pub fn status_value(store: &Store) -> Value {
@@ -78,14 +90,18 @@ pub fn status_value(store: &Store) -> Value {
         }
     }
     json!({
+        "version": store.status.version,
         "generation": store.status.generation,
         "verdict": store.status.verdict,
         "spent": store.status.spent,
         "parked": store.status.parked,
+        "failed": store.status.failed,
+        "costs": store.status.costs,
         "counts": {
             "entities": store.graph.entities.len(),
             "requirements": store.graph.requirements.len(),
             "relationships": store.graph.relationships.len(),
+            "views": store.graph.views.len(),
         },
         "coverage": { "covered": covered, "total": total },
         "diagnostics": by_sev,
@@ -376,7 +392,9 @@ pub async fn graph(State(st): State<SharedState>) -> Response {
         "generation": store.status.generation,
         "entities": store.graph.entities,
         "requirements": store.graph.requirements,
+        "views": store.graph.views,
         "relationships": store.graph.relationships,
+        "stateMachines": store.graph.state_machines,
         "diagnostics": store.graph.diagnostics,
         "redirects": store.graph.redirects,
     }))
@@ -407,9 +425,32 @@ pub async fn entity(State(st): State<SharedState>, UrlPath(id): UrlPath<String>)
         .iter()
         .filter_map(|r| statuses.get(r).map(|v| (r, v)))
         .collect();
+    let children: Vec<&String> = store
+        .graph
+        .entities
+        .iter()
+        .filter(|(_, e)| e.parent.as_deref().map(|p| store.resolve_id(p)) == Some(id.as_str()))
+        .map(|(cid, _)| cid)
+        .collect();
+    let views: Vec<&String> = store
+        .graph
+        .views
+        .iter()
+        .filter(|(_, v)| v.members.iter().any(|m| store.resolve_id(m) == id))
+        .map(|(vid, _)| vid)
+        .collect();
+    let machine = store
+        .graph
+        .state_machines
+        .iter()
+        .find(|(_, m)| store.resolve_id(&m.subject) == id)
+        .map(|(mid, m)| json!({ "id": mid, "machine": m }));
     Json(json!({
         "id": id,
         "entity": ent,
+        "children": children,
+        "views": views,
+        "stateMachine": machine,
         "requirements": requirements,
         "relationships": relationships,
         "verify": verify,
@@ -445,25 +486,30 @@ pub async fn search(State(st): State<SharedState>, Query(p): Query<SearchQ>) -> 
 #[derive(Deserialize)]
 pub struct ContextQ {
     target: String,
-    focus: Option<String>,
-    budget: Option<usize>,
+    depth: Option<u32>,
 }
 
+// What `load` renders for the target: the loaded set of that one load, with its
+// expansion handles. Mirrors docs/compiler/context.md#tools.
 pub async fn context(State(st): State<SharedState>, Query(p): Query<ContextQ>) -> Response {
     let store = load_store(&st).await;
-    let focus = p
-        .focus
-        .as_deref()
-        .map(crate::context::Focus::parse)
-        .unwrap_or_default();
-    let budget = p.budget.unwrap_or(crate::limits::CONTEXT_BUDGET);
+    let depth = p.depth.unwrap_or(1);
+    let mut set = crate::context::LoadedSet::new(crate::limits::CONTEXT_BUDGET);
     let result = if p.target.starts_with("h:") {
-        crate::context::expand(&store, &p.target, budget)
+        crate::context::parse_handle(&p.target)
+            .and_then(|(t, _, _)| set.load(&store, &t, depth))
+            .and_then(|_| set.expand(&store, &p.target))
     } else {
-        crate::context::assemble(&store, &p.target, &focus, budget)
+        set.load(&store, &p.target, depth)
     };
     match result {
-        Ok(pack) => Json(json!(pack)).into_response(),
+        Ok(text) => Json(json!({
+            "target": p.target,
+            "depth": depth,
+            "pack": text,
+            "handles": set.open_handles(),
+        }))
+        .into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),
     }
 }
@@ -589,27 +635,47 @@ fn diag_counts_by_doc(store: &Store) -> BTreeMap<String, BTreeMap<&'static str, 
     out
 }
 
-// The matched documents with their on-disk hash, the reconciled hash, staleness, and
-// open diagnostics by severity.
+// The matched documents with their on-disk hash, the reconciled hash, staleness,
+// open diagnostics by severity, and open goals counted by kind.
 pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
-    let store = load_store(&st).await;
-    let by_doc = diag_counts_by_doc(&store);
-    let mut list: Vec<Value> = Vec::new();
-    for f in st.proj().doc_files() {
-        let rel = rel_doc(&st.proj().root, &f);
-        let text = std::fs::read_to_string(&f).unwrap_or_default();
-        let hash = crate::model::hash_hex(&text);
-        let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
-        let stale = graph_hash.as_deref() != Some(hash.as_str());
-        list.push(json!({
-            "path": rel,
-            "contentHash": hash,
-            "graphHash": graph_hash,
-            "stale": stale,
-            "diagnostics": by_doc.get(&rel).cloned().unwrap_or_default(),
-        }));
-    }
-    Json(json!({ "docs": list }))
+    let proj = st.proj();
+    let out = st.out.clone();
+    Json(
+        tokio::task::spawn_blocking(move || {
+            let store = Store::load(&out);
+            let by_doc = diag_counts_by_doc(&store);
+            let board = crate::board::Board::compute(&proj, &out);
+            let mut goals_by_doc: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+            for g in board.open_goals() {
+                if let Some(doc) = crate::board::target_doc(&g.target) {
+                    *goals_by_doc
+                        .entry(doc)
+                        .or_default()
+                        .entry(g.kind.clone())
+                        .or_default() += 1;
+                }
+            }
+            let mut list: Vec<Value> = Vec::new();
+            for f in proj.doc_files() {
+                let rel = rel_doc(&proj.root, &f);
+                let text = std::fs::read_to_string(&f).unwrap_or_default();
+                let hash = crate::model::hash_hex(&text);
+                let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
+                let stale = graph_hash.as_deref() != Some(hash.as_str());
+                list.push(json!({
+                    "path": rel,
+                    "contentHash": hash,
+                    "graphHash": graph_hash,
+                    "stale": stale,
+                    "diagnostics": by_doc.get(&rel).cloned().unwrap_or_default(),
+                    "goals": goals_by_doc.get(&rel).cloned().unwrap_or_default(),
+                }));
+            }
+            json!({ "docs": list })
+        })
+        .await
+        .expect("docs task panicked"),
+    )
 }
 
 #[derive(Deserialize)]
@@ -669,7 +735,8 @@ pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {
     Json(json!({ "pending": crate::gen::pending(&store, &st.gs()) }))
 }
 
-pub async fn gen_task(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
+// The per-entity generation package a session receives.
+pub async fn gen_package(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
     let store = load_store(&st).await;
     match crate::gen::task_package(&store, &id, &st.gs()) {
         Ok(v) => Json(v).into_response(),

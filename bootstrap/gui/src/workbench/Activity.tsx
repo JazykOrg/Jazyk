@@ -4,9 +4,9 @@
 // generate, verify, the watch and generation modes, the running job
 // (docs/frontends/gui.md#activity).
 import { useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { get, post, put, type Job, type JournalEntry, type TraceEvent } from '../lib/api'
+import { entryLabel, get, post, put, verdictText, type Job, type JournalEntry, type TraceEvent } from '../lib/api'
 import { useDocs, useGenPending, useJournal, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
@@ -66,7 +66,8 @@ interface Row {
 function resultLine(result: Record<string, unknown> | null, state: string): string | null {
   if (!result) return state === 'died' ? 'died mid-run (no outcome recorded)' : null
   if ('verdict' in result) {
-    return `${result.verdict} · ${result.dirtyDocs} dirty docs · ${result.turns} turns · ${result.applied} applied · ${result.parked} parked · ${result.errors} err ${result.warnings} warn · ${result.coveragePct}% coverage`
+    // The BuildReport: the verdict with its counts (docs/frontends/cli.md#jazyk-compile).
+    return `${result.verdict} · ${result.goals} goals · ${result.sessions} sessions · ${result.applied} applied · ${result.parked} parked ${result.failed} failed ${result.blocked} blocked · ${result.errors} err ${result.warnings} warn · ${result.coveragePct}% coverage`
   }
   return Object.entries(result)
     .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
@@ -113,10 +114,10 @@ function labelOf(ev: TraceEvent): string | null {
   return null
 }
 
-// Chronological events into one group per label, each group into rounds. Parallel
-// work interleaves on the wire; the label puts it back together. A second
-// turnStart for a label opens a new group: that is a retry, not more of the same
-// turn. Events with no label (waves, build notes) pool under "build".
+// Chronological events into one group per label (the batch id), each group into
+// rounds. Parallel work interleaves on the wire; the label puts it back together.
+// A second sessionStart for a label opens a new group: that is a retry, not more
+// of the same session. Events with no label (build notes) pool under "build".
 function groupTurns(events: Numbered[]): Turn[] {
   const out: Turn[] = []
   const open = new Map<string, Turn>()
@@ -131,7 +132,7 @@ function groupTurns(events: Numbered[]): Turn[] {
   for (const row of events) {
     const ev = row.event
     const label = labelOf(ev) ?? 'build'
-    if (ev.kind === 'turnStart') {
+    if (ev.kind === 'sessionStart') {
       const fresh: Turn = { key: `${label}#${out.length}`, label, start: ev, preRows: [], rounds: [] }
       open.set(label, fresh)
       out.push(fresh)
@@ -139,11 +140,11 @@ function groupTurns(events: Numbered[]): Turn[] {
     }
     const g = groupFor(label)
     switch (ev.kind) {
-      case 'turnDone':
+      case 'sessionDone':
         g.done = ev
         open.delete(label)
         break
-      case 'turnFailed':
+      case 'sessionFailed':
         g.failed = ev
         open.delete(label)
         break
@@ -356,15 +357,51 @@ function TraceRow({ ev, stem, n }: { ev: TraceEvent; stem: string; n: number }) 
         </>
       )
       break
-    case 'waveStart':
+    case 'board': {
       cls = 't-muted'
+      const kinds = Array.isArray(ev.kinds) ? (ev.kinds as [string, number][]) : []
       line = (
         <>
-          ▷ wave {s('wave')}: {s('task')} ×{Array.isArray(ev.items) ? (ev.items as string[]).length : 0}
+          ▷ compile: {String(ev.goals ?? 0)} goals
+          {kinds.length > 0 ? ` (${kinds.map(([k, n]) => `${n} ${k}`).join(', ')})` : ''}
+          {Number(ev.blocked ?? 0) > 0 ? `, ${String(ev.blocked)} blocked` : ''}
         </>
       )
-      full = Array.isArray(ev.items) ? (ev.items as string[]).join('\n') : null
       break
+    }
+    case 'batchStart': {
+      cls = 't-muted'
+      const goals = Array.isArray(ev.goals) ? (ev.goals as { id?: string; kind?: string; target?: string }[]) : []
+      line = (
+        <>
+          ▷ batch {s('label')}: {s('class')}
+          {ev.tier != null ? ` tier ${String(ev.tier)}` : ''} · {goals.length} goal(s)
+          {typeof ev.executor === 'string' ? ` · ${String(ev.executor)}` : ''}
+        </>
+      )
+      full = goals.map((g) => `${g.kind} ${g.target}`).join('\n') || null
+      break
+    }
+    case 'gcBurst':
+      cls = 't-warn'
+      line = (
+        <>
+          ⟳ gc burst: {s('goalKind')} {s('target')} ({String(ev.count ?? '')} &gt; {String(ev.limit ?? '')})
+        </>
+      )
+      break
+    case 'goal': {
+      const event = s('event')
+      cls = event === 'resolved' ? 't-ok' : event === 'failed' ? 't-err' : 't-muted'
+      const tail = s('justification') || s('reason')
+      line = (
+        <>
+          {event === 'resolved' ? '✓' : event === 'failed' ? '✗' : '◈'} {event} {linkifyIds(s('goal'))}
+          {tail ? <span className="muted"> · {linkifyIds(tail)}</span> : null}
+        </>
+      )
+      break
+    }
     case 'genEntityStart':
       line = <>▶ gen <NodeLink id={s('entity')} />{ev.stage ? ` · ${s('stage')}` : ''}</>
       break
@@ -445,12 +482,14 @@ function TraceRow({ ev, stem, n }: { ev: TraceEvent; stem: string; n: number }) 
 }
 
 function TurnCard({ g, active, stem }: { g: Turn; active: boolean; stem: string }) {
-  const sp = g.label.indexOf(' ')
-  const task = sp > 0 ? g.label.slice(0, sp) : g.label || 'build'
-  const target = sp > 0 ? g.label.slice(sp + 1) : ''
+  // The header names the batch: its goals and their targets. The label is the
+  // batch id; the start event carries the claimed task and target.
+  const task = String(g.start?.task ?? '') || g.label || 'build'
+  const target = String(g.start?.target ?? '')
+  const goals = Array.isArray(g.start?.goals) ? (g.start.goals as string[]) : []
   const sections = Array.isArray(g.start?.sections) ? (g.start.sections as string[]) : []
-  // Where the turn got to, from its own section events: the same path the files
-  // tree and the editor draw (docs/compiler/turns.md#trace-events).
+  // Where the session got to, from its own section events: the same path the files
+  // tree and the editor draw (docs/compiler/sessions.md#trace-events).
   const path = g.rounds
     .flatMap((r) => r.rows)
     .filter((row) => row.event.kind === 'section')
@@ -460,8 +499,9 @@ function TurnCard({ g, active, stem }: { g: Turn; active: boolean; stem: string 
   return (
     <div className={`card ${active ? 'turn-active' : ''}`}>
       <div className="row">
-        <b>{task}</b>
-        {target && <span className="mono">{target}</span>}
+        <b>{g.label}</b>
+        <span className="mono">{task}{target ? ` ${target}` : ''}</span>
+        {goals.length > 1 && <span className="muted mono">{goals.length} goals</span>}
         {active && <span className="chip v-stale">running</span>}
         {g.done && (
           <span className="chip v-ok">
@@ -480,6 +520,7 @@ function TurnCard({ g, active, stem }: { g: Turn; active: boolean; stem: string 
       </div>
       {g.start && (
         <div className="trace-row t-muted">
+          {goals.length > 0 ? `${goals.join(' · ')} · ` : ''}
           dirty {String(g.start.dirty ?? 0)} · stale {String(g.start.stale ?? 0)}
           {sections.length > 0 ? ` · ${sections.join(' ')}` : ''}
         </div>
@@ -540,11 +581,26 @@ function Changesets({ from, to }: { from: number; to: number }) {
         return (
           <details key={e.generation} className="wb-changeset-row">
             <summary>
-              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {e.workItem.task} ·{' '}
-              {e.workItem.target} · <span className="v-ok">+{a}</span>{' '}
+              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {e.kind || 'changeset'} ·{' '}
+              {entryLabel(e)} · <span className="v-ok">+{a}</span>{' '}
               <span className="sev-info">~{u}</span> <span className="v-bad">-{d}</span> ·{' '}
               {e.tokens} tok
             </summary>
+            {(e.resolved_goals ?? []).map((r) => (
+              <p key={r.goal} style={{ margin: '1px 0 1px 16px' }}>
+                <span className="v-ok">✓</span> <NodeLink id={r.goal} />{' '}
+                <span className="muted">{r.justification}</span>
+              </p>
+            ))}
+            {(e.opened_goals ?? []).map((o) => (
+              <p key={o.goal} style={{ margin: '1px 0 1px 16px' }}>
+                <span className="sev-info">◈</span> <NodeLink id={o.goal} />{' '}
+                <span className="muted mono">
+                  g{o.cause.generation} #{o.cause.mutation}
+                  {o.cause.via ? ` via ${o.cause.via}` : ''}
+                </span>
+              </p>
+            ))}
             {e.mutations.map((m, i) => {
               const id = typeof m.id === 'string' ? m.id : null
               const reasoning = typeof m.reasoning === 'string' ? m.reasoning : null
@@ -612,10 +668,13 @@ function WorkersStrip() {
 }
 
 // The control line: run actions and the automatic modes, visible even collapsed.
+// In compile: manual the compile click opens the preview pane on the board; its
+// release button records the release (docs/frontends/gui.md#workflow-modes).
 function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const { data: s } = useStatus()
   const { data: docs } = useDocs()
   const pending = useGenPending()
+  const navigate = useNavigate()
   const jobs = useApp((a) => a.jobs)
   const watchMode = useApp((a) => a.watchMode)
   const genMode = useApp((a) => a.genMode)
@@ -623,6 +682,15 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
   const queued = Object.values(jobs).filter((j) => j.state === 'queued').length
   const changedDocs = (docs?.docs ?? []).filter((d) => d.stale).length
   const genPending = pending.data?.pending.length ?? 0
+  const boardCounts = s?.board
+  const compileClick = () => {
+    if (watchMode !== 'watch') {
+      // Manual: the click opens the preview pane before any release.
+      navigate('/board?preview=next')
+      return
+    }
+    void post('/api/jobs', { kind: 'compile' })
+  }
 
   return (
     <div className="wb-activity-bar">
@@ -641,7 +709,11 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
           </button>
         </span>
       ) : (
-        <span className="muted">{s?.verdict || 'no build yet'}</span>
+        <span className="muted">
+          {verdictText(s?.verdict)}
+          {boardCounts && boardCounts.open > 0 ? ` · ${boardCounts.open} open goals` : ''}
+          {boardCounts && boardCounts.blocked > 0 ? `, ${boardCounts.blocked} blocked` : ''}
+        </span>
       )}
       <span className="bar-right">
         <label className="muted" title="manual: changes queue and await a release, compiling is a click · auto: compile on change (spends LLM budget). Shared with agents via control.yaml.">
@@ -658,8 +730,9 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
             <option value="auto">auto</option>
           </select>
         </label>
-        <button disabled={!!running} onClick={() => post('/api/jobs', { kind: 'compile' })}>
-          compile{changedDocs > 0 ? ` ${changedDocs}` : ''} ▸
+        <button disabled={!!running} onClick={compileClick} title={watchMode !== 'watch' ? 'opens the preview pane; its release button runs the build' : 'compile now'}>
+          compile{changedDocs > 0 ? ` ${changedDocs}` : ''}
+          {boardCounts && boardCounts.gated > 0 ? ` (${boardCounts.gated} gated)` : ''} ▸
         </button>
         <button
           disabled={!!running || genPending === 0}

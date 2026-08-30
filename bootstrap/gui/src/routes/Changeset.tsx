@@ -1,18 +1,19 @@
-// One committed changeset: the work item, every mutation with its reasoning,
-// and navigation to neighbors and the diff.
+// One committed changeset: the entry kind, its goal batch, every mutation with its
+// reasoning, the goals it resolved and opened, and navigation to neighbors and the
+// diff.
 import { Link, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { get, type JournalEntry } from '../lib/api'
+import { get, entryLabel, type JournalEntry } from '../lib/api'
 import NodeLink from '../components/NodeLink'
 import SectionLink from '../components/SectionLink'
 import './routes.css'
 
 function opClass(op: string): string {
   if (op.startsWith('create') || op.startsWith('report')) return 'v-ok'
-  if (op.startsWith('update') || op.startsWith('triage')) return 'sev-info'
-  if (op.startsWith('delete') || op.startsWith('resolve')) return 'v-bad'
+  if (op.startsWith('update') || op.startsWith('triage') || op.startsWith('bump')) return 'sev-info'
+  if (op.startsWith('delete') || op.startsWith('resolve') || op.startsWith('retract')) return 'v-bad'
   if (op.startsWith('merge')) return 'v-stale'
-  return 'sev-none' // set_coverage, gc
+  return 'sev-none' // set_coverage, gc, ratify
 }
 
 export default function Changeset() {
@@ -52,27 +53,68 @@ export default function Changeset() {
       </div>
     )
 
+  const dirtied = entry.dirtied ?? []
   return (
     <div>
       <h1 className="mono">g{gen}</h1>
       {nav}
       <div className="card">
         <p style={{ margin: '2px 0' }}>
-          <b>{entry.workItem.task}</b> · <span className="mono">{entry.workItem.target}</span> ·{' '}
+          <b>{entry.kind || 'changeset'}</b> · <span className="mono">{entryLabel(entry)}</span> ·{' '}
           <span className="muted">
             {entry.rounds} rounds · {entry.tokens} tok
           </span>
         </p>
-        {(entry.workItem.dirtySections ?? []).length > 0 && (
+        {(entry.batch ?? []).length > 0 && (
           <p style={{ margin: '2px 0' }}>
-            {(entry.workItem.dirtySections ?? []).map((sec) => (
-              <span key={sec} style={{ marginRight: 8 }}>
-                <SectionLink doc={entry.workItem.target} section={sec} />
+            {(entry.batch ?? []).map((g) => (
+              <span key={g} style={{ marginRight: 8 }}>
+                <NodeLink id={g} />
               </span>
             ))}
           </p>
         )}
+        {dirtied.length > 0 && (
+          <p style={{ margin: '2px 0' }}>
+            {dirtied.map((sec) => {
+              const [doc, section] = sec.includes('#')
+                ? [sec.slice(0, sec.indexOf('#')), sec.slice(sec.indexOf('#') + 1)]
+                : [sec, undefined]
+              return (
+                <span key={sec} style={{ marginRight: 8 }}>
+                  <SectionLink doc={doc} section={section} />
+                </span>
+              )
+            })}
+          </p>
+        )}
       </div>
+
+      {(entry.resolved_goals ?? []).length > 0 && (
+        <div className="card">
+          <p style={{ margin: '2px 0' }}><b>resolved</b></p>
+          {(entry.resolved_goals ?? []).map((r) => (
+            <p key={r.goal} style={{ margin: '2px 0' }}>
+              <span className="v-ok">✓</span> <NodeLink id={r.goal} />{' '}
+              <span className="muted">{r.justification}</span>
+            </p>
+          ))}
+        </div>
+      )}
+      {(entry.opened_goals ?? []).length > 0 && (
+        <div className="card">
+          <p style={{ margin: '2px 0' }}><b>opened</b></p>
+          {(entry.opened_goals ?? []).map((o) => (
+            <p key={o.goal} style={{ margin: '2px 0' }}>
+              <NodeLink id={o.goal} />{' '}
+              <span className="muted mono">
+                cause: g{o.cause.generation} #{o.cause.mutation}
+                {o.cause.via ? ` via ${o.cause.via}` : ''}
+              </span>
+            </p>
+          ))}
+        </div>
+      )}
 
       {entry.mutations.length === 0 && <p className="muted">no mutations in this changeset</p>}
       {entry.mutations.map((m, i) => {

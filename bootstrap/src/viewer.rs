@@ -303,21 +303,51 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 .edges
                 .iter()
                 .map(|e| {
-                    format!(
-                        "{} → {} ({})",
-                        esc(&e.a),
-                        esc(&e.b),
-                        esc(e
-                            .rel_type
-                            .as_deref()
-                            .unwrap_or(crate::model::DEFAULT_REL_TYPE))
-                    )
+                    let t = e
+                        .rel_type
+                        .as_deref()
+                        .unwrap_or(crate::model::DEFAULT_REL_TYPE);
+                    match &e.cardinality {
+                        Some(c) => {
+                            format!("{} → {} ({}, {})", esc(&e.a), esc(&e.b), esc(t), esc(c))
+                        }
+                        None => format!("{} → {} ({})", esc(&e.a), esc(&e.b), esc(t)),
+                    }
                 })
                 .collect();
             let _ = write!(
                 body,
                 "<p><span class=\"k\">edges</span> {}</p>",
                 edges.join(", ")
+            );
+        }
+        if !r.facets.is_empty() {
+            let facets: Vec<String> = r
+                .facets
+                .iter()
+                .map(|f| match &f.measure {
+                    Some(m) => format!("{} ({})", f.facet, m),
+                    None => f.facet.clone(),
+                })
+                .collect();
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">facets</span> {}</p>",
+                esc(&facets.join(", "))
+            );
+        }
+        if let Some(t) = &r.transition {
+            let mut tl = format!("{}: {} → {}", t.subject, t.from, t.to);
+            if let Some(tr) = &t.trigger {
+                tl.push_str(&format!(" on {}", tr));
+            }
+            if let Some(gu) = &t.guard {
+                tl.push_str(&format!(" if {}", gu));
+            }
+            let _ = write!(
+                body,
+                "<p><span class=\"k\">transition</span> {}</p>",
+                esc(&tl)
             );
         }
         let doc = r
@@ -336,17 +366,77 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
     }
     for (id, rel) in &g.relationships {
         let members: Vec<String> = rel.members.iter().map(|m| link(m)).collect();
-        let reqs: Vec<String> = rel.requirements().into_iter().map(link).collect();
+        // Each contribution group as stored: direction, type, cardinality, and the
+        // contributing requirement ids. Mirrors docs/frontends/viewer.md#what-it-shows.
+        let mut groups = String::new();
+        for c in &rel.contributions {
+            let card = c
+                .cardinality
+                .as_ref()
+                .map(|x| format!(", {}", x))
+                .unwrap_or_default();
+            let reqs: Vec<String> = c.requirements.iter().map(|r| link(r)).collect();
+            let _ = write!(
+                groups,
+                "<p class=\"q\">{} → {} ({}{}) · {}</p>",
+                esc(&c.a),
+                esc(&c.b),
+                esc(&c.r#type),
+                esc(&card),
+                reqs.join(" ")
+            );
+        }
         let s = search_attr(&[id, rel.strongest(), &rel.members.join(" ")]);
         let _ = write!(
             h,
-            "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3><p><span class=\"k\">members</span> {}</p><p><span class=\"k\">requirements</span> {}</p></div>\n",
+            "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{}</span></h3><p><span class=\"k\">members</span> {}</p>{}</div>\n",
             s,
             esc(id),
             esc(id),
             esc(rel.strongest()),
             members.join(" "),
-            reqs.join(" ")
+            groups
+        );
+    }
+
+    // Views: the stored half of each diagram, with a link to its rendering when the
+    // .svg exists beside this file's default location under the out directory.
+    h.push_str("<h2>Views</h2>\n");
+    if g.views.is_empty() {
+        h.push_str("<p class=\"k\">none</p>\n");
+    }
+    for (id, v) in &g.views {
+        let members: Vec<String> = v.members.iter().map(|m| link(m)).collect();
+        let svg_link = id
+            .strip_prefix("view:")
+            .and_then(|rel| rel.split_once('/'))
+            .filter(|(kind, slug)| {
+                store
+                    .out
+                    .join("diagrams")
+                    .join(kind)
+                    .join(format!("{}.svg", slug))
+                    .exists()
+            })
+            .map(|(kind, slug)| {
+                format!(
+                    " · <a class=\"id\" href=\"diagrams/{}/{}.svg\">svg</a>",
+                    esc(kind),
+                    esc(slug)
+                )
+            })
+            .unwrap_or_default();
+        let s = search_attr(&[id, &v.kind, &v.title]);
+        let _ = write!(
+            h,
+            "<div class=\"card\" data-s=\"{}\"><h3 id=\"n-{}\">{} <span class=\"k\">{} · {}</span>{}</h3><p><span class=\"k\">members</span> {}</p></div>\n",
+            s,
+            esc(id),
+            esc(&v.title),
+            esc(id),
+            esc(&v.kind),
+            svg_link,
+            members.join(" ")
         );
     }
 
@@ -431,7 +521,14 @@ mod tests {
 
     #[test]
     fn renders_and_escapes() {
-        let mut s = Store::default();
+        let out = std::env::temp_dir().join(format!("jazyk-viewer-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        std::fs::create_dir_all(out.join("diagrams/class")).unwrap();
+        std::fs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
         s.graph.entities.insert(
             "ent:cart".into(),
             Entity {
@@ -446,11 +543,54 @@ mod tests {
                 statement: "The Cart shall hold items.".into(),
                 entities: vec!["ent:cart".into()],
                 edges: vec![],
+                transition: Some(Transition {
+                    subject: "ent:cart".into(),
+                    from: "empty".into(),
+                    to: "filled".into(),
+                    trigger: Some("an item lands".into()),
+                    guard: None,
+                }),
+                facets: vec![Facet {
+                    facet: "quality".into(),
+                    reasoning: "bounded".into(),
+                    measure: Some("2 seconds".into()),
+                }],
                 source: Some(SourceRef {
                     doc: "shop.md".into(),
                     section: "/shop".into(),
                     quote: "holds".into(),
                 }),
+                ..Default::default()
+            },
+        );
+        s.graph.relationships.insert(
+            "rel:cart~item".into(),
+            Relationship {
+                members: vec!["ent:cart".into(), "ent:item".into()],
+                contributions: vec![
+                    Contribution {
+                        a: "ent:cart".into(),
+                        b: "ent:item".into(),
+                        r#type: "composition".into(),
+                        cardinality: Some("1..*".into()),
+                        requirements: vec!["req:shop-1".into()],
+                    },
+                    Contribution {
+                        a: "ent:item".into(),
+                        b: "ent:cart".into(),
+                        r#type: "dependency".into(),
+                        cardinality: None,
+                        requirements: vec!["req:shop-2".into()],
+                    },
+                ],
+            },
+        );
+        s.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                members: vec!["ent:cart".into()],
                 ..Default::default()
             },
         );
@@ -475,7 +615,34 @@ mod tests {
         assert!(html.contains("Cart &lt;script&gt;"));
         assert!(html.contains("&quot;items&quot; &amp; things"));
         assert!(html.contains("href=\"#n-req:shop-1\""));
+        assert!(html.contains("The Cart shall hold items."));
+        // Facets and transition as stated.
+        assert!(html.contains("quality (2 seconds)"), "{}", html);
+        assert!(
+            html.contains("ent:cart: empty → filled on an item lands"),
+            "{}",
+            html
+        );
+        // Each contribution group with direction, type, cardinality, requirements.
+        assert!(
+            html.contains("ent:cart → ent:item (composition, 1..*)"),
+            "{}",
+            html
+        );
+        assert!(
+            html.contains("ent:item → ent:cart (dependency)"),
+            "{}",
+            html
+        );
+        // The view card links its rendering, which exists on disk.
+        assert!(html.contains("id=\"n-view:class/public\""), "{}", html);
+        assert!(
+            html.contains("href=\"diagrams/class/public.svg\""),
+            "{}",
+            html
+        );
         assert!(html.contains("<table>"));
         assert!(!html.contains("<script>alert"));
+        std::fs::remove_dir_all(&out).ok();
     }
 }

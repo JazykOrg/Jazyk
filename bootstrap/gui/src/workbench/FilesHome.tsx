@@ -1,6 +1,7 @@
 // The files center with nothing open: the project at a glance and the attention
 // list. The run actions live in the activity control line below.
 import { Link } from 'react-router'
+import { entryLabel } from '../lib/api'
 import { useGenPending, useGraph, useJournal, useMatrix, useStatus } from '../lib/queries'
 import NodeLink from '../components/NodeLink'
 import { SevChip, verifyClass } from '../components/Chip'
@@ -88,8 +89,8 @@ export default function FilesHome() {
           )}
           {(journal.data?.entries ?? []).slice(0, 8).map((e) => (
             <p key={e.generation} className="oneline mono">
-              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {e.workItem.task} ·{' '}
-              {e.workItem.target} · {e.mutations.length} mut · {e.tokens} tok
+              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {entryLabel(e)} ·{' '}
+              {e.mutations.length} mut · {e.tokens} tok
             </p>
           ))}
         </div>

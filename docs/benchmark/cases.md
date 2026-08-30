@@ -76,27 +76,27 @@ Case names are the fixture file stems and are used as written by
 
 Extraction tier:
 
-- [turn-extract](./cases/turn-extract.md): extraction sanity.
-- [turn-declarative](./cases/turn-declarative.md): declarative extraction.
-- [turn-density](./cases/turn-density.md): extraction density on plain declarative
+- [extract](./cases/extract.md): extraction sanity.
+- [declarative](./cases/declarative.md): declarative extraction.
+- [density](./cases/density.md): extraction density on plain declarative
   prose.
-- [turn-edges](./cases/turn-edges.md): edge declaration from a sub-system list.
-- [turn-steps](./cases/turn-steps.md): code-block extraction, one requirement per
+- [edges](./cases/edges.md): edge declaration from a sub-system list.
+- [steps](./cases/steps.md): code-block extraction, one requirement per
   behavioral step.
-- [turn-navigation](./cases/turn-navigation.md): restraint on a glossary and a
+- [navigation](./cases/navigation.md): restraint on a glossary and a
   roadmap, both non-normative.
-- [turn-reuse](./cases/turn-reuse.md): reuse discipline.
-- [turn-converge](./cases/turn-converge.md): convergence discipline.
-- [turn-repair](./cases/turn-repair.md): repair.
+- [reuse](./cases/reuse.md): reuse discipline.
+- [converge](./cases/converge.md): convergence discipline.
+- [repair](./cases/repair.md): repair.
 
 Review tier:
 
-- [turn-review](./cases/turn-review.md): review judgment, one planted contradiction and
+- [review](./cases/review.md): review judgment, one planted contradiction and
   one clean entity.
-- [turn-review-duplicate](./cases/turn-review-duplicate.md): rephrase-duplicate
+- [review-duplicate](./cases/review-duplicate.md): rephrase-duplicate
   collapse.
-- [turn-review-lookalike](./cases/turn-review-lookalike.md): lookalike entity merge.
-- [turn-review-lint](./cases/turn-review-lint.md): lint application.
+- [review-lookalike](./cases/review-lookalike.md): lookalike entity merge.
+- [review-lint](./cases/review-lint.md): lint application.
 
 Generation tier:
 

@@ -297,28 +297,27 @@ impl McpServer {
                 break;
             }
         }
-        let q = crate::queue::compute(&self.project, &self.out);
+        let board = crate::board::Board::compute(&self.project, &self.out);
         let c = crate::control::Control::load(&self.project, &self.out);
+        let graph_kinds = crate::board::Board::graph_kinds();
         let (c_act, b_act, g_act, v_act) = (
-            crate::queue::actionable(&q.compile),
-            crate::queue::actionable(&q.bind),
-            crate::queue::actionable(&q.generate),
-            crate::queue::actionable(&q.verify),
+            board.ready_of(&graph_kinds),
+            board.ready_of(&["bind"]),
+            board.ready_of(&["generate"]),
+            board.ready_of(&["verify"]),
         );
-        let gated = crate::queue::gated(&q.compile)
-            + crate::queue::gated(&q.bind)
-            + crate::queue::gated(&q.generate);
+        let gated = board.gated.len();
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
-            "compilationTasks": q.compile.len(),
-            "bindingTasks": q.bind.len(),
-            "generationTasks": q.generate.len(),
-            "verificationTasks": q.verify.len(),
+            "compilationTasks": board.open_of(&graph_kinds),
+            "bindingTasks": board.open_of(&["bind"]),
+            "generationTasks": board.open_of(&["generate"]),
+            "verificationTasks": board.open_of(&["verify"]),
             "workflow": {"compile": c.compile, "generate": c.generate},
             "gatedTasks": gated,
-            "verdict": q.verdict,
-            "openDiagnostics": q.open_diags,
+            "verdict": board.verdict.to_string(),
+            "openDiagnostics": board.open_diags,
             "next": if c_act > 0 {
                 "compilation_tasks lists the work"
             } else if b_act > 0 {
@@ -456,23 +455,27 @@ impl McpServer {
     }
 
     fn compilation_tasks(&self) -> Value {
-        let mut q = crate::queue::compute(&self.project, &self.out);
-        // An empty queue with a stale `incomplete` verdict settles here: finalize is
+        let mut board = crate::board::Board::compute(&self.project, &self.out);
+        // An empty board with a stale `incomplete` verdict settles here: the tail is
         // deterministic and idempotent, and a lister that finds nothing to do may as
-        // well say so truthfully. A dangling judged diagnostic settles the same way:
-        // finalize resolves or re-enqueues it, and the recompute lists the reviews.
-        // Mirrors docs/compiler/reconciler.md#the-task-queue.
-        if q.compile_empty()
-            && (q.verdict != "converged" || q.dangling_diags)
+        // well say so truthfully. A dangling judged diagnostic settles the same way.
+        // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+        if board.open_mandatory() == 0
+            && (!board.verdict.converged() || board.dangling_diags)
             && self.open.lock().unwrap().is_none()
         {
             let mut s = Store::load(&self.out);
-            let parked = s.status.parked_items();
             let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
-            crate::reconcile::finalize(&mut s, &self.project, &parked, &quiet);
-            q = crate::queue::compute(&self.project, &self.out);
+            crate::reconcile::finalize(
+                &mut s,
+                &self.project,
+                Vec::new(),
+                &crate::model::Costs::default(),
+                &quiet,
+            );
+            board = crate::board::Board::compute(&self.project, &self.out);
         }
-        let mut v = q.compilation_answer();
+        let mut v = board.answer();
         if self.open.lock().unwrap().is_some() {
             v["openTask"] = json!("a task is already open; done or abandon_compilation first");
         }
@@ -485,13 +488,16 @@ impl McpServer {
                 "task `{} {}` is already open with {} staged mutation(s); done or abandon_compilation first",
                 o.item.task, o.item.target, o.session.staged.len())}});
         }
-        let q = crate::queue::compute(&self.project, &self.out);
-        let target = params["arguments"]["task"].as_str();
-        let Some(item) = q.find(target) else {
-            let mut v = q.compilation_answer();
+        let board = crate::board::Board::compute(&self.project, &self.out);
+        let target = params["arguments"]["task"]
+            .as_str()
+            .or(params["arguments"]["batch"].as_str())
+            .or(params["arguments"]["goal"].as_str());
+        let Some(item) = board.find_item(target) else {
+            let mut v = board.answer();
             v["error"] = json!({"rule": "no-ready-task", "message": match target {
-                Some(t) => format!("`{}` is not a ready task; the queue above says what is", t),
-                None => "no task is ready; the queue above says why".to_string(),
+                Some(t) => format!("`{}` is not a ready goal; the board above says what is", t),
+                None => "no goal is ready; the board above says why".to_string(),
             }});
             return v;
         };
@@ -509,10 +515,13 @@ impl McpServer {
         // already released this work and holds the coarse lease itself.
         // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
         if self.bridge.build_token.is_none() {
-            if q.compile
-                .iter()
-                .any(|e| e["target"] == item.target.as_str() && e["gated"] == true)
-            {
+            let gated = board.gated.iter().any(|id| {
+                board.goal(id).is_some_and(|g| {
+                    g.target == item.target
+                        || crate::board::target_doc(&g.target).as_deref() == Some(item.target.as_str())
+                })
+            });
+            if gated {
                 return json!({"error": {"rule": "awaiting-release", "message": format!(
                     "`{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", item.target)}});
             }
@@ -636,13 +645,19 @@ impl McpServer {
         }
         let mut reply = self.commit_open(&mut o);
         drop(open);
-        // The consumer that empties the queue runs the deterministic tail.
-        let q = crate::queue::compute(&self.project, &self.out);
-        if q.compile_empty() {
+        // The consumer that empties the board runs the deterministic tail.
+        let board = crate::board::Board::compute(&self.project, &self.out);
+        let graph_kinds = crate::board::Board::graph_kinds();
+        if board.ready_of(&graph_kinds) == 0 {
             let mut s2 = Store::load(&self.out);
-            let parked = s2.status.parked_items();
             let quiet = crate::turn::Trace::stderr(crate::turn::TraceLevel::Quiet);
-            let report = crate::reconcile::finalize(&mut s2, &self.project, &parked, &quiet);
+            let report = crate::reconcile::finalize(
+                &mut s2,
+                &self.project,
+                Vec::new(),
+                &crate::model::Costs::default(),
+                &quiet,
+            );
             reply["verdict"] = json!(report.verdict);
             reply["coveragePct"] = json!(report.coverage_pct);
             // The verdict never travels alone (docs/compiler/compilation.md#convergence).
@@ -653,20 +668,21 @@ impl McpServer {
                     "open diagnostics stand in the graph; the diagnostics read tool lists them"
                 );
             }
-            let q2 = crate::queue::compute(&self.project, &self.out);
-            if q2.compile_empty() {
-                reply["next"] = if q2.generate.is_empty() {
+            let board2 = crate::board::Board::compute(&self.project, &self.out);
+            if board2.ready_of(&graph_kinds) == 0 {
+                let generate = board2.open_of(&["generate"]);
+                reply["next"] = if generate == 0 {
                     json!("compilation done; nothing pending")
                 } else {
                     json!(format!(
-                        "compilation done; {} generation task(s) ready (generation_tasks lists them)",
-                        q2.generate.len()
+                        "compilation done; {} generation goal(s) ready (generation_tasks lists them)",
+                        generate
                     ))
                 };
                 return reply;
             }
             // The checks can surface new work (rare); fall through to name it.
-            reply["next"] = json!(q2.compilation_answer());
+            reply["next"] = json!(board2.answer());
             return reply;
         }
         // beginNext claims the next ready task in the same call, saving a round trip
@@ -678,7 +694,7 @@ impl McpServer {
                 return reply;
             }
         }
-        reply["next"] = json!(q.compilation_answer());
+        reply["next"] = json!(board.answer());
         reply
     }
 
@@ -749,8 +765,9 @@ impl McpServer {
             .finish_implicit("(implicit: the agent session ended)")
         {
             let reply = self.commit_open(&mut o);
-            self.trace.event(crate::turn::TraceEvent::TurnDone {
+            self.trace.event(crate::turn::TraceEvent::SessionDone {
                 label: format!("{} {}", o.item.task, o.item.target),
+                goals: vec![o.item.goal_id()],
                 staged: reply["applied"].as_u64().unwrap_or(0) as usize,
                 rounds: o.rounds,
                 mode: "implicit".into(),

@@ -636,8 +636,8 @@ fn trace_for(opts: &Options) -> Trace {
 
 fn print_report(r: &reconcile::BuildReport) {
     println!(
-        "jazyk: {} — {} dirty doc(s), {} turn(s), {} mutation(s), {} parked; {} error(s), {} warning(s); coverage {}%",
-        r.verdict, r.dirty_docs, r.turns, r.applied, r.parked, r.errors, r.warnings, r.coverage_pct
+        "jazyk: {}; {} goal(s), {} session(s), {} mutation(s), {} parked; {} error(s), {} warning(s); coverage {}%",
+        r.verdict, r.goals, r.sessions, r.applied, r.parked, r.errors, r.warnings, r.coverage_pct
     );
 }
 
@@ -650,7 +650,7 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
     let report = reconcile::compile(&proj, &llm, &out, &trace);
     trace.finish_transcript("done", &serde_json::json!(report));
     print_report(&report);
-    if report.verdict == "converged" {
+    if report.converged() {
         0
     } else {
         1
@@ -679,7 +679,7 @@ pub fn run_check(paths: &[String], opts: &Options) -> i32 {
             );
         }
     }
-    if errors > 0 || report.verdict != "converged" {
+    if errors > 0 || !report.converged() {
         1
     } else {
         0
@@ -699,13 +699,13 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
     }
     let (proj, _llm, out) = resolve(&[], opts);
     crate::control::release(&proj, &out, stage);
-    let q = crate::queue::compute(&proj, &out);
+    let board = crate::board::Board::compute(&proj, &out);
     println!(
-        "jazyk: released {} — {} compilation, {} binding, {} generation task(s) now actionable",
+        "jazyk: released {}: {} compile, {} bind, {} generate goal(s) now ready",
         stage.unwrap_or("compile and generate"),
-        crate::queue::actionable(&q.compile),
-        crate::queue::actionable(&q.bind),
-        crate::queue::actionable(&q.generate),
+        board.ready_of(&crate::board::Board::graph_kinds()),
+        board.ready_of(&["bind"]),
+        board.ready_of(&["generate"]),
     );
     0
 }
@@ -750,116 +750,65 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
     // notice, then exit 0. Gated work prints as awaiting release.
     let once = opts.once;
     let notice = |last: &mut String| -> bool {
-        let q = crate::queue::compute(&proj, &out);
-        let has_work = crate::queue::actionable(&q.compile) > 0
-            || crate::queue::actionable(&q.bind) > 0
-            || crate::queue::actionable(&q.generate) > 0
-            || crate::queue::actionable(&q.verify) > 0;
+        let board = crate::board::Board::compute(&proj, &out);
+        let ready = board.ready_goals();
+        let has_work = !ready.is_empty();
         if once && !has_work {
             return false;
         }
         let rendered = if json_mode {
-            serde_json::json!({
-                "compilation": q.compile,
-                "binding": q.bind,
-                "generation": q.generate,
-                "verification": q.verify,
-                "verdict": q.verdict,
-            })
-            .to_string()
+            board.answer().to_string()
         } else {
+            let counts = board.counts();
             let mut s = String::new();
-            if !q.compile.is_empty() {
-                let gated = crate::queue::gated(&q.compile);
-                let act = crate::queue::actionable(&q.compile);
-                s.push_str(&format!(
-                    "jazyk: {} compilation task(s), {} actionable\n",
-                    q.compile.len(),
-                    act
-                ));
-                for t in q
-                    .compile
-                    .iter()
-                    .filter(|t| t["ready"] == true && t["gated"] != true)
-                    .take(5)
-                {
-                    let secs = t["dirtySections"].as_array().map(|a| a.len()).unwrap_or(0);
-                    let anchors = t["staleAnchors"].as_array().map(|a| a.len()).unwrap_or(0);
-                    match t["kind"].as_str().unwrap_or("") {
-                        "reconcile-document" => s.push_str(&format!(
-                            "  reconcile {} ({} dirty section(s), {} stale anchor(s))\n",
-                            t["target"].as_str().unwrap_or(""),
-                            secs,
-                            anchors
-                        )),
-                        k => {
-                            s.push_str(&format!("  {} {}\n", k, t["target"].as_str().unwrap_or("")))
-                        }
-                    }
-                }
-                if gated > 0 {
-                    s.push_str(&format!(
-                        "  {} gated, awaiting release (`jazyk release compile` or the GUI)\n",
-                        gated
-                    ));
-                }
-                if act > 0 {
-                    s.push_str("  → call compilation_tasks on the jazyk MCP server to begin\n");
-                }
-            } else if !q.bind.is_empty() {
-                let gated = crate::queue::gated(&q.bind);
-                s.push_str(&format!(
-                    "jazyk: compilation {}; {} binding task(s), {} actionable\n",
-                    q.verdict,
-                    q.bind.len(),
-                    crate::queue::actionable(&q.bind)
-                ));
-                for t in q.bind.iter().filter(|t| t["gated"] != true).take(5) {
-                    s.push_str(&format!(
-                        "  bind {} ({})\n",
-                        t["requirement"].as_str().unwrap_or(""),
-                        t["reason"].as_str().unwrap_or("")
-                    ));
-                }
-                if gated > 0 {
-                    s.push_str(&format!(
-                        "  {} gated, awaiting release (`jazyk release generate` or the GUI)\n",
-                        gated
-                    ));
-                } else {
-                    s.push_str("  → call binding_tasks on the jazyk MCP server to begin\n");
-                }
-            } else if !q.generate.is_empty() {
-                let gated = crate::queue::gated(&q.generate);
-                s.push_str(&format!(
-                    "jazyk: compilation {}; {} generation task(s), {} actionable\n",
-                    q.verdict,
-                    q.generate.len(),
-                    crate::queue::actionable(&q.generate)
-                ));
-                for t in q.generate.iter().filter(|t| t["gated"] != true).take(5) {
-                    s.push_str(&format!(
-                        "  generate {} ({})\n",
-                        t["entity"].as_str().unwrap_or(""),
-                        t["reason"].as_str().unwrap_or("")
-                    ));
-                }
-                if gated > 0 {
-                    s.push_str(&format!(
-                        "  {} gated, awaiting release (`jazyk release generate` or the GUI)\n",
-                        gated
-                    ));
-                } else {
-                    s.push_str("  → call generation_tasks on the jazyk MCP server to begin\n");
-                }
-            } else if !q.verify.is_empty() {
-                s.push_str(&format!(
-                    "jazyk: {} verification task(s) ready\n",
-                    q.verify.len()
-                ));
-                s.push_str("  → call verification_tasks on the jazyk MCP server (run_tests covers programmatic rows)\n");
+            if board.open_goals().is_empty() && counts.blocked == 0 {
+                s.push_str(&format!("jazyk: nothing to do ({})\n", board.verdict));
             } else {
-                s.push_str("jazyk: nothing to do\n");
+                s.push_str(&format!(
+                    "jazyk: {} goals ready, {} blocked\n",
+                    counts.ready, counts.blocked
+                ));
+                for g in ready.iter().take(5) {
+                    s.push_str(&format!(
+                        "  {} {} ({})\n",
+                        g.kind,
+                        g.target,
+                        g.hints.first().cloned().unwrap_or_default()
+                    ));
+                }
+                for g in board
+                    .goals
+                    .iter()
+                    .filter(|g| matches!(g.state, crate::model::GoalState::Blocked { .. }))
+                    .take(3)
+                {
+                    s.push_str(&format!(
+                        "  blocked: {} {} ({})\n",
+                        g.kind,
+                        g.target,
+                        board
+                            .readiness
+                            .get(&g.id)
+                            .and_then(|r| r.reason())
+                            .unwrap_or("")
+                    ));
+                }
+                if counts.gated > 0 {
+                    s.push_str(&format!(
+                        "  {} gated, awaiting release (`jazyk release` or the GUI)\n",
+                        counts.gated
+                    ));
+                }
+                if has_work {
+                    let ledger_only = ready
+                        .iter()
+                        .all(|g| crate::board::LEDGER_KINDS.contains(&g.kind.as_str()));
+                    s.push_str(if ledger_only {
+                        "  → call binding_tasks, generation_tasks, or verification_tasks on the jazyk MCP server\n"
+                    } else {
+                        "  → call goals on the jazyk MCP server, then begin_goals to claim a batch\n"
+                    });
+                }
             }
             s
         };

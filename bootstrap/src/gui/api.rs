@@ -321,7 +321,8 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 // live leases, gated counts. Mirrors docs/frontends/gui.md#workers.
 pub fn workers_snapshot(st: &SharedState) -> Value {
     let c = st.control();
-    let q = crate::queue::compute(&st.proj(), &st.out);
+    let board = crate::board::Board::compute(&st.proj(), &st.out);
+    let graph_kinds = crate::board::Board::graph_kinds();
     let store = crate::store::Store::load(&st.out);
     let unclaimed = crate::bind::unclaimed(&st.proj(), &store, &st.gs());
     json!({
@@ -329,16 +330,17 @@ pub fn workers_snapshot(st: &SharedState) -> Value {
         "workers": crate::control::workers(&st.out),
         "leases": crate::control::leases(&st.out).values().collect::<Vec<_>>(),
         "gated": {
-            "compile": crate::queue::gated(&q.compile),
-            // Bind tasks gate under the generate release beside generation.
-            "generate": crate::queue::gated(&q.generate) + crate::queue::gated(&q.bind),
+            "compile": board.gated_of(&graph_kinds),
+            // Bind goals gate under the generate release beside generation.
+            "generate": board.gated_of(&["generate", "bind"]),
         },
         "actionable": {
-            "compile": crate::queue::actionable(&q.compile),
-            "bind": crate::queue::actionable(&q.bind),
-            "generate": crate::queue::actionable(&q.generate),
-            "verify": crate::queue::actionable(&q.verify),
+            "compile": board.ready_of(&graph_kinds),
+            "bind": board.ready_of(&["bind"]),
+            "generate": board.ready_of(&["generate"]),
+            "verify": board.ready_of(&["verify"]),
         },
+        "board": board.counts(),
         // The unclaimed report: the decompile worklist.
         "unclaimed": unclaimed.len(),
         "decompileReleased": c.released.decompile,

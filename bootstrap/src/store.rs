@@ -185,7 +185,7 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 13] = [
+pub const CHECK_RULES: [&str; 27] = [
     "pinned-fact-drift",
     "empty-file",
     "broken-link",
@@ -195,9 +195,23 @@ pub const CHECK_RULES: [&str; 13] = [
     "unreachable-entity",
     "stale-provenance",
     "unstable-extraction",
+    "unstable-derivation",
     "duplicate-requirement",
     "section-too-large",
     "doc-too-large",
+    "unjustified-fact",
+    "unplaced-behavior",
+    "unrepresented-failure-mode",
+    "containment-mismatch",
+    "nonconformant-instance",
+    "unreachable-state",
+    "dead-end-state",
+    "nondeterministic-transition",
+    "unhandled-event",
+    "provider-missing",
+    "provider-ambiguous",
+    "quality-unmeasured",
+    "unratified",
     "incomplete-build",
 ];
 

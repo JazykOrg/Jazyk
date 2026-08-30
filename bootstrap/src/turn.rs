@@ -21,12 +21,15 @@ pub enum TraceLevel {
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(tag = "kind")]
 pub enum TraceEvent {
-    // Where the turn works: the task, its target, the document when it has one, and
-    // the dirty sections it must process. The GUI lights those up in place.
-    #[serde(rename = "turnStart")]
+    // A session starts on a batch: the goals it carries, the task and target the
+    // serving claims, the document when it has one, and the sections it must process.
+    // The GUI lights those up in place.
+    #[serde(rename = "sessionStart")]
     #[serde(rename_all = "camelCase")]
-    TurnStart {
+    SessionStart {
         label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        goals: Vec<String>,
         task: String,
         target: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,9 +37,56 @@ pub enum TraceEvent {
         sections: Vec<String>,
         dirty: usize,
         stale: usize,
-        // Proposals an align-doc turn must decide; zero for every other task.
+        // Proposals a place-anchors session must decide; zero for every other kind.
         #[serde(default, skip_serializing_if = "is_zero")]
         proposals: usize,
+    },
+    // The scheduler formed a batch: its class and tier, the goals with their kinds
+    // and targets, the resolved executor.
+    #[serde(rename = "batchStart")]
+    BatchStart {
+        label: String,
+        class: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tier: Option<u8>,
+        goals: Vec<Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        executor: Option<String>,
+    },
+    // A goal changed state: opened (with its cause), resolved (with its
+    // justification), failed or parked (with the reason).
+    #[serde(rename = "goal")]
+    Goal {
+        label: String,
+        goal: String,
+        event: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<crate::model::Cause>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        justification: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    // A GC burst starts on a settled cone: the kind, the target, and the count
+    // against the limit that opened it.
+    #[serde(rename = "gcBurst")]
+    GcBurst {
+        label: String,
+        #[serde(rename = "goalKind")]
+        goal_kind: String,
+        target: String,
+        count: u64,
+        limit: u64,
+        detail: String,
+    },
+    // The board summary a build prints first: the goal count, the count per kind,
+    // and the blocked count.
+    #[serde(rename = "board")]
+    Board {
+        label: String,
+        goals: usize,
+        kinds: Vec<(String, usize)>,
+        blocked: usize,
     },
     // `summary` is the condensed line the CLI prints; `full` carries the payload
     // behind it (capped) when condensing cut something, so the GUI expands in place.
@@ -66,17 +116,21 @@ pub enum TraceEvent {
     ModelText { label: String, text: String },
     // mode: "done" (explicit, with the model's summary), "implicit" (the model went
     // silent with staged work), or "budget" (implicit at the round budget).
-    #[serde(rename = "turnDone")]
-    TurnDone {
+    #[serde(rename = "sessionDone")]
+    SessionDone {
         label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        goals: Vec<String>,
         staged: usize,
         rounds: u32,
         mode: String,
         summary: String,
     },
-    #[serde(rename = "turnFailed")]
-    TurnFailed {
+    #[serde(rename = "sessionFailed")]
+    SessionFailed {
         label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        goals: Vec<String>,
         attempt: u32,
         error: String,
     },
@@ -122,13 +176,6 @@ pub enum TraceEvent {
         attempt: u32,
         error: String,
         wait_ms: u64,
-    },
-    // A wave of work items is about to run: what is queued, before any turn starts.
-    #[serde(rename = "waveStart")]
-    WaveStart {
-        wave: u32,
-        task: String,
-        items: Vec<String>,
     },
     // Generation worker events, one entity per bounded task.
     #[serde(rename = "genEntityStart")]
@@ -176,22 +223,72 @@ fn is_zero(n: &usize) -> bool {
 
 fn render_stderr(ev: &TraceEvent) {
     match ev {
-        TraceEvent::TurnStart {
+        TraceEvent::Board {
+            goals,
+            kinds,
+            blocked,
+            ..
+        } => {
+            let per_kind: Vec<String> = kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
+            let mut s = format!("compile: {} goals", goals);
+            if !per_kind.is_empty() {
+                s.push_str(&format!(" ({})", per_kind.join(", ")));
+            }
+            if *blocked > 0 {
+                s.push_str(&format!(", {} blocked", blocked));
+            }
+            eprintln!("{}", s)
+        }
+        TraceEvent::GcBurst {
+            goal_kind,
+            target,
+            count,
+            limit,
+            ..
+        } => eprintln!("gc burst: {} {} ({} > {})", goal_kind, target, count, limit),
+        TraceEvent::BatchStart {
             label,
-            dirty,
-            stale,
+            class,
+            tier,
+            goals,
+            ..
+        } => eprintln!(
+            "[{}] batch: {} {}({} goal(s))",
+            label,
+            class,
+            tier.map(|t| format!("tier {} ", t)).unwrap_or_default(),
+            goals.len()
+        ),
+        TraceEvent::Goal {
+            goal,
+            event,
+            cause,
+            justification,
+            reason,
+            ..
+        } => {
+            let tail = match (cause, justification, reason) {
+                (Some(c), _, _) => format!("  (g{} via {})", c.generation, c.via),
+                (_, Some(j), _) => format!("  {}", j),
+                (_, _, Some(r)) => format!("  {}", r),
+                _ => String::new(),
+            };
+            eprintln!("{:<8} {}{}", event, goal, tail)
+        }
+        TraceEvent::SessionStart {
+            label,
             proposals,
             ..
         } if *proposals > 0 => {
-            eprintln!("[{}] turn start ({} proposal(s))", label, proposals)
+            eprintln!("[{}] session start ({} proposal(s))", label, proposals)
         }
-        TraceEvent::TurnStart {
+        TraceEvent::SessionStart {
             label,
             dirty,
             stale,
             ..
         } => {
-            eprintln!("[{}] turn start ({} dirty, {} stale)", label, dirty, stale)
+            eprintln!("[{}] session start ({} dirty, {} stale)", label, dirty, stale)
         }
         TraceEvent::ToolCall {
             label,
@@ -208,12 +305,13 @@ fn render_stderr(ev: &TraceEvent) {
         TraceEvent::ModelText { label, text } => {
             eprintln!("[{}] · {}", label, llm::truncate(text, 200))
         }
-        TraceEvent::TurnDone {
+        TraceEvent::SessionDone {
             label,
             staged,
             rounds,
             mode,
             summary,
+            ..
         } => match mode.as_str() {
             "implicit" => eprintln!(
                 "[{}] ✓ implicit done ({} staged, {} rounds)",
@@ -228,12 +326,13 @@ fn render_stderr(ev: &TraceEvent) {
                 label, staged, rounds, summary
             ),
         },
-        TraceEvent::TurnFailed {
+        TraceEvent::SessionFailed {
             label,
             attempt,
             error,
+            ..
         } => {
-            eprintln!("[{}] turn failed (attempt {}): {}", label, attempt, error)
+            eprintln!("[{}] session failed (attempt {}): {}", label, attempt, error)
         }
         TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
         // The section path is implicit in the tool rows the default level already
@@ -278,9 +377,6 @@ fn render_stderr(ev: &TraceEvent) {
             attempt,
             llm::truncate(error, 120)
         ),
-        TraceEvent::WaveStart { wave, task, items } => {
-            eprintln!("[wave {}] {} ({} items)", wave, task, items.len())
-        }
         // Worker events reach stderr only outside the CLI wrappers (which render them
         // themselves, on the exact historical format); keep these plain.
         TraceEvent::GenEntityStart { entity } => eprintln!("[gen {}] start", entity),
@@ -428,8 +524,10 @@ impl Trace {
                 let _ = t.file.flush();
             }
         }
+        // Quiet keeps the board summary and the burst lines: the build's outline,
+        // never its rows (docs/frontends/cli.md#jazyk-compile).
         let keep = match self.level {
-            TraceLevel::Quiet => false,
+            TraceLevel::Quiet => matches!(&ev, TraceEvent::Board { .. } | TraceEvent::GcBurst { .. }),
             TraceLevel::Normal => !matches!(&ev, TraceEvent::Note { verbose: true, .. }),
             TraceLevel::Verbose => true,
         };

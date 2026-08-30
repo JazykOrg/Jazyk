@@ -205,8 +205,9 @@ impl AcpRunner {
     // serving; the report is derived from the journal and the queue afterwards.
     pub fn run_item(&self, item: &WorkItem, trace: &Trace) -> TurnReport {
         let label = format!("{} {}", item.task, item.target);
-        trace.event(TraceEvent::TurnStart {
+        trace.event(TraceEvent::SessionStart {
             label: label.clone(),
+            goals: vec![item.goal_id()],
             task: item.task.clone(),
             target: item.target.clone(),
             doc: matches!(item.task.as_str(), "reconcile-doc" | "align-doc")
@@ -247,20 +248,16 @@ impl AcpRunner {
             }
         });
         let mut outcome = session.prompt(&self.prompt_for(item), on_update.clone());
-        // One reminder when the turn ended in prose with the task uncommitted: the
-        // generic agent ends its turn on a plain answer by design, so the client
+        // One reminder when the session ended in prose with the batch uncommitted:
+        // the generic agent ends its turn on a plain answer by design, so the client
         // owns the "you are mid-task" reminder. A second prose ending fails the
-        // turn through the queue check below. Mirrors
+        // session through the board check below. Mirrors
         // docs/frontends/acp.md#worker-sessions.
         if !matches!(item.task.as_str(), "bind-requirement" | "generate-entity") {
             if let Ok(o) = &outcome {
                 if o.stop == "end_turn" && !o.idled {
-                    let q = crate::queue::compute(&self.project, &self.out);
-                    let kind = crate::queue::kind_of(&item.task);
-                    if q.compile
-                        .iter()
-                        .any(|e| e["target"] == item.target.as_str() && e["kind"] == kind)
-                    {
+                    let board = crate::board::Board::compute(&self.project, &self.out);
+                    if board.item_open(item) {
                         outcome = session.prompt(
                             &format!(
                                 "The task is not finished: `{} {}` has not committed. Continue with the tool calls the instructions name, then finish with done.",
@@ -297,17 +294,13 @@ impl AcpRunner {
         let gen_after = crate::store::read_generation(&self.out);
         let (applied, touched, changed) = journal_diff(&self.out, gen_before, gen_after, item);
 
-        // Success is the store's word: a compilation item must have left the queue,
+        // Success is the store's word: a compilation item must have left the board,
         // a bind or generation item is judged by its caller against the ledger.
         let failed = match item.task.as_str() {
             "bind-requirement" | "generate-entity" => None,
             _ => {
-                let q = crate::queue::compute(&self.project, &self.out);
-                let still_listed = q
-                    .compile
-                    .iter()
-                    .any(|e| e["target"] == item.target.as_str());
-                if still_listed {
+                let board = crate::board::Board::compute(&self.project, &self.out);
+                if board.item_open(item) {
                     Some(format!(
                         "the task did not land (session stopped: {}{})",
                         stop.stop,
@@ -324,8 +317,9 @@ impl AcpRunner {
         };
         if failed.is_none() && !matches!(item.task.as_str(), "bind-requirement" | "generate-entity")
         {
-            trace.event(TraceEvent::TurnDone {
+            trace.event(TraceEvent::SessionDone {
                 label,
+                goals: vec![item.goal_id()],
                 staged: applied,
                 rounds,
                 mode: "done".into(),

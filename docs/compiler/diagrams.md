@@ -294,10 +294,17 @@ not the default: CI renders the reference graph and the fixture views
 (`bootstrap/example/f1`, `f2`) through both implementations and diffs the SVGs, so a gap
 in the crate is measured before a reader meets it.
 
-Known gap, and the emitter rule it dictates: a `package` with an empty body
-(`package "X" as X { }`) fails in `plantuml-little` with `invalid DOT input`. The package
-emitter therefore never emits an empty package body; an empty package is the one-line
-form `package "X" as X`.
+Known gaps, and the emitter rules they dictate:
+
+- A `package` with an alias and a body (`package "X" as X { ... }`) fails in
+  `plantuml-little` with `invalid DOT input`. The package emitter therefore never
+  aliases a package: packages go by their quoted name, and the classes inside keep
+  their aliases.
+- The crate rejects a diagram with no elements, so a view with no members renders as
+  one `rectangle "<title>: no members"`.
+- A renderer panic (observed on non-ASCII characters in the edge labels of
+  graphviz-routed kinds) is caught at the seam and reported as a render failure like
+  any other: the `.puml` stays, the stale `.svg` is removed, the build continues.
 
 ## Diagrams as input
 

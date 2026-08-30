@@ -789,8 +789,8 @@ fn run_command(
             let trace = narrated_trace(up.clone(), sid.to_string());
             let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
             format!(
-                "\n{} — {} turn(s), {} mutation(s), {} parked, coverage {}%",
-                report.verdict, report.turns, report.applied, report.parked, report.coverage_pct
+                "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%",
+                report.verdict, report.sessions, report.applied, report.parked, report.coverage_pct
             )
         }
         "generate" | "verify" => {
@@ -894,7 +894,7 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
         ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     };
     // Per worker label: calls made so far, the id of the one still open, and the
-    // summary the suppressed `done` call carried (the runner's TurnDone has none;
+    // summary the suppressed `done` call carried (the runner's SessionDone has none;
     // the model's own words fill the closing line).
     #[derive(Default)]
     struct WorkerRow {
@@ -912,14 +912,43 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
         };
         match ev {
-            TraceEvent::WaveStart { task, items, .. } => {
+            TraceEvent::BatchStart {
+                label, class, goals, ..
+            } => {
                 send(text_update(format!(
-                    "wave: {} ({} item(s))\n",
-                    task,
-                    items.len()
+                    "batch {}: {} ({} goal(s))\n",
+                    label,
+                    class,
+                    goals.len()
                 )));
             }
-            TraceEvent::TurnStart { label, .. } => {
+            TraceEvent::GcBurst {
+                goal_kind,
+                target,
+                count,
+                limit,
+                ..
+            } => {
+                send(text_update(format!(
+                    "gc burst: {} {} ({} > {})\n",
+                    goal_kind, target, count, limit
+                )));
+            }
+            TraceEvent::Goal {
+                goal,
+                event,
+                justification,
+                reason,
+                ..
+            } => {
+                let tail = justification
+                    .as_ref()
+                    .or(reason.as_ref())
+                    .map(|t| format!(": {}", t))
+                    .unwrap_or_default();
+                send(text_update(format!("{} {}{}\n", event, goal, tail)));
+            }
+            TraceEvent::SessionStart { label, .. } => {
                 open.lock()
                     .unwrap()
                     .entry(label.clone())
@@ -927,7 +956,7 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                     .done_summary = None;
                 send(text_update(format!("▶ {}\n", label)));
             }
-            TraceEvent::TurnDone {
+            TraceEvent::SessionDone {
                 label,
                 staged,
                 summary,
@@ -954,7 +983,7 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                     label, staged, tail
                 )));
             }
-            TraceEvent::TurnFailed { label, error, .. } => {
+            TraceEvent::SessionFailed { label, error, .. } => {
                 send(text_update(format!("✗ {}: {}\n", label, error)));
             }
             TraceEvent::GenEntityDone { entity, files } => {
@@ -1136,7 +1165,7 @@ fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
         let n = v["n"].as_u64().unwrap_or(0);
         let label = ev["label"].as_str().unwrap_or("");
         match ev["kind"].as_str().unwrap_or("") {
-            "turnStart" => updates.push(chunk(format!("▶ {}\n", label))),
+            "sessionStart" => updates.push(chunk(format!("▶ {}\n", label))),
             "modelText" => updates.push(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
                 ContentBlock::from(format!("{}\n", ev["text"].as_str().unwrap_or(""))),
             ))),
@@ -1164,8 +1193,8 @@ fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
                 )
                 .status(ToolCallStatus::Failed),
             )),
-            "turnDone" => updates.push(chunk(format!("✓ {}\n", label))),
-            "turnFailed" => updates.push(chunk(format!(
+            "sessionDone" => updates.push(chunk(format!("✓ {}\n", label))),
+            "sessionFailed" => updates.push(chunk(format!(
                 "✗ {}: {}\n",
                 label,
                 ev["error"].as_str().unwrap_or("")

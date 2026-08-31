@@ -463,7 +463,7 @@ pub struct Store {
     pub align: crate::align::Thresholds,
 }
 
-fn normalize(name: &str) -> String {
+pub(crate) fn normalize(name: &str) -> String {
     name.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -532,6 +532,17 @@ fn id_kind(id: &str) -> &'static str {
 
 fn provenance_is_pending(p: &Provenance) -> bool {
     !matches!(p, Provenance::Quote(_))
+}
+
+// The sticky identity of an invented-choice finding includes the choice sentence:
+// its message opens with the sentence and closes with the unattached measure, which
+// varies per record. Mirrors docs/consumers/gen.md#invented-choices.
+fn invented_choice_key(message: &str) -> &str {
+    message
+        .split(" Unattached remainder on the entity:")
+        .next()
+        .unwrap_or(message)
+        .trim_end()
 }
 
 // What one commit dirtied, accumulated while its ops apply: the first mutation that
@@ -735,6 +746,37 @@ impl Store {
 
     fn write_journal(&self, entry: &JournalEntry) {
         write_yaml(&self.journal_path(entry.generation), entry);
+    }
+
+    // The latest journal mutation that decreed over the given fact and recorded the
+    // prior value it replaced. Mirrors docs/compiler/graph.md#journal: a decree
+    // entry carries, on a mutation written over a quoted value, the prior value and
+    // source.
+    fn decree_prior(&self, id: &str, op: &str) -> Option<serde_json::Value> {
+        let dir = self.out.join("journal");
+        let mut gens: Vec<u64> = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| {
+                let name = e.ok()?.file_name();
+                let name = name.to_str()?;
+                name.strip_prefix('g')?
+                    .strip_suffix(".yaml")?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .collect();
+        gens.sort_unstable();
+        for g in gens.into_iter().rev() {
+            let Some(entry) = yaml_to::<JournalEntry>(&self.journal_path(g)) else {
+                continue;
+            };
+            for mv in entry.mutations.iter().rev() {
+                if mv["op"] == op && mv["id"] == id && mv["prior"].is_object() {
+                    return Some(mv["prior"].clone());
+                }
+            }
+        }
+        None
     }
 
     // The reconciler re-derives the board after a commit and records the goals the
@@ -1663,6 +1705,9 @@ impl Store {
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut applied: Vec<Op> = Vec::new();
+        // Prior values a decree overwrote, attached to the journal mutations by
+        // applied index. Mirrors docs/compiler/graph.md#journal.
+        let mut priors: Vec<(usize, serde_json::Value)> = Vec::new();
         let mut dirt = Dirt::default();
         let mut batch = RecordBatch::new(generation);
 
@@ -1865,6 +1910,25 @@ impl Store {
                         *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
                     }
                     let e = self.graph.entities.get_mut(&rid).unwrap();
+                    // A decree over a quote-anchored entity records the prior values
+                    // of the fields it overwrites, so a later retract restores them.
+                    if matches!(&provenance, Some(Provenance::Decree { .. }))
+                        && e.provenance.is_none()
+                    {
+                        let mut prior = serde_json::Map::new();
+                        if definition.is_some() {
+                            prior.insert("definition".into(), serde_json::json!(e.definition));
+                        }
+                        if stereotype.is_some() {
+                            prior.insert("stereotype".into(), serde_json::json!(e.stereotype));
+                        }
+                        if parent.is_some() {
+                            prior.insert("parent".into(), serde_json::json!(e.parent));
+                        }
+                        if !prior.is_empty() {
+                            priors.push((applied.len(), serde_json::Value::Object(prior)));
+                        }
+                    }
                     if let Some(n) = &name {
                         e.name = n.clone();
                     }
@@ -2359,6 +2423,7 @@ impl Store {
                     }
                     let r = self.graph.requirements.get_mut(&rid).unwrap();
                     let before: Vec<String> = r.entities.clone();
+                    let statement_before = r.statement.clone();
                     if let Some(e) = &statement {
                         if r.statement != *e {
                             dirt.revised(&rid, m, "fields");
@@ -2390,6 +2455,19 @@ impl Store {
                         r.provenance = None;
                     } else if let Some(p) = &provenance {
                         // A decree or derivation over the fact: the quote gives way.
+                        // A decree over a quoted fact records the prior value and
+                        // source in the journal, so a later retract restores them.
+                        if matches!(p, Provenance::Decree { .. }) {
+                            if let Some(prior_src) = &r.source {
+                                priors.push((
+                                    applied.len(),
+                                    serde_json::json!({
+                                        "statement": statement_before,
+                                        "source": prior_src,
+                                    }),
+                                ));
+                            }
+                        }
                         r.source = None;
                         r.provenance = Some(p.clone());
                         dirt.pending(&rid, m, p);
@@ -2692,40 +2770,90 @@ impl Store {
                     let rid = resolve(&remap, self, &id);
                     let pending =
                         |p: &Option<Provenance>| p.as_ref().is_some_and(provenance_is_pending);
-                    if let Some(r) = self.graph.requirements.get(&rid) {
-                        if r.source.is_some() || !pending(&r.provenance) {
+                    if self.graph.requirements.contains_key(&rid) {
+                        {
+                            let r = &self.graph.requirements[&rid];
+                            if r.source.is_some() || !pending(&r.provenance) {
+                                skipped.push(format!("retract_decree {}: not a decree", rid));
+                                continue;
+                            }
+                        }
+                        // A fact that was quoted before the decree returns to the
+                        // prior value and source the decree's journal entry recorded;
+                        // a requirement created by decree or derivation is deleted.
+                        // Mirrors docs/compiler/graph.md#mutations.
+                        match self.decree_prior(&rid, "update_requirement") {
+                            Some(prior) if prior["source"].is_object() => {
+                                let Ok(source) =
+                                    serde_json::from_value::<SourceRef>(prior["source"].clone())
+                                else {
+                                    skipped.push(format!(
+                                        "retract_decree {}: unreadable prior source",
+                                        rid
+                                    ));
+                                    continue;
+                                };
+                                let r = self.graph.requirements.get_mut(&rid).unwrap();
+                                if let Some(st) = prior["statement"].as_str() {
+                                    r.statement = st.to_string();
+                                }
+                                r.source = Some(source);
+                                r.provenance = None;
+                                r.updated = Some(build.clone());
+                                let ents = r.entities.clone();
+                                dirt.revised(&rid, m, "quote");
+                                dirt.entities(ents.iter(), m);
+                            }
+                            _ => {
+                                let r = self.graph.requirements.remove(&rid).unwrap();
+                                dirt.entities(r.entities.iter(), m);
+                                dirt.deleted(&rid, m);
+                            }
+                        }
+                    } else if self.graph.entities.contains_key(&rid) {
+                        if !pending(&self.graph.entities[&rid].provenance) {
                             skipped.push(format!("retract_decree {}: not a decree", rid));
                             continue;
                         }
-                        let r = self.graph.requirements.remove(&rid).unwrap();
-                        dirt.entities(r.entities.iter(), m);
-                        dirt.deleted(&rid, m);
-                    } else if let Some(e) = self.graph.entities.get(&rid) {
-                        if !pending(&e.provenance) {
-                            skipped.push(format!("retract_decree {}: not a decree", rid));
-                            continue;
+                        if let Some(prior) = self.decree_prior(&rid, "update_entity") {
+                            // The decreed fields return to their prior values; the
+                            // mentions still quote the entity.
+                            let e = self.graph.entities.get_mut(&rid).unwrap();
+                            if let Some(v) = prior.get("definition") {
+                                e.definition = v.as_str().map(String::from);
+                            }
+                            if let Some(v) = prior.get("stereotype") {
+                                e.stereotype = v.as_str().map(String::from);
+                            }
+                            if let Some(v) = prior.get("parent") {
+                                e.parent = v.as_str().map(String::from);
+                            }
+                            e.provenance = None;
+                            e.updated = Some(build.clone());
+                            dirt.entity(&rid, m, "fields");
+                        } else {
+                            let refs = self.requirements_referencing(&rid);
+                            if !refs.is_empty() {
+                                skipped.push(format!(
+                                    "retract_decree {}: still referenced by {}",
+                                    rid,
+                                    refs.join(", ")
+                                ));
+                                continue;
+                            }
+                            let children = self.children_of(&rid);
+                            if !children.is_empty() {
+                                skipped.push(format!(
+                                    "retract_decree {}: still a parent of {}",
+                                    rid,
+                                    children.join(", ")
+                                ));
+                                continue;
+                            }
+                            self.graph.entities.remove(&rid);
+                            self.graph.redirects.insert(rid.clone(), String::new());
+                            dirt.deleted(&rid, m);
                         }
-                        let refs = self.requirements_referencing(&rid);
-                        if !refs.is_empty() {
-                            skipped.push(format!(
-                                "retract_decree {}: still referenced by {}",
-                                rid,
-                                refs.join(", ")
-                            ));
-                            continue;
-                        }
-                        let children = self.children_of(&rid);
-                        if !children.is_empty() {
-                            skipped.push(format!(
-                                "retract_decree {}: still a parent of {}",
-                                rid,
-                                children.join(", ")
-                            ));
-                            continue;
-                        }
-                        self.graph.entities.remove(&rid);
-                        self.graph.redirects.insert(rid.clone(), String::new());
-                        dirt.deleted(&rid, m);
                     } else if let Some(v) = self.graph.views.get(&rid) {
                         if v.default || !pending(&v.provenance) {
                             skipped.push(format!("retract_decree {}: not a decree", rid));
@@ -2889,7 +3017,9 @@ impl Store {
                         .collect();
                     // Sticky: an open diagnostic with the same rule and subjects is updated,
                     // not duplicated. Subject order does not matter: a pair reported from
-                    // either endpoint is the same finding. Human triage is never touched.
+                    // either endpoint is the same finding. An invented-choice finding also
+                    // keys on its choice sentence, so two choices over the same subjects
+                    // stay distinct. Human triage is never touched.
                     let subject_set =
                         |v: &[String]| -> BTreeSet<String> { v.iter().cloned().collect() };
                     let incoming_subjects = subject_set(&diagnostic.subjects);
@@ -2901,6 +3031,9 @@ impl Store {
                             d.rule == diagnostic.rule
                                 && d.lifecycle == "open"
                                 && subject_set(&d.subjects) == incoming_subjects
+                                && (d.rule != "invented-choice"
+                                    || invented_choice_key(&d.message)
+                                        == invented_choice_key(&diagnostic.message))
                         })
                         .map(|(id, _)| id.clone());
                     match existing {
@@ -3122,6 +3255,64 @@ impl Store {
                 );
             }
         }
+        // The commit that lands a derived or decreed fact files its ratification
+        // proposal, mechanically: one `ratification-pending` diagnostic whose prompt
+        // the blocked `ratify` goal surfaces. A fact whose proposal is already open
+        // (a decree path staged one in this changeset, a prior commit filed one)
+        // keeps it. The sentence follows the composition rules: a requirement's
+        // `statement` verbatim, an entity's name and `definition` as one sentence.
+        // Mirrors docs/consumers/docsgen.md#ratification-proposals.
+        let pending: Vec<(String, usize)> = dirt
+            .provenance_pending
+            .iter()
+            .map(|(id, (m, _))| (id.clone(), *m))
+            .collect();
+        for (id, m) in pending {
+            if !self.node_exists(&id) {
+                continue;
+            }
+            let open = self.graph.diagnostics.values().any(|d| {
+                d.lifecycle == "open"
+                    && d.rule == "ratification-pending"
+                    && d.subjects.iter().any(|s| s == &id)
+            });
+            if open {
+                continue;
+            }
+            let (sentence, prov, entities) = if let Some(r) = self.graph.requirements.get(&id) {
+                (
+                    r.statement.clone(),
+                    r.provenance.clone(),
+                    r.entities.clone(),
+                )
+            } else if let Some(e) = self.graph.entities.get(&id) {
+                let sentence = match e.definition.as_deref() {
+                    Some(d) => format!("{}: {}", e.name, d),
+                    None => e.name.clone(),
+                };
+                (
+                    sentence,
+                    e.provenance.clone(),
+                    e.parent.clone().into_iter().collect(),
+                )
+            } else {
+                continue;
+            };
+            let Some(prov) = prov else {
+                continue;
+            };
+            let mut diagnostic =
+                self.ratification_proposal(&id, &sentence, &prov, None, &entities, None);
+            diagnostic.created = Some(build.clone());
+            diagnostic.updated = Some(build.clone());
+            let did = self.mint_diag_id("ratification-pending", &BTreeSet::new());
+            dirt.prompt(&did, m, "ratification");
+            applied.push(Op::ReportDiagnostic {
+                id: did.clone(),
+                diagnostic: diagnostic.clone(),
+            });
+            self.graph.diagnostics.insert(did, diagnostic);
+        }
         for (id, (m, via)) in &dirt.prompts {
             batch.push(
                 *m,
@@ -3198,16 +3389,24 @@ impl Store {
         self.status.spent.tokens += commit.tokens;
         self.prune_records();
         let changes = self.commit_records(batch);
-        let entry = self.journal_entry(
-            &build,
-            commit,
-            applied
-                .iter()
-                .map(|o| serde_json::to_value(o).unwrap_or_default())
-                .collect(),
-        );
+        let mut mutations: Vec<serde_json::Value> = applied
+            .iter()
+            .map(|o| serde_json::to_value(o).unwrap_or_default())
+            .collect();
+        // A mutation that decreed over a quoted value carries the prior value and
+        // source it replaced. Mirrors docs/compiler/graph.md#journal.
+        for (i, prior) in priors {
+            if let Some(mv) = mutations.get_mut(i) {
+                mv["prior"] = prior;
+            }
+        }
+        let entry = self.journal_entry(&build, commit, mutations);
         self.write_journal(&entry);
         self.save();
+        // The renderer redraws the views the commit touched; a view whose emitted
+        // `.puml` matches the file on disk is skipped.
+        // Mirrors docs/compiler/diagrams.md#rendering.
+        crate::render::render_all(self, &self.out);
         CommitReport {
             applied: applied.len(),
             skipped,
@@ -3941,6 +4140,9 @@ impl Store {
             );
             self.write_journal(&entry);
             self.save();
+            // The sweep is a commit like any other: deleted nodes leave the derived
+            // views, so the renderer redraws. Mirrors docs/compiler/diagrams.md#rendering.
+            crate::render::render_all(self, &self.out);
         } else if had_removed {
             self.save_status();
         }
@@ -3956,7 +4158,7 @@ impl Store {
         &mut self,
         findings: Vec<(
             String,
-            String,
+            Vec<String>,
             String,
             String,
             Option<crate::model::DiagnosticPrompt>,
@@ -3967,8 +4169,7 @@ impl Store {
         let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
         let mut mutations: Vec<serde_json::Value> = Vec::new();
         let mut batch = RecordBatch::new(generation);
-        for (rule, subject, severity, message, prompt) in findings {
-            let subjects = vec![subject];
+        for (rule, subjects, severity, message, prompt) in findings {
             seen.insert((rule.clone(), subjects.clone()));
             let existing = self
                 .graph
@@ -4036,13 +4237,13 @@ impl Store {
                 }
             }
         }
-        // Deterministic rules whose condition cleared: resolve. Check findings carry
-        // exactly one subject; a multi-subject diagnostic under a shared rule name
-        // (a session's duplicate-requirement pair) is judged work, not the checks'
-        // to resolve.
+        // Deterministic rules whose condition cleared: resolve. A check finding may
+        // carry a pair (nondeterministic-transition), but a multi-subject diagnostic
+        // under a rule sessions also file (a session's duplicate-requirement pair) is
+        // judged work, not the checks' to resolve.
         for (id, d) in self.graph.diagnostics.iter_mut() {
             if d.lifecycle == "open"
-                && d.subjects.len() == 1
+                && (d.subjects.len() == 1 || !JUDGED_RULES.contains(&d.rule.as_str()))
                 && CHECK_RULES.contains(&d.rule.as_str())
                 && !seen.contains(&(d.rule.clone(), d.subjects.clone()))
             {
@@ -5263,8 +5464,32 @@ mod tests {
             ],
             &session(),
         );
-        assert_eq!(r.applied, 4, "{:?}", r.skipped);
+        assert_eq!(r.applied, 5, "{:?}", r.skipped);
         assert!(r.skipped[0].contains("no provenance"));
+        // The commit filed the decreed fact's proposal, statement verbatim; the
+        // staged diagnostic on req:x-1 already stood, so no second one landed there.
+        let proposal_id = s
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| {
+                d.rule == "ratification-pending" && d.subjects == vec!["req:x-2".to_string()]
+            })
+            .map(|(id, _)| id.clone())
+            .expect("the commit files the proposal for the decreed fact");
+        let prompt = s.graph.diagnostics[&proposal_id].prompt.as_ref().unwrap();
+        assert!(prompt
+            .question
+            .contains("The cart never exceeds ten categories."));
+        assert_eq!(
+            s.graph
+                .diagnostics
+                .values()
+                .filter(|d| d.rule == "ratification-pending"
+                    && d.subjects == vec!["req:x-1".to_string()])
+                .count(),
+            1
+        );
         assert!(s.graph.requirements.contains_key("req:x-1"));
         assert!(s.graph.requirements.contains_key("req:x-2"));
         assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
@@ -5302,7 +5527,9 @@ mod tests {
             .graph
             .diagnostics
             .values()
+            .filter(|d| d.subjects.contains(&"req:x-1".to_string()))
             .all(|d| d.lifecycle == "resolved"));
+        assert_eq!(s.graph.diagnostics[&proposal_id].lifecycle, "open");
         assert!(s.graph.entities["ent:cart"]
             .mentions
             .iter()
@@ -5321,10 +5548,15 @@ mod tests {
             ],
             &Commit::store("decree"),
         );
-        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert_eq!(r.applied, 2, "{:?}", r.skipped);
         assert!(!s.graph.requirements.contains_key("req:x-2"));
         assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:x-2"));
         assert!(r.skipped[0].contains("not a decree"));
+        assert!(s
+            .graph
+            .diagnostics
+            .get(&proposal_id)
+            .is_none_or(|d| d.lifecycle == "resolved"));
     }
 
     // A save that dirtied sections is a generation of its own with its records.
@@ -5600,7 +5832,7 @@ mod tests {
         };
         s.reconcile_check_diags(vec![(
             "uncovered-section".into(),
-            "t.md#/t".into(),
+            vec!["t.md#/t".into()],
             "warning".into(),
             "section /t is unprocessed".into(),
             None,
@@ -5614,7 +5846,7 @@ mod tests {
         // Same finding again: same id, no duplicate, no generation.
         s.reconcile_check_diags(vec![(
             "uncovered-section".into(),
-            "t.md#/t".into(),
+            vec!["t.md#/t".into()],
             "warning".into(),
             "section /t is unprocessed".into(),
             None,
@@ -5625,7 +5857,7 @@ mod tests {
         // A prompt landing on a finding opens an answer.
         s.reconcile_check_diags(vec![(
             "uncovered-section".into(),
-            "t.md#/t".into(),
+            vec!["t.md#/t".into()],
             "warning".into(),
             "section /t is unprocessed".into(),
             Some(crate::model::DiagnosticPrompt {

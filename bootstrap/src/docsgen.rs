@@ -2,7 +2,7 @@
 // and graph. Rendered on every commit, no LLM. Renders the diagrams first so every
 // image link resolves, embeds the views relevant to each entity, and cross-links the
 // pages through the views they share. Mirrors docs/consumers/docsgen.md.
-use crate::derive::{entity_slug, instance_types};
+use crate::derive::{entity_slug, instance_types, view_edge_count};
 use crate::gen::GenSettings;
 use crate::md;
 use crate::model::{Diagnostic, Goal, Provenance, StateMachine, View};
@@ -49,18 +49,48 @@ fn svg_exists(store: &Store, view_id: &str) -> bool {
 
 const FLOW_KINDS: [&str; 4] = ["use-case", "activity", "sequence", "communication"];
 
+// The arrows a view renders, counted over the members' relationships.
+fn edge_count(store: &Store, view: &View) -> u64 {
+    let members: Vec<String> = view
+        .members
+        .iter()
+        .map(|m| store.resolve_id(m).to_string())
+        .collect();
+    view_edge_count(store, &members)
+}
+
 // The `split-view` goal a view carries when a count crossed its (possibly bumped)
-// soft threshold. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
-fn over_limit_goal(view_id: &str, view: &View) -> Option<String> {
-    let count = view.members.len() as u64;
-    let name = match view.kind.as_str() {
-        "object" => "instances-per-object-view",
-        k if FLOW_KINDS.contains(&k) => "members-per-flow-view",
-        _ => "members-per-structural-view",
+// soft threshold: the member count for its kind, the edge count on structural and
+// object views, the participant count on sequence and communication views. Mirrors
+// docs/consumers/docsgen.md#diagrams-on-entity-pages.
+fn over_limit_goal(store: &Store, view_id: &str, view: &View) -> Option<String> {
+    let over = |name: &str, count: u64| -> bool {
+        let bump = view.limits.get(name).map(|b| b.value);
+        match crate::limits::threshold(name, bump) {
+            Some((soft, _)) => count > soft,
+            None => false,
+        }
     };
-    let bump = view.limits.get(name).map(|b| b.value);
-    let (soft, _) = crate::limits::threshold(name, bump)?;
-    if count > soft {
+    let members = view.members.len() as u64;
+    let crossed = match view.kind.as_str() {
+        "object" => {
+            over("instances-per-object-view", members)
+                || over("edges-per-view", edge_count(store, view))
+        }
+        k if FLOW_KINDS.contains(&k) => {
+            over("members-per-flow-view", members)
+                || ((k == "sequence" || k == "communication")
+                    && over(
+                        "participants-per-sequence-view",
+                        participants(store, view).len() as u64,
+                    ))
+        }
+        _ => {
+            over("members-per-structural-view", members)
+                || over("edges-per-view", edge_count(store, view))
+        }
+    };
+    if crossed {
         return Some(format!("g:split-view:{}", view_id));
     }
     None
@@ -131,7 +161,7 @@ fn caption(store: &Store, view_id: &str, view: &View) -> String {
         line.push_str(&format!(": {}", links.join(", ")));
     }
     line.push_str(&format!(" · [source]({})", puml));
-    if let Some(goal) = over_limit_goal(view_id, view) {
+    if let Some(goal) = over_limit_goal(store, view_id, view) {
         line.push_str(&format!(" · goal `{}`", goal));
     }
     line
@@ -721,7 +751,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     svg,
                     puml
                 );
-                if let Some(goal) = over_limit_goal(vid, v) {
+                if let Some(goal) = over_limit_goal(store, vid, v) {
                     line.push_str(&format!(" · goal `{}`", goal));
                 }
                 idx.push_str(&line);

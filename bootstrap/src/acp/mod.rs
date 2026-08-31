@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod host;
 pub mod install;
+pub mod plan;
 pub mod policy;
 pub mod proxy;
 pub mod runner;

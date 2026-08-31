@@ -111,10 +111,9 @@ the agent contract, the project block, the goals block, the loaded set. The goal
 block for a `bind` goal carries the contract paragraph from
 [`prompts/bind.md`](./prompts/bind.md) (claim the requirement with `begin_binding`,
 follow the package, record the row, never touch implementation files), the change in
-one line, the gate in one line, and the hints. The last hint is the pointer line from
-[`prompts/bind-pointer.md`](./prompts/bind-pointer.md), `{target}` replaced by the
-requirement id, so a batch of several bind goals names each target exactly once. The
-loaded set holds the requirement in full and its entity as a stub.
+one line, the gate in one line, and the hints. The last hint names the resolving
+calls: `begin_binding`, then `record_binding`. The loaded set holds the requirement
+in full and its entity as a stub.
 
 The binding contract rides the tool reply, not the prompt, because the model must
 interleave jazyk's package with its own file and shell work

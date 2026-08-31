@@ -64,8 +64,11 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "search",
-            description: "Look up entities by name or alias before creating one. Returns up to 8 possible matches; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
-            parameters: obj(json!({"query": {"type": "string"}}), &["query"]),
+            description: "Look up entities by name or alias (kind entity, the default) or views by title (kind view) before creating one. Returns up to 8 possible matches; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
+            parameters: obj(
+                json!({"query": {"type": "string"}, "kind": {"type": "string", "enum": ["entity", "view"]}}),
+                &["query"],
+            ),
         },
         ToolDef {
             name: "read_section",
@@ -308,7 +311,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_generation",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. Next: run_tests to verify.",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
@@ -321,7 +324,8 @@ pub fn catalog() -> Vec<ToolDef> {
                             "cwd": {"type": "string"},
                             "produces": {"type": "array", "items": {"type": "string"}}
                         }}
-                    }}
+                    }},
+                    "choices": {"type": "array", "items": {"type": "object"}}
                 }),
                 &["entity", "factHash", "manifest"],
             ),
@@ -2221,6 +2225,24 @@ impl ToolSession {
     }
 
     fn unknown_entity_error(&self, id: &str) -> ToolError {
+        // A non-entity node id is a wrong-tool call, not a missing entity: say which
+        // tool reads that kind instead of suggesting a create.
+        for (prefix, kind) in [
+            ("req:", "a requirement"),
+            ("view:", "a view; get_view also reads it"),
+            ("diag:", "a diagnostic; diagnostics lists it"),
+            ("sm:", "a state machine"),
+        ] {
+            if id.starts_with(prefix) {
+                return ToolError::new(
+                    "unknown-id",
+                    format!(
+                        "`{}` is {}, not an entity; read it with load({{target}})",
+                        id, kind
+                    ),
+                );
+            }
+        }
         let bare = id.strip_prefix("ent:").unwrap_or(id).replace('-', " ");
         let hits = self.search_all(&bare);
         let hint = if hits.is_empty() {
@@ -2257,6 +2279,79 @@ impl ToolSession {
         hits.extend(self.snapshot.search(query));
         hits.truncate(8);
         hits
+    }
+
+    // Search view titles across the snapshot plus this turn's staged creates. Same
+    // tiering as entity search (exact, then substring, then token overlap); views have
+    // no aliases. Mirrors docs/compiler/tools.md#read-tools.
+    fn search_views(&self, query: &str) -> Vec<(String, String)> {
+        let q = crate::store::normalize(query);
+        let q_tokens: std::collections::BTreeSet<&str> = q.split(' ').collect();
+        let mut scored: Vec<(u32, String, String)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, v) in self
+            .staged_views
+            .iter()
+            .chain(self.snapshot.graph.views.iter())
+        {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let n = crate::store::normalize(&v.title);
+            let tier = if n == q {
+                0
+            } else if n.contains(&q) || q.contains(n.as_str()) {
+                1
+            } else {
+                let n_tokens: std::collections::BTreeSet<&str> = n.split(' ').collect();
+                if q_tokens.intersection(&n_tokens).count() > 0 {
+                    2
+                } else {
+                    continue;
+                }
+            };
+            scored.push((tier, id.clone(), v.title.clone()));
+        }
+        scored.sort();
+        scored
+            .into_iter()
+            .take(8)
+            .map(|(_, id, title)| (id, title))
+            .collect()
+    }
+
+    // A miss is an answer, not a dead end. A bare empty list reads as "ask again";
+    // models loop on it. Say what the graph holds and what to do next.
+    fn search_miss(&self, query: &str) -> Value {
+        let mut known: Vec<String> = self
+            .staged_entities
+            .iter()
+            .map(|(id, e)| format!("{} ({})", id, e.name))
+            .collect();
+        for (id, e) in &self.snapshot.graph.entities {
+            if !self.staged_entities.contains_key(id) {
+                known.push(format!("{} ({})", id, e.name));
+            }
+        }
+        let total = known.len();
+        known.truncate(25);
+        let shown = known.len();
+        json!({
+            "hits": [],
+            "entityCount": total,
+            "entities": known,
+            "next": if total == 0 {
+                format!(
+                    "no match for `{}`: the graph holds no entities yet. Searching again will return this same answer. Create the entity with upsert_entity.",
+                    query
+                )
+            } else {
+                format!(
+                    "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them, or a known entity in your work pack, means the same concept under another name, use its id. Otherwise create the entity with upsert_entity.",
+                    query, shown, total
+                )
+            }
+        })
     }
 
     // Resolve a section argument: either "doc.md#/ref" or a bare "/ref" against the
@@ -2763,6 +2858,29 @@ impl ToolSession {
             }
             "search" => {
                 let query = Self::str_arg(args, "query")?;
+                let kind = Self::opt_str(args, "kind").unwrap_or_else(|| "entity".to_string());
+                if kind != "entity" && kind != "view" {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        format!("unknown search kind `{}`; expected entity or view", kind),
+                    ));
+                }
+                if kind == "view" {
+                    let hits = self.search_views(&query);
+                    if !hits.is_empty() {
+                        // A read's subject joins the loaded set as a stub.
+                        for (id, _) in &hits {
+                            self.loaded.load_stub(&self.snapshot, id);
+                        }
+                        return Ok(json!({
+                            "hits": hits
+                                .iter()
+                                .map(|(id, title)| json!({"id": id, "name": title}))
+                                .collect::<Vec<_>>()
+                        }));
+                    }
+                    return Ok(self.search_miss(&query));
+                }
                 let hits = self.search_all(&query);
                 if !hits.is_empty() {
                     // A read's subject joins the loaded set as a stub.
@@ -2776,37 +2894,7 @@ impl ToolSession {
                             .collect::<Vec<_>>()
                     }));
                 }
-                // A miss is an answer, not a dead end. A bare empty list reads as "ask
-                // again"; models loop on it. Say what the graph holds and what to do next.
-                let mut known: Vec<String> = self
-                    .staged_entities
-                    .iter()
-                    .map(|(id, e)| format!("{} ({})", id, e.name))
-                    .collect();
-                for (id, e) in &self.snapshot.graph.entities {
-                    if !self.staged_entities.contains_key(id) {
-                        known.push(format!("{} ({})", id, e.name));
-                    }
-                }
-                let total = known.len();
-                known.truncate(10);
-                let shown = known.len();
-                Ok(json!({
-                    "hits": [],
-                    "entityCount": total,
-                    "entities": known,
-                    "next": if total == 0 {
-                        format!(
-                            "no match for `{}`: the graph holds no entities yet. Searching again will return this same answer. Create the entity with upsert_entity.",
-                            query
-                        )
-                    } else {
-                        format!(
-                            "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them, or a known entity in your work pack, means the same concept under another name, use its id. Otherwise create the entity with upsert_entity.",
-                            query, shown, total
-                        )
-                    }
-                }))
+                Ok(self.search_miss(&query))
             }
             "read_section" => {
                 let r = Self::str_arg(args, "ref")?;
@@ -3794,14 +3882,30 @@ impl ToolSession {
                         "manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}".into(),
                     ));
                 }
-                crate::gen::mark(
-                    &self.snapshot,
-                    &id,
-                    Some(seen.as_str()),
-                    &args["manifest"],
-                    &gs,
-                )
-                .map_err(|e| ToolError::new("bad-manifest", e))
+                // `choices` rides beside the manifest; fold it in so one validated
+                // set feeds the record and the diagnostics.
+                let mut manifest = args["manifest"].clone();
+                if manifest["choices"].is_null() && args["choices"].is_array() {
+                    manifest["choices"] = args["choices"].clone();
+                }
+                let choices = crate::gen::parse_choices(&self.snapshot, &manifest)
+                    .map_err(|e| ToolError::new("bad-choices", e))?;
+                let reply =
+                    crate::gen::mark(&self.snapshot, &id, Some(seen.as_str()), &manifest, &gs)
+                        .map_err(|e| ToolError::new("bad-manifest", e))?;
+                // Invented choices land as diagnostics through the session path; the
+                // ops also resolve open ones this record omits.
+                // Mirrors docs/consumers/gen.md#invented-choices.
+                let ledger = crate::gen::Ledger::load(&self.snapshot.out);
+                let unattached = ledger
+                    .entities
+                    .get(&crate::gen::slug_of(&id))
+                    .and_then(|e| e.unattached.clone());
+                for op in crate::gen::choice_ops(&self.snapshot, &id, &choices, unattached.as_ref())
+                {
+                    self.stage(op)?;
+                }
+                Ok(reply)
             }
             "binding_tasks" => {
                 let gs = self.gen_settings();
@@ -3885,6 +3989,7 @@ impl ToolSession {
                     &verdict,
                     seen.as_deref(),
                     evidence.as_deref(),
+                    None,
                     &gs,
                 )
                 .map_err(|e| ToolError::new("bad-argument", e))
@@ -5212,6 +5317,40 @@ mod tests {
         // A hit answers under the same key, so the caller reads one shape.
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
+    }
+
+    // kind narrows the search: view matches on title, entity stays the default, and an
+    // unknown kind bounces. Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn search_kind_view_matches_on_title() {
+        let mut t = session();
+        t.snapshot.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public surface".into(),
+                ..Default::default()
+            },
+        );
+        let r = t
+            .dispatch("search", &json!({"query": "public", "kind": "view"}))
+            .unwrap();
+        assert_eq!(r["hits"][0]["id"], "view:class/public");
+        assert_eq!(r["hits"][0]["name"], "Public surface");
+        // The entity default never returns views.
+        let r = t.dispatch("search", &json!({"query": "public"})).unwrap();
+        assert_eq!(r["hits"].as_array().unwrap().len(), 0);
+        // A view miss is the same documented miss body.
+        let r = t
+            .dispatch("search", &json!({"query": "slides", "kind": "view"}))
+            .unwrap();
+        assert_eq!(r["hits"].as_array().unwrap().len(), 0);
+        assert_eq!(r["entityCount"], 1);
+        // An unknown kind bounces.
+        let err = t
+            .dispatch("search", &json!({"query": "x", "kind": "diagram"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-args");
     }
 
     // A section that yielded a statement cannot also state none of them.

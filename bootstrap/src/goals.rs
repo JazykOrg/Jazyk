@@ -2029,22 +2029,33 @@ impl GoalKind for ConformInstance {
 
 // ---- ledger kinds ----
 
-// The latest record on a requirement that explains a ledger disagreement, else the
-// ledger comparison at the current generation.
+// The persisted ledger-stale record on the subject, else the latest record that
+// explains the disagreement, else the ledger comparison at the current generation.
 fn ledger_cause(store: &Store, subject: &str) -> Cause {
     store
         .status
         .changes
         .iter()
-        .filter(|c| {
-            c.subject == subject
-                && matches!(
-                    c.kind.as_str(),
-                    store::CHANGE_REQ_CREATED | store::CHANGE_REQ_REVISED | store::CHANGE_ENTITY
-                )
-        })
+        .filter(|c| c.kind == CHANGE_LEDGER_STALE && c.subject == subject)
         .max_by_key(|c| (c.generation, c.mutation))
         .map(|c| c.cause())
+        .or_else(|| {
+            store
+                .status
+                .changes
+                .iter()
+                .filter(|c| {
+                    c.subject == subject
+                        && matches!(
+                            c.kind.as_str(),
+                            store::CHANGE_REQ_CREATED
+                                | store::CHANGE_REQ_REVISED
+                                | store::CHANGE_ENTITY
+                        )
+                })
+                .max_by_key(|c| (c.generation, c.mutation))
+                .map(|c| c.cause())
+        })
         .unwrap_or(Cause {
             generation: store.status.generation,
             mutation: 0,

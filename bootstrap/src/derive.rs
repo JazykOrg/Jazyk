@@ -102,10 +102,67 @@ pub fn instance_types(store: &Store) -> BTreeMap<String, String> {
 
 // ---- document order ----
 
-// Requirement ids in document order: path, then the source section's position, then
-// id. Requirements with no quote source sort last, by id.
+// Breadth-first document levels from the given root documents over the link graph in
+// the stored sections; unreachable documents come after the reachable ones. With no
+// roots, every document is its own level in path order. The board orders tier 1 with
+// the same computation (board::doc_levels). Mirrors docs/compiler/reconciler.md#link-levels.
+pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usize> {
+    let mut links: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (doc, rec) in &store.docs {
+        let mut targets: Vec<String> = Vec::new();
+        for sec in rec.sections.values() {
+            for l in md::doc_links(&sec.raw, doc) {
+                if store.docs.contains_key(&l) && !targets.contains(&l) {
+                    targets.push(l);
+                }
+            }
+        }
+        links.insert(doc.clone(), targets);
+    }
+    let roots: Vec<String> = roots
+        .iter()
+        .filter(|d| store.docs.contains_key(*d))
+        .cloned()
+        .collect();
+    let mut level_of: BTreeMap<String, usize> = BTreeMap::new();
+    if roots.is_empty() {
+        for (i, d) in store.docs.keys().enumerate() {
+            level_of.insert(d.clone(), i);
+        }
+        return level_of;
+    }
+    let mut frontier = roots.clone();
+    for r in &roots {
+        level_of.insert(r.clone(), 0);
+    }
+    let mut depth = 0;
+    while !frontier.is_empty() {
+        depth += 1;
+        let mut next = Vec::new();
+        for doc in &frontier {
+            for l in links.get(doc).map(|v| v.as_slice()).unwrap_or(&[]) {
+                if !level_of.contains_key(l) {
+                    level_of.insert(l.clone(), depth);
+                    next.push(l.clone());
+                }
+            }
+        }
+        frontier = next;
+    }
+    let max = level_of.values().max().copied().unwrap_or(0);
+    for d in store.docs.keys() {
+        level_of.entry(d.clone()).or_insert(max + 1);
+    }
+    level_of
+}
+
+// Requirement ids in document order: document link level (from the roots the build
+// stamped into the status), then path, then the source section's position, then id.
+// Requirements with no quote source sort last, by id.
+// Mirrors docs/compiler/model/view.md#default-views.
 pub fn document_order(store: &Store) -> Vec<String> {
-    let mut keyed: Vec<((String, usize, String), String)> = store
+    let levels = doc_levels_from(store, &store.status.roots);
+    let mut keyed: Vec<((usize, String, usize, String), String)> = store
         .graph
         .requirements
         .iter()
@@ -118,9 +175,10 @@ pub fn document_order(store: &Store) -> Vec<String> {
                         .and_then(|d| d.sections.get(&s.section))
                         .map(|sec| sec.lines[0])
                         .unwrap_or(usize::MAX);
-                    (s.doc.clone(), line, id.clone())
+                    let level = levels.get(&s.doc).copied().unwrap_or(usize::MAX);
+                    (level, s.doc.clone(), line, id.clone())
                 }
-                None => ("~".to_string(), usize::MAX, id.clone()),
+                None => (usize::MAX, "~".to_string(), usize::MAX, id.clone()),
             };
             (key, id.clone())
         })
@@ -841,6 +899,46 @@ pub fn record_threshold_crossings(store: &mut Store, batch: &mut RecordBatch) {
     }
 }
 
+// The ledger comparison, persisted as ledger-stale change records when the build
+// derives its board: one record per row the ledger and the graph disagree on, the
+// detail refreshed in place, the record cleared when the row agrees again. Bind,
+// generate, and verify goals stand on these records.
+// Mirrors docs/compiler/graph.md#change-records.
+pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
+    let fresh = crate::gen::ledger_stale_records(store, gs);
+    let mut changed = false;
+    let before = store.status.changes.len();
+    store.status.changes.retain(|c| {
+        c.kind != crate::goals::CHANGE_LEDGER_STALE
+            || fresh
+                .iter()
+                .any(|f| f.subject == c.subject && f.detail["goal"] == c.detail["goal"])
+    });
+    changed |= store.status.changes.len() != before;
+    for f in fresh {
+        let pos = store.status.changes.iter().position(|c| {
+            c.kind == crate::goals::CHANGE_LEDGER_STALE
+                && c.subject == f.subject
+                && c.detail["goal"] == f.detail["goal"]
+        });
+        match pos {
+            Some(i) => {
+                if store.status.changes[i].detail != f.detail {
+                    store.status.changes[i].detail = f.detail;
+                    changed = true;
+                }
+            }
+            None => {
+                store.status.changes.push(f);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        store.save_status();
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1163,6 +1261,46 @@ pub(crate) mod tests {
         }
         recompute_state_machines(&mut s);
         assert!(s.graph.state_machines.is_empty());
+    }
+
+    #[test]
+    fn document_order_takes_link_levels_ahead_of_path() {
+        let mut s = Store::default();
+        let a = "# A\n\nalpha\n";
+        let z = "# Z\n\nsee [a](./a.md)\n";
+        for (doc, text) in [("a.md", a), ("z.md", z)] {
+            s.docs.insert(
+                doc.into(),
+                DocRecord {
+                    content_hash: hash_hex(text),
+                    sections: md::parse_sections(text),
+                    coverage: BTreeMap::new(),
+                },
+            );
+        }
+        let req = |doc: &str, section: &str| Requirement {
+            statement: format!("{} states a fact.", doc),
+            source: Some(src(doc, section, "")),
+            ..Default::default()
+        };
+        s.graph
+            .requirements
+            .insert("req:a-1".into(), req("a.md", "/a"));
+        s.graph
+            .requirements
+            .insert("req:z-1".into(), req("z.md", "/z"));
+        // z.md is the stamped root and links a.md: link level orders ahead of path.
+        s.status.roots = vec!["z.md".into()];
+        assert_eq!(
+            document_order(&s),
+            vec!["req:z-1".to_string(), "req:a-1".to_string()]
+        );
+        // No stamped roots: every document is its own level in path order.
+        s.status.roots.clear();
+        assert_eq!(
+            document_order(&s),
+            vec!["req:a-1".to_string(), "req:z-1".to_string()]
+        );
     }
 
     #[test]

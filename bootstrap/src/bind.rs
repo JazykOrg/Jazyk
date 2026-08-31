@@ -64,18 +64,9 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         .first()
         .map(|e| store.resolve_id(e).to_string())
         .unwrap_or_default();
-    let pack = crate::context::assemble(
-        store,
-        &rid,
-        &crate::context::Focus {
-            parents: 1,
-            mentions: 1,
-            requirements: 2,
-        },
-        8_000,
-    )
-    .map(|p| p.pack)
-    .unwrap_or_default();
+    // The goal's loaded set: the requirement in full with its entity as a stub.
+    // Mirrors docs/consumers/bind.md#the-bind-goal.
+    let pack = crate::context::ledger_context(store, &rid);
     // The established test conventions: what the ledger already records, so a second
     // toolchain is never introduced.
     let conventions: Vec<Value> = ledger

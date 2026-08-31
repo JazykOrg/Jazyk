@@ -162,8 +162,9 @@ Three session kinds, all the same protocol:
   the next session, not a parallel one.
 - Chat sessions: created by a user in the [GUI chat pane](./gui.md#chat) or from an
   IDE through the proxy. The agent gets the `chat` toolset: the read tools, the
-  lifecycle tools, the [dual-write tools](#dual-write-tools), `update_diagnostic`,
-  `answer_diagnostic`, and the [project tools](#project-tools). No raw write tools.
+  compilation, binding, generation, and verification lifecycles, the
+  [dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`,
+  and the [project tools](#project-tools). No raw write tools.
 - Follow sessions: read-only mirrors of worker sessions, so a person can watch
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).
@@ -267,10 +268,11 @@ dead agent can hold either way.
 ## Chat sessions
 
 A chat session is an open conversation with the agent about the project. The injected
-`chat` serving carries the read tools, the lifecycle tools, the
-[dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`, and
-the [project tools](#project-tools), and no raw write tools, so "tighten this
-requirement and recompile" is a sentence, not a workflow.
+`chat` serving carries the read tools, the compilation, binding, generation, and
+verification lifecycles, the [dual-write tools](#dual-write-tools),
+`update_diagnostic`, `answer_diagnostic`, and the [project tools](#project-tools),
+and no raw write tools, so "tighten this requirement and recompile" is a sentence,
+not a workflow.
 
 ### Dual-write tools
 
@@ -411,6 +413,8 @@ what setup remains. The catalog:
 | `/status` | The last build: verdict with its counts, graph size, open findings, board counts. |
 | `/board` | The goal board as `jazyk compile` would derive it now: open goals by class and kind, the batches the scheduler would form, blocked goals with their reasons, parked and failed goals. The verdict when the board is empty. |
 | `/preview` | The next session's prompt, exactly as the model would receive it. With a goal or target (`/preview ent:order`), the batch that goal would join. What [`jazyk preview`](../compiler/sessions.md#preview) prints. |
+| `/explain` | Why a goal exists, or what a change to a target would open. With a goal, its change record, cause, readiness, and hints; with a target, the cone of goals a change there would open. What [`jazyk explain`](./cli.md#jazyk-explain) prints. |
+| `/ripple` | Walk a change's cascade through the journal: the generations it led to, the goals each opened, the sessions that resolved them. `--back` walks upstream to the edit that started it. What [`jazyk ripple`](./cli.md#jazyk-ripple) prints. |
 | `/questions` | The [standing questions](#questions-in-chat) on open findings. |
 | `/compile` | Reconcile the graph with the documents: run the board to convergence. |
 | `/generate` | Bind and generate the deliverable. |

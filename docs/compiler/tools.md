@@ -89,8 +89,9 @@ a mutating reply previews the goals the mutation will open
   documents explicitly name a bounded context.
 - `update_entity({id, name?, definition?, add_aliases?, stereotype?, parent?, attributes?})`:
   a rename keeps the id. `attributes` upserts by name; attributes not named stand.
-  `parent` obeys the same gates as on create, and where committed `composition` edges
-  name the entity as the part, `parent` must be one of the wholes they name.
+  `parent` obeys the same gates as on create. No gate compares `parent` with committed
+  `composition` edges: composition consistency is the `containment-mismatch`
+  [check](./compilation.md#checks).
 - `delete_entity({id, reason})`: rejected while any requirement references the entity
   or any entity names it as `parent`; the error lists them. Deleting an entity a view,
   a transition, or a `from` list references is allowed: the commit writes
@@ -156,7 +157,8 @@ a mutating reply previews the goals the mutation will open
   the documents leave open, or `nonconformant-instance` for an instance whose values
   or links its type's statements rule out. Free-form rule names are rejected, so
   findings stay comparable across builds ([rules catalog](./model/diagnostic.md#rules-catalog)).
-  Keys on rule plus subjects: re-reporting the same finding updates it. `prompt`
+  Keys on rule plus subjects (`invented-choice` adds the choice sentence to the key):
+  re-reporting the same finding updates it. `prompt`
   attaches a question with suggested resolutions
   ([prompts](./model/diagnostic.md#prompts)); a `decision` requires one. Its gates: at
   most 4 options, each with a `label` and exactly one of `edit` or `answer`, and an
@@ -424,9 +426,9 @@ sandboxed to the deliverable, when the profile sets
   ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps
   and [prunes rows](../consumers/gen.md#deletion-prunes-the-ledger) whose requirement
   left the graph; the `generate` goal's gate reads the landed record. `choices` lists
-  what the worker had to invent, each `{scope, message, requirements?}`, recorded as
-  [`invented-choice`](../consumers/gen.md#invented-choices) diagnostics graded by
-  scope. A `factHash` that no longer matches the live graph is recorded but leaves the
+  what the worker had to invent, each `{choice, scope, reasoning, requirements?}`,
+  recorded as [`invented-choice`](../consumers/gen.md#invented-choices) diagnostics
+  graded by scope. A `factHash` that no longer matches the live graph is recorded but leaves the
   entity pending, so a graph that moved mid-goal is never masked.
 
 ## Binding tools

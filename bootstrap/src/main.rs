@@ -88,7 +88,7 @@ fn top_usage() -> String {
     s.push_str(
         "  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n",
     );
-    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,graph\n  jazyk monitor [--json] [--once]  print ready and blocked goals as the state changes; --once exits at the first\n  jazyk release [compile|generate]  approve gated goals in manual mode without running anything\n");
+    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,decompile,benchmark,chat,graph\n  jazyk monitor [--json] [--once]  print ready and blocked goals as the state changes; --once exits at the first\n  jazyk release [compile|generate]  approve gated goals in manual mode without running anything\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
     s.push_str("  jazyk benchmark [case...]      grade the configured agent and model\n");
@@ -111,12 +111,17 @@ const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/
 
 fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
-        "init" => "usage: jazyk init [--mcp claude|cursor|vscode|gemini|none]\n\n\
+        "init" => "usage: jazyk init [--mcp claude|cursor|vscode|gemini|none] [--agent NAME] [--acp IDE]\n\n\
              Initialize the current directory as a project root: write a minimal\n\
              jazyk.toml, scaffold docs/ (with a placeholder README.md) and\n\
-             deliverable/, and offer MCP integration for a coding agent. Existing\n\
-             files are merged or left unchanged with a warning, never overwritten.\n\
-             --mcp skips the prompt; a non-interactive stdin skips the MCP step.\n\n\
+             deliverable/, and offer MCP integration, the agent choice, and ACP\n\
+             registration. Existing files are merged or left unchanged with a\n\
+             warning, never overwritten. Each flag skips its prompt; a\n\
+             non-interactive stdin skips or defaults the rest.\n\n\
+             options:\n  \
+             --mcp AGENT    the coding agent whose MCP config gains a jazyk entry (or none)\n  \
+             --agent NAME   the ACP agent that does the AI work (embedded, codex, claude, opencode, none)\n  \
+             --acp IDE      the ACP client to register jazyk with (or none)\n\n\
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
@@ -317,14 +322,18 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              Serve the tool registry over stdio as an MCP server. <toolsets> is a comma\n\
              list of: compile (claim goal batches: goals, begin_goals, done), generate\n\
              (the binding and generation workflows), verify (the verification\n\
-             workflow), decompile (draft docs for unclaimed code), graph (read tools;\n\
-             --write adds raw write tools).\n\n\
+             workflow), decompile (draft docs for unclaimed code), benchmark (the\n\
+             agent under test performs the cases against sandbox stores), chat (the\n\
+             chat serving: reads, lifecycles, dual-write tools, no raw writes),\n\
+             graph (read tools; --write adds raw write tools).\n\n\
              Bridge flags (set by the ACP bridge when it injects a serving into a\n\
              session; not for standalone servings):\n  \
              --ephemeral          the serving belongs to one session\n  \
              --only ID            begin_goals accepts only this batch (or a goal, selecting its batch)\n  \
              --build-token ID     part of the running internal build\n  \
-             --serve-files        add the sandboxed file and command tools\n\n\
+             --packaged           the prompt was already delivered; begin_goals acks instead of repeating it\n  \
+             --serve-files        add the sandboxed file and command tools\n  \
+             --edit-sink PATH     delegate document and settings writes to the spawning process\n\n\
              {}",
             COMMON_OUT
         ),
@@ -332,6 +341,20 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              The embedded ACP agent over stdio: a generic agent over the configured\n\
              LLM endpoint with no jazyk knowledge. The bridge spawns it when the\n\
              `embedded` profile is selected. Not meant to be run by hand."
+            .to_string(),
+        "acp" => "usage: jazyk acp [install --ide <client>]\n\n\
+             Without arguments: the IDE-facing ACP proxy on stdio. An IDE spawns it\n\
+             as its Jazyk agent; it drives the configured downstream agent and adds\n\
+             jazyk in between: tool injection, doc edit delegation, slash commands,\n\
+             build status. Outside a jazyk project it is a transparent passthrough.\n\
+             Not meant to be run by hand.\n\n\
+             jazyk acp install --ide <client> registers Jazyk with an ACP client:\n\
+             zed, jetbrains, vscode, neovim, emacs, obsidian, acpx, marimo. The\n\
+             client may also be given positionally (jazyk acp install zed). A config\n\
+             jazyk writes is merged in place, leaving comments and other agents\n\
+             alone; for the rest, the snippet to paste is printed.\n\n\
+             exit: 0 when the entry was written, was already current, or the snippet\n\
+             was printed, 1 when a file could not be written"
             .to_string(),
         "lsp" => format!(
             "usage: jazyk lsp\n\n\
@@ -498,7 +521,8 @@ fn main() {
         }
         "mcp" => match positional.first().map(|s| s.as_str()) {
             Some(arg) => {
-                // The toolsets served, comma separated: compile, generate, verify, graph.
+                // The toolsets served, comma separated: compile, generate, verify,
+                // decompile, benchmark, chat, graph.
                 let modes: Vec<String> = arg
                     .split(',')
                     .map(|m| m.trim().to_string())
@@ -543,9 +567,10 @@ fn main() {
         "gen" => cli::run_gen(&opts, &positional),
         "test" => cli::run_test(&opts, &positional),
         "decompile" => cli::run_decompile(&opts, &positional),
+        // A pointer only, never the work: docs/frontends/cli.md#jazyk-gen.
         "codegen" | "testgen" => {
             eprintln!("jazyk: `{}` is deprecated; generation is one workflow now, use `jazyk gen` (and `jazyk test` to verify)", cmd);
-            cli::run_gen(&opts, &positional)
+            2
         }
         "docsgen" => {
             let (proj, _llm, out) = cli::resolve(&[], &opts);

@@ -1,1 +1,0 @@
-You are resolving one jazyk `generate` goal through the connected `jazyk` MCP server. Call `begin_generation` with {"entity": "{target}"}. Follow the returned package exactly: write the entity's part of the deliverable and its tests, make the bound tests pass, then `record_generation` with the manifest, then `run_tests`, then `mark_goal_done` for this goal.

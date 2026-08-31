@@ -470,7 +470,7 @@ requirements:
       run: cargo test req_catalog_3_a1b2c3d4    # for llm, jazyk test req:catalog-3
       cwd: .                              # deliverable-relative working dir for run
     hashes:
-      requirement: <full statement hash>  # written only at generation time
+      requirement: <full statement hash>  # written at generation and binding, never by a run
       test: <hash of test artifact bytes>
       files: <hash over the manifest files, sorted, concatenated>
     verdict: none                         # none | pass | fail (last run outcome)
@@ -501,8 +501,9 @@ the files on disk, recomputed at every read. First match wins:
    `runner-failed`, so a broken machine reads as unverified, not as a failing
    deliverable (see [runners](#runners)).
 
-Hashes are written at exactly two moments: generation resolves a goal (all three), and
-a test run completes (`test` and `files` rebaseline, never `requirement`). Every
+Hashes are written at exactly three moments: generation resolves a goal (all three),
+binding records a row (`record_binding` writes all three), and a test run completes
+(`test` and `files` rebaseline, never `requirement`). Every
 staleness flip is a deterministic hash comparison. The model owns three judgments only:
 the test kind, the test itself, and the verdict of an `llm` run.
 
@@ -685,7 +686,9 @@ records through `record_generation` carries every choice it had to invent
 its `scope` (`product`, `behavior`, or `detail`), the model's reasoning, and the
 requirements it fills in when any exist), and the harness files one `invented-choice`
 [diagnostic](../compiler/model/diagnostic.md) per entry, its subjects the entity and
-those requirements, its `reasoning` the model's. The severity follows the scope of the
+those requirements, its `reasoning` the model's. Each choice is its own finding: the
+sticky identity of `invented-choice` includes the choice sentence, so two choices over
+the same subjects never merge. The severity follows the scope of the
 invention:
 
 - `error`: the invention decides what the deliverable or an entity is. A medium no
@@ -733,9 +736,8 @@ The measure lands on the entity's ledger entry (`unattached`), and the message o
 read together. Three words of documentation show up as an enormous remainder; documents
 written near pseudo-code leave almost none. No threshold fires on the remainder by
 itself: it is evidence beside the graded diagnostics, shown as a line in
-[`jazyk status`](../frontends/cli.md#jazyk-status), in the
-[deliverable viewer](../frontends/gui.md#deliverable-viewer), and in the whole-build
-report ([`jazyk ripple`](../frontends/cli.md#jazyk-ripple)).
+[`jazyk status`](../frontends/cli.md#jazyk-status) and returned in the
+`record_generation` reply.
 
 ## Coverage as a graph query
 

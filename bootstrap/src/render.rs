@@ -62,7 +62,13 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
         .spawn()
         .map_err(|e| fail(&e))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(puml.as_bytes()).map_err(|e| fail(&e))?;
+        // A child that dies without reading (or before the write finishes) breaks the
+        // pipe; its exit status below is the story, so the write tolerates that one.
+        if let Err(e) = stdin.write_all(puml.as_bytes()) {
+            if e.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(fail(&e));
+            }
+        }
     }
     let out = child.wait_with_output().map_err(|e| fail(&e))?;
     if !out.status.success() {

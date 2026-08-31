@@ -688,6 +688,13 @@ pub fn seed_verification(
 // One case as a turn on the generic loop: the same codecs the embedded agent runs,
 // dispatching into a ToolSession over the sandbox. What run_turn used to be, scoped
 // to grading. Mirrors docs/benchmark/benchmark.md#runs.
+// How a case turn fell short: the session aborted, or the model marked the batch's
+// goal failed (docs/benchmark/benchmark.md#runs).
+enum TurnFail {
+    Abort(String),
+    GoalFailed(String),
+}
+
 fn run_case_turn(
     llm: &Llm,
     snapshot: Store,
@@ -695,7 +702,7 @@ fn run_case_turn(
     _lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     transcript: Option<&std::path::Path>,
-) -> (Vec<crate::store::Op>, u32, Option<String>) {
+) -> (Vec<crate::store::Op>, u32, Option<TurnFail>) {
     use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
@@ -771,11 +778,16 @@ fn run_case_turn(
         });
     }
     let mut s = session.into_inner();
-    let failed = if s.done.is_some() {
+    // A goal the model marked failed fails its case, done or not: every fixture is
+    // resolvable by design, so the claim measures the model, not the fixture.
+    // Mirrors docs/benchmark/benchmark.md#runs.
+    let failed = if let Some((_, reason)) = s.failed_goals().into_iter().next() {
+        Some(TurnFail::GoalFailed(reason))
+    } else if s.done.is_some() {
         None
     } else {
         match stop {
-            Stop::Error(e) => Some(e),
+            Stop::Error(e) => Some(TurnFail::Abort(e)),
             _ => {
                 // Graph turns land staged work or fail; generation and binding land
                 // in the ledger and the deliverable, so their checks are the judge.
@@ -784,7 +796,9 @@ fn run_case_turn(
                 {
                     None
                 } else {
-                    Some("the turn ended without done and nothing valid was staged".to_string())
+                    Some(TurnFail::Abort(
+                        "the turn ended without done and nothing valid was staged".to_string(),
+                    ))
                 }
             }
         }
@@ -962,22 +976,32 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                     ),
                 );
                 let staged = staged_ops.len();
-                // An aborted turn fails the case with the abort reason. Its checks are
-                // skipped and count as failed: an untouched fixture satisfying a check
-                // is not evidence. Mirrors docs/benchmark/benchmark.md#runs.
-                if let Some(why) = &failed {
-                    fail = Some(format!("turn aborted: {}", why));
-                    aborted = true;
-                    if first_abort.is_none() {
-                        first_abort = Some(why.clone());
+                match &failed {
+                    // An aborted turn fails the case with the abort reason. Its checks
+                    // are skipped and count as failed: an untouched fixture satisfying
+                    // a check is not evidence. Mirrors docs/benchmark/benchmark.md#runs.
+                    Some(TurnFail::Abort(why)) => {
+                        fail = Some(format!("turn aborted: {}", why));
+                        aborted = true;
+                        if first_abort.is_none() {
+                            first_abort = Some(why.clone());
+                        }
                     }
-                } else {
-                    // A native case that silently downgraded mid-turn did not pass natively.
-                    if mode == 1 && llm::tools_mode() == 2 {
-                        fail = Some("endpoint or model rejected native tool calls".into());
+                    // A goal the model marked failed fails the case with the model's
+                    // reason; the checks are skipped and count as failed, as on an
+                    // abort. Mirrors docs/benchmark/benchmark.md#runs.
+                    Some(TurnFail::GoalFailed(reason)) => {
+                        fail = Some(format!("goal marked failed: {}", reason));
+                        aborted = true;
                     }
-                    if staged > 0 {
-                        store.apply(staged_ops, &item.commit(rounds_n, 0));
+                    None => {
+                        // A native case that silently downgraded mid-turn did not pass natively.
+                        if mode == 1 && llm::tools_mode() == 2 {
+                            fail = Some("endpoint or model rejected native tool calls".into());
+                        }
+                        if staged > 0 {
+                            store.apply(staged_ops, &item.commit(rounds_n, 0));
+                        }
                     }
                 }
                 (rounds_n, staged)

@@ -41,14 +41,21 @@ impl BuildReport {
     }
 }
 
-// One deterministic finding: rule, subject, severity, message, and the question the
-// finding carries when its resolution is enumerable.
-pub type Finding = (String, String, String, String, Option<DiagnosticPrompt>);
+// One deterministic finding: rule, subjects, severity, message, and the question the
+// finding carries when its resolution is enumerable. Most checks name one subject;
+// nondeterministic-transition names the pair.
+pub type Finding = (
+    String,
+    Vec<String>,
+    String,
+    String,
+    Option<DiagnosticPrompt>,
+);
 
 fn finding(rule: &str, subject: &str, severity: &str, message: String) -> Finding {
     (
         rule.to_string(),
-        subject.to_string(),
+        vec![subject.to_string()],
         severity.to_string(),
         message,
         None,
@@ -182,7 +189,7 @@ fn drift_checks(store: &Store, proj: &Project) -> Vec<Finding> {
             };
             findings.push((
                 "pinned-fact-drift".to_string(),
-                rid.clone(),
+                vec![rid.clone()],
                 "warning".to_string(),
                 format!(
                     "{} pins `{}`; bound file(s) {} never mention it",
@@ -884,15 +891,10 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     for m in store.graph.state_machines.values() {
         f.extend(machine_checks(m));
     }
-    // Provider check, wherever interface-like entities exist.
+    // Provider check, wherever interface-like entities exist. Interface-like keys on
+    // structure, not the label: something realizes the entity, or the `interface`
+    // stereotype marks it before anything does. Mirrors docs/compiler/model/entity.md#fields.
     for (iface, e) in &store.graph.entities {
-        let interface_like = e
-            .stereotype
-            .as_deref()
-            .is_some_and(|s| s.to_lowercase().contains("interface"));
-        if !interface_like {
-            continue;
-        }
         let contributions: Vec<&Contribution> = store
             .graph
             .relationships
@@ -900,6 +902,18 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             .flat_map(|r| r.contributions.iter())
             .filter(|c| &c.b == iface)
             .collect();
+        let realizers: Vec<&str> = contributions
+            .iter()
+            .filter(|c| c.r#type == "realization")
+            .map(|c| c.a.as_str())
+            .collect();
+        let interface_like = !realizers.is_empty()
+            || e.stereotype
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase().contains("interface"));
+        if !interface_like {
+            continue;
+        }
         let dependents = contributions
             .iter()
             .filter(|c| c.r#type == "dependency")
@@ -907,11 +921,6 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         if dependents == 0 {
             continue;
         }
-        let realizers: Vec<&str> = contributions
-            .iter()
-            .filter(|c| c.r#type == "realization")
-            .map(|c| c.a.as_str())
-            .collect();
         match realizers.len() {
             0 => f.push(finding(
                 "provider-missing",
@@ -1035,10 +1044,12 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
                 (Some(x), Some(y)) => norm(x) == norm(y),
             };
             if overlap && norm(&a.to) != norm(&b.to) {
-                f.push(finding(
-                    "nondeterministic-transition",
-                    &a.requirement,
-                    "warning",
+                // One diagnostic per pair, the two requirements as subjects, so deleting
+                // either one re-triggers rejudge through deletion propagation.
+                f.push((
+                    "nondeterministic-transition".to_string(),
+                    vec![a.requirement.clone(), b.requirement.clone()],
+                    "warning".to_string(),
                     format!(
                         "{} and {} both leave {} on {} with overlapping guards",
                         a.requirement,
@@ -1046,6 +1057,7 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
                         a.from,
                         a.trigger.as_deref().unwrap_or("")
                     ),
+                    None,
                 ));
             }
         }
@@ -1235,7 +1247,7 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
         };
         findings.push((
             "unstable-derivation".to_string(),
-            subject.clone(),
+            vec![subject.clone()],
             "warning".to_string(),
             format!(
                 "`{}` was handed back and forth between {} (g{}: {}) and {} (g{}: {}); both goals are parked until a ruling",
@@ -1381,6 +1393,16 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     store.save_status();
     let (parsed, _links) = parse_all(proj);
     store.sync_docs(&parsed);
+    // Stamp the documents matching the project roots, so commits with no Project at
+    // hand (edits, answers, MCP sessions) order documents by the same link levels.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    store.status.roots = store
+        .docs
+        .keys()
+        .filter(|d| proj.is_root_file(d))
+        .cloned()
+        .collect();
+    store.save_status();
     sweep(&mut store, trace);
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
     // record the compile release so manual mode gates nothing this run asked for.
@@ -1619,17 +1641,16 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             store.record_opened_goals(last_session, opened);
         }
         known = board.open_goals().iter().map(|g| g.id.clone()).collect();
-        trace.event(TraceEvent::SessionDone {
+        // The session already printed its own done line; this is the board after the
+        // commit and the re-derivation, one note per batch.
+        trace.event(TraceEvent::Note {
             label: batch.id.clone(),
-            goals: batch.goals.clone(),
-            staged: applied,
-            rounds: 0,
-            mode: "done".into(),
-            summary: format!(
-                "{} open, {} blocked",
+            text: format!(
+                "board: {} open, {} blocked",
                 board.counts().open,
                 board.counts().blocked
             ),
+            verbose: false,
         });
     }
 
@@ -1691,15 +1712,16 @@ pub fn finalize(
         .filter(|c| c.generation == generation)
         .count();
     let mut wrote = false;
-    for ((rule, rid, _, _, _), best, alternatives, facet) in placement {
+    for ((rule, subjects, _, _, _), best, alternatives, facet) in placement {
         let Some(view) = best else { continue };
+        let Some(rid) = subjects.first().cloned() else {
+            continue;
+        };
         let diagnostic = s
             .graph
             .diagnostics
             .iter()
-            .find(|(_, d)| {
-                d.lifecycle == "open" && d.rule == rule && d.subjects == vec![rid.clone()]
-            })
+            .find(|(_, d)| d.lifecycle == "open" && d.rule == rule && d.subjects == subjects)
             .map(|(id, _)| id.clone());
         let shared: Vec<String> = s
             .graph
@@ -2345,7 +2367,7 @@ mod tests {
         );
         let (rule, subject, sev, msg, prompt) = &f[0];
         assert_eq!(rule, "pinned-fact-drift");
-        assert_eq!(subject, "req:gw-1");
+        assert_eq!(*subject, ["req:gw-1"]);
         assert_eq!(sev, "warning");
         assert!(msg.contains("/var/log/gw.log"), "{}", msg);
         let p = prompt.as_ref().expect("the finding carries its question");
@@ -2365,7 +2387,7 @@ mod tests {
         assert_eq!(hits.len(), 2, "{:?}", hits);
         assert!(hits
             .iter()
-            .all(|(_, subj, sev, _, _)| sev == "warning" && subj != "full.md"));
+            .all(|(_, subj, sev, _, _)| sev == "warning" && *subj != ["full.md"]));
     }
 
     #[test]
@@ -2380,7 +2402,7 @@ mod tests {
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "broken-link");
         assert_eq!(hits.len(), 1, "{:?}", hits);
-        assert_eq!(hits[0].1, "a.md");
+        assert_eq!(hits[0].1, ["a.md"]);
         assert!(hits[0].3.contains("no-such-doc-xyz.md"));
     }
 
@@ -2450,12 +2472,16 @@ mod tests {
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "duplicate-requirement");
         assert_eq!(hits.len(), 2, "{:?}", hits);
-        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:a-1"
-            && sev == "warning"
-            && msg.contains("keep one")));
-        assert!(hits.iter().any(|(_, subj, sev, msg, _)| subj == "req:b-1"
-            && sev == "info"
-            && msg.contains("both kept")));
+        assert!(hits
+            .iter()
+            .any(|(_, subj, sev, msg, _)| subj.iter().any(|s| s == "req:a-1")
+                && sev == "warning"
+                && msg.contains("keep one")));
+        assert!(hits
+            .iter()
+            .any(|(_, subj, sev, msg, _)| subj.iter().any(|s| s == "req:b-1")
+                && sev == "info"
+                && msg.contains("both kept")));
     }
 
     #[test]
@@ -2520,7 +2546,10 @@ mod tests {
         );
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "unjustified-fact");
-        let subjects: Vec<&str> = hits.iter().map(|h| h.1.as_str()).collect();
+        let subjects: Vec<&str> = hits
+            .iter()
+            .flat_map(|h| h.1.iter().map(String::as_str))
+            .collect();
         assert!(subjects.contains(&"req:x-1"), "{:?}", subjects);
         assert!(subjects.contains(&"req:x-2"), "{:?}", subjects);
         assert!(subjects.contains(&"req:x-3"), "{:?}", subjects);
@@ -2564,7 +2593,7 @@ mod tests {
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "unplaced-behavior");
         assert_eq!(hits.len(), 1, "{:?}", hits);
-        assert_eq!(hits[0].1, "req:returns-1");
+        assert_eq!(hits[0].1, ["req:returns-1"]);
         let placement = flow_placement(&s);
         let (_, best, _, facet) = &placement[0];
         assert_eq!(facet, "behavior");
@@ -2592,7 +2621,7 @@ mod tests {
         let f = checks(&s, &Project::default());
         let missing = rules_for(&f, "provider-missing");
         assert_eq!(missing.len(), 1, "{:?}", missing);
-        assert_eq!(missing[0].1, "ent:stock-api");
+        assert_eq!(missing[0].1, ["ent:stock-api"]);
         // Two realizers of the checkout API.
         s.graph.requirements.insert(
             "req:shop-12".into(),
@@ -2617,7 +2646,47 @@ mod tests {
         let f = checks(&s, &Project::default());
         let ambiguous = rules_for(&f, "provider-ambiguous");
         assert_eq!(ambiguous.len(), 1, "{:?}", ambiguous);
-        assert_eq!(ambiguous[0].1, "ent:checkout-api");
+        assert_eq!(ambiguous[0].1, ["ent:checkout-api"]);
+        // Interface-like keys on structure, not the label: with the stereotype gone,
+        // the realizations alone keep the provider check on the entity.
+        s.graph
+            .entities
+            .get_mut("ent:checkout-api")
+            .unwrap()
+            .stereotype = None;
+        let f = checks(&s, &Project::default());
+        let ambiguous = rules_for(&f, "provider-ambiguous");
+        assert_eq!(ambiguous.len(), 1, "{:?}", ambiguous);
+        assert_eq!(ambiguous[0].1, ["ent:checkout-api"]);
+    }
+
+    #[test]
+    fn nondeterministic_transition_names_the_pair_as_subjects() {
+        let m = StateMachine {
+            subject: "ent:order".into(),
+            states: vec!["placed".into(), "paid".into(), "held".into()],
+            initial: Some("placed".into()),
+            transitions: vec![
+                StateTransition {
+                    from: "placed".into(),
+                    to: "paid".into(),
+                    trigger: Some("payment succeeds".into()),
+                    guard: None,
+                    requirement: "req:shop-7".into(),
+                },
+                StateTransition {
+                    from: "placed".into(),
+                    to: "held".into(),
+                    trigger: Some("payment succeeds".into()),
+                    guard: None,
+                    requirement: "req:shop-8".into(),
+                },
+            ],
+        };
+        let f = machine_checks(&m);
+        let hits = rules_for(&f, "nondeterministic-transition");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["req:shop-7", "req:shop-8"]);
     }
 
     #[test]
@@ -2649,7 +2718,7 @@ mod tests {
         let f = checks(&s, &Project::default());
         let hits = rules_for(&f, "nonconformant-instance");
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].1, "ent:ana");
+        assert_eq!(hits[0].1, ["ent:ana"]);
         assert!(
             hits[0].3.contains("shoe size") && hits[0].3.contains("ent:customer"),
             "{}",
@@ -2739,7 +2808,7 @@ mod tests {
         assert_eq!(f.len(), 1, "{:?}", f);
         let (rule, subject, _, msg, prompt) = &f[0];
         assert_eq!(rule, "unstable-derivation");
-        assert_eq!(subject, "ent:order");
+        assert_eq!(*subject, ["ent:order"]);
         assert!(
             msg.contains("pricing statements cohere again")
                 && msg.contains("pricing is the order itself"),

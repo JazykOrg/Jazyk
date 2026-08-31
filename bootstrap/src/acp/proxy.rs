@@ -34,6 +34,11 @@ struct ProxyState {
     routes: Mutex<std::collections::HashMap<String, String>>,
     // Behind a lock because `/model` retunes it without a restart.
     llm: Mutex<crate::llm::Llm>,
+    // True while this proxy runs a build itself: the build's narrated trace owns the
+    // plan, and the board watcher stays quiet. Mirrors docs/frontends/acp.md#plans.
+    building: std::sync::atomic::AtomicBool,
+    // The last plan pushed or recorded, so the watcher republishes only on change.
+    plan_seen: Mutex<String>,
     out: std::path::PathBuf,
 }
 
@@ -89,6 +94,7 @@ impl ProxyState {
         *self.project.lock().unwrap() = Some(crate::project::Project::load(&cwd));
         start_sink(self);
         watch_runs(self);
+        watch_board(self);
         format!(
             "Initialized a jazyk project in {}: jazyk.toml{}{}.\n\
              Describe what you are building in docs/README.md, then run /compile.\n\
@@ -142,6 +148,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         down_loads: Mutex::new(false),
         routes: Mutex::new(std::collections::HashMap::new()),
         llm: Mutex::new(llm),
+        building: std::sync::atomic::AtomicBool::new(false),
+        plan_seen: Mutex::new(String::new()),
         out,
     });
     if state.in_project() {
@@ -158,6 +166,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_cancel = state.clone();
     if state.in_project() {
         watch_runs(&state);
+        watch_board(&state);
     }
 
     let result = futures::executor::block_on(
@@ -552,6 +561,19 @@ fn advertise_commands(st: &Arc<ProxyState>, up: &ConnectionTo<Client>, sid: &str
         sid_of(sid),
         SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
     ));
+    // The pending-work plan rides session start beside the commands, so the chat
+    // surface opens onto what the board already owes.
+    // Mirrors docs/frontends/acp.md#lsp-and-the-proxy.
+    if let Some(proj) = st.project.lock().unwrap().clone() {
+        let plan = crate::acp::plan::pending_plan(&proj, &st.out);
+        *st.plan_seen.lock().unwrap() = crate::acp::plan::fingerprint(&plan);
+        if !plan.entries.is_empty() {
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(sid),
+                SessionUpdate::Plan(plan),
+            ));
+        }
+    }
 }
 
 fn not_initialized() -> agent_client_protocol::Error {
@@ -800,8 +822,16 @@ fn run_command(
         }
         "compile" => {
             say("compiling…\n".into());
-            let trace = narrated_trace(up.clone(), sid.to_string());
+            st.building
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
             let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
+            // The watcher takes the plan back where the build left it: record what
+            // remains without republishing over the finished checklist.
+            *st.plan_seen.lock().unwrap() =
+                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
+            st.building
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             // The verdict carries its counts; the board summary rides beside it.
             let board = crate::board::Board::compute(proj, &st.out);
             format!(
@@ -819,7 +849,7 @@ fn run_command(
                 Ok(r) => r,
                 Err(e) => return format!("agent failed to start: {}", e),
             };
-            let trace = narrated_trace(up.clone(), sid.to_string());
+            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
             let store = crate::store::Store::load(&st.out);
             let gs = crate::gen::GenSettings::resolve(proj);
             let result = if cmd == "generate" {
@@ -827,12 +857,20 @@ fn run_command(
                     Ok(g) => g,
                     Err(e) => return format!("refused: {}", e),
                 };
+                st.building
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 runner.set_build_token(Some(format!("internal-{}", std::process::id())));
                 let _ = crate::bind::run_all(&store, &runner, &gs, &[], &trace);
                 crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {
+                st.building
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 crate::verify::run_all(&store, &runner, &gs, &[], None, false, &trace)
             };
+            *st.plan_seen.lock().unwrap() =
+                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
+            st.building
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             match result {
                 Ok(v) => format!("\ndone: {}", v),
                 Err(e) => format!("\nfailed: {}", e),
@@ -920,7 +958,12 @@ fn result_title(name: &str, output: &str) -> Option<String> {
 // message text, worker reasoning as thought chunks, and each graph tool call as a
 // tool_call row with its result. Ids are namespaced per worker so parallel turns
 // never collide. Mirrors docs/frontends/acp.md#slash-commands.
-fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::session::Trace {
+fn narrated_trace(
+    up: ConnectionTo<Client>,
+    sid: String,
+    proj: crate::project::Project,
+    out: std::path::PathBuf,
+) -> crate::session::Trace {
     use crate::session::TraceEvent;
     use agent_client_protocol::schema::v1::{
         ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
@@ -939,7 +982,13 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::session::Trac
     let send = move |update: SessionUpdate| {
         let _ = up.send_notification(SessionNotification::new(sid_of(&sid), update));
     };
+    // The build's plan, flipped by the same events and republished whole.
+    // Mirrors docs/frontends/acp.md#plans.
+    let plan = Mutex::new(crate::acp::plan::PlanTracker::new(&proj, &out));
     let sink: Arc<dyn Fn(&TraceEvent) + Send + Sync> = Arc::new(move |ev| {
+        if let Some(p) = plan.lock().unwrap().on_event(ev) {
+            send(SessionUpdate::Plan(p));
+        }
         let text_update = |text: String| {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
         };
@@ -1317,6 +1366,63 @@ fn watch_runs(state: &Arc<ProxyState>) {
                     }
                 }
             }
+        }
+    });
+}
+
+// A build in another process moves the board; the proxy pushes the pending-work
+// plan and a session info update into the most recently active jazyk session, and
+// only that one, republishing when the board changes. A cheap signal (the store
+// generation, the control plane's mtime) gates the recompute.
+// Mirrors docs/frontends/acp.md#mirroring-into-ides.
+fn watch_board(state: &Arc<ProxyState>) {
+    let st = state.clone();
+    std::thread::spawn(move || {
+        let mut last_sig: Option<(u64, Option<std::time::SystemTime>)> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if st.building.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
+            let Some(proj) = st.project.lock().unwrap().clone() else {
+                continue;
+            };
+            let Some(sid) = st.last_session.lock().unwrap().clone() else {
+                continue;
+            };
+            let Some(up) = st.up.get() else {
+                continue;
+            };
+            let sig = (
+                crate::store::read_generation(&st.out),
+                std::fs::metadata(st.out.join("control.yaml"))
+                    .ok()
+                    .and_then(|m| m.modified().ok()),
+            );
+            if last_sig.as_ref() == Some(&sig) {
+                continue;
+            }
+            last_sig = Some(sig);
+            let plan = crate::acp::plan::pending_plan(&proj, &st.out);
+            let fp = crate::acp::plan::fingerprint(&plan);
+            {
+                let mut seen = st.plan_seen.lock().unwrap();
+                if *seen == fp {
+                    continue;
+                }
+                *seen = fp;
+            }
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(&sid),
+                SessionUpdate::Plan(plan),
+            ));
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(&sid),
+                SessionUpdate::SessionInfoUpdate(
+                    agent_client_protocol::schema::v1::SessionInfoUpdate::new()
+                        .updated_at(crate::verify::now_iso()),
+                ),
+            ));
         }
     });
 }

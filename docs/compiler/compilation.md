@@ -168,6 +168,10 @@ Every check run journals a `checks` entry under its own generation.
   and shared requirements.
 - `unstable-extraction`: a natural key deleted and recreated across recent builds
   ([flip detection](./reconciler.md#flip-detection)).
+- `duplicate-requirement`, the mechanical part: near-identical statements on one
+  entity, both quote-anchored. The same sentence extracted twice in one section is a
+  warning (keep one); the same fact restated across documents is an info (both kept).
+  Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment.
 - Document quality, prose problems a human can fix, surfaced where the human writes
   ([LSP](../frontends/lsp.md) shows them inline): `section-too-large` (a body over 6000
   chars), `doc-too-large` (over 40 sections), `empty-file` (a matched file with no

@@ -319,9 +319,14 @@ impl McpServer {
         );
         let gated = board.gated.len();
         let counts = board.counts();
+        let store = Store::load(&self.out);
+        // Stale: documents changed but not yet reconciled, visible as open tier 0/1
+        // goals on the derived board (docs/frontends/mcp.md#the-work-loop).
+        let graph_stale = board.open_of(&["place-anchors", "reconcile-section"]) > 0;
         json!({
             "changed": changed,
             "changedDocs": changed_docs,
+            "graphStale": graph_stale,
             "board": {
                 "open": counts.open,
                 "ready": counts.ready,
@@ -334,7 +339,7 @@ impl McpServer {
             "compilationTasks": board.open_of(&graph_kinds),
             "bindingTasks": board.open_of(&["bind"]),
             "generationTasks": board.open_of(&["generate"]),
-            "verificationTasks": board.open_of(&["verify"]),
+            "verificationTasks": crate::verify::pending_counts(&store, &gs),
             "workflow": {"compile": c.compile, "generate": c.generate},
             "gatedTasks": gated,
             "verdict": board.verdict.to_string(),
@@ -741,15 +746,23 @@ impl McpServer {
             }
             let board2 = crate::board::Board::compute(&self.project, &self.out);
             if board2.ready_of(&graph_kinds) == 0 {
-                let generate = board2.open_of(&["generate"]);
-                reply["next"] = if generate == 0 {
+                // The generation rows that became ready ride under `ready`
+                // (docs/frontends/mcp.md#compilation-over-mcp).
+                let generate: Vec<String> = board2
+                    .ready_goals()
+                    .iter()
+                    .filter(|g| g.kind == "generate")
+                    .map(|g| g.target.clone())
+                    .collect();
+                reply["next"] = if generate.is_empty() {
                     json!("compilation done; nothing pending")
                 } else {
                     json!(format!(
                         "compilation done; {} generation goal(s) ready (generation_tasks lists them)",
-                        generate
+                        generate.len()
                     ))
                 };
+                reply["ready"] = json!({"generate": generate});
                 return reply;
             }
             // The checks can surface new work (rare); fall through to name it.
@@ -786,7 +799,9 @@ impl McpServer {
         s.sync_docs(&parsed);
         let mut reply = json!({"committed": true, "batch": o.id, "applied": 0});
         let mut generation = None;
-        if !staged.is_empty() {
+        // A zero-mutation batch with resolutions still commits: the journal is where
+        // a resolution's justification lives (docs/compiler/graph.md#journal).
+        if !staged.is_empty() || !commit.resolved.is_empty() {
             let report = s.apply(staged, &commit);
             generation = Some(report.generation);
             reply["applied"] = json!(report.applied);
@@ -794,6 +809,11 @@ impl McpServer {
             if !report.skipped.is_empty() {
                 reply["skipped"] = json!(report.skipped);
             }
+        }
+        // The counter rides every done reply, mutations or not
+        // (docs/frontends/mcp.md#compilation-over-mcp).
+        if generation.is_none() {
+            reply["generation"] = json!(s.status.generation);
         }
         // A resolution clears the change records its goal stood on, mutations or not.
         if !resolved_ids.is_empty() {
@@ -1031,6 +1051,7 @@ impl McpServer {
         let case = &cases[o.idx];
         // Turn cases face the same done gates a turn does; a rejection keeps the case
         // open, same contract as done on a batch.
+        let mut staged_count = 0usize;
         if case.task_type == "reconcile-doc" || case.task_type.starts_with("review-") {
             let summary = params["arguments"]["summary"]
                 .as_str()
@@ -1042,6 +1063,7 @@ impl McpServer {
                 return v;
             }
             let staged = std::mem::take(&mut o.session.staged);
+            staged_count = staged.len();
             if !staged.is_empty() {
                 o.store.apply(staged, &o.item.commit(o.calls, 0));
             }
@@ -1053,27 +1075,44 @@ impl McpServer {
                 return json!({"error": {"rule": "bad-argument", "message": "finish_case on a verification case needs verdict: pass or fail"}});
             }
             let evidence = params["arguments"]["evidence"].as_str().unwrap_or("");
-            if let Err(e) =
-                crate::verify::mark(&o.store, &case.target, verdict, None, Some(evidence), &o.gs)
-            {
+            if let Err(e) = crate::verify::mark(
+                &o.store,
+                &case.target,
+                verdict,
+                None,
+                Some(evidence),
+                None,
+                &o.gs,
+            ) {
                 b.open = Some(o);
                 return json!({"error": {"rule": "bad-argument", "message": e}});
             }
         }
-        // Grade: the same deterministic checks an endpoint run faces.
-        let staged_count = 0usize;
-        let (mut passed, mut fail): (usize, Option<String>) = (0, None);
-        for (kind, arg) in &case.checks {
-            let verdict = if crate::benchmark::WORKFLOW_CHECKS.contains(&kind.as_str()) {
-                crate::benchmark::eval_workflow_check(kind, arg, &o.store, &o.gs, &case.target)
-            } else {
-                crate::benchmark::eval_check(kind, arg, &o.store, staged_count.max(1))
-            };
-            match verdict {
-                None => passed += 1,
-                Some(why) => {
-                    if fail.is_none() {
-                        fail = Some(format!("{}: {}", kind, why));
+        // Grade: the same deterministic checks an endpoint run faces, over the
+        // session's real staged count. A goal the model marked failed fails the case
+        // with the model's reason; the checks are skipped and count as failed, as on
+        // an abort: an untouched fixture satisfying a check is not evidence.
+        // Mirrors docs/benchmark/benchmark.md#runs.
+        let goal_failed = o
+            .session
+            .failed_goals()
+            .into_iter()
+            .next()
+            .map(|(_, reason)| format!("goal marked failed: {}", reason));
+        let (mut passed, mut fail): (usize, Option<String>) = (0, goal_failed);
+        if fail.is_none() {
+            for (kind, arg) in &case.checks {
+                let verdict = if crate::benchmark::WORKFLOW_CHECKS.contains(&kind.as_str()) {
+                    crate::benchmark::eval_workflow_check(kind, arg, &o.store, &o.gs, &case.target)
+                } else {
+                    crate::benchmark::eval_check(kind, arg, &o.store, staged_count)
+                };
+                match verdict {
+                    None => passed += 1,
+                    Some(why) => {
+                        if fail.is_none() {
+                            fail = Some(format!("{}: {}", kind, why));
+                        }
                     }
                 }
             }

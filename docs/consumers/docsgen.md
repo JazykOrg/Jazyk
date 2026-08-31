@@ -41,10 +41,10 @@ The page, in order:
   entity, its attributes, and its requirements, and the open `invented-choice` prompts
   generation filed on the entity ([invented choices](./gen.md#invented-choices)), which
   propose sentences the same way.
-- `## Goals`: the goals on the board whose target is the entity, one of its requirements,
-  or a view the entity is a member of: the kind, the state (open, blocked with its reason,
-  parked, failed with its reason), and the cause. Blocked goals render on every status
-  surface, and the entity page is one.
+- `## Goals`: the parked and failed goals whose target is the entity, one of its
+  requirements, or a view the entity is a member of: the kind, the state with its
+  reason, and the cause. Open and blocked goals live on the board surfaces; the page
+  shows what a build left behind.
 - `## Open diagnostics`: every open diagnostic whose subjects include the entity or one of
   its requirements, with severity, message, and triage state.
 - `## Mentioned in`: the sections that mention the entity, with the verbatim quotes.
@@ -56,7 +56,8 @@ with each statement pointing back at the exact source sentence.
 
 When the [ledger](./gen.md#the-ledger) holds a row for a requirement, its block carries a
 verification line: the derived status, the test name and kind, the last run time, and the
-evidence. A requirement with no row reads `not generated`. The status derives at render
+evidence. A requirement with no row reads the derived status `missing` (reason
+`not-generated`, [statuses](./gen.md#status-is-derived-never-stored)). The status derives at render
 time ([status is derived](./gen.md#status-is-derived-never-stored)), so the document never
 shows a stored stale flag.
 
@@ -139,11 +140,9 @@ it goes. Docsgen owns the composition, run in the same commit, by these rules:
   nodes (`from`), nearest the fact's first entity on a tie; for a decree, the section of
   the first entity's first mention. A decree that replaced a quoted fact targets the
   fact's former source section, and `old_text` is the former quote, so the accepted
-  sentence overwrites the one it overrules. When the target section carries an open
-  `section-too-large`, or its document an open `doc-too-large`, the proposal targets a
-  new sub-document beside it, named after the entity, with `link_from` naming the parent
-  section that gains a link to it: the docs absorb detail by dividing rather than
-  bloating.
+  sentence overwrites the one it overrules. The target is always an existing section:
+  an oversized section or document keeps its `section-too-large` or `doc-too-large`
+  advice to split, and the proposal follows the section wherever a split moves it.
 - The options. One `edit` option that inserts the sentence at the end of the target
   section (`{doc, section, old_text, new_text}`, `old_text` empty for an insertion), and
   one `answer` option, `retract`. Freeform is accepted: a reply that rewords the sentence
@@ -172,10 +171,12 @@ matches. The compiler never writes a source document without an accepted proposa
 ## Relationships view
 
 The index (`<out>/docsgen/index.md`) lists every entity with a link to its page, then
-embeds the default class views rendered from the graph: one image per scope
-(`view:class/<scope>`), each with the caption line described above, and the default
-component view per system (`view:component/<system-slug>`) beside it where one derives
-([default views](../compiler/model/view.md#default-views)). The images are generated on
+embeds the class views rendered from the graph: one image per scope
+(`view:class/<scope>`), each with the caption line described above, and the component
+view per system (`view:component/<system-slug>`) beside it where one exists, default or
+curated ([default views](../compiler/model/view.md#default-views)). An edit turns a
+default view curated without changing its id, so the index never drops a scope's view
+over an edit. The images are generated on
 every run like everything else here, so they cannot drift from the graph the way a
 hand-drawn architecture diagram drifts from the code. A scope over its member or edge
 limit renders collapsed with the renderer's note and carries a `split-view` goal on the

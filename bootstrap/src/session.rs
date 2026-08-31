@@ -246,8 +246,17 @@ fn render_stderr(ev: &TraceEvent) {
             target,
             count,
             limit,
+            detail,
             ..
-        } => eprintln!("gc burst: {} {} ({} > {})", goal_kind, target, count, limit),
+        } => {
+            // A limit goal prints its crossing; a judgment goal has no threshold to
+            // cross, so its line carries the evidence count instead.
+            if *limit > 0 {
+                eprintln!("gc burst: {} {} ({} > {})", goal_kind, target, count, limit)
+            } else {
+                eprintln!("gc burst: {} {} ({} {})", goal_kind, target, count, detail)
+            }
+        }
         TraceEvent::BatchStart {
             label,
             class,

@@ -640,17 +640,24 @@ mod tests {
         std::fs::remove_dir_all(&project.root).ok();
     }
 
-    // Retracting removes the decree deterministically and resolves the proposal.
+    // Retracting a decree over a formerly quoted requirement restores the prior
+    // value and source from the decree's journal entry and resolves the proposal.
     // Mirrors docs/compiler/goals/ratify.md#retract.
     #[test]
-    fn ratification_retract_removes_the_decree() {
+    fn ratification_retract_restores_the_prior_value() {
         let (project, out, did) = seed_decree("retract");
         let before = Store::load(&out).status.generation;
         let v = answer(&project, &out, &did, Reply::Choice(1), None).unwrap();
         assert_eq!(v["status"], "applied");
         let s = Store::load(&out);
         assert_eq!(s.status.generation, before + 1);
-        assert!(!s.graph.requirements.contains_key("req:pay-1"));
+        let r = &s.graph.requirements["req:pay-1"];
+        assert_eq!(r.statement, "An Order is paid within 30 days.");
+        assert_eq!(
+            r.source.as_ref().unwrap().quote,
+            "An Order is paid within 30 days."
+        );
+        assert!(r.provenance.is_none());
         let d = &s.graph.diagnostics[&did];
         assert_eq!(d.lifecycle, "resolved");
         assert_eq!(d.answer.as_ref().unwrap().status, "applied");
@@ -658,9 +665,104 @@ mod tests {
             .status
             .has_change(crate::store::CHANGE_PROVENANCE_PENDING, "req:pay-1"));
         assert_eq!(journal_kind(&out, before + 1).kind, "ratify");
-        // The document was never touched.
+        // The document was never touched; the restored quote still locates.
         let text = std::fs::read_to_string(project.root.join("docs/pay.md")).unwrap();
         assert!(text.contains("within 30 days"), "{}", text);
+        std::fs::remove_dir_all(&project.root).ok();
+    }
+
+    // A fact created by decree has no prior quote to restore: retracting deletes it.
+    // Mirrors docs/compiler/goals/ratify.md#retract.
+    #[test]
+    fn ratification_retract_deletes_a_decree_created_fact() {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-answer-retract-created-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("docs/pay.md"),
+            "# Pay\n\nAn Order is paid within 30 days.\n",
+        )
+        .unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&out);
+        s.sync_docs(&parsed);
+        let decree = Provenance::Decree {
+            author: "owner".into(),
+            at: "now".into(),
+            note: None,
+        };
+        let proposal = s.ratification_proposal(
+            "req:x-1",
+            "An Order emits a receipt.",
+            &decree,
+            None,
+            &["ent:order".into()],
+            None,
+        );
+        let report = s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:order".into(),
+                    entity: crate::model::Entity {
+                        name: "Order".into(),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "req:x-1".into(),
+                    requirement: crate::model::Requirement {
+                        statement: "An Order emits a receipt.".into(),
+                        entities: vec!["ent:order".into()],
+                        provenance: Some(decree),
+                        ..Default::default()
+                    },
+                },
+                Op::ReportDiagnostic {
+                    id: String::new(),
+                    diagnostic: proposal,
+                },
+            ],
+            &Commit::store("decree"),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let s = Store::load(&out);
+        let rid = s
+            .graph
+            .requirements
+            .keys()
+            .find(|k| k.starts_with("req:x"))
+            .cloned()
+            .unwrap();
+        let did = s
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| d.rule == "ratification-pending")
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        let retract = s.graph.diagnostics[&did]
+            .prompt
+            .as_ref()
+            .unwrap()
+            .options
+            .iter()
+            .position(|o| o.answer.as_deref() == Some("retract"))
+            .unwrap();
+        let v = answer(&project, &out, &did, Reply::Choice(retract), None).unwrap();
+        assert_eq!(v["status"], "applied");
+        let s = Store::load(&out);
+        assert!(!s.graph.requirements.contains_key(&rid));
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
         std::fs::remove_dir_all(&project.root).ok();
     }
 

@@ -49,9 +49,9 @@ one draft per session.
 ## Drafts land in the docs tree
 
 There is no shadow tree and no second pipeline. `submit_draft` validates the draft
-(the lint rules, extractable statements, evidence anchors present) and writes it as a
-normal file under the docs glob. The compiler picks it up like any hand-written
-document: sections, dirty set, `reconcile-section` sessions, the graph.
+(one H1, no em dash, a path the docs glob includes) and writes it as a normal file
+under the docs glob. The compiler picks it up like any hand-written document:
+sections, dirty set, `reconcile-section` sessions, the graph.
 
 The out directory records each draft in `decompile/drafts.yaml`: the document path and
 the content hash as submitted. That record is what ratification reads.

@@ -226,10 +226,13 @@ The [limits registry](./graph.md#limits) bounds views: `members-per-structural-v
 `edges-per-view`, `members-per-flow-view`, `participants-per-sequence-view`,
 `instances-per-object-view`. Crossing a limit's soft value derives the
 [`split-view`](./goals/split-view.md) goal as optional; crossing the hard value makes it
-mandatory. A view is over a limit, for rendering, when its count exceeds the hard value,
-or the hard threshold its own bump sets (`limits: {<limit>: n}` on the view, decree
-provenance, [per-node bumps](./graph.md#per-node-bumps)). From there the renderer
-intervenes until the goal resolves. The renderer never truncates silently:
+mandatory. A view is over a limit, for rendering, when its drawn count (the members and
+edges left after the authored collapse) exceeds the hard value, or the hard threshold
+its own bump sets (`limits: {<limit>: n}` on the view, decree provenance,
+[per-node bumps](./graph.md#per-node-bumps)). From there the renderer intervenes until
+the goal resolves. The goal counts the other way: `split-view` derives from the listed
+members ([limits](./graph.md#limits)), so a well-collapsed view can render cleanly while
+the goal stands. The renderer never truncates silently:
 
 - A structural view over a limit renders with auto-collapse: the renderer collapses the
   shown member with the most hidden descendants, then the next, until the view is within

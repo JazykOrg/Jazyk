@@ -480,12 +480,38 @@ pub fn reqs_of_sorted(store: &Store, id: &str) -> Vec<String> {
     v
 }
 
+// The facts generation consumes, folded into one hash: name, definition,
+// stereotype, attributes, and every referencing statement with its edges. Any of
+// them changing flips the entity to generation work.
+// Mirrors docs/consumers/gen.md#the-ledger.
 pub fn fact_hash(store: &Store, id: &str) -> String {
     let e = &store.graph.entities[id];
-    let mut facts = format!("{}|{}|", e.name, e.definition.as_deref().unwrap_or(""));
+    let mut facts = format!(
+        "{}|{}|{}|",
+        e.name,
+        e.definition.as_deref().unwrap_or(""),
+        e.stereotype.as_deref().unwrap_or("")
+    );
+    for a in &e.attributes {
+        facts.push_str(&format!(
+            "{}:{}:{}|",
+            a.name,
+            a.r#type.as_deref().unwrap_or(""),
+            a.value.as_deref().unwrap_or("")
+        ));
+    }
     for rid in reqs_of_sorted(store, id) {
         if let Some(r) = store.graph.requirements.get(&rid) {
             facts.push_str(&r.statement);
+            for edge in &r.edges {
+                facts.push_str(&format!(
+                    "{}>{}:{}:{}",
+                    edge.a,
+                    edge.b,
+                    edge.rel_type.as_deref().unwrap_or(""),
+                    edge.cardinality.as_deref().unwrap_or("")
+                ));
+            }
             facts.push('|');
         }
     }
@@ -793,18 +819,9 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
             )
         })
         .collect();
-    let pack = crate::context::assemble(
-        store,
-        id,
-        &crate::context::Focus {
-            parents: 1,
-            mentions: 1,
-            requirements: 2,
-        },
-        16_000,
-    )
-    .map(|p| p.pack)
-    .unwrap_or_default();
+    // The goal's loaded set: the entity in full with its neighbors as stubs.
+    // Mirrors docs/consumers/gen.md.
+    let pack = crate::context::ledger_context(store, id);
     // The manifest of other tasks' work. A composite deliverable is assembled from parts
     // other entities wrote, so a path alone is not enough: the entry names what the files
     // hold, by the statements the task implemented.
@@ -1520,6 +1537,22 @@ pub fn group_root(store: &Store, id: &str) -> String {
     cur
 }
 
+// The component groups of an ordered target list: one group per root, groups in
+// first-member order, members keeping the leaf-first order they arrived in. A flat
+// graph yields one group per entity.
+// Mirrors docs/consumers/gen.md#grouping-by-component.
+pub fn groups_in_order(store: &Store, ordered: &[String]) -> Vec<(String, Vec<String>)> {
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for id in ordered {
+        let root = group_root(store, id);
+        match groups.iter_mut().find(|(r, _)| *r == root) {
+            Some((_, members)) => members.push(id.clone()),
+            None => groups.push((root, vec![id.clone()])),
+        }
+    }
+    groups
+}
+
 // A group is its root plus every descendant through `parent`, in tree order.
 pub fn group_members(store: &Store, root: &str) -> Vec<String> {
     let mut members = vec![root.to_string()];
@@ -2064,6 +2097,65 @@ mod tests {
         assert!(pos("ent:svc-part") < pos("ent:svc"), "{:?}", order);
         assert!(pos("ent:svc") < pos("ent:sys"), "{:?}", order);
         assert!(pos("ent:other") < pos("ent:sys"), "{:?}", order);
+        // run_all batches by these groups: svc-part rides with its root svc, the
+        // system and the childless direct child are groups of their own.
+        let groups = groups_in_order(&s, &order);
+        let of = |root: &str| {
+            groups
+                .iter()
+                .find(|(r, _)| r == root)
+                .map(|(_, m)| m.clone())
+                .unwrap_or_default()
+        };
+        assert!(of("ent:svc").contains(&"ent:svc".to_string()));
+        assert!(of("ent:svc").contains(&"ent:svc-part".to_string()));
+        assert_eq!(of("ent:sys"), vec!["ent:sys".to_string()]);
+        assert_eq!(of("ent:other"), vec!["ent:other".to_string()]);
+    }
+
+    // The fact hash covers everything the ledger documents: stereotype, attributes,
+    // and a statement's edges flip it, so those changes become generation work.
+    // Mirrors docs/consumers/gen.md#the-ledger.
+    #[test]
+    fn fact_hash_flips_on_stereotype_attributes_and_edges() {
+        let out = std::env::temp_dir().join(format!("jazyk-facthash-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, _gs) = fixture(&out);
+        let h0 = fact_hash(&s, "ent:cart");
+        s.graph.entities.get_mut("ent:cart").unwrap().stereotype = Some("service".into());
+        let h1 = fact_hash(&s, "ent:cart");
+        assert_ne!(h0, h1, "a stereotype change flips the hash");
+        s.graph
+            .entities
+            .get_mut("ent:cart")
+            .unwrap()
+            .attributes
+            .push(Attribute {
+                name: "capacity".into(),
+                r#type: Some("u32".into()),
+                value: None,
+                provenance: Provenance::Quote(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "holds".into(),
+                }),
+            });
+        let h2 = fact_hash(&s, "ent:cart");
+        assert_ne!(h1, h2, "an attribute change flips the hash");
+        s.graph
+            .requirements
+            .get_mut("req:shop-1")
+            .unwrap()
+            .edges
+            .push(ReqEdge {
+                a: "ent:cart".into(),
+                b: "ent:item".into(),
+                rel_type: Some("composition".into()),
+                cardinality: Some("1..*".into()),
+            });
+        let h3 = fact_hash(&s, "ent:cart");
+        assert_ne!(h2, h3, "an edge change flips the hash");
+        std::fs::remove_dir_all(&out).ok();
     }
 
     // One invented-choice diagnostic per manifest entry, graded by the scope of the
@@ -2322,51 +2414,70 @@ pub fn run_all(
         .filter_map(|p| p["entity"].as_str().map(String::from))
         .collect();
     let (mut regenerated, mut skipped, mut failures) = (0u64, 0u64, 0u64);
-    for id in &ordered {
+    // One session per component group: the ready goals of one group run together, so
+    // the parts of one component are written under one set of conventions. A member
+    // whose facts match the ledger is skipped; its files ride the packages as
+    // context (docs/consumers/gen.md#grouping-by-component).
+    for (root, members) in groups_in_order(store, &ordered) {
         if trace.is_cancelled() {
             break;
         }
-        if !force && !pending_set.contains(id) {
-            skipped += 1;
-            trace.event(TraceEvent::GenEntitySkipped {
-                entity: id.clone(),
-                reason: "unchanged".into(),
-            });
+        let mut ready: Vec<String> = Vec::new();
+        for id in &members {
+            if !force && !pending_set.contains(id) {
+                skipped += 1;
+                trace.event(TraceEvent::GenEntitySkipped {
+                    entity: id.clone(),
+                    reason: "unchanged".into(),
+                });
+            } else {
+                ready.push(id.clone());
+            }
+        }
+        if ready.is_empty() {
             continue;
         }
-        trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
-        let task = match task_package(store, id, gs) {
-            Ok(t) => t,
-            Err(e) => {
-                trace.event(TraceEvent::GenEntityFailed {
-                    entity: id.clone(),
-                    stage: "task".into(),
-                    error: e,
-                });
-                failures += 1;
-                continue;
+        for id in &ready {
+            trace.event(TraceEvent::GenEntityStart { entity: id.clone() });
+        }
+        let results: Vec<(String, Result<usize, String>)> = if gs.worker == "pipeline" {
+            // The pipeline worker is a fixed per-entity sequence; the group still
+            // orders it, part before whole.
+            let mut out = Vec::new();
+            for id in &ready {
+                if trace.is_cancelled() {
+                    break;
+                }
+                match task_package(store, id, gs) {
+                    Ok(task) => out.push((id.clone(), gen_one(store, runner, gs, id, &task))),
+                    Err(e) => {
+                        trace.event(TraceEvent::GenEntityFailed {
+                            entity: id.clone(),
+                            stage: "task".into(),
+                            error: e,
+                        });
+                        failures += 1;
+                    }
+                }
             }
-        };
-        let result = if gs.worker == "pipeline" {
-            gen_one(store, runner, gs, id, &task)
+            out
         } else {
-            gen_session(store, runner, gs, id, trace)
+            gen_session(store, runner, gs, &root, &ready, trace)
         };
-        match result {
-            Ok(files) => {
-                trace.event(TraceEvent::GenEntityDone {
-                    entity: id.clone(),
-                    files,
-                });
-                regenerated += 1;
-            }
-            Err(e) => {
-                trace.event(TraceEvent::GenEntityFailed {
-                    entity: id.clone(),
-                    stage: "generate".into(),
-                    error: e,
-                });
-                failures += 1;
+        for (id, result) in results {
+            match result {
+                Ok(files) => {
+                    trace.event(TraceEvent::GenEntityDone { entity: id, files });
+                    regenerated += 1;
+                }
+                Err(e) => {
+                    trace.event(TraceEvent::GenEntityFailed {
+                        entity: id,
+                        stage: "generate".into(),
+                        error: e,
+                    });
+                    failures += 1;
+                }
             }
         }
     }
@@ -2398,46 +2509,73 @@ pub fn run_all(
 // its module and the entry point in a single answer has written both, and folding the
 // second into the first leaves a file that cannot parse.
 // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-// The agentic worker: one entity as a generation session on the harness, with the
-// file and command tools. Success is the ledger's word, never the model's: the
-// session must have left record_generation's mark with current facts and existing
-// files. Mirrors docs/compiler/sessions.md#generation-sessions.
+// The agentic worker: one component group as one generation session on the harness,
+// with the file and command tools. The batch carries one generate goal per ready
+// member, so the parts of one component are written together under one set of
+// conventions (docs/consumers/gen.md#grouping-by-component). Success is the ledger's
+// word, never the model's: the session must have left record_generation's mark with
+// current facts and existing files for each member.
+// Mirrors docs/compiler/sessions.md#generation-sessions.
 fn gen_session(
     store: &Store,
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
-    id: &str,
+    root: &str,
+    ids: &[String],
     trace: &crate::session::Trace,
-) -> Result<usize, String> {
-    let batch = crate::acp::runner::BatchRun::single(crate::model::Goal {
-        id: format!("g:generate:{}", id),
-        kind: "generate".into(),
-        class: "compile".into(),
-        mandatory: true,
-        target: id.to_string(),
-        unit: "entity".into(),
-        change: serde_json::json!({"goal": "generate"}),
-        cause: None,
-        state: crate::model::GoalState::Open,
-        hints: Vec::new(),
-    });
+) -> Vec<(String, Result<usize, String>)> {
+    let goals: Vec<crate::model::Goal> = ids
+        .iter()
+        .map(|id| crate::model::Goal {
+            id: format!("g:generate:{}", id),
+            kind: "generate".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: id.to_string(),
+            unit: "entity".into(),
+            change: serde_json::json!({"goal": "generate"}),
+            cause: None,
+            state: crate::model::GoalState::Open,
+            hints: Vec::new(),
+        })
+        .collect();
+    // The group root labels the session; a group of one keeps its goal id.
+    let batch = crate::acp::runner::BatchRun {
+        id: format!("g:generate:{}", root),
+        goals,
+        executor: None,
+    };
     let report = runner.run_item(&batch, trace);
     if let Some(e) = report.failed {
-        return Err(e);
+        return ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect();
     }
     let ledger = Ledger::load(&store.out);
-    let hash = fact_hash(store, id);
-    match ledger.entities.get(&slug_of(id)) {
-        Some(e) if e.fact_hash == hash && !e.files.is_empty() && e.files.iter().all(|f| gs.deliverable.join(f).exists()) => {
-            Ok(e.files.len())
-        }
-        Some(e) if e.fact_hash != hash => Err(format!(
-            "the session recorded factHash {} but the graph says {}; the goal package carries the current one",
-            e.fact_hash, hash
-        )),
-        Some(_) => Err("the session recorded files that do not exist under the deliverable".into()),
-        None => Err("the session ended without record_generation; nothing landed in the ledger".into()),
-    }
+    ids.iter()
+        .map(|id| {
+            let hash = fact_hash(store, id);
+            let res = match ledger.entities.get(&slug_of(id)) {
+                Some(e)
+                    if e.fact_hash == hash
+                        && !e.files.is_empty()
+                        && e.files.iter().all(|f| gs.deliverable.join(f).exists()) =>
+                {
+                    Ok(e.files.len())
+                }
+                Some(e) if e.fact_hash != hash => Err(format!(
+                    "the session recorded factHash {} but the graph says {}; the goal package carries the current one",
+                    e.fact_hash, hash
+                )),
+                Some(_) => Err(
+                    "the session recorded files that do not exist under the deliverable".into(),
+                ),
+                None => Err(
+                    "the session ended without record_generation; nothing landed in the ledger"
+                        .into(),
+                ),
+            };
+            (id.clone(), res)
+        })
+        .collect()
 }
 
 pub fn parse_file_replies(reply: &str) -> Result<Vec<(String, String)>, String> {
@@ -3256,6 +3394,23 @@ pub fn gen_one(
                 std::fs::remove_file(gs.deliverable.join(f)).ok();
             }
         }
+    }
+    // Both built-in workers file and clear the graded invented-choice diagnostics:
+    // the session path stages them through record_generation, and this pipeline path
+    // commits them here, right after the record they grade.
+    // Mirrors docs/consumers/gen.md#invented-choices.
+    let choices = parse_choices(store, &manifest)?;
+    let unattached = Ledger::load(&store.out)
+        .entities
+        .get(&own_slug)
+        .and_then(|e| e.unattached.clone());
+    let mut ws = Store::load(&store.out);
+    let ops = choice_ops(&ws, id, &choices, unattached.as_ref());
+    if !ops.is_empty() {
+        ws.apply(
+            ops,
+            &crate::store::Commit::session(vec![format!("g:generate:{}", id)], 0, 0),
+        );
     }
     Ok(files.len())
 }

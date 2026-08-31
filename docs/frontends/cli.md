@@ -147,10 +147,10 @@ parked. `gc burst:` lines print as in `compile`. `--verbose` prints the full `co
 trace instead. E.g.:
 
 ```
-opened   g:reconcile-section:docs/orders.md#/orders/holds  section-dirty (edit g87)
-taken    g:reconcile-section:docs/orders.md#/orders/holds  session 1
-resolved g:reconcile-section:docs/orders.md#/orders/holds  g88: req:orders-6 revised (quote, statement, transition guard)
-opened   g:rejudge-pair:req:orders-6~req:payment-9         requirement-revised (g88 via entities)
+opened   g:reconcile-section:docs/orders.md#/orders/holds  (g87 via section-dirty)
+taken    g:reconcile-section:docs/orders.md#/orders/holds  b87-1
+resolved g:reconcile-section:docs/orders.md#/orders/holds  req:orders-6 revised (quote, statement, transition guard)
+opened   g:rejudge-pair:req:orders-6~req:payment-9  (g88 via entities)
 ```
 
 A build that ends `incomplete` (work parked, e.g. by a transient endpoint outage)
@@ -214,13 +214,15 @@ the board:
 
 - the store `version` and the generation counter,
 - the last verdict with its counts,
-- the board counts: open goals by class (compile, GC) and by kind, blocked, parked,
+- the board counts: open goals by class (compile, GC), blocked, parked,
   failed, optional advised. The board is derived from disk the same way `compile`
   derives it, so on a tree with pending edits `status` shows the goals the next build
   will run,
 - [coverage](../compiler/compilation.md#coverage) percentage,
 - open diagnostics by severity,
 - the last build's cost (`costs`: sessions, tokens, the share per goal kind),
+- the [unattached remainder](../consumers/gen.md#the-unattached-remainder): generated
+  mass no requirement claims, summed over the ledger, with the worst entity's ratio,
 - the [unclaimed report](../consumers/bind.md#the-unclaimed-report): deliverable
   files no binding names.
 
@@ -233,19 +235,25 @@ board: 0 open (0 compile, 0 gc), 2 blocked, 0 parked, 0 failed, 1 optional
 coverage: 96% (185 of 193 sections)
 diagnostics: 1 error, 4 warnings
 cost: 41 sessions, 310k tokens (78% reconcile-section)
-unclaimed: 3 files
+unattached: 3 file(s), 120 line(s) (worst cart at 0.32)
+unclaimed: 3 file(s) no binding names (`jazyk decompile` drafts docs for them)
+  - src/cart.rs
+  - src/coupon.rs
+  - src/tax.rs
 ```
 
 ### jazyk preview
 
-`jazyk preview [goal|target]` renders the next session's prompt exactly as the model
-would receive it: the agent contract, the active skills, the project block, the goals
-block for the batch, the loaded set with its handles, and the worker protocol line (see
-[the prompt](../compiler/sessions.md#the-prompt)). With a goal id, it renders the batch
-that goal would join; with a target (a node id, a section reference, a document path),
-the batch of the first ready goal on that target; without an argument, the batch the
-scheduler would claim next. A goal that is not ready yet renders all the same, with a
-`not ready:` line and the readiness reason above the prompt, so its session can be
+`jazyk preview [goal|target|batch]` renders the next session's prompt exactly as the
+model would receive it: the agent contract, the active skills, the project block, the
+goals block for the batch, the loaded set with its handles, and the worker protocol line
+(see [the prompt](../compiler/sessions.md#the-prompt)). With a goal id, it renders the
+batch that goal would join; with a target (a node id, a section reference, a document
+path), the batch of the first ready goal on that target; with a batch id
+(`b<generation>-<n>`, as the [board](../compiler/reconciler.md#batching) lists them),
+that batch's prompt; without an argument, the batch the scheduler would claim next.
+A goal that is not ready yet renders all the same, with a `not ready:` line and the
+readiness reason above the prompt, so its session can be
 inspected before its tier arrives. The rendering is deterministic, so what `preview`
 prints is what the session will spend; it makes no LLM call and writes nothing. The
 [GUI](./gui.md) shows the same pane before a release in `manual` mode
@@ -297,11 +305,12 @@ Exit codes: `0`; `1` when the goal or target is unknown.
 
 ### jazyk ripple
 
-`jazyk ripple <target|generation|doc> [--back]` prints the ripple DAG rooted at a
+`jazyk ripple [target|generation|doc] [--back]` prints the ripple DAG rooted at a
 change: every generation the root led to, the goals each generation opened and the
 sessions that resolved them, each with its cause and its one-line justification. It is
 a rendering over the [journal](../compiler/graph.md#journal); nothing is stored for it.
-The root is required.
+Without a root it walks the last build: the cascade rooted at the generation the build
+opened with, the whole-build report.
 
 - For a target (a node id): the last cascade that touched it, from the human edit at
   its root through the generations that followed.
@@ -335,7 +344,7 @@ session. Parked and failed goals print after the tree with their reasons; a buil
 none says so.
 
 Exit codes: `0`; `1` when the root is unknown (no journal entry touched the target, no
-such generation, no `edit` entry for the document); `2` when the root is missing.
+such generation, no `edit` entry for the document) or the journal is empty.
 
 ### jazyk context
 
@@ -365,9 +374,11 @@ matches, one `{id, name, definition}` line each.
 
 `jazyk gen [entity...]` runs the built-in [generation](../consumers/gen.md) worker over
 the ledger goals: [`bind`](../compiler/goals/bind.md), [`generate`](../compiler/goals/generate.md),
-and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3, gated by the
-generate [release](../compiler/control-plane.md#modes-and-releases), and `jazyk gen` is
-that release. It resolves owed `bind` goals first (search the deliverable, find or write
+and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3. `bind` and
+`generate` are gated by the generate
+[release](../compiler/control-plane.md#modes-and-releases), and `jazyk gen` is that
+release. `verify` is not release-gated (verification writes nothing into the
+deliverable). It resolves owed `bind` goals first (search the deliverable, find or write
 the test per requirement from its `statement`, record the row), then `generate` goals:
 each entity's part of the deliverable in one bounded session, making its
 `unimplemented` bound tests pass, written into the configured
@@ -382,7 +393,8 @@ is decided once per deliverable, before the first session. When that medium must
 built, the run ends by running [the build](../consumers/gen.md#the-build) and says what
 it produced, or what it said when it failed. A choice the documents do not settle is
 recorded as an `invented-choice` diagnostic graded by the scope of the invention.
-`jazyk codegen` and `jazyk testgen` print a pointer to `jazyk gen`.
+`jazyk codegen` and `jazyk testgen` print a pointer to `jazyk gen` and exit `2`
+without running anything.
 
 ### jazyk test
 

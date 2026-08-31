@@ -39,9 +39,12 @@ separated; each adds its tools to the union:
   [change records](../compiler/graph.md#change-records) so the next build derives
   the goals the write opened.
 - `jazyk mcp chat`: the serving for [chat sessions](./acp.md#chat-sessions): read
-  tools, the lifecycle tools, the [dual-write tools](./acp.md#dual-write-tools),
-  `update_diagnostic` and `answer_diagnostic`
-  ([questions in chat](./acp.md#questions-in-chat)), and the
+  tools, the [compilation](../compiler/tools.md#compilation-tools),
+  [binding](../compiler/tools.md#binding-tools),
+  [generation](../compiler/tools.md#generation-tools), and
+  [verification](../compiler/tools.md#verification-tools) lifecycles, the
+  [dual-write tools](./acp.md#dual-write-tools), `update_diagnostic` and
+  `answer_diagnostic` ([questions in chat](./acp.md#questions-in-chat)), and the
   [project tools](./acp.md#project-tools). No raw write tools: a chat edit moves the
   prose and the graph together or not at all.
 
@@ -300,7 +303,9 @@ whole cascade afterward, one line per journal entry.
 ## Transcripts
 
 Every serving leaves a transcript: one JSON-lines file under `<out>/trace`
-(`<ts>-mcp-<client>.jsonl`), one `toolCall`/`toolResult`/`toolError` event per call
+(`<ts>-mcp-cli<pid>.jsonl`; the file opens at server start, before the client
+introduces itself, so the stem carries the process id, not the client name), one
+`toolCall`/`toolResult`/`toolError` event per call
 with condensed payloads, labeled by the open batch's id when one exists (`b412-3`)
 and by the serving otherwise. The same format the compile trace writes
 ([trace events](../compiler/sessions.md#trace-events)), so an MCP session is

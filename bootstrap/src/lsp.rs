@@ -2,7 +2,7 @@
 // graph store and maps nodes to editor positions. It never compiles; rebuilds run
 // through `jazyk compile` or `jazyk watch`, and the store's generation counter tells
 // this server when to reload and republish.
-use crate::context::{self, Focus};
+use crate::context::LoadedSet;
 use crate::jsonrpc::{read_message, write_message};
 use crate::md;
 use crate::model::{Diagnostic, Entity, VIEW_KINDS};
@@ -600,17 +600,18 @@ impl Lsp {
         json!(locs)
     }
 
-    // Hover shows the same rendered pack the compiler and the MCP server see, with a
-    // verification summary from the ledger. Hovering inside a requirement's located
-    // quote shows that requirement's own status.
-    // Mirrors docs/frontends/lsp.md#capabilities.
+    // Hover renders the entity as `load` renders it at depth 1, so the hover matches
+    // what a session and the MCP server see, with a verification summary from the
+    // ledger. Hovering inside a requirement's located quote shows that requirement's
+    // own status. Mirrors docs/frontends/lsp.md#capabilities.
     fn on_hover(&self, params: &Value) -> Value {
         let Some((doc, line, ch)) = self.pos(params) else {
             return Value::Null;
         };
         if let Some((id, _)) = self.entity_at(&doc, line, ch) {
-            let mut value = match context::assemble(&self.store, &id, &Focus::default(), 4000) {
-                Ok(pack) => pack.pack,
+            let mut set = LoadedSet::new(4000);
+            let mut value = match set.load(&self.store, &id, 1) {
+                Ok(text) => text,
                 Err(_) => return Value::Null,
             };
             let vmap = crate::verify::status_map(&self.store, &self.gen);

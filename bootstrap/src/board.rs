@@ -309,57 +309,16 @@ pub fn target_doc(target: &str) -> Option<String> {
 }
 
 // Breadth-first document levels from the roots over the link graph in the stored
-// sections; unreachable documents come after the reachable ones. With no roots, every
-// document is its own level in path order. Mirrors docs/compiler/reconciler.md#link-levels.
+// sections (derive::doc_levels_from does the walk). With no roots, every document is
+// its own level in path order. Mirrors docs/compiler/reconciler.md#link-levels.
 pub fn doc_levels(store: &Store, proj: &Project) -> BTreeMap<String, usize> {
-    let mut links: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (doc, rec) in &store.docs {
-        let mut targets: Vec<String> = Vec::new();
-        for sec in rec.sections.values() {
-            for l in crate::md::doc_links(&sec.raw, doc) {
-                if store.docs.contains_key(&l) && !targets.contains(&l) {
-                    targets.push(l);
-                }
-            }
-        }
-        links.insert(doc.clone(), targets);
-    }
     let roots: Vec<String> = store
         .docs
         .keys()
         .filter(|d| proj.is_root_file(d))
         .cloned()
         .collect();
-    let mut level_of: BTreeMap<String, usize> = BTreeMap::new();
-    if roots.is_empty() {
-        for (i, d) in store.docs.keys().enumerate() {
-            level_of.insert(d.clone(), i);
-        }
-        return level_of;
-    }
-    let mut frontier = roots.clone();
-    for r in &roots {
-        level_of.insert(r.clone(), 0);
-    }
-    let mut depth = 0;
-    while !frontier.is_empty() {
-        depth += 1;
-        let mut next = Vec::new();
-        for doc in &frontier {
-            for l in links.get(doc).map(|v| v.as_slice()).unwrap_or(&[]) {
-                if !level_of.contains_key(l) {
-                    level_of.insert(l.clone(), depth);
-                    next.push(l.clone());
-                }
-            }
-        }
-        frontier = next;
-    }
-    let max = level_of.values().max().copied().unwrap_or(0);
-    for d in store.docs.keys() {
-        level_of.entry(d.clone()).or_insert(max + 1);
-    }
-    level_of
+    crate::derive::doc_levels_from(store, &roots)
 }
 
 // The characters a goal's initially loaded set costs, so a batch fills under the
@@ -1347,7 +1306,9 @@ fn section_order(store: &Store, target: &str) -> usize {
 }
 
 // The keys a goal's locality joins on: its document, its entities, its requirements,
-// its view. The first key labels the locality.
+// its view. The first key labels the locality. Ledger goals join through their
+// entity's component group root, so the ready goals of one component subtree form
+// one batch (docs/consumers/gen.md#grouping-by-component).
 fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
     let mut keys: Vec<String> = Vec::new();
     fn entity_keys_into(store: &Store, keys: &mut Vec<String>, ids: &[String]) {
@@ -1422,10 +1383,11 @@ fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
         }
         "bind" | "verify" => {
             if let Some(e) = g.change["entity"].as_str() {
-                own.push(format!("ent {}", e));
+                let id = store.resolve_id(e).to_string();
+                own.push(format!("ent {}", crate::gen::group_root(store, &id)));
             }
         }
-        "generate" => own.push(format!("ent {}", g.target)),
+        "generate" => own.push(format!("ent {}", crate::gen::group_root(store, &g.target))),
         _ => {}
     }
     drop(entity_keys);
@@ -1770,6 +1732,49 @@ pub(crate) mod tests {
             b.summary_line()
         );
         assert!(b.batches.is_empty());
+    }
+
+    // Ledger goals join through the component group root: the bind, generate, and
+    // verify goals of one component subtree share one locality, so they batch into
+    // one session. Mirrors docs/consumers/gen.md#grouping-by-component.
+    #[test]
+    fn ledger_goals_join_their_component_group() {
+        let mut s = Store::default();
+        for (id, parent) in [
+            ("ent:sys", None),
+            ("ent:svc", Some("ent:sys")),
+            ("ent:svc-part", Some("ent:svc")),
+        ] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    parent: parent.map(String::from),
+                    ..Default::default()
+                },
+            );
+        }
+        let goal = |kind: &str, target: &str, change: Value| Goal {
+            id: format!("g:{}:{}", kind, target),
+            kind: kind.into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: target.into(),
+            unit: "entity".into(),
+            change,
+            cause: None,
+            state: GoalState::Open,
+            hints: Vec::new(),
+        };
+        let gen_part = goal("generate", "ent:svc-part", json!({"goal": "generate"}));
+        let bind_part = goal("bind", "req:shop-9", json!({"entity": "ent:svc-part"}));
+        let verify_svc = goal("verify", "req:shop-9", json!({"entity": "ent:svc"}));
+        assert_eq!(locality_keys(&s, &gen_part)[0], "ent ent:svc");
+        assert_eq!(locality_keys(&s, &bind_part)[0], "ent ent:svc");
+        assert_eq!(locality_keys(&s, &verify_svc)[0], "ent ent:svc");
+        // The system generates alone.
+        let gen_sys = goal("generate", "ent:sys", json!({"goal": "generate"}));
+        assert_eq!(locality_keys(&s, &gen_sys)[0], "ent ent:sys");
     }
 
     #[test]

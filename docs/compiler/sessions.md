@@ -50,7 +50,7 @@ prompt, so it can be shown before it is spent. The parts, in order:
    [`report_feedback`](./tools.md#feedback-tool) and the session continues on best
    judgment; a problem in the documents is a diagnostic, not feedback.
 2. The active skills, each as `[skill: <name> (active)]` followed by its payload.
-3. `## Project`: the build and generation numbers, the workflow mode, the open
+3. `## Project`: the generation number, the workflow mode, the open
    diagnostic counts, and the board counts: goals in this session, goals elsewhere,
    goals blocked on a human.
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
@@ -71,7 +71,7 @@ shortened here; the real ones are the payload files):
 [the judgment skill payload]
 
 ## Project
-- build 12, generation 413, manual mode
+- generation 413, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
 - board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers
 
@@ -419,6 +419,11 @@ a round, `product 1/2` for a generation part).
 
 The event kinds:
 
+- `board`: the board summary, emitted once after the build derives the board, before
+  any batch forms. Carries the open goal count, the count per kind, and the blocked
+  count; the label is `build`. It renders as the summary line
+  [`jazyk compile`](../frontends/cli.md#jazyk-compile) prints first
+  (`compile: 21 goals (9 reconcile-section, ...), 3 blocked`).
 - `batchStart`: the scheduler formed a batch. Carries the batch id, the class and tier,
   the goals with their kinds and targets, and the resolved executor, so a reader sees
   what is about to run before any session starts.

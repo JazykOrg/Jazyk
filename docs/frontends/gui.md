@@ -63,6 +63,9 @@ Project and store reads:
   [verdict](../compiler/compilation.md#convergence) with its counts, the costs) plus
   node counts, the coverage fraction, open diagnostics by severity, and the board
   counts. The same summary as `jazyk status`.
+- `GET /api/overview`: the same summary without the board counts, plus verification
+  counts by [derived status](../consumers/gen.md#status-is-derived-never-stored).
+  The viewer-style rollup, served live.
 - `GET /api/graph`: every shard (entities, requirements, views, relationships, state
   machines, diagnostics, redirects) plus the generation counter.
 - `GET /api/entities/{id}`: the entity, its parent and children, its attributes, the
@@ -231,6 +234,25 @@ Diagnostics:
   [triage state](../compiler/model/diagnostic.md#lifecycle-and-triage)
   (`acknowledged`, `suppressed`, `wontfix`, or null to clear). The write commits
   through the store as a journaled changeset (`kind: triage`).
+- `GET /api/questions`: the standing questions the [questions list](#questions)
+  renders: every open, unsuppressed diagnostic carrying a
+  [prompt](../compiler/model/diagnostic.md#prompts), each with its prompt and any
+  recorded answer.
+- `POST /api/questions/{id}/answer` with `{option}` (an option index) or `{text}`
+  (a freeform reply): answer a prompted diagnostic, the same engine every frontend
+  uses ([answers](../compiler/model/diagnostic.md#answers)). An `edit` option
+  applies and resolves in the reply; any other answer records handling and an
+  [answer session](./acp.md#answer-sessions) acts on it.
+
+Transcripts:
+
+- `GET /api/trace`: past runs from the transcripts on disk under `<out>/trace/`,
+  newest first, capped at 200: each with its stem, its metadata line, its outcome
+  when the run finished (a missing outcome means it died mid-run), and its event
+  count. The [activity panel](#activity)'s run list.
+- `GET /api/trace/{stem}`: one whole transcript: the metadata, the outcome, and
+  every event, elided the same way the live stream is ([jobs](#jobs)). Event `n`
+  with nothing cut is `GET /api/trace/{stem}/{n}` ([jobs](#jobs)).
 
 ## Jobs
 
@@ -327,8 +349,8 @@ journal entries at commit, not from the job, so a build run anywhere moves the b
 One workbench page. Navigation swaps panes, never the page. Six regions:
 
 - The rail: a narrow icon strip on the far left: `files`, `graph`, `board`, `work`,
-  `feedback`, `settings`. A rail item picks what the sidebar shows; it never
-  navigates away.
+  `benchmarks`, `feedback`, `settings`. A rail item picks what the sidebar shows; it
+  never navigates away.
 - The sidebar: the navigator for the active rail item. Clicking an entry opens it in
   the center.
 - The center: the open item. The document editor, the deliverable viewer, the map,
@@ -657,8 +679,8 @@ The pane's behaviors:
   advertises, completed in the prompt box from the advertised list. A command means
   the same thing in both frontends; here a build command runs through the job queue
   and streams its progress into the same session.
-- The [build plan](./acp.md#plans) renders as a live checklist: one entry per goal in
-  the batch, flipping as each resolves, fails, or parks.
+- The [build plan](./acp.md#plans) renders as a live checklist: one entry per goal
+  batch, showing the batch's task and target, flipping as the build advances.
 - Follow mode: a toggle that pins the transcript to the newest update and moves the
   editor along with the work. A tool call carrying a location opens the document or
   deliverable file in the center at that line, so the center shows what the agent is
@@ -676,7 +698,8 @@ API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
 them, `GET /api/chat/sessions/{id}` returns one with its transcript and its loaded
 set, `POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
 event stream), `POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
-`POST /api/chat/permissions/{id}` answers a pending permission request. Updates
+`POST /api/chat/permissions` answers a pending permission request with body
+`{sessionId, id, optionId?}` (a missing `optionId` cancels the request). Updates
 travel as `chat.update` events, elided like `job.trace`; permission requests as
 `chat.permission`; session list changes as `chat.sessions`.
 

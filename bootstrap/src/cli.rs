@@ -1155,6 +1155,31 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         }
         println!("{}", line);
     }
+    // The unattached remainder, summed over the ledger: generated mass no
+    // requirement claims. Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    let ledger = crate::gen::Ledger::load(&out);
+    let measured: Vec<(&String, &crate::gen::Unattached)> = ledger
+        .entities
+        .iter()
+        .filter_map(|(slug, e)| e.unattached.as_ref().map(|u| (slug, u)))
+        .collect();
+    let (ufiles, ulines) = measured
+        .iter()
+        .fold((0u64, 0u64), |(f, l), (_, u)| (f + u.files, l + u.lines));
+    if ufiles > 0 || ulines > 0 {
+        let worst = measured
+            .iter()
+            .max_by(|a, b| {
+                a.1.ratio
+                    .partial_cmp(&b.1.ratio)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .unwrap();
+        println!(
+            "unattached: {} file(s), {} line(s) (worst {} at {:.2})",
+            ufiles, ulines, worst.0, worst.1.ratio
+        );
+    }
     // The unclaimed report: deliverable files no binding names, the decompilation
     // worklist. Mirrors docs/consumers/bind.md#the-unclaimed-report.
     let gs = crate::gen::GenSettings::resolve(&proj);

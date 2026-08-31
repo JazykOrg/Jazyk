@@ -16,7 +16,7 @@ jazyk-out/
   status.yaml            # version, generation, verdict, change records, parked and
                          # failed goals, costs, budgets spent, open diagnostic counts
                          # by severity, pending alignment proposals, anchors marked
-                         # for re-evaluation
+                         # for re-evaluation, stamped root documents
   graph/
     entities.yaml        # map: id -> entity
     requirements.yaml    # map: id -> requirement
@@ -63,10 +63,10 @@ Each document file under `docs/` holds:
 - `verdict`: `{state, open, failed, blocked, optional}`, the last build's
   [convergence](./compilation.md#convergence) with its counts.
 - `changes`: the open [change records](#change-records).
-- `parked`: the goals left open when a budget ran out, each entry the goal id with its
-  `change` payload. `failed`: `{goal, reason, change}` per goal a session marked failed.
-  Both persist by id with the payload, so a parked or failed goal survives a
-  re-derivation that would otherwise drop it. See
+- `parked`: the goals left open when a budget ran out, each entry the whole goal
+  record. `failed`: `{goal, reason}` per goal a session marked failed, `goal` the whole
+  record. Both persist whole, `change` payload included, so a parked or failed goal
+  survives a re-derivation that would otherwise drop it. See
   [parked and failed](./reconciler.md#parked-and-failed).
 - `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
   `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`).
@@ -75,6 +75,10 @@ Each document file under `docs/` holds:
 - `alignment`: pending [alignment proposals](./alignment.md#what-applies-and-what-is-proposed),
   one block per document. `reevaluate`: anchors placed with `reevaluate`, listed as
   stale until addressed.
+- `roots`: the documents matching the project [roots](./project-settings.md#roots),
+  stamped by the build after the section trees sync. Commits outside a build (edits,
+  answers, MCP sessions) read the stamp to order documents by
+  [link level](./reconciler.md#link-levels) when they recompute derived data.
 
 ### Store version
 
@@ -375,8 +379,9 @@ its `change` from exactly one record.
   detail: {fields: [statement, transition]}
 ```
 
-- `id` is `c<generation>-<mutation>`. A record whose `mutation` is `0` names a
-  store-level cause (the sweep, a recompute, a check) rather than a staged mutation.
+- `id` is `c<generation>-<index>`, the record's index within its generation. `mutation`
+  names the journal mutation behind it, `0` for a store-level cause (the sweep, a
+  recompute, a check).
 - `subject` is a node id or a full section reference `doc.md#/ref`. `via` is the stored
   reference or computation that carried the dirtiness (`section`, `entities`, `members`,
   `parent`, `from`, `ledger`, `sweep`, and the rest of the closed list in
@@ -399,7 +404,7 @@ The kinds, who writes them, and the goal each feeds:
 | `entity-changed` | a commit that changes an entity's fact set | `review-entity` |
 | `node-deleted` | a delete or the sweep, one record per live node that still referenced the dead one (`via` names the edge) | `retrace` (a view, an instance, a derived fact); `rejudge-pair` (a surviving diagnostic subject) |
 | `instance-changed` | a commit that changes an instance, its type, or the type's attributes | `conform-instance` |
-| `ledger-stale` | the ledger comparison at commit (unbound, requirement changed, artifact gone) | `bind` |
+| `ledger-stale` | the ledger comparison as the build derives its board (unbound, requirement changed, artifact gone); refreshed in place, cleared when the row agrees again | `bind`, `generate`, `verify` |
 | `prompt-unanswered` | a commit that files a prompt on a diagnostic | `answer` |
 | `provenance-pending` | a commit that lands a derived or decreed fact | `ratify` |
 | `threshold-crossed` | the limit counts at commit | `split-view`, `abstract-entity` |
@@ -480,7 +485,9 @@ harness derives and a session resolves. Both are named `gc` on every surface.
   reconcile is deleted by the store, journaled. An anchor named by a pending
   [alignment proposal](./alignment.md#what-applies-and-what-is-proposed) is exempt until
   the `place-anchors` session decides it.
-- Entity mentions and quoted attributes pointing at removed sections are pruned.
+- An entity mention is pruned when its section is gone or its quote no longer locates
+  in it (a stale mention leaks statements the documents no longer make into later
+  loaded sets). Quoted attributes pointing at removed sections are pruned.
 - An entity with zero mentions, zero requirements, zero attributes, zero children, and no
   derived or decree provenance is deleted, with a tombstone redirect.
 - A deleted requirement takes its edges and its transition with it: relationships and
@@ -537,7 +544,10 @@ A new limit joins the table with both thresholds and the goal that resolves it. 
 machine over its cap opens `abstract-entity` on its subject, because the machine derives
 from the subject's requirements. A violation never truncates a rendering silently: the
 view renders meanwhile with collapse applied to the largest subtrees, marked as such
-([over-limit views](./diagrams.md#over-limit-views)).
+([over-limit views](./diagrams.md#over-limit-views)). The two counts differ on purpose:
+the goal derives from the listed members, the store's truth, while the renderer judges
+the members and edges it draws after collapse, so a well-collapsed view can render
+cleanly while the goal stays open.
 
 ### Per-node bumps
 

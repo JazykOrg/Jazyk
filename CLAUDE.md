@@ -119,8 +119,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `docs/TODO.md` is the live work list.
 - Payloads: `docs/compiler/goals/prompts/` (agent-contract.md, feedback-note.md,
   worker-protocol.md, one contract paragraph per model-executed goal kind, and the
-  generation payloads bind-contract.md, bind-pointer.md, generate-contract.md,
-  generate-pointer.md, decompile-contract.md) and `docs/compiler/skills/` (extraction,
+  generation payloads bind-contract.md, generate-contract.md,
+  decompile-contract.md) and `docs/compiler/skills/` (extraction,
   judgment, flow-views, structural-views, abstraction, conformance). Both are embedded
   into the binary at compile time (`include_str!`), so docs and code share the same
   bytes by construction. Edit the files, never reintroduce string constants in code.

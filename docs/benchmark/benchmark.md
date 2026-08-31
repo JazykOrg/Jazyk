@@ -48,8 +48,10 @@ field. See [cases](./cases.md#case-format).
   stages nothing, and an untouched fixture satisfying a check is not evidence. In
   particular, cases whose expected outcome is zero staged mutations must not pass
   vacuously on a session that never ran.
-- A goal the model marks failed (`mark_goal_failed`) fails its case. Every fixture is
-  resolvable by design, so a failure claim measures the model, not the fixture.
+- A goal the model marks failed (`mark_goal_failed`) fails its case, even when the
+  session finishes with `done`. The model's reason is the fail line. Its checks are
+  skipped and count as failed, as on an abort. Every fixture is resolvable by design,
+  so a failure claim measures the model, not the fixture.
 
 ## Running a subset
 
@@ -253,8 +255,10 @@ goal over a planted ledger row):
 Tool-call fidelity has no dedicated case. Every case exercises it: a model that cannot
 emit valid calls passes nothing.
 
-The case names under `cases/` are fixture file stems (`extract`, `gen-basic`,
-`verify-judge`); `jazyk benchmark [case...]` and `begin_case` take them as written.
+A case name is the `name` field of its `yaml` block, usually the file stem
+(`extract`, `gen-basic`). A file holding a pair adds suffixed names (`review-clean`,
+`verify-judge-pass`, `verify-judge-fail`); `jazyk benchmark [case...]` and
+`begin_case` take every name as written.
 
 ## Deterministic grading
 

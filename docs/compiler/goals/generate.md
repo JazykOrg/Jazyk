@@ -16,7 +16,8 @@ whose `detail.goal` is `generate`, written whenever the entity's facts differ fr
 the [ledger](../../consumers/gen.md#the-ledger):
 
 - `facts-changed`: the entity has a ledger entry whose `factHash` (name, definition,
-  every statement referencing it) differs from the live graph. `detail.changed` lists
+  stereotype, attributes, every referencing statement with its edges) differs from
+  the live graph. `detail.changed` lists
   the requirement ids added, removed, or reworded since the last generation.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
   is `unimplemented` (the test fails and nothing implements it). The bound test is
@@ -117,9 +118,9 @@ The session prompt is [assembled](../sessions.md#the-prompt): the agent contract
 the project block, the goals block, the loaded set. The goal block carries the
 contract paragraph from [`prompts/generate.md`](./prompts/generate.md) (claim the
 entity with `begin_generation`, follow the package, write real files, record, run),
-the change in one line, the gate in one line, and the hints; the last hint is the
-pointer line from [`prompts/generate-pointer.md`](./prompts/generate-pointer.md),
-`{target}` replaced by the entity id. The loaded set holds the entity in full with
+the change in one line, the gate in one line, and the hints; the last hint names
+the resolving calls: `begin_generation`, then `record_generation`, then
+`run_tests`. The loaded set holds the entity in full with
 its requirements, and its parent and children as stubs.
 
 1. `begin_generation({entity})` answers with

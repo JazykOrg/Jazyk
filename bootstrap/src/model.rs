@@ -1047,6 +1047,11 @@ pub struct Status {
     // on their document's reconcile item until that session addresses them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reevaluate: Vec<String>,
+    // The documents matching the project roots, stamped by the build at sync. Commits
+    // outside a build read it to order documents by link level.
+    // Mirrors docs/compiler/graph.md#storage-layout and reconciler.md#link-levels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<String>,
 }
 
 impl Default for Status {
@@ -1063,6 +1068,7 @@ impl Default for Status {
             diagnostics: BTreeMap::new(),
             alignment: Vec::new(),
             reevaluate: Vec::new(),
+            roots: Vec::new(),
         }
     }
 }

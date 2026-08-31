@@ -174,18 +174,9 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
             rid, row.entity
         ));
     }
-    let pack = crate::context::assemble(
-        store,
-        &rid,
-        &crate::context::Focus {
-            parents: 1,
-            mentions: 1,
-            requirements: 2,
-        },
-        8_000,
-    )
-    .map(|p| p.pack)
-    .unwrap_or_default();
+    // The goal's loaded set: the requirement in full with its entity as a stub.
+    // Mirrors docs/consumers/bind.md#the-bind-goal.
+    let pack = crate::context::ledger_context(store, &rid);
     let artifact = artifact_path(&store.out, gs, &row.test);
     let criteria = if row.test.kind == "llm" {
         std::fs::read_to_string(&artifact).unwrap_or_default()
@@ -249,13 +240,18 @@ fn parse_verdict(reply: &str) -> Option<bool> {
 }
 
 // Record a verdict. Rebaselines the test and files hashes, never the requirement hash;
-// a stale factHash is recorded but the row stays pending by derivation.
+// a stale factHash is recorded but the row stays pending by derivation. A programmatic
+// run passes its exit code and the row keeps it beside the output, so a verdict can be
+// read back without rerunning it (docs/consumers/gen.md#runners); a judged llm verdict
+// passes None, so exitCode stays a programmatic-only field. Either way the verdict
+// clears a runner-failed mark: runner-failed derivation keys on verdict `none`.
 pub fn mark(
     store: &Store,
     rid: &str,
     verdict: &str,
     fact_hash_seen: Option<&str>,
     evidence: Option<&str>,
+    exit_code: Option<i32>,
     gs: &GenSettings,
 ) -> Result<Value, String> {
     if verdict != "pass" && verdict != "fail" {
@@ -270,7 +266,7 @@ pub fn mark(
         return Err(format!("no ledger row for `{}`", rid));
     };
     row.verdict = verdict.to_string();
-    row.exit_code = None;
+    row.exit_code = exit_code;
     row.last_run = Some(now_iso());
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
@@ -399,6 +395,8 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     let (mut passed, mut failed) = (0u64, 0u64);
     let mut rows: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
+    // Failed runs, judged together after the loop.
+    let mut held: Vec<(String, ProgRun)> = Vec::new();
     for rid in &selected {
         let Some(row) = ledger.requirements.get(rid) else {
             skipped.push(json!({"requirement": rid, "reason": "no ledger row; generate first"}));
@@ -422,18 +420,54 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             continue;
         }
         match run_programmatic(store, rid, gs) {
-            Ok(r) => {
-                let verdict = if r.pass { "pass" } else { "fail" };
-                mark(store, rid, verdict, None, Some(&r.evidence), gs).ok();
-                if r.pass {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
-                rows.push(json!({"requirement": rid, "verdict": verdict, "exitCode": r.code, "evidence": r.tail}));
+            Ok(r) if r.pass => {
+                mark(
+                    store,
+                    rid,
+                    "pass",
+                    None,
+                    Some(&r.evidence),
+                    Some(r.code),
+                    gs,
+                )
+                .ok();
+                passed += 1;
+                rows.push(json!({"requirement": rid, "verdict": "pass", "exitCode": r.code, "evidence": r.tail}));
             }
+            // A failure waits: whether it is the deliverable's or the machine's is
+            // decided once, when the run knows how the other rows went
+            // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
+            Ok(r) => held.push((rid.clone(), r)),
             Err(e) => skipped.push(json!({"requirement": rid, "reason": e})),
         }
+    }
+    // One broken runner says the same thing to every row it touched; unmet
+    // requirements do not agree with each other. A run that never executed is
+    // recorded as runner-failed, never as a failing requirement.
+    let identical =
+        held.len() > 1 && passed == 0 && held.windows(2).all(|w| w[0].1.tail == w[1].1.tail);
+    let mut runner_failed = 0u64;
+    for (rid, r) in held {
+        if r.runner_failed() || identical {
+            record_runner_failure(store, &rid, r.code, &r.evidence);
+            runner_failed += 1;
+            rows.push(json!({"requirement": rid, "verdict": "none", "reason": "runner-failed", "exitCode": r.code, "evidence": r.tail}));
+            continue;
+        }
+        mark(
+            store,
+            &rid,
+            "fail",
+            None,
+            Some(&r.evidence),
+            Some(r.code),
+            gs,
+        )
+        .ok();
+        failed += 1;
+        rows.push(
+            json!({"requirement": rid, "verdict": "fail", "exitCode": r.code, "evidence": r.tail}),
+        );
     }
     // A failing row whose requirement sits inside an open judged diagnostic (a
     // contradiction, say) may be failing because the documents are wrong, not the
@@ -459,12 +493,15 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     let mut reply = json!({
         "passed": passed,
         "failed": failed,
+        "runnerFailed": runner_failed,
         "rows": rows,
         "skipped": skipped,
         "next": if failed > 0 && !doc_diags.is_empty() {
             "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
         } else if failed > 0 {
             "a failing row names its requirement; fix the deliverable or the test, then run_tests again"
+        } else if runner_failed > 0 {
+            "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
         } else if !skipped.is_empty() {
             "skipped rows say why; llm rows need begin_verification and record_verdict"
         } else {
@@ -798,12 +835,52 @@ mod tests {
         assert_eq!(status, "unverified");
         assert_eq!(reason, "runner-failed");
 
-        // A verdict from a working runner clears the mark.
-        mark(&s, "req:shop-1", "fail", None, Some("assert failed"), &gs).unwrap();
+        // A verdict from a working runner clears the mark and keeps the run's exit
+        // code beside the output (docs/consumers/gen.md#runners).
+        mark(
+            &s,
+            "req:shop-1",
+            "fail",
+            None,
+            Some("assert failed"),
+            Some(1),
+            &gs,
+        )
+        .unwrap();
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
-        assert_eq!(row.exit_code, None);
+        assert_eq!(row.exit_code, Some(1));
         assert_eq!(status_of(&s, "req:shop-1", row, &gs).0, "failing");
+
+        // A judged verdict carries no exit code: the field stays programmatic-only.
+        mark(&s, "req:shop-1", "pass", None, Some("judged"), None, &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        assert_eq!(ledger.requirements["req:shop-1"].exit_code, None);
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // The run_tests path never records a runner failure as a failing requirement:
+    // exit 127 routes through record_runner_failure, the verdict stays none.
+    // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
+    #[test]
+    fn run_selected_routes_runner_failures() {
+        let out = std::env::temp_dir().join(format!("jazyk-runsel-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        {
+            let mut ledger = Ledger::load(&out);
+            ledger.requirements.get_mut("req:shop-1").unwrap().test.run =
+                "jazyk-no-such-runner-xyz".into();
+            ledger.save(&out);
+        }
+        let reply = run_selected(&s, &gs, &[]).unwrap();
+        assert_eq!(reply["failed"], 0, "{}", reply);
+        assert_eq!(reply["runnerFailed"], 1, "{}", reply);
+        let ledger = Ledger::load(&out);
+        let row = &ledger.requirements["req:shop-1"];
+        assert_eq!(row.verdict, "none");
+        assert_eq!(row.exit_code, Some(127));
+        assert_eq!(status_of(&s, "req:shop-1", row, &gs).1, "runner-failed");
         std::fs::remove_dir_all(&out).ok();
     }
 
@@ -820,14 +897,14 @@ mod tests {
         assert_eq!(p[0]["reason"], "never-run");
 
         // A pass verdict rebaselines and verifies.
-        mark(&s, "req:shop-1", "pass", None, Some("ok"), &gs).unwrap();
+        mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
         assert!(pending(&s, &gs, None, None).is_empty());
 
         // Hand-editing an implementing file flips stale-code.
         std::fs::write(gs.deliverable.join("src/cart.rs"), "// edited product").unwrap();
         let p = pending(&s, &gs, None, None);
         assert_eq!(p[0]["status"], "stale-code");
-        mark(&s, "req:shop-1", "pass", None, None, &gs).unwrap();
+        mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
 
         // Editing the test artifact flips stale-test.
         let name = test_name("req:shop-1", "The Cart shall hold items.");
@@ -837,7 +914,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-test");
-        mark(&s, "req:shop-1", "pass", None, None, &gs).unwrap();
+        mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
 
         // Rewording the requirement flips stale-requirement; task refuses; test refuses.
         s.graph
@@ -857,7 +934,7 @@ mod tests {
             .get_mut("req:shop-1")
             .unwrap()
             .statement = "The Cart shall hold items.".into();
-        mark(&s, "req:shop-1", "fail", None, Some("boom"), &gs).unwrap();
+        mark(&s, "req:shop-1", "fail", None, Some("boom"), Some(1), &gs).unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "failing");
 
         // Programmatic run: `true` exits 0.
@@ -870,7 +947,7 @@ mod tests {
         let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", std::process::id()));
         std::fs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
-        mark(&s, "req:shop-1", "pass", None, None, &gs).unwrap();
+        mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
         // Reword the requirement: stale-requirement.
         s.graph
             .requirements
@@ -1033,9 +1110,11 @@ pub fn run_all(
                         Some(trace),
                     ) {
                         Ok(reply) => match parse_verdict(&reply) {
-                            Some(pass) => {
-                                Some((pass, crate::llm::truncate(reply.trim(), 300).to_string()))
-                            }
+                            Some(pass) => Some((
+                                pass,
+                                crate::llm::truncate(reply.trim(), 300).to_string(),
+                                None,
+                            )),
                             None => {
                                 trace.event(TraceEvent::VerifyRowError {
                                     requirement: rid.clone(),
@@ -1064,7 +1143,7 @@ pub fn run_all(
             }
         } else {
             match run_programmatic(store, &rid, gs) {
-                Ok(run) if run.pass => Some((true, run.evidence)),
+                Ok(run) if run.pass => Some((true, run.evidence, Some(run.code))),
                 // A failure waits: whether it is the deliverable's or the machine's is
                 // decided once, when the run knows how the other rows went
                 // (docs/consumers/gen.md#a-test-that-could-not-run-says-nothing).
@@ -1086,9 +1165,9 @@ pub fn run_all(
             }
         };
         match verdict {
-            Some((pass, evidence)) => {
+            Some((pass, evidence, code)) => {
                 let v = if pass { "pass" } else { "fail" };
-                mark(store, &rid, v, None, Some(&evidence), gs).ok();
+                mark(store, &rid, v, None, Some(&evidence), code, gs).ok();
                 trace.event(TraceEvent::VerifyRowDone {
                     requirement: rid.clone(),
                     verdict: v.to_string(),
@@ -1125,7 +1204,16 @@ pub fn run_all(
             });
             continue;
         }
-        mark(store, &rid, "fail", None, Some(&run.evidence), gs).ok();
+        mark(
+            store,
+            &rid,
+            "fail",
+            None,
+            Some(&run.evidence),
+            Some(run.code),
+            gs,
+        )
+        .ok();
         failing += 1;
         trace.event(TraceEvent::VerifyRowDone {
             requirement: rid,

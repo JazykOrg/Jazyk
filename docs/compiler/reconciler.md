@@ -409,8 +409,10 @@ a batch from goals of one class and one tier that resolve to one
   judgment sees the merges and diagnostics of its neighbors. Entities that share
   requirements or relationships form one group.
 - view locality: view goals batch with the goals on the view's members.
-- ledger goals batch per entity: an entity's `bind` goals together, one `generate` per
-  entity, `verify` rows per entity.
+- ledger locality: `bind`, `generate`, and `verify` goals join through their entity's
+  component group root, so the ready goals of one component subtree form one batch
+  ([grouping by component](../consumers/gen.md#grouping-by-component)). A flat graph
+  has no groups, and the ledger goals batch per entity.
 
 The batch fills until the budget says stop. The registry's `pack` computes the batch's
 initially loaded set from the goals' hints under the session context budget (24000
@@ -488,10 +490,11 @@ files `incomplete-build`.
 
 ## Parked and failed
 
-`status.yaml` carries both lists beside the change records: `parked` (goal ids) and
-`failed` (`{goal, reason}`). Both are read at derivation and stamp the goal's `state`.
-Both keep the goal's `change` payload beside the id, so a parked or failed goal survives
-a re-derivation that would otherwise drop it.
+`status.yaml` carries both lists beside the change records: `parked` (whole goal
+records) and `failed` (`{goal, reason}`, `goal` the whole record). Both are read at
+derivation and stamp the goal's `state`. Both keep the goal whole, `change` payload
+included, so a parked or failed goal survives a re-derivation that would otherwise drop
+it.
 
 - Parked means "ran out of road": a session that exhausted its rounds without meeting
   the gate is retried once with a fresh session, then its goals park; a build that hits
@@ -513,19 +516,24 @@ a re-derivation that would otherwise drop it.
 
 ## Flip detection
 
-Oscillation is caught on natural keys, never on ids. The store keeps the recent history
-of every natural key across builds (created, deleted, merged, split, with the generation
-and the goal that caused each):
+Oscillation is caught on natural keys, never on ids. No dedicated key history is
+stored: the journal is the history, and tombstone redirects mark deletions
+([garbage collection](./graph.md#garbage-collection)).
 
-- A natural key deleted and recreated across recent builds, within one class, files
-  `unstable-extraction` ([checks](./compilation.md#checks)).
+- Recreation within one class is caught on tombstoned slugs. A deleted entity leaves a
+  tombstone redirect on its slug, so recreating the natural key mints the new id with a
+  collision suffix. An entity id carrying a collision suffix while a tombstone holds
+  the base slug files `unstable-extraction` ([checks](./compilation.md#checks)).
 - A flip between the classes is a GC commit undoing what a compile commit established on
   a key, or the reverse: `abstract-entity` introduces `ent:order-pricing` with derived
   provenance, `review-entity` merges it back into `ent:order`, `abstract-entity` derives
-  again and re-creates it. Two flips of one natural key between the classes park the
-  pair: both goals move to `parked` and stay there, and one `unstable-derivation`
-  diagnostic is filed on the key's nodes with both justifications side by side (the
-  journal's `resolved_goals` entries for each direction). The diagnostic carries a
+  again and re-creates it. The check replays the journal's `session` entries into a
+  per-key event list: entity creates, deletes, merges, and decree retractions, each
+  stamped with its generation, the class of the session's resolved goal, and that
+  goal's justification from `resolved_goals`. Two flips of one natural key between the
+  classes park the pair: both goals move to `parked` and stay there, and one
+  `unstable-derivation` diagnostic is filed on the key's surviving node with both
+  justifications side by side (the latest from each direction). The diagnostic carries a
   [prompt](./model/diagnostic.md#prompts): keep the split, keep the merge, or a
   freeform ruling. The pair is blocked on that answer; answering it clears the parked
   entries and the next build resumes the chosen direction.

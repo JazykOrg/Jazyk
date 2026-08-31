@@ -95,8 +95,9 @@ and its target and renders the proposal on the subject's page
   the fact: a requirement's `statement`; an entity's name and `definition` as one
   sentence; an attribute as the entity, the attribute, and its type or value.
 - The target. For a derived fact, the section quoted by most of its `from` nodes; for
-  a decree, the first entity's first mention; a document carrying an open
-  `doc-too-large` diagnostic sends the proposal to a new document beside it. A decree
+  a decree, the first entity's first mention; always an existing section (an oversized
+  document keeps its `doc-too-large` advice to split; the proposal never creates a
+  document). A decree
   that replaced a quoted fact keeps the fact's former source section, and the `edit`
   rewrites the former quote (`old_text` is the former quote), so accepted prose never
   stands beside the sentence it overrules.
@@ -130,10 +131,13 @@ statement the human reworded opens `rejudge-pair` and `bind` on it.
 
 ### Retract
 
-Choosing retract deletes the fact with reason `retracted`, journaled as `ratify`, and
-with it the facts derived from it (those whose `from` names it). For a decree this
-undoes the human's edit; for a derived fact it undoes the session's invention. No
-model runs. Quoted requirements that referenced a retracted entity are re-pointed to
+Choosing retract runs `retract_decree` with reason `retracted`, journaled as
+`ratify`. A fact created by decree or derivation is deleted, and with it the facts
+derived from it (those whose `from` names it); a field decreed over a formerly quoted
+fact returns to the prior value and source recorded in the decree's journal entry
+([mutations](../graph.md#mutations)), so its provenance is `quote` again. For a
+decree this undoes the human's edit; for a derived fact it undoes the session's
+invention. No model runs. Quoted requirements that referenced a retracted entity are re-pointed to
 its `parent` in the same changeset, so no quoted fact is orphaned and the parent's
 `review-entity` goal judges the result; an entity with no parent cannot be retracted
 while quoted requirements reference it, and the refusal names them. The deletion's

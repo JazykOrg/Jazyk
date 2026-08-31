@@ -56,19 +56,20 @@ prompt:
 
 - `question`: one sentence, addressed to a person.
 - `options`: up to 4 choices. Each has a `label` and exactly one of:
-  - `edit`: a suggested edit, `{doc, section, old_text, new_text, link_from?}`, the
+  - `edit`: a suggested edit, `{doc, section, old_text, new_text}`, the
     same shape the [dual-write tools](../../frontends/acp.md#dual-write-tools) use.
     `old_text` non-empty: `new_text` overwrites it; `old_text` empty: `new_text` is
-    appended to the end of the section's body. A `doc` that does not exist yet is created with
-    `new_text` as its body, and `link_from: {doc, section}` names the section that
-    gains a relative link to the new document at its end. Choosing an `edit` is
+    appended to the end of the section's body. Choosing an `edit` is
     deterministic: no model runs.
   - `answer`: a prefilled reply. Choosing it hands the reply to the model.
 - `freeform`: whether a typed reply is accepted (handled like an `answer`).
 
 Who writes prompts: [sessions](../sessions.md) (`rejudge-pair`, `review-entity`,
-`abstract-entity`, and chat sessions) attach them through `report_diagnostic` and edit
-them through `update_diagnostic` ([write tools](../tools.md#write-tools)); the
+`abstract-entity`, and chat sessions) attach them through `report_diagnostic`
+([write tools](../tools.md#write-tools)) and maintain them the same way: re-reporting
+the finding is a natural-key upsert and carries the new prompt. `update_diagnostic`
+replaces the question alone; it is served on the chat path and the raw MCP servings
+([toolsets](../tools.md#toolsets)), never in a goal session's toolset. The
 deterministic [checks](../compilation.md#checks) attach them mechanically where the
 resolution is enumerable (`pinned-fact-drift`, `unstable-derivation`); the commit that
 lands a `derived` or `decree` fact attaches the
@@ -78,8 +79,8 @@ change and opens the blocked [`answer` goal](../goals/answer.md), which rides in
 verdict's `blocked` count.
 
 Gates: an `edit` option's `old_text` must locate in its section
-(whitespace-insensitively) when it is non-empty, `link_from` must name an existing
-section, `label` is required, and `edit` and `answer` are mutually exclusive per option.
+(whitespace-insensitively) when it is non-empty, `label` is required, and `edit` and
+`answer` are mutually exclusive per option.
 The `section` takes either reference form: `/ref` or the full `doc.md#/ref` the loaded
 set displays.
 
@@ -142,7 +143,7 @@ answer:
 | coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | [`rejudge-pair`](../goals/rejudge-pair.md), [`review-entity`](../goals/review-entity.md) sessions | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | `review-entity`, [`dedupe-candidates`](../goals/dedupe-candidates.md) sessions | `duplicate-entity` | warning | two entities that look like one concept |
-| `rejudge-pair`, `review-entity` sessions | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
+| `rejudge-pair`, `review-entity` sessions, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
 | `review-entity` sessions | `missing-link` | warning | a concept the documents rely on but never define; a dead file link is `broken-link`'s finding, never this rule's |
 | sessions | `ambiguity` | info, warning, or error | a statement open to more than one reading |
 | sessions, chat | `decision` | info, warning, or error | a choice the documents leave open, the `prompt` carrying the question and its options; unanswered, it opens the blocked `answer` goal |
@@ -227,10 +228,9 @@ The sentence and its target:
 - A new fact targets the section that sources most of its `from` facts (a sub-entity: the
   section that defines its parent; a decree with no upstream: the first mention of its
   first entity), and `old_text` is empty: the sentence is appended to the section's body.
-- When that section is over `section-too-large` or its document over `doc-too-large`, the
-  proposal targets a new sub-document beside the parent: `doc` names the new file,
-  `section` is `/`, and `link_from` names the parent section that gains a link to it, so
-  the part stays reachable from the whole.
+- The target is always an existing section. An oversized section or document keeps its
+  `section-too-large` or `doc-too-large` advice to split; the proposal never creates a
+  document, and it follows the section wherever a split moves it.
 
 The two ways out:
 

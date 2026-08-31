@@ -97,8 +97,8 @@ every relationship among them:
   group draws no arrow; the object view names the instance's type from it.
 - Lifting: when a view hides a descendant, a relationship touching it lifts to the nearest
   shown ancestor. Groups that lift onto the same shown pair and direction collapse to one
-  arrow, drawn in the strongest ranked type among them with a count label
-  (`dependency ×3`). An `instantiation` group never joins a collapse: it keeps its own
+  arrow, drawn in the strongest ranked type among them with an ASCII count label
+  (`: 3 edges`). An `instantiation` group never joins a collapse: it keeps its own
   group and draws no arrow.
 - Collapse: a member listed in the view's `collapse` hides its subtree. The same
   aggregation applies.

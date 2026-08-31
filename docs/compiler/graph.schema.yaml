@@ -663,20 +663,6 @@ definitions:
                   description: Empty when the edit inserts a sentence, as a ratification proposal does
                 new_text:
                   type: string
-                link_from:
-                  description: >-
-                    The section that gains a relative link to the document the edit
-                    creates. Present only when doc does not exist yet
-                  type: object
-                  required:
-                    - doc
-                    - section
-                  properties:
-                    doc:
-                      type: string
-                    section:
-                      type: string
-                  additionalProperties: false
               additionalProperties: false
             answer:
               description: A prefilled reply, handled by the model over ACP
@@ -795,7 +781,7 @@ definitions:
     properties:
       id:
         type: string
-        description: c<generation>-<mutation>
+        description: c<generation>-<index>, the record's index within its generation
         pattern: '^c[0-9]+-[0-9]+$'
       generation:
         type: integer
@@ -859,38 +845,89 @@ definitions:
       cause:
         $ref: '#/definitions/goalCause'
     additionalProperties: false
-  parkedGoal:
+  goalState:
+    description: Where a goal stands
+    oneOf:
+      - type: string
+        enum:
+          - open
+          - parked
+      - type: object
+        required:
+          - blocked
+        properties:
+          blocked:
+            type: object
+            required:
+              - 'on'
+            properties:
+              'on':
+                type: string
+                description: What the goal waits on
+            additionalProperties: false
+        additionalProperties: false
+      - type: object
+        required:
+          - failed
+        properties:
+          failed:
+            type: object
+            required:
+              - reason
+            properties:
+              reason:
+                type: string
+            additionalProperties: false
+        additionalProperties: false
+  goal:
     description: >-
-      A goal left open when a budget ran out, with its change payload so it survives a
-      re-derivation that would otherwise drop it
+      A derived goal, persisted whole in the status.yaml parked and failed lists so a
+      re-derivation keeps it
     type: object
     required:
-      - goal
-      - change
+      - id
+      - kind
+      - target
     properties:
-      goal:
+      id:
         $ref: '#/definitions/goalId'
-      change:
-        type: object
-        description: The goal's change, kind-specific
-    additionalProperties: false
-  failedGoal:
-    description: >-
-      A goal a session marked failed, with the reason and its change payload so it
-      survives a re-derivation that would otherwise drop it
-    type: object
-    required:
-      - goal
-      - reason
-      - change
-    properties:
-      goal:
-        $ref: '#/definitions/goalId'
-      reason:
+      kind:
+        type: string
+      class:
+        type: string
+        enum:
+          - compile
+          - gc
+      mandatory:
+        type: boolean
+      target:
+        type: string
+        description: A node id, a section reference, a document path, or a pair
+      unit:
         type: string
       change:
         type: object
         description: The goal's change, kind-specific
+      cause:
+        $ref: '#/definitions/goalCause'
+      state:
+        $ref: '#/definitions/goalState'
+      hints:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+  failedGoal:
+    description: A goal a session marked failed, whole, with the reason
+    type: object
+    required:
+      - goal
+      - reason
+    properties:
+      goal:
+        $ref: '#/definitions/goal'
+      reason:
+        type: string
     additionalProperties: false
   journalKind:
     description: What kind of changeset the entry records
@@ -1052,13 +1089,13 @@ definitions:
           $ref: '#/definitions/changeRecord'
       parked:
         description: >-
-          Goals left open when a budget ran out, each with its change payload. Resumed
-          first next build
+          Goals left open when a budget ran out, persisted whole. Resumed first next
+          build
         type: array
         items:
-          $ref: '#/definitions/parkedGoal'
+          $ref: '#/definitions/goal'
       failed:
-        description: Goals a session marked failed, each with its reason and change payload
+        description: Goals a session marked failed, each whole with its reason
         type: array
         items:
           $ref: '#/definitions/failedGoal'
@@ -1092,6 +1129,14 @@ definitions:
         description: >-
           Anchors a place-anchors session placed with reevaluate, listed as stale
           anchors until addressed
+        type: array
+        items:
+          type: string
+      roots:
+        description: >-
+          The documents matching the project roots, stamped by the build after the
+          section trees sync. Orders documents by link level on commits outside a
+          build
         type: array
         items:
           type: string

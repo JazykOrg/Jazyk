@@ -67,12 +67,14 @@ the landing; see [deferred cases](./benchmark.md#deferred-cases).
   ([resolving, failing, parking](../compiler/sessions.md#resolving-failing-parking)).
 - Checks run after the session commits. An aborted session fails the case with the
   abort reason; its checks are skipped and count as failed. A goal marked failed fails
-  the case. See [runs](./benchmark.md#runs).
+  the case the same way, with the model's reason. See [runs](./benchmark.md#runs).
 
 ## Index
 
-Case names are the fixture file stems and are used as written by
-`jazyk benchmark [case...]`.
+A case name is the `name` field of its `yaml` block, usually the file stem. A file
+holding a pair adds suffixed names: [review](./cases/review.md) holds `review` and
+`review-clean`, [verify-judge](./cases/verify-judge.md) holds `verify-judge-pass` and
+`verify-judge-fail`. `jazyk benchmark [case...]` takes these names as written.
 
 Extraction tier:
 

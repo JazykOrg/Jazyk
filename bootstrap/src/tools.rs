@@ -1178,6 +1178,9 @@ pub struct ToolSession {
     default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this session's own creates.
     staged_entities: std::collections::BTreeMap<String, Entity>,
+    // The session's own staged findings, by their stage-minted ids: reads see
+    // them, and a re-report answers with the id it updates.
+    staged_diags: std::collections::BTreeMap<String, Diagnostic>,
     staged_reqs: BTreeSet<String>,
     // Staged views (id -> view) so a repeated upsert lands on the staged one and
     // update_view sees this session's own creates.
@@ -1223,6 +1226,7 @@ impl ToolSession {
             mutation_limit,
             default_budget,
             staged_entities: Default::default(),
+            staged_diags: Default::default(),
             staged_reqs: Default::default(),
             staged_views: Default::default(),
             staged_parents: Default::default(),
@@ -1515,8 +1519,8 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-justification",
                 format!(
-                    "the justification is {} sentences; one or two saying why the gate holds, never an essay",
-                    sentences
+                    "the justification for {} is {} sentences; one or two saying why the gate holds, never an essay",
+                    goal, sentences
                 ),
             ));
         }
@@ -3089,11 +3093,15 @@ impl ToolSession {
                     Self::opt_str(args, "lifecycle").unwrap_or_else(|| "open".to_string());
                 let rule = Self::opt_str(args, "rule");
                 let subject = Self::opt_str(args, "subject");
-                let list: Vec<Value> = self
-                    .snapshot
-                    .graph
-                    .diagnostics
-                    .iter()
+                // Read-your-writes: the session's own staged findings ride beside
+                // the snapshot, staged content winning on a shared id.
+                let mut merged: std::collections::BTreeMap<&String, &Diagnostic> =
+                    self.snapshot.graph.diagnostics.iter().collect();
+                for (i, d) in &self.staged_diags {
+                    merged.insert(i, d);
+                }
+                let list: Vec<Value> = merged
+                    .into_iter()
                     .filter(|(_, d)| lifecycle == "all" || d.lifecycle == lifecycle)
                     .filter(|(_, d)| rule.as_deref().is_none_or(|r| d.rule == r))
                     .filter(|(_, d)| subject.as_deref().is_none_or(|s| d.subjects.iter().any(|x| x == s)))
@@ -3842,27 +3850,64 @@ impl ToolSession {
                         "a decision diagnostic carries a prompt: the question and the options the documents leave open (each a label with an edit or an answer)".into(),
                     ));
                 }
+                // Stage-time natural-key resolution, same predicate as the commit
+                // fold: the reply carries the finding's id, and a re-report answers
+                // with the id it will update instead of a bare acknowledgement.
+                let subject_set: BTreeSet<&str> = subjects.iter().map(String::as_str).collect();
+                let same_key = |d: &Diagnostic| {
+                    d.rule == rule
+                        && d.lifecycle == "open"
+                        && d.subjects
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<BTreeSet<&str>>()
+                            == subject_set
+                };
+                let existing = self
+                    .staged_diags
+                    .iter()
+                    .find(|(_, d)| same_key(d))
+                    .map(|(i, _)| i.clone())
+                    .or_else(|| {
+                        self.snapshot
+                            .graph
+                            .diagnostics
+                            .iter()
+                            .find(|(_, d)| same_key(d))
+                            .map(|(i, _)| i.clone())
+                    });
+                let (id, created) = match existing {
+                    Some(i) => (i, false),
+                    None => {
+                        let taken: BTreeSet<String> = self.staged_diags.keys().cloned().collect();
+                        (self.snapshot.mint_diag_id(&rule, &taken), true)
+                    }
+                };
+                let diagnostic = Diagnostic {
+                    rule,
+                    severity,
+                    subjects,
+                    message,
+                    reasoning: Self::opt_str(args, "reasoning"),
+                    lifecycle: "open".to_string(),
+                    triage: None,
+                    prompt,
+                    answer: None,
+                    created: None,
+                    updated: None,
+                };
                 self.stage(Op::ReportDiagnostic {
-                    id: String::new(),
-                    diagnostic: Diagnostic {
-                        rule,
-                        severity,
-                        subjects,
-                        message,
-                        reasoning: Self::opt_str(args, "reasoning"),
-                        lifecycle: "open".to_string(),
-                        triage: None,
-                        prompt,
-                        answer: None,
-                        created: None,
-                        updated: None,
-                    },
+                    id: id.clone(),
+                    diagnostic: diagnostic.clone(),
                 })?;
-                Ok(json!({"reported": true}))
+                self.staged_diags.insert(id.clone(), diagnostic);
+                Ok(json!({"reported": true, "id": id, "created": created}))
             }
             "update_diagnostic" => {
                 let id = Self::str_arg(args, "id")?;
-                if !self.snapshot.graph.diagnostics.contains_key(&id) {
+                if !self.snapshot.graph.diagnostics.contains_key(&id)
+                    && !self.staged_diags.contains_key(&id)
+                {
                     return Err(ToolError::new(
                         "unknown-id",
                         format!("unknown diagnostic id `{}`", id),
@@ -3875,7 +3920,13 @@ impl ToolSession {
             "resolve_diagnostic" => {
                 let id = Self::str_arg(args, "id")?;
                 let reason = Self::str_arg(args, "reason")?;
-                let Some(d) = self.snapshot.graph.diagnostics.get(&id) else {
+                let Some(d) = self
+                    .snapshot
+                    .graph
+                    .diagnostics
+                    .get(&id)
+                    .or_else(|| self.staged_diags.get(&id))
+                else {
                     return Err(ToolError::new(
                         "unknown-id",
                         format!("unknown diagnostic id `{}`", id),
@@ -5211,6 +5262,50 @@ mod tests {
             .dispatch("get_entity", &json!({"id": "ent:customer"}))
             .unwrap();
         assert_eq!(v["definition"], "a person who buys things");
+    }
+
+    #[test]
+    fn report_diagnostic_answers_with_the_id_and_reads_see_it() {
+        // The model's own feedback: a bare {"reported": true} left a just-filed
+        // finding unaddressable. The reply carries the id, a re-report answers
+        // with the id it updates, and the session's reads see staged findings.
+        let mut t = session();
+        let v = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "warning",
+                        "subjects": ["ent:customer"], "message": "Which customer?"}),
+            )
+            .unwrap();
+        let id = v["id"].as_str().expect("an id").to_string();
+        assert!(id.starts_with("diag:ambiguity-"), "{}", id);
+        assert_eq!(v["created"], true);
+        let again = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "info",
+                        "subjects": ["ent:customer"], "message": "Which customer, really?"}),
+            )
+            .unwrap();
+        assert_eq!(again["id"], id.as_str());
+        assert_eq!(again["created"], false);
+        let list = t.dispatch("diagnostics", &json!({})).unwrap();
+        assert!(
+            list["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["id"] == id.as_str()),
+            "{}",
+            list
+        );
+        let r = t
+            .dispatch(
+                "resolve_diagnostic",
+                &json!({"id": id, "reason": "resolved in review"}),
+            )
+            .unwrap();
+        assert_eq!(r["resolved"], true);
     }
 
     #[test]

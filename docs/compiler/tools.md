@@ -164,7 +164,10 @@ a mutating reply previews the goals the mutation will open
   ([prompts](./model/diagnostic.md#prompts)); a `decision` requires one. Its gates: at
   most 4 options, each with a `label` and exactly one of `edit` or `answer`, and an
   `edit`'s `old_text` must locate in its section when non-empty. A diagnostic with an
-  unanswered prompt opens the blocked [`answer`](./goals/answer.md) goal.
+  unanswered prompt opens the blocked [`answer`](./goals/answer.md) goal. The reply
+  carries the finding's `id` (a re-report answers with the id it updates), and the
+  session's own staged findings are visible to `diagnostics`, `update_diagnostic`,
+  and `resolve_diagnostic`.
 - `update_diagnostic({id, prompt})`: replace the prompt on an open diagnostic (pass
   `null` to remove it). The finding itself is edited through `report_diagnostic`'s
   natural-key upsert; this tool only maintains the question. Never touches a human-set

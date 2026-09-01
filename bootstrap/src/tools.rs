@@ -729,6 +729,11 @@ fn parse_edges(
 ) -> Result<Vec<ReqEdge>, ToolError> {
     let mut edges = Vec::new();
     for e in arr {
+        // Empty means absent (docs/compiler/tools.md#validation-and-errors): an
+        // all-empty item is a filled-in blank, not an edge.
+        if !ToolSession::present(e) {
+            continue;
+        }
         let raw_a = e["a"].as_str().unwrap_or_default();
         let raw_b = e["b"].as_str().unwrap_or_default();
         let a = session
@@ -812,6 +817,11 @@ fn parse_facets(v: &Value) -> Result<Vec<Facet>, ToolError> {
     };
     let mut out: Vec<Facet> = Vec::new();
     for f in arr {
+        // Empty means absent (docs/compiler/tools.md#validation-and-errors): an
+        // all-empty item is a filled-in blank, not a facet.
+        if !ToolSession::present(f) {
+            continue;
+        }
         let facet = f["facet"].as_str().unwrap_or_default().trim().to_string();
         if !FACETS.contains(&facet.as_str()) {
             return Err(ToolError::new(
@@ -1602,6 +1612,13 @@ impl ToolSession {
             ));
         }
         let raw = v["subject"].as_str().unwrap_or_default().trim();
+        if raw.is_empty() {
+            return Err(ToolError::new(
+                "bad-transition",
+                "transition.subject is empty; name the subject entity, or omit `transition` entirely"
+                    .into(),
+            ));
+        }
         let Some(subject) = self.canon_entity_id(raw) else {
             let e = self.unknown_entity_error(raw);
             return Err(ToolError::new(
@@ -2930,11 +2947,12 @@ impl ToolSession {
                 let rid = self
                     .canon_entity_id(&id)
                     .ok_or_else(|| self.unknown_entity_error(&id))?;
+                // Staged first, then the snapshot: canon_entity_id resolves the
+                // session's own staged entities, so the lookup sees them too.
                 let e = self
-                    .snapshot
-                    .graph
-                    .entities
+                    .staged_entities
                     .get(&rid)
+                    .or_else(|| self.snapshot.graph.entities.get(&rid))
                     .ok_or_else(|| self.unknown_entity_error(&id))?;
                 let reqs: Vec<Value> = self
                     .snapshot
@@ -3319,12 +3337,12 @@ impl ToolSession {
                     Some(arr) => parse_edges(self, arr, Some(&entities))?,
                     None => Vec::new(),
                 };
-                let transition = if args["transition"].is_null() {
+                let transition = if !Self::present(&args["transition"]) {
                     None
                 } else {
                     Some(self.parse_transition(&args["transition"], &entities)?)
                 };
-                let facets = if args["facets"].is_null() {
+                let facets = if !Self::present(&args["facets"]) {
                     Vec::new()
                 } else {
                     parse_facets(&args["facets"])?
@@ -3484,12 +3502,12 @@ impl ToolSession {
                     Some(arr) => Some(parse_edges(self, arr, Some(&listed))?),
                     None => None,
                 };
-                let transition = if args["transition"].is_null() {
+                let transition = if !Self::present(&args["transition"]) {
                     None
                 } else {
                     Some(self.parse_transition(&args["transition"], &listed)?)
                 };
-                let facets = if args["facets"].is_null() {
+                let facets = if !Self::present(&args["facets"]) {
                     None
                 } else {
                     Some(parse_facets(&args["facets"])?)
@@ -4201,12 +4219,12 @@ impl ToolSession {
             Some(arr) => parse_edges(self, arr, Some(&entities))?,
             None => Vec::new(),
         };
-        let transition = if args["transition"].is_null() {
+        let transition = if !Self::present(&args["transition"]) {
             None
         } else {
             Some(self.parse_transition(&args["transition"], &entities)?)
         };
-        let facets = if args["facets"].is_null() {
+        let facets = if !Self::present(&args["facets"]) {
             Vec::new()
         } else {
             parse_facets(&args["facets"])?
@@ -4921,6 +4939,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v["created"], true);
+        // The doctrine covers structured optionals too: an all-empty transition
+        // object and all-empty items inside lists are filled-in blanks, not data.
+        // This is the exact shape a gpt-5.5 run staged, bounced by unknown-id on
+        // the empty transition subject.
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "A customer intends to buy the items.",
+                    "entities": ["ent:customer", "ent:gadget"],
+                    "section": "/shop/cart", "quote": "intends to buy",
+                    "edges": [{}], "facets": [{}],
+                    "transition": {"subject": "", "from": "", "to": "", "trigger": "", "guard": ""}
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let spun = t
+            .staged
+            .iter()
+            .find_map(|op| match op {
+                Op::CreateRequirement { requirement, .. }
+                    if requirement.statement == "A customer intends to buy the items." =>
+                {
+                    Some(requirement)
+                }
+                _ => None,
+            })
+            .expect("the requirement staged");
+        assert!(spun.transition.is_none());
+        assert!(spun.edges.is_empty());
+        assert!(spun.facets.is_empty());
         // All-empty on both sides still reads as no provenance at all.
         let err = t
             .dispatch(
@@ -4930,6 +4980,25 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "provenance-required");
+    }
+
+    #[test]
+    fn get_entity_sees_the_sessions_staged_entities() {
+        // canon_entity_id resolves staged ids, so the lookup must too: a session
+        // reading an entity it just staged gets it back, not `unknown-id` with
+        // that very id listed as a near miss.
+        let mut t = session();
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Gadget", "definition": "A gadget.",
+                    "mention": {"section": "/shop/cart", "quote": "holds items"}}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch("get_entity", &json!({"id": "ent:gadget"}))
+            .unwrap();
+        assert_eq!(v["id"], "ent:gadget");
+        assert_eq!(v["name"], "Gadget");
     }
 
     #[test]

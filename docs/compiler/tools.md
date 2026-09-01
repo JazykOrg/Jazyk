@@ -51,6 +51,7 @@ loaded set as a stub.
 - `read_section({ref})`: one section's raw body and its child titles.
 - `get_entity({id})`: one entity with its definition, stereotype, parent, attributes,
   mentions, requirements, relationships, and its derived state machine when one exists.
+  The lookup sees the session's own staged entities, same as `search`.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
   collapse list, the relationships among its members (lifted where a member is
   collapsed), and the path of its rendering under `diagrams/`
@@ -513,8 +514,9 @@ quote not found in docs/cli.md#/cli/commands; copy the sentence verbatim from th
 Errors are part of the tool design. They are written for a model that will read them and
 try again. Resolution is lenient toward intent, and that includes shape: an optional
 argument that is empty (an empty string, an empty list, or an object whose fields are
-all empty) counts as absent. A model that fills every schema field with empty values
-makes the same call as one that omits them.
+all empty) counts as absent. An all-empty item inside a list argument is dropped the
+same way. A model that fills every schema field with empty values makes the same call
+as one that omits them.
 
 The named errors a caller meets beyond the gates:
 

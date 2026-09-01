@@ -1715,6 +1715,19 @@ impl ToolSession {
         Ok(out)
     }
 
+    // An optional argument that is empty counts as absent: a model that fills every
+    // schema field with "" / [] / {} makes the same call as one that omits them.
+    // Mirrors docs/compiler/tools.md#validation-and-errors.
+    fn present(v: &Value) -> bool {
+        match v {
+            Value::Null => false,
+            Value::String(s) => !s.trim().is_empty(),
+            Value::Array(a) => a.iter().any(Self::present),
+            Value::Object(o) => o.values().any(Self::present),
+            _ => true,
+        }
+    }
+
     // Parse a provenance argument a session may stage: a derivation naming live nodes
     // with its reasoning. A decree is refused: only a human path stages one.
     fn parse_derived(&self, v: &Value) -> Result<Provenance, ToolError> {
@@ -3027,10 +3040,11 @@ impl ToolSession {
                         ));
                     }
                 }
-                // Exactly one provenance: a located mention, or a derivation.
+                // Exactly one provenance: a located mention, or a derivation. Empty
+                // objects count as absent (docs/compiler/tools.md#validation-and-errors).
                 let mention = &args["mention"];
-                let has_mention = mention.is_object();
-                let has_derived = args["provenance"].is_object();
+                let has_mention = Self::present(mention);
+                let has_derived = Self::present(&args["provenance"]);
                 if has_mention == has_derived {
                     return Err(ToolError::new(
                         if has_mention { "bad-provenance" } else { "provenance-required" },
@@ -3252,9 +3266,10 @@ impl ToolSession {
             "upsert_requirement" => {
                 let statement = Self::str_arg(args, "statement")?;
                 statement_present(&statement)?;
-                // Exactly one provenance: the source sentence, or a derivation.
-                let has_source = !args["section"].is_null() || !args["quote"].is_null();
-                let has_derived = args["provenance"].is_object();
+                // Exactly one provenance: the source sentence, or a derivation. Empty
+                // fields count as absent (docs/compiler/tools.md#validation-and-errors).
+                let has_source = Self::present(&args["section"]) || Self::present(&args["quote"]);
+                let has_derived = Self::present(&args["provenance"]);
                 if has_source == has_derived {
                     return Err(ToolError::new(
                         if has_source { "bad-provenance" } else { "provenance-required" },
@@ -4873,6 +4888,50 @@ mod tests {
 
     // Every staging gate names its rule and the repair.
     // Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn empty_optional_arguments_count_as_absent() {
+        // gpt-class models fill every schema field; "" / [] / {} must read as
+        // omitted (docs/compiler/tools.md#validation-and-errors). This is the
+        // exact call shape a gpt-5.5 run staged, bounced by bad-provenance.
+        let mut t = session();
+        let v = t
+            .dispatch(
+                "upsert_entity",
+                &json!({
+                    "name": "Gadget", "definition": "A gadget.", "aliases": [],
+                    "scope": "", "stereotype": "device", "parent": "",
+                    "attributes": [],
+                    "mention": {"section": "/shop/cart", "quote": "holds items"},
+                    "provenance": {"derived": {"from": [], "reasoning": ""}},
+                    "note": ""
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "The gadget holds items.",
+                    "entities": ["ent:gadget"],
+                    "section": "/shop/cart", "quote": "holds items",
+                    "edges": [], "facets": [],
+                    "provenance": {"derived": {"from": [], "reasoning": ""}}
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        // All-empty on both sides still reads as no provenance at all.
+        let err = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Widget", "mention": {},
+                        "provenance": {"derived": {"from": [], "reasoning": ""}}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "provenance-required");
+    }
+
     #[test]
     fn entity_and_requirement_gates_name_their_rules() {
         let mut t = session();

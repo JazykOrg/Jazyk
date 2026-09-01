@@ -511,7 +511,12 @@ quote not found in docs/cli.md#/cli/commands; copy the sentence verbatim from th
 ```
 
 Errors are part of the tool design. They are written for a model that will read them and
-try again. The named errors a caller meets beyond the gates:
+try again. Resolution is lenient toward intent, and that includes shape: an optional
+argument that is empty (an empty string, an empty list, or an object whose fields are
+all empty) counts as absent. A model that fills every schema field with empty values
+makes the same call as one that omits them.
+
+The named errors a caller meets beyond the gates:
 
 - `repeated-call`: the third identical call in a session
   ([repeated calls](./sessions.md#repeated-calls)); `load` of a loaded target and

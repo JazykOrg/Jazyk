@@ -940,6 +940,19 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
 
 // Record a task done. The manifest binds the worker's files to the graph and seeds the
 // verification rows. Mirrors docs/compiler/tools.md#generation-tools (gen_mark).
+// Empty means absent (docs/compiler/tools.md#validation-and-errors), mirrored here
+// for manifest rows: a row whose fields are all empty is a filled-in blank from a
+// schema-filling model, not data.
+fn hollow(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::String(s) => s.trim().is_empty(),
+        Value::Array(a) => a.iter().all(hollow),
+        Value::Object(o) => o.values().all(hollow),
+        _ => false,
+    }
+}
+
 pub fn mark(
     store: &Store,
     id: &str,
@@ -957,7 +970,12 @@ pub fn mark(
             .as_array()
             .map(|a| {
                 a.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
+                    .filter_map(|x| {
+                        x.as_str()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -972,6 +990,7 @@ pub fn mark(
                     x.as_str()
                         .map(String::from)
                         .or_else(|| x["path"].as_str().map(String::from))
+                        .filter(|s| !s.trim().is_empty())
                 })
                 .collect()
         })
@@ -987,6 +1006,10 @@ pub fn mark(
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
+            // A row whose fields are all empty is a filled-in blank; drop it.
+            if hollow(t) {
+                continue;
+            }
             let kind = t["kind"].as_str().unwrap_or("programmatic");
             let rid = t["requirement"].as_str().unwrap_or("?");
             if kind == "programmatic" {
@@ -1052,7 +1075,12 @@ pub fn mark(
                     .as_array()
                     .map(|a| {
                         a.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
+                            .filter_map(|x| {
+                                x.as_str()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(String::from)
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -1105,7 +1133,15 @@ pub fn mark(
     let mut seeded = 0;
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
-            let Some(rid) = t["requirement"].as_str() else {
+            // A hollow row or an empty requirement id is a filled-in blank.
+            if hollow(t) {
+                continue;
+            }
+            let Some(rid) = t["requirement"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
                 continue;
             };
             let rid = store.resolve_id(rid).to_string();
@@ -1145,7 +1181,12 @@ pub fn mark(
                     .as_array()
                     .map(|a| {
                         a.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
+                            .filter_map(|x| {
+                                x.as_str()
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(String::from)
+                            })
                             .collect()
                     })
                     .filter(|v: &Vec<String>| !v.is_empty())
@@ -1318,6 +1359,10 @@ pub fn parse_choices(store: &Store, manifest: &Value) -> Result<Vec<Choice>, Str
     };
     let mut out = Vec::new();
     for c in list {
+        // An all-empty entry is a filled-in blank, not an invented choice.
+        if hollow(c) {
+            continue;
+        }
         let text = c["choice"]
             .as_str()
             .or_else(|| c["message"].as_str())
@@ -1347,7 +1392,12 @@ pub fn parse_choices(store: &Store, manifest: &Value) -> Result<Vec<Choice>, Str
             .as_array()
             .map(|a| {
                 a.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
+                    .filter_map(|x| {
+                        x.as_str()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                    })
                     .collect()
             })
             .unwrap_or_default();

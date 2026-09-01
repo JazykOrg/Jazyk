@@ -753,7 +753,10 @@ fn parse_edges(
                 ));
             }
         }
-        let t = e["type"].as_str().map(|s| s.to_string());
+        let t = e["type"]
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if let Some(t) = &t {
             if !REL_TYPES.contains(&t.as_str()) {
                 return Err(ToolError::new(
@@ -766,7 +769,10 @@ fn parse_edges(
                 ));
             }
         }
-        let cardinality = e["cardinality"].as_str().map(|s| s.to_string());
+        let cardinality = e["cardinality"]
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if let Some(c) = &cardinality {
             if !crate::model::CARDINALITIES.contains(&c.as_str()) {
                 return Err(ToolError::new(
@@ -1677,6 +1683,11 @@ impl ToolSession {
         };
         let mut out: Vec<Attribute> = Vec::new();
         for a in arr {
+            // Empty means absent (docs/compiler/tools.md#validation-and-errors): an
+            // all-empty item is a filled-in blank, not an attribute.
+            if !Self::present(a) {
+                continue;
+            }
             let name = a["name"].as_str().unwrap_or_default().trim().to_string();
             if name.is_empty() {
                 return Err(ToolError::new(
@@ -1698,7 +1709,9 @@ impl ToolSession {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
             };
-            let provenance = if a["provenance"].is_object() {
+            // A hollow provenance object counts as absent: the attribute falls
+            // back to the call's own quote, as the schema promises.
+            let provenance = if Self::present(&a["provenance"]) {
                 let section = a["provenance"]["section"].as_str().unwrap_or_default();
                 let quote = a["provenance"]["quote"].as_str().unwrap_or_default();
                 let (doc, sec) = self.resolve_section(section)?;
@@ -1954,6 +1967,11 @@ impl ToolSession {
         };
         let mut out = Vec::new();
         for x in items {
+            // Empty means absent (docs/compiler/tools.md#validation-and-errors): a
+            // hollow exclusion, item or singleton, is a filled-in blank.
+            if !Self::present(x) {
+                continue;
+            }
             let raw = x["id"].as_str().unwrap_or_default().trim().to_string();
             let Some(id) = self.node_known(&raw) else {
                 return Err(ToolError::new(
@@ -2565,11 +2583,14 @@ impl ToolSession {
     }
 
     fn str_list(args: &Value, key: &str) -> Vec<String> {
+        // Empty means absent (docs/compiler/tools.md#validation-and-errors): every
+        // caller is an id or name list, where "" is a filled-in blank, never data.
         args[key]
             .as_array()
             .map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| !s.trim().is_empty())
                     .collect()
             })
             .unwrap_or_default()
@@ -2580,7 +2601,10 @@ impl ToolSession {
     // must locate in its section. Mirrors docs/compiler/model/diagnostic.md#prompts.
     fn parse_prompt(&self, v: &Value) -> Result<Option<crate::model::DiagnosticPrompt>, ToolError> {
         use crate::model::{DiagnosticPrompt, PromptOption, SuggestedEdit};
-        if v.is_null() {
+        // Empty means absent (docs/compiler/tools.md#validation-and-errors): a
+        // hollow prompt (no question, no options) was filled in, not asked. The
+        // content fields decide; `freeform: false` is a filler's default, not content.
+        if v.is_null() || (!Self::present(&v["question"]) && !Self::present(&v["options"])) {
             return Ok(None);
         }
         let Some(question) = v["question"].as_str().filter(|s| !s.trim().is_empty()) else {
@@ -2598,13 +2622,17 @@ impl ToolSession {
                 ));
             }
             for (i, o) in arr.iter().enumerate() {
+                // An all-empty option item is a filled-in blank; drop it.
+                if !Self::present(o) {
+                    continue;
+                }
                 let Some(label) = o["label"].as_str().filter(|s| !s.trim().is_empty()) else {
                     return Err(ToolError::new(
                         "bad-prompt",
                         format!("option {} needs a label", i),
                     ));
                 };
-                let has_edit = !o["edit"].is_null();
+                let has_edit = Self::present(&o["edit"]);
                 let answer = o["answer"].as_str().filter(|s| !s.trim().is_empty());
                 if has_edit == answer.is_some() {
                     return Err(ToolError::new(
@@ -2949,11 +2977,64 @@ impl ToolSession {
                     .ok_or_else(|| self.unknown_entity_error(&id))?;
                 // Staged first, then the snapshot: canon_entity_id resolves the
                 // session's own staged entities, so the lookup sees them too.
-                let e = self
+                // Read-your-writes: staged updates replay over the base, so the
+                // session reads back what it just wrote.
+                let mut e = self
                     .staged_entities
                     .get(&rid)
                     .or_else(|| self.snapshot.graph.entities.get(&rid))
-                    .ok_or_else(|| self.unknown_entity_error(&id))?;
+                    .ok_or_else(|| self.unknown_entity_error(&id))?
+                    .clone();
+                for op in &self.staged {
+                    let Op::UpdateEntity {
+                        id: uid,
+                        name,
+                        definition,
+                        add_aliases,
+                        add_mention,
+                        stereotype,
+                        parent,
+                        set_attributes,
+                        add_attributes,
+                        ..
+                    } = op
+                    else {
+                        continue;
+                    };
+                    if *uid != rid && self.snapshot.resolve_id(uid) != rid {
+                        continue;
+                    }
+                    if let Some(n) = name {
+                        e.name = n.clone();
+                    }
+                    if let Some(d) = definition {
+                        e.definition = Some(d.clone());
+                    }
+                    for a in add_aliases {
+                        if !e.aliases.contains(a) {
+                            e.aliases.push(a.clone());
+                        }
+                    }
+                    if let Some(m) = add_mention {
+                        e.mentions.push(m.clone());
+                    }
+                    if let Some(s) = stereotype {
+                        e.stereotype = Some(s.clone());
+                    }
+                    if let Some(p) = parent {
+                        e.parent = Some(p.clone());
+                    }
+                    if let Some(set) = set_attributes {
+                        e.attributes = set.clone();
+                    }
+                    for a in add_attributes {
+                        match e.attributes.iter_mut().find(|x| x.name == a.name) {
+                            Some(x) => *x = a.clone(),
+                            None => e.attributes.push(a.clone()),
+                        }
+                    }
+                }
+                let e = &e;
                 let reqs: Vec<Value> = self
                     .snapshot
                     .requirements_referencing(&rid)
@@ -3467,26 +3548,29 @@ impl ToolSession {
             }
             "update_requirement" => {
                 let id = self.canon_req_id(&Self::str_arg(args, "id")?)?;
-                if let Some(given) = args["statement"].as_str() {
-                    statement_present(given)?;
-                }
+                // An empty statement counts as absent: statement unchanged.
                 let statement = Self::opt_str(args, "statement");
-                let entities = match args["entities"].as_array() {
-                    Some(_) => {
-                        let mut canon: Vec<String> = Vec::new();
-                        for e in Self::str_list(args, "entities") {
-                            match self.canon_entity_id(&e) {
-                                Some(id) => {
-                                    if !canon.contains(&id) {
-                                        canon.push(id);
+                // Empty means absent: [] (or [""]) leaves the entity list unchanged.
+                let entities = if !Self::present(&args["entities"]) {
+                    None
+                } else {
+                    match args["entities"].as_array() {
+                        Some(_) => {
+                            let mut canon: Vec<String> = Vec::new();
+                            for e in Self::str_list(args, "entities") {
+                                match self.canon_entity_id(&e) {
+                                    Some(id) => {
+                                        if !canon.contains(&id) {
+                                            canon.push(id);
+                                        }
                                     }
+                                    None => return Err(self.unknown_entity_error(&e)),
                                 }
-                                None => return Err(self.unknown_entity_error(&e)),
                             }
+                            Some(canon)
                         }
-                        Some(canon)
+                        None => None,
                     }
-                    None => None,
                 };
                 // The entities the edges and the transition are checked against: the
                 // revised list, or the stored one.
@@ -3498,9 +3582,15 @@ impl ToolSession {
                         .map(|r| r.entities.clone())
                         .unwrap_or_default()
                 });
-                let edges = match args["edges"].as_array() {
-                    Some(arr) => Some(parse_edges(self, arr, Some(&listed))?),
-                    None => None,
+                // On the update path an empty edges list is a filled-in blank,
+                // not "replace the judged edges with nothing".
+                let edges = if !Self::present(&args["edges"]) {
+                    None
+                } else {
+                    args["edges"]
+                        .as_array()
+                        .map(|arr| parse_edges(self, arr, Some(&listed)))
+                        .transpose()?
                 };
                 let transition = if !Self::present(&args["transition"]) {
                     None
@@ -4331,7 +4421,7 @@ impl ToolSession {
                 let members = self.canon_members(&Self::str_list(args, "members"), "member")?;
                 let collapse = self.canon_members(&Self::str_list(args, "collapse"), "collapse")?;
                 let excluded = self.parse_exclusions(&args["excluded"])?;
-                let query = if args["query"].is_object() {
+                let query = if Self::present(&args["query"]) {
                     Some(self.parse_query(&args["query"])?)
                 } else {
                     None
@@ -4406,24 +4496,24 @@ impl ToolSession {
                     ));
                 };
                 let title = Self::opt_str(args, "title");
-                let members = match args["members"].as_array() {
-                    Some(_) => {
-                        Some(self.canon_members(&Self::str_list(args, "members"), "member")?)
-                    }
-                    None => None,
+                // Empty means absent: [] (or [""]) is a filled-in blank, not
+                // "replace the membership with nothing".
+                let members = if Self::present(&args["members"]) {
+                    Some(self.canon_members(&Self::str_list(args, "members"), "member")?)
+                } else {
+                    None
                 };
                 let add_members =
                     self.canon_members(&Self::str_list(args, "add_members"), "member")?;
                 let remove_members =
                     self.canon_members(&Self::str_list(args, "remove_members"), "member")?;
-                let collapse = match args["collapse"].as_array() {
-                    Some(_) => {
-                        Some(self.canon_members(&Self::str_list(args, "collapse"), "collapse")?)
-                    }
-                    None => None,
+                let collapse = if Self::present(&args["collapse"]) {
+                    Some(self.canon_members(&Self::str_list(args, "collapse"), "collapse")?)
+                } else {
+                    None
                 };
                 let exclude = self.parse_exclusions(&args["exclude"])?;
-                let query = if args["query"].is_object() {
+                let query = if Self::present(&args["query"]) {
                     Some(self.parse_query(&args["query"])?)
                 } else {
                     None
@@ -4494,7 +4584,9 @@ impl ToolSession {
         let raw_id = Self::str_arg(args, "id")?;
         let field = Self::str_arg(args, "field")?;
         let value = &args["value"];
-        if value.is_null() {
+        // A hollow value ({}, [], "") is as absent as null: the requiredness
+        // bounce names the repair instead of a deeper parser's misleading error.
+        if !Self::present(value) {
             return Err(ToolError::new(
                 "bad-args",
                 "value is required: the field's new content".into(),
@@ -4971,6 +5063,65 @@ mod tests {
         assert!(spun.transition.is_none());
         assert!(spun.edges.is_empty());
         assert!(spun.facets.is_empty());
+        // Hollow items inside otherwise-real arguments drop the same way: ""
+        // aliases, blank attribute rows, a hollow per-attribute provenance
+        // (falls back to the call's quote), "" entity ids, and empty edge
+        // type/cardinality strings (an untyped edge, no cardinality).
+        let v = t
+            .dispatch(
+                "upsert_entity",
+                &json!({
+                    "name": "Sprocket", "definition": "A sprocket.",
+                    "aliases": [""],
+                    "attributes": [{}, {"name": "teeth", "type": "int",
+                                        "provenance": {"section": "", "quote": ""}}],
+                    "mention": {"section": "/shop/cart", "quote": "intends to buy"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let sprocket = t
+            .staged_entities
+            .get("ent:sprocket")
+            .expect("staged entity");
+        assert!(sprocket.aliases.is_empty());
+        assert_eq!(sprocket.attributes.len(), 1);
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "The sprocket gadget pair holds.",
+                    "entities": ["ent:sprocket", "ent:gadget", ""],
+                    "section": "/shop/cart", "quote": "a Customer intends",
+                    "edges": [{"a": "ent:sprocket", "b": "ent:gadget",
+                               "type": "", "cardinality": ""}]
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let pair = t
+            .staged
+            .iter()
+            .find_map(|op| match op {
+                Op::CreateRequirement { requirement, .. }
+                    if requirement.statement == "The sprocket gadget pair holds." =>
+                {
+                    Some(requirement)
+                }
+                _ => None,
+            })
+            .expect("the pair requirement staged");
+        assert_eq!(pair.entities.len(), 2);
+        assert_eq!(pair.edges.len(), 1);
+        // A hollow prompt object on a diagnostic was filled in, not asked.
+        t.dispatch(
+            "report_diagnostic",
+            &json!({"rule": "lint", "severity": "warning",
+                    "subjects": ["ent:customer"],
+                    "message": "Sprocket is undefined in the glossary.",
+                    "prompt": {"question": "", "options": [], "freeform": false}}),
+        )
+        .unwrap();
         // All-empty on both sides still reads as no provenance at all.
         let err = t
             .dispatch(
@@ -4999,6 +5150,28 @@ mod tests {
             .unwrap();
         assert_eq!(v["id"], "ent:gadget");
         assert_eq!(v["name"], "Gadget");
+        // Read-your-writes: a staged update shows in the read, for a staged
+        // create and for a committed entity alike.
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:gadget", "definition": "A precise gadget.",
+                    "add_aliases": ["widget"]}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch("get_entity", &json!({"id": "ent:gadget"}))
+            .unwrap();
+        assert_eq!(v["definition"], "A precise gadget.");
+        assert_eq!(v["aliases"][0], "widget");
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:customer", "definition": "a person who buys things"}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch("get_entity", &json!({"id": "ent:customer"}))
+            .unwrap();
+        assert_eq!(v["definition"], "a person who buys things");
     }
 
     #[test]
@@ -5253,6 +5426,19 @@ mod tests {
             &json!({"id": "view:class/cart-parts", "add_members": ["ent:cart"]}),
         )
         .unwrap();
+        // Empty means absent: members [] is a filled-in blank, not "replace the
+        // membership with nothing".
+        t.dispatch(
+            "update_view",
+            &json!({"id": "view:class/cart-parts", "members": [], "add_members": ["ent:customer"]}),
+        )
+        .unwrap();
+        let staged = t
+            .staged_views
+            .get("view:class/cart-parts")
+            .expect("staged view");
+        assert!(staged.members.contains(&"ent:item".to_string()));
+        assert!(staged.members.contains(&"ent:customer".to_string()));
         let err = t
             .dispatch(
                 "update_view",
@@ -5628,7 +5814,7 @@ mod tests {
     }
 
     #[test]
-    fn update_requirement_rejects_an_empty_statement_and_a_bad_cardinality() {
+    fn update_requirement_takes_an_empty_statement_as_unchanged_and_rejects_a_bad_cardinality() {
         let mut t = session();
         t.dispatch(
             "upsert_entity",
@@ -5642,10 +5828,14 @@ mod tests {
             )
             .unwrap();
         let rid = r["id"].as_str().unwrap().to_string();
-        let err = t
-            .dispatch("update_requirement", &json!({"id": rid, "statement": ""}))
-            .unwrap_err();
-        assert_eq!(err.rule, "bad-args");
+        // An empty statement counts as absent: the call lands, statement unchanged.
+        let v = t
+            .dispatch(
+                "update_requirement",
+                &json!({"id": rid, "statement": "", "entities": ["ent:shopping-cart"]}),
+            )
+            .unwrap();
+        assert_eq!(v["id"], rid);
         let err = t
             .dispatch(
                 "update_requirement",

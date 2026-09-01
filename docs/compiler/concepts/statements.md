@@ -114,7 +114,9 @@ Two kinds of sentence state a fact the requirement alone does not hold:
   and the order entity also gains the `attributes` the sentence states (`total`,
   `currency`). A worked example ("Ana keeps 3 items in her cart") is an instance: an
   entity tied to its type by an `instantiation` edge, with the values on its own
-  `attributes`. See [entity fields](../model/entity.md#fields).
+  `attributes`. A worked example under an illustration heading whose values nothing
+  else uses is illustration, not an instance: extract only the rule it smuggles.
+  See [entity fields](../model/entity.md#fields).
 - Whole and part. "The shop contains an order service" is a requirement on the shop
   with a `composition` edge from the shop to the order service, and the order service's
   `parent` follows the edge. See [containment](../model/entity.md#containment) and
@@ -124,7 +126,11 @@ Non-normative is the exception, not the default. A section is non-normative only
 no sentence in it passes the test above: navigation pages that only link elsewhere,
 glossaries defining outside-world terms, changelogs, roadmap wish lists. A glossary
 entry that states what a part does is a requirement wearing a glossary's clothes;
-extract it. Lists of operations, properties, or rules are never non-normative; see
+extract it. The counterweight: an entry that only fixes vocabulary ("X is the term
+for Y") states no obligation and mints no entity, and a section that declares itself
+non-authoritative and defers to the pages that own its facts is non-normative;
+definitions the owning pages already state are not extracted twice. Lists of
+operations, properties, or rules are never non-normative; see
 [enumerations](#enumerations). Before marking a section non-normative, re-read it
 sentence by sentence; if any sentence is about the subject, the section is not
 non-normative. Coverage states are defined in
@@ -265,7 +271,8 @@ grammar. The extractor writes it to be:
 - Trigger and response. When the sentence has a trigger (an event, a state, a
   condition), the statement names it and the response it obliges, in that order. When
   the response is a state change, the requirement also carries a `transition`; its
-  states come from the documents, never invented. See
+  states come from the documents, never invented, and the event that creates the
+  subject names its initial state. See
   [transition](../model/requirement.md#transition). E.g.:
 
 ```

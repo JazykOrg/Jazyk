@@ -50,6 +50,17 @@ pub fn add_tokens(n: u64) {
     SPENT_TOKENS.fetch_add(n, Ordering::Relaxed);
 }
 
+// Tokens already folded into a persisted status. The meter is process-lifetime, but
+// status.yaml is cumulative across builds and processes: a build takes only the delta
+// since the last take, so it never clobbers earlier builds' spend.
+static FOLDED_TOKENS: AtomicU64 = AtomicU64::new(0);
+
+pub fn take_tokens_delta() -> u64 {
+    let spent = SPENT_TOKENS.load(Ordering::Relaxed);
+    let folded = FOLDED_TOKENS.swap(spent, Ordering::Relaxed);
+    spent.saturating_sub(folded)
+}
+
 // Verbose request logging, enabled by the CLI or the JAZYK_VERBOSE env var.
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static VERBOSE_INIT: AtomicBool = AtomicBool::new(false);

@@ -694,7 +694,7 @@ pub struct Crossing {
 }
 
 const STRUCTURAL_KINDS: [&str; 5] = ["class", "package", "component", "composite", "deployment"];
-const FLOW_KINDS: [&str; 6] = [
+pub const FLOW_KINDS: [&str; 6] = [
     "use-case",
     "activity",
     "sequence",

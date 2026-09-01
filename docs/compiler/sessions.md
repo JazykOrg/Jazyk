@@ -202,7 +202,9 @@ session spend its budget on it:
 
 Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
-see more of a loaded node is `expand` on its handles. `done`, `mark_goal_done`, and
+see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
+count for its target: re-loading a node evicted for budget is legitimate, and its
+render is fresh. `done`, `mark_goal_done`, and
 `mark_goal_failed` are exempt; repairing a rejected claim legitimately repeats it. The
 guard lives in the serving, not in any agent, so every agent gets the same contract.
 

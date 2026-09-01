@@ -9,7 +9,7 @@ Membership per kind.
 - Deployment: only what deployment statements state ("The shop is deployed in the EU region"); never synthesize topology from containment or from assumptions.
 - A state view is the derived machine of its one member. There is nothing to curate but the subject.
 
-Query or list. Prefer a `query` (`scope`, `parent`, `stereotype`, `depth`) when the rule is a scope, a subtree, or a label: new matches arrive as `query-match` goals and the view stays current. Prefer a member list when the view is hand-picked. When a query match does not belong, exclude it with a note rather than switching to a list; the note is the reason the next build reads, and an excluded node is not asked about again.
+Query or list. Prefer a `query` (`scope`, `parent`, `stereotype`, `depth`) when the rule is a scope, a subtree, or a label: new matches arrive as `query-match` goals and the view stays current. Prefer a member list when the view is hand-picked. When a query match does not belong, exclude it with a note rather than switching to a list; the note is the reason the next build reads, and an excluded node is not asked about again. Batch one view's exclusions into a single update_view: exclude takes a list. A scope's default class view keeps the domain's core types: exclude a member only when another view actually shows it, and name that view in the note.
 
 Collapse and lifting.
 - `collapse` shows an entity with children as one node. Its hidden subtree's relationships lift to it, and the collapsed node links to the sub-view detailing it: the view of the same kind whose `query.parent` is the collapsed entity, or whose members are its children.

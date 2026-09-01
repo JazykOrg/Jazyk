@@ -121,7 +121,7 @@ the conversation.
   in the batch, as target or hint. Suggestions are advice; the model decides.
 - Repeats: a `load` of a target that is already loaded is a repeat whatever its `depth`,
   answered by the [repeated-call guard](./sessions.md#repeated-calls). Deepening a
-  loaded node is `expand` on its handles.
+  loaded node is `expand` on its handles. An `unload` clears the count for its target.
 - Staged work: the set renders the committed snapshot the session began with. An item a
   staged mutation touches carries a `staged:` note on its line (`staged: delete`,
   `staged: statement revised`), so the model never mistakes its own pending work for a

@@ -1314,15 +1314,16 @@ impl ToolSession {
         Err(ToolError::new(
             "context-full",
             format!(
-                "{} refused: the loaded set is past the high-water mark ({}/{} chars); unload something first. Candidates: {}",
+                "{} refused: unload one of: {}, then retry. The loaded set is at {} chars, past the high-water mark {} (budget {}). If this refusal seems wrong, say so with report_feedback.",
                 what,
-                self.loaded.used() + self.skills.rendered_chars(),
-                self.loaded.budget,
                 if candidates.is_empty() {
-                    "(unload any loaded item)".to_string()
+                    "(any loaded item)".to_string()
                 } else {
                     candidates.join(", ")
-                }
+                },
+                self.loaded.used() + self.skills.rendered_chars(),
+                self.loaded.high_water,
+                self.loaded.budget,
             ),
         ))
     }
@@ -1647,9 +1648,14 @@ impl ToolSession {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
+                    let coach = if k == "from" {
+                        " Name the state the documents place the subject in before the trigger; the event that creates the subject names its initial state. When no sentence states one, omit `transition` entirely."
+                    } else {
+                        ""
+                    };
                     ToolError::new(
                         "bad-transition",
-                        format!("transition.{} names a state; it is empty", k),
+                        format!("transition.{} names a state; it is empty.{}", k, coach),
                     )
                 })
         };
@@ -1937,7 +1943,10 @@ impl ToolSession {
     }
 
     // Parse a view query argument. Mirrors docs/compiler/model/view.md#fields.
-    fn parse_query(&self, v: &Value) -> Result<ViewQuery, ToolError> {
+    // An all-empty query object is a filled-in blank, not a match-everything rule:
+    // empty means absent (docs/compiler/tools.md#validation-and-errors), so a query
+    // naming no scope, parent, or stereotype parses as no query at all.
+    fn parse_query(&self, v: &Value) -> Result<Option<ViewQuery>, ToolError> {
         if !v.is_object() {
             return Err(ToolError::new(
                 "bad-args",
@@ -1951,12 +1960,16 @@ impl ToolSession {
             })?),
             None => None,
         };
-        Ok(ViewQuery {
+        let q = ViewQuery {
             scope: Self::opt_str(v, "scope"),
             parent,
             stereotype: Self::opt_str(v, "stereotype"),
             depth: v["depth"].as_u64().map(|d| d as u32),
-        })
+        };
+        if q.scope.is_none() && q.parent.is_none() && q.stereotype.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(q))
     }
 
     fn parse_exclusions(&self, v: &Value) -> Result<Vec<Exclusion>, ToolError> {
@@ -2285,8 +2298,8 @@ impl ToolSession {
                 return ToolError::new(
                     "unknown-id",
                     format!(
-                        "`{}` is {}, not an entity; read it with load({{target}})",
-                        id, kind
+                        "`{}` is {}, not an entity; call load with target `{}`",
+                        id, kind, id
                     ),
                 );
             }
@@ -2753,7 +2766,7 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "repeated-call",
                     format!(
-                        "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have, or finish with done.",
+                        "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have, or finish with done. If this refusal seems wrong, say so with report_feedback.",
                         seen, name
                     ),
                 ));
@@ -2840,6 +2853,10 @@ impl ToolSession {
                         ),
                     ));
                 }
+                // A reload after an unload genuinely re-renders: clear the load count
+                // for this target so the budget-forced unload->reload cycle is not
+                // refused as a repeat.
+                self.repeats.remove(&format!("load|{}", target));
                 // Unloading the last node of a kind marks the kind's skill inactive.
                 if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &target) {
                     let another = self.loaded.items.iter().any(|i| {
@@ -4422,10 +4439,21 @@ impl ToolSession {
                 let collapse = self.canon_members(&Self::str_list(args, "collapse"), "collapse")?;
                 let excluded = self.parse_exclusions(&args["excluded"])?;
                 let query = if Self::present(&args["query"]) {
-                    Some(self.parse_query(&args["query"])?)
+                    self.parse_query(&args["query"])?
                 } else {
                     None
                 };
+                // A query matches entities; a flow view's members are requirements,
+                // so a query on one would flood it with every entity in the graph.
+                if query.is_some() && crate::derive::FLOW_KINDS.contains(&kind.as_str()) {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        format!(
+                            "a {} view's members are requirements; an entity-matching query cannot drive it. Omit query and pick members",
+                            kind
+                        ),
+                    ));
+                }
                 self.check_view_members(&kind, &members, &collapse)?;
                 let mut from: Vec<String> = Vec::new();
                 for id in members
@@ -4514,11 +4542,22 @@ impl ToolSession {
                 };
                 let exclude = self.parse_exclusions(&args["exclude"])?;
                 let query = if Self::present(&args["query"]) {
-                    Some(self.parse_query(&args["query"])?)
+                    self.parse_query(&args["query"])?
                 } else {
                     None
                 };
                 let reasoning = Self::opt_str(args, "reasoning");
+                // A query matches entities; a flow view's members are requirements,
+                // so a query on one would flood it with every entity in the graph.
+                if query.is_some() && crate::derive::FLOW_KINDS.contains(&current.kind.as_str()) {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        format!(
+                            "a {} view's members are requirements; an entity-matching query cannot drive it. Omit query and pick members",
+                            current.kind
+                        ),
+                    ));
+                }
                 // The membership the call leaves behind passes the kind's rule.
                 let mut result = members.clone().unwrap_or_else(|| current.members.clone());
                 for m in &add_members {

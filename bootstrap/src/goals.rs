@@ -1515,6 +1515,36 @@ impl GoalKind for ReviewEntity {
                         .join(", ")
                 ));
             }
+            // A stated composition whose part has no parent: the review's contract
+            // says to set parent on the part, so name each such edge.
+            let mut parentless: Vec<String> = Vec::new();
+            for r in &reqs {
+                let Some(q) = store.graph.requirements.get(r) else {
+                    continue;
+                };
+                for edge in &q.edges {
+                    if edge.rel_type.as_deref() != Some("composition") {
+                        continue;
+                    }
+                    if store
+                        .graph
+                        .entities
+                        .get(&edge.b)
+                        .is_some_and(|p| p.parent.is_none())
+                    {
+                        let line = format!("{} -> {}", edge.a, edge.b);
+                        if !parentless.contains(&line) {
+                            parentless.push(line);
+                        }
+                    }
+                }
+            }
+            if !parentless.is_empty() {
+                hints.push(format!(
+                    "composition edges whose part has no parent (set parent on the part with update_entity): {}",
+                    parentless.join(", ")
+                ));
+            }
             let mut subjects: Vec<&str> = reqs.iter().map(String::as_str).collect();
             subjects.push(&id);
             let diags = open_diags_naming(store, &subjects);

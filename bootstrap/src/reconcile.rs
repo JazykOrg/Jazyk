@@ -1062,11 +1062,17 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
             }
         }
     }
-    let triggers: BTreeSet<String> = m
-        .transitions
-        .iter()
-        .filter_map(|t| t.trigger.clone())
-        .collect();
+    // A single-transition machine makes every other state a trivially unhandled dead
+    // end that dead-end-state already reports on the same build: unhandled-event
+    // speaks only once the machine has at least two transitions.
+    let triggers: BTreeSet<String> = if m.transitions.len() >= 2 {
+        m.transitions
+            .iter()
+            .filter_map(|t| t.trigger.clone())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     let mut unhandled: Vec<String> = Vec::new();
     for s in &states {
         for t in &triggers {
@@ -1831,7 +1837,10 @@ pub fn finalize(
             trace.line("build", &format!("render failed: {}: {}", id, e));
         }
     }
-    s.status.spent.tokens = crate::llm::tokens_spent();
+    // Add this build's process delta: spent.tokens is cumulative across builds and
+    // processes, and llm::tokens_spent() is a process-lifetime counter, so an
+    // assignment would clobber the spend of builds this process did not run.
+    s.status.spent.tokens += crate::llm::take_tokens_delta();
     s.status.diagnostics = s.open_diag_counts();
     s.save_status();
     trace.line("build", &s.status.verdict.to_string());

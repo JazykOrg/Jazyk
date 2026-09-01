@@ -23,7 +23,10 @@ or from humans.
   `stereotype` the entities with that label, `depth` how far below `parent` (or below the
   scope's roots) the match descends. A match excludes instances (entities that are `a` of
   an `instantiation` group): instances live in `object` views. Query matches join
-  `members` at every commit.
+  `members` at every commit. A query names at least one of `scope`, `parent`, or
+  `stereotype`: an all-empty query counts as absent. Only structural kinds take one:
+  a flow view's members are requirements, so an entity-matching query on one is
+  refused.
 - `collapse`: entity ids shown as one node despite their children. The hidden subtree's
   relationships lift to the collapsed node.
 - `provenance`: `derived` for default views and for views a session curates (`from` the

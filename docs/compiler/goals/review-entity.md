@@ -134,6 +134,8 @@ Computed by the harness and rendered under the goal block:
 - Multi-entity requirements on this entity that declare no `edges`, when the
   statements are structural (the `declare-edges` GC goal advises the same; the review
   may settle it while the statements are loaded).
+- Composition edges on the entity's requirements whose part has no `parent`, with the
+  note that `update_entity` on the part sets it.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
   naming the entity itself ride in the loaded set.
 - The project's lint rules, restated with their severities
@@ -150,7 +152,8 @@ agent contract, the active skills, the project block, the goals block, the loade
 The goal block carries the contract paragraph from
 [`prompts/review-entity.md`](./prompts/review-entity.md): read the requirements as a
 whole; refresh the definition, stereotype, and parent only when the statements support
-it; judge every listed lookalike, merging name variants and synonyms and keeping
+it; set the part's `parent` where a stated composition leaves it unset; judge every
+listed lookalike, merging name variants and synonyms and keeping
 fields, parts, states, roles, thresholds, instances, and child concepts apart; add a
 missing reference with `update_requirement` passing only `id` and `entities`; delete a
 same-document duplicate and file a cross-document one; report only what the author can

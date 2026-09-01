@@ -572,7 +572,17 @@ impl LoadedSet {
                 Some(s) => format!("source {}#{}", s.doc, s.section),
                 None => "derived".to_string(),
             };
-            ("full".to_string(), format!("full: statement, {}", src))
+            (
+                "full".to_string(),
+                // The statement rides the condensed line: a requirement is one
+                // sentence by construction, and a metadata-only line defeats the
+                // point of keeping it loaded.
+                format!(
+                    "full: \"{}\" ({})",
+                    crate::llm::truncate(&r.statement, 100),
+                    src
+                ),
+            )
         } else if let Some(v) = store.graph.views.get(id) {
             let shown = self.render_view(store, id, v, &mut b);
             (

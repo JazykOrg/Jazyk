@@ -72,7 +72,10 @@ them in place while the condition holds, and resolve them when it clears. See
 - `unhandled-event` (info): an event the subject's requirements name that some state does
   not handle. The event set is the union of the machine's triggers. A pair (state,
   trigger) with no transition out of that state on that trigger, self-transitions
-  included, is unhandled. One diagnostic per machine, the message listing the pairs. An
+  included, is unhandled. The check is silent on a machine with fewer than two
+  transitions: with one arrow, every other state is a trivially unhandled dead end
+  that `dead-end-state` already reports. One diagnostic per machine, the message
+  listing the pairs. An
   unhandled pair is a requirements gap detector: the documents say what happens on payment
   success in `placed` and say nothing about it in `held`.
 

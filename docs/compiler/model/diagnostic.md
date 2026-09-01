@@ -166,7 +166,7 @@ answer:
 | checks | `unreachable-state` | warning | a state no path from the initial state reaches |
 | checks | `dead-end-state` | info | a state with no outgoing transition: the final state, or a requirements gap |
 | checks | `nondeterministic-transition` | warning | two transitions out of one state on one trigger with overlapping guards |
-| checks | `unhandled-event` | info | a state and a trigger the subject's requirements name with no transition out of that state on that trigger |
+| checks | `unhandled-event` | info | a state and a trigger the subject's requirements name with no transition out of that state on that trigger; silent under two transitions |
 | checks | `provider-missing` | warning | an interface-like entity something depends on with no `realization` toward it |
 | checks | `provider-ambiguous` | warning | an interface-like entity with more than one realizer |
 | checks | `quality-unmeasured` | warning | a `quality` facet without a `measure` |

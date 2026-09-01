@@ -100,7 +100,9 @@ instance of Product. No `instantiation` edge, no `conform-instance` goal, no
 
 Behavior-facet requirements cluster by actor (the first `actor` among the requirement's
 entities, else its first entity) and document. Clusters of two or more derive a
-`use-case` and a `sequence` view sharing a title. Expected:
+`use-case` and a `sequence` view sharing a title. A sequence view derives only when at
+least two members carry an edge; a use-case view without a sequence twin is
+mechanism-faithful for an edge-poor cluster. Expected:
 
 | cluster | members (document order) | views |
 | --- | --- | --- |
@@ -111,7 +113,8 @@ entities, else its first entity) and document. Clusters of two or more derive a
 
 When Operator is not minted, the admin.md cluster keys on the Admin CLI instead
 (`admin-cli-admin`, title `Admin CLI: Admin CLI`) and the use case draws the initiators
-as actors. The remaining behavior requirements fall in one-member clusters (the
+as actors. The cluster slug follows the actor's recorded name, so a plural `Operators`
+keys `operators-admin`: acceptable. The remaining behavior requirements fall in one-member clusters (the
 Customer in system.md, customer.md, payment.md; Payment, Catalog, Return in their own
 pages; Inventory's two stock rules derive `Inventory: Inventory` only when both anchor
 on Inventory first). Each lone member draws `unplaced-behavior` (info) with a
@@ -124,7 +127,10 @@ Structural and state defaults:
 - `view:component/orderly`, title `Orderly`: derives only when Orderly has at least one
   child. Members: Orderly's children plus the outside entities that depend on them
   (Customer, Operator). A compile that lands no containment has no component view; that
-  is acceptable but weaker.
+  is acceptable but weaker. A component view derives per containment root with at least
+  one child (graph.md reads "system" structurally), so a `view:component/<root>` for
+  another root that gained a child (Catalog over Catalog category) is mechanism-faithful,
+  not a defect.
 - `view:state/order`, title `Order`, over `sm:order`.
 - No `view:object/*`, no package, activity, deployment, or timing view: nothing curates
   them and no instance or time measure exists.

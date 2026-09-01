@@ -197,7 +197,8 @@ obligation as one atomic `statement` in clear wording with its entities, edges,
 transition, facets, and a verbatim quote; leave an unchanged statement alone,
 re-record a changed one, delete one the section stopped making; honor every stale
 anchor; search before creating an entity and read "the system" as the entity another
-document introduced; record the facts as stated; set coverage exactly once, with the
+document introduced, never minting a sibling for the document's own subject; record
+the facts as stated; set coverage exactly once, with the
 three rejected reasons named; stage nothing when the section already yielded everything
 it states. Then the change in one line, the gate in one line, and the hints.
 

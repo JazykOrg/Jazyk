@@ -228,10 +228,13 @@ reconciler's, never the model's. For each requirement with a `requirement-create
 computed deterministically:
 
 - candidates are requirements sharing an entity with it,
-- each is scored by overlapping content tokens: statement tokens minus stop words and
+- each is scored by overlapping content tokens (statement tokens minus stop words and
   the shared entities' own name tokens, reduced to crude stems, so "reverses" meets
-  "reverse" and "sorting" meets "sort",
-- neighbors sharing at least two content tokens qualify, best six by score.
+  "reverse" and "sorting" meets "sort") plus the count of shared entities,
+- neighbors sharing at least two content tokens qualify, and so do neighbors sharing
+  at least two entities: a restatement built from the same entities can share every
+  noun and still share no other token, because the shared names leave the token pool.
+  Best six by score.
 
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed
 requirement also pairs with every partner such a diagnostic ties it to, so editing one

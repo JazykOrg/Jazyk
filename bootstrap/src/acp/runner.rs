@@ -169,11 +169,31 @@ impl AcpRunner {
             )?;
             hosts.insert(agent.name.clone(), host);
         }
-        hosts[&agent.name].new_session(
+        match hosts[&agent.name].new_session(
             &self.project.root,
-            mcp,
+            mcp.clone(),
             super::policy::PermissionPolicy::Auto,
-        )
+        ) {
+            // The cached host died since its spawn. Its death is not the batch's:
+            // replace it once and only a spawn that fails again fails the caller.
+            // Mirrors docs/frontends/acp.md#worker-sessions.
+            Err(e) if e.contains("acp host") => {
+                hosts.remove(&agent.name);
+                let host = AcpHost::start(
+                    agent.clone(),
+                    self.project.root.clone(),
+                    self.extra_env_for(agent),
+                )?;
+                let s = host.new_session(
+                    &self.project.root,
+                    mcp,
+                    super::policy::PermissionPolicy::Auto,
+                );
+                hosts.insert(agent.name.clone(), host);
+                s
+            }
+            r => r,
+        }
     }
 
     fn session(&self, mcp: Vec<McpSpec>) -> Result<super::host::SessionHandle, String> {
@@ -358,7 +378,14 @@ impl AcpRunner {
 
         let stop = match outcome {
             Ok(o) => o,
-            Err(e) => return failed_report(e, rounds, tokens),
+            Err(e) => {
+                // A dead host poisons every later session: drop it so the batch
+                // retry spawns a fresh one.
+                if e.contains("acp host") {
+                    self.hosts.lock().unwrap().remove(&agent.name);
+                }
+                return failed_report(e, rounds, tokens);
+            }
         };
 
         let gen_after = crate::store::read_generation(&self.out);

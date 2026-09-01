@@ -74,7 +74,7 @@ fn max_rounds() -> u32 {
     std::env::var("JAZYK_AGENT_MAX_ROUNDS")
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(48)
+        .unwrap_or(crate::limits::AGENT_MAX_ROUNDS)
         .max(1)
 }
 

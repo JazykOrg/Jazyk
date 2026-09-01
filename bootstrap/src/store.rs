@@ -1094,20 +1094,25 @@ impl Store {
         let toks = self.content_tokens(&req.statement, &req.entities);
         let mut scored: Vec<(usize, &String)> = Vec::new();
         for (oid, other) in &self.graph.requirements {
-            if oid == rid
-                || !other
-                    .entities
-                    .iter()
-                    .any(|e| subject_entities.contains(self.resolve_id(e)))
-            {
+            if oid == rid {
+                continue;
+            }
+            let other_entities: BTreeSet<&str> =
+                other.entities.iter().map(|e| self.resolve_id(e)).collect();
+            let shared_entities = other_entities.intersection(&subject_entities).count();
+            if shared_entities == 0 {
                 continue;
             }
             let shared = self
                 .content_tokens(&other.statement, &other.entities)
                 .intersection(&toks)
                 .count();
-            if shared >= 2 {
-                scored.push((shared, oid));
+            // Two shared content tokens qualify, and so do two shared entities: a
+            // restatement built from the same entities can share every noun and
+            // still share no other token, because the shared names leave the token
+            // pool. Mirrors docs/compiler/reconciler.md#pairs.
+            if shared >= 2 || shared_entities >= 2 {
+                scored.push((shared + shared_entities, oid));
             }
         }
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
@@ -5974,6 +5979,50 @@ mod tests {
         assert!(n.contains(&"req:m-2".to_string()), "{:?}", n);
         assert!(n.contains(&"req:m-3".to_string()), "{:?}", n);
         assert!(!n.contains(&"req:m-5".to_string()), "{:?}", n);
+    }
+
+    #[test]
+    fn requirement_neighbors_pair_on_shared_entities_alone() {
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:reorder-point".into(), entity("Reorder point"));
+        s.graph
+            .entities
+            .insert("ent:restock-task".into(), entity("Restock task"));
+        let mk = |statement: &str, entities: &[&str]| Requirement {
+            statement: statement.into(),
+            entities: entities.iter().map(|e| e.to_string()).collect(),
+            source: Some(mention("m.md", "/m", "q")),
+            ..Default::default()
+        };
+        // The f2 failure: a glossary definition restating an inventory rule shares
+        // both entities and, with their names out of the token pool, no other
+        // token. Two shared entities qualify the pair on their own.
+        s.graph.requirements.insert(
+            "req:inv-3".into(),
+            mk(
+                "When Stock falls below the Reorder point, the system creates a Restock task.",
+                &["ent:reorder-point", "ent:restock-task"],
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:glos-3".into(),
+            mk(
+                "The Reorder point is whatever level triggers a Restock task.",
+                &["ent:reorder-point", "ent:restock-task"],
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:other".into(),
+            mk(
+                "The Restock task queue drains nightly.",
+                &["ent:restock-task"],
+            ),
+        );
+        let n = s.requirement_neighbors("req:glos-3");
+        assert!(n.contains(&"req:inv-3".to_string()), "{:?}", n);
+        assert!(!n.contains(&"req:other".to_string()), "{:?}", n);
     }
 
     #[test]

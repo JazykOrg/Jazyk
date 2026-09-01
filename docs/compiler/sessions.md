@@ -368,10 +368,12 @@ The next build lists the anchor again.
 Budgets are registry constants built into the binary, not settings
 ([budgets and thresholds](./graph.md#budgets-and-thresholds)):
 
-- Rounds per session: 24, with at least 8 rounds per section in the batch. This bounds
-  the embedded agent's loop; an external agent bounds its own, and the idle timeout
-  (`JAZYK_ACP_IDLE_TIMEOUT`, [worker sessions](../frontends/acp.md#worker-sessions))
-  bounds them all.
+- Rounds: batches are sized so 24 rounds, 8 per section, fit ordinary work. The
+  embedded agent's loop stops at 48 model round-trips (`JAZYK_AGENT_MAX_ROUNDS` to
+  override), a flat runaway stop, not a per-batch budget: one round-trip may carry
+  several tool calls, so a trace's call count can exceed it. An external agent bounds
+  its own loop, and the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
+  [worker sessions](../frontends/acp.md#worker-sessions)) bounds them all.
 - Staged mutations per session: 64. Enforced by the tool serving.
 - Context: 24000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).

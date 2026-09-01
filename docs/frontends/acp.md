@@ -265,6 +265,11 @@ default 600 seconds). Cancellation follows the protocol: pending permission requ
 are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound what a
 dead agent can hold either way.
 
+A host process that dies would otherwise take every later session with it: session
+creation and prompts fail with `acp host is gone`. The runner treats that as the
+host's death, not the batch's: the cached host is dropped, the next session (a batch
+retry included) spawns a fresh one, and only a spawn that fails again fails its batch.
+
 ## Chat sessions
 
 A chat session is an open conversation with the agent about the project. The injected

@@ -94,6 +94,9 @@ pub const VIEW_LIMITS: [&str; 5] = [
 
 // Session budgets. Mirrors docs/compiler/sessions.md#budgets.
 pub const SESSION_ROUNDS: u32 = 24;
+// The embedded agent's flat runaway stop, in model round-trips (one may carry
+// several tool calls). `JAZYK_AGENT_MAX_ROUNDS` overrides.
+pub const AGENT_MAX_ROUNDS: u32 = 48;
 pub const SESSION_MUTATIONS: usize = 64;
 pub const CONTEXT_BUDGET: usize = 24_000;
 pub const ROUNDS_PER_SECTION: u32 = 8;

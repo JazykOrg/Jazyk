@@ -562,6 +562,11 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         }
         return v;
     }
+    // A goal kind's own name (the task of a WorkItem built from a goal whose kind has
+    // no legacy task, every GC kind among them) is its kind's slice.
+    if crate::goals::kind(task).is_some() {
+        return toolset_for_kinds(&[task]);
+    }
     let mut v = match task {
         // MCP servings. Mirrors docs/compiler/tools.md#toolsets.
         "mcp-generate" => {
@@ -3112,11 +3117,15 @@ impl ToolSession {
                     .load(&self.snapshot, &id, depth)
                     .map_err(|e| ToolError::new("bad-target", e))?;
                 let mut v = json!({"pack": text});
-                // The first node of a kind loaded in the session brings the kind's
-                // skill, once. Mirrors docs/compiler/sessions.md#skills.
-                if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
-                    if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
-                        v["skill"] = json!(format!("[skill: {} (active)]\n{}", skill, payload));
+                // In a serving, the first node of a kind loaded brings the kind's
+                // skill, once; a batch works under its goal kinds' skills and reads
+                // other nodes as reference. Mirrors docs/compiler/sessions.md#skills.
+                if !self.skills.has_pinned() {
+                    if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
+                        if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
+                            v["skill"] =
+                                json!(format!("[skill: {} (active)]\n{}", skill, payload));
+                        }
                     }
                 }
                 v["status"] = json!(self.condensed_status());
@@ -7039,6 +7048,19 @@ mod tests {
         }
     }
 
+    // A WorkItem built from a GC goal carries the kind's name as its task; the
+    // toolset is the kind's slice, never the read-only fallback (the snippet and
+    // the MCP case path build their tool list from it).
+    #[test]
+    fn toolset_of_a_goal_kind_task_is_its_slice() {
+        let names = toolset("abstract-entity");
+        for t in ["group_entities", "dissolve_entity", "update_entity", "mark_goal_done", "done"] {
+            assert!(names.contains(&t), "abstract-entity misses `{}`", t);
+        }
+        assert!(toolset("curate-view").contains(&"update_view"));
+        assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
+    }
+
     fn align_session() -> ToolSession {
         let mut s = Store::default();
         let text = "# Shop\nintro\n\n## Basket\nThe Basket keeps items a Customer intends to buy.\nItems stay until checkout.\n";
@@ -7307,6 +7329,23 @@ mod tests {
             .dispatch("load", &json!({"target": "shop.md#/shop/cart"}))
             .unwrap();
         assert!(v.get("skill").is_none(), "a pinned skill never re-renders");
+        // A batch reads a view as reference: no structural-views skill rides along
+        // with the load (docs/compiler/sessions.md#skills).
+        t.snapshot.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                members: vec!["ent:cart".into()],
+                default: true,
+                ..Default::default()
+            },
+        );
+        let v = t
+            .dispatch("load", &json!({"target": "view:class/public"}))
+            .unwrap();
+        assert!(v.get("skill").is_none(), "a batch never auto-loads a skill");
+        assert!(!t.skills.is_rendered("structural-views"));
         t.dispatch("load_skill", &json!({"name": "judgment"}))
             .unwrap();
         t.dispatch("load_skill", &json!({"name": "flow-views"}))

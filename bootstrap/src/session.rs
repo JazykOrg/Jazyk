@@ -760,6 +760,13 @@ impl SkillState {
         }
     }
 
+    // Whether a goal kind's skill governs this session. A batch works under its
+    // kinds' skills and reads other nodes as reference; only a serving auto-loads.
+    // Mirrors docs/compiler/sessions.md#skills.
+    pub fn has_pinned(&self) -> bool {
+        !self.pinned.is_empty()
+    }
+
     // A goal kind's skill: rendered in the prompt from the first round, pinned active.
     pub fn pin(&mut self, name: &str) {
         if skill_payload(name).is_none() {

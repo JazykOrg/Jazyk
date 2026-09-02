@@ -139,12 +139,16 @@ The lifecycle inside a session:
 - From the first round: the skills of the batch's goal kinds (the union, from the
   [goal catalog](./reconciler.md#the-catalog)) render in the prompt as active. A goal
   kind's skill stays active while a goal of that kind is open in the batch.
-- Auto-load: the first node of a kind loaded in the session brings the kind's skill,
-  once. A section brings `extraction`; a flow view (`use-case`, `activity`, `sequence`,
-  `communication`, `timing`, `overview`) brings `flow-views`; a structural view
-  (`class`, `object`, `package`, `component`, `composite`, `deployment`, `state`)
-  brings `structural-views`. Entities and requirements bring no skill by themselves;
-  `judgment`, `abstraction`, and `conformance` come from the goal kind or by name.
+- Auto-load: in a session with no goal-kind skill (a serving), the first node of a
+  kind loaded brings the kind's skill, once. A section brings `extraction`; a flow view
+  (`use-case`, `activity`, `sequence`, `communication`, `timing`, `overview`) brings
+  `flow-views`; a structural view (`class`, `object`, `package`, `component`,
+  `composite`, `deployment`, `state`) brings `structural-views`. Entities and
+  requirements bring no skill by themselves; `judgment`, `abstraction`, and
+  `conformance` come from the goal kind or by name. A batch works under its goal
+  kinds' skills: a section or view it loads is reference (a fan-out goal reading a
+  document for the names it uses), and another skill comes by name when the work
+  needs one, never as a side effect of a load that would spend half the budget.
 - By name: `load_skill({name})` renders the payload in its reply and marks the skill
   active. The index line under `## Loaded` lists every skill: active ones with their
   size, the rest as loadable.

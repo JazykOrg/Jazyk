@@ -60,6 +60,10 @@ difference from a list item is what the sentence names: an item under "the sub-s
 are:" names a part of the subject and is a fact about it, while a navigation sentence
 names a file. See [enumerations](#enumerations).
 
+History is the other counterweight. A sentence reporting a completed past event states
+no obligation on the subject today: only the standing rules such prose hides are
+extracted, and nothing mentioned only in history is minted.
+
 ## Declarative prose states obligations
 
 Documentation rarely says "shall". A declarative sentence about the subject states an
@@ -115,7 +119,9 @@ Two kinds of sentence state a fact the requirement alone does not hold:
   `currency`). A worked example ("Ana keeps 3 items in her cart") is an instance: an
   entity tied to its type by an `instantiation` edge, with the values on its own
   `attributes`. A worked example under an illustration heading whose values nothing
-  else uses is illustration, not an instance: extract only the rule it smuggles.
+  else uses is illustration, not an instance: extract only a rule no other section
+  states; its incidental values (a day of week, a quantity) are illustration detail,
+  never a statement, and a sentence in an example never records a transition.
   See [entity fields](../model/entity.md#fields).
 - Whole and part. "The shop contains an order service" is a requirement on the shop
   with a `composition` edge from the shop to the order service, and the order service's
@@ -282,7 +288,9 @@ transition: {subject: ent:order, from: placed, to: paid, trigger: payment succee
 ```
 
 - Measured. A quality bound stays in the statement as stated, and the `quality` facet
-  records it as `measure`. E.g.:
+  records it as `measure` when the bound is a number, duration, count, or rate; a bare
+  adverb (promptly, quickly, soon) is the unmeasured case and `measure` stays absent.
+  E.g.:
 
 ```
 quote: Checkout is confirmed in under two seconds.

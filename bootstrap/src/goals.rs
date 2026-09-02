@@ -1515,8 +1515,9 @@ impl GoalKind for ReviewEntity {
                         .join(", ")
                 ));
             }
-            // A stated composition whose part has no parent: the review's contract
-            // says to set parent on the part, so name each such edge.
+            // A stated composition whose part has no parent, or a parent disagreeing
+            // with the stated whole: the review's contract says to set parent on the
+            // part, so name each such edge (both the missing and the mismatch case).
             let mut parentless: Vec<String> = Vec::new();
             for r in &reqs {
                 let Some(q) = store.graph.requirements.get(r) else {
@@ -1526,22 +1527,24 @@ impl GoalKind for ReviewEntity {
                     if edge.rel_type.as_deref() != Some("composition") {
                         continue;
                     }
-                    if store
-                        .graph
-                        .entities
-                        .get(&edge.b)
-                        .is_some_and(|p| p.parent.is_none())
-                    {
-                        let line = format!("{} -> {}", edge.a, edge.b);
-                        if !parentless.contains(&line) {
-                            parentless.push(line);
+                    let Some(part) = store.graph.entities.get(&edge.b) else {
+                        continue;
+                    };
+                    let line = match &part.parent {
+                        None => format!("{} -> {}", edge.a, edge.b),
+                        Some(p) if p != &edge.a => {
+                            format!("{} -> {} (parent now {})", edge.a, edge.b, p)
                         }
+                        _ => continue,
+                    };
+                    if !parentless.contains(&line) {
+                        parentless.push(line);
                     }
                 }
             }
             if !parentless.is_empty() {
                 hints.push(format!(
-                    "composition edges whose part has no parent (set parent on the part with update_entity): {}",
+                    "composition edges whose part has no parent or a parent disagreeing with the stated whole (set parent on the part with update_entity): {}",
                     parentless.join(", ")
                 ));
             }
@@ -2605,6 +2608,12 @@ impl GoalKind for Answer {
                 || d.rule == "ratification-pending"
                 || matches!(d.triage.as_deref(), Some("suppressed") | Some("wontfix"))
             {
+                continue;
+            }
+            // An observation's prompt is advice, not a standing question: an
+            // info-severity diagnostic (other than a decision, which exists to ask)
+            // derives no answer goal. Mirrors docs/compiler/goals/answer.md#created-when.
+            if d.severity == "info" && d.rule != "decision" {
                 continue;
             }
             let change = json!({

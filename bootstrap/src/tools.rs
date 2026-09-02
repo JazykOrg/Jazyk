@@ -197,7 +197,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt optionally attaches a question for the document owner: up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string", "enum": REVIEW_RULES},
@@ -1498,6 +1498,31 @@ impl ToolSession {
         Ok(())
     }
 
+    // A sentence boundary is [.!?] followed by whitespace or the end of the text, so
+    // a dot inside `customer.md` or a versioned id never counts a phantom sentence
+    // (a naive split trained models to strip document names from justifications).
+    fn sentence_count(text: &str) -> usize {
+        let mut count = 0usize;
+        let mut has_content = false;
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if matches!(c, '.' | '!' | '?') && chars.peek().map_or(true, |n| n.is_whitespace()) {
+                if has_content {
+                    count += 1;
+                    has_content = false;
+                }
+                continue;
+            }
+            if !c.is_whitespace() {
+                has_content = true;
+            }
+        }
+        if has_content {
+            count += 1;
+        }
+        count
+    }
+
     fn mark_goal_done(&mut self, args: &Value) -> Result<Value, ToolError> {
         let goal = Self::str_arg(args, "goal")?;
         let Some(gs) = self.scope.goal(&goal).cloned() else {
@@ -1511,10 +1536,7 @@ impl ToolSession {
             ));
         };
         let justification = Self::str_arg(args, "justification")?;
-        let sentences = justification
-            .split(['.', '!', '?'])
-            .filter(|s| !s.trim().is_empty())
-            .count();
+        let sentences = Self::sentence_count(&justification);
         if sentences > 2 {
             return Err(ToolError::new(
                 "bad-justification",
@@ -2654,7 +2676,7 @@ impl ToolSession {
                 if has_edit == answer.is_some() {
                     return Err(ToolError::new(
                         "bad-prompt",
-                        format!("option {} needs exactly one of edit or answer", i),
+                        format!("option {} needs exactly one of edit or answer; an option with neither is a filled-in blank, and a diagnostic that asks nothing of a human omits `prompt` entirely", i),
                     ));
                 }
                 let edit = if has_edit {

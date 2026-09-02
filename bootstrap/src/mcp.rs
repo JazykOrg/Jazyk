@@ -41,6 +41,10 @@ pub struct McpServer {
     // and each skill payload once. Later batches elide them; full: true repeats.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     delivered: std::sync::Mutex<Delivered>,
+    // The batch this serving already committed through done: a scoped serving asking
+    // for more work afterwards is told the session is complete instead of bouncing
+    // between wrong-target and stale-batch refusals.
+    finished: std::sync::Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -241,6 +245,7 @@ impl McpServer {
                 .with_transcript(&out_for_trace, "mcp"),
             bridge,
             delivered: std::sync::Mutex::new(Delivered::default()),
+            finished: std::sync::Mutex::new(None),
         }
     }
 
@@ -504,6 +509,14 @@ impl McpServer {
             board = crate::board::Board::compute(&self.project, &self.out);
         }
         let mut v = board.answer();
+        if self.bridge.only.is_some() {
+            if let Some(fin) = self.finished.lock().unwrap().as_ref() {
+                v["note"] = json!(format!(
+                    "this session is complete (batch `{}` committed); goals listed here belong to the next session",
+                    fin
+                ));
+            }
+        }
         if let Some(o) = self.open.lock().unwrap().as_ref() {
             v["openBatch"] = json!(format!(
                 "batch `{}` is already open; done or abandon_goals first",
@@ -523,6 +536,15 @@ impl McpServer {
             return json!({"error": {"rule": "batch-open", "message": format!(
                 "batch `{}` is already open with {} staged mutation(s); done or abandon_goals first",
                 o.id, o.session.staged.len())}});
+        }
+        // A scoped serving serves exactly one batch. Once it has committed, the goals
+        // now open on the board belong to the next session; say so instead of the
+        // wrong-target/stale refusal pair a confused agent bounces between.
+        if self.bridge.only.is_some() {
+            if let Some(fin) = self.finished.lock().unwrap().as_ref() {
+                return json!({"error": {"rule": "session-complete", "message": format!(
+                    "this session is complete: batch `{}` committed. Goals reopened since belong to the next session; finish without claiming more", fin)}});
+            }
         }
         // The snapshot and the board derive from the same synced store.
         let mut store = Store::load(&self.out);
@@ -719,7 +741,9 @@ impl McpServer {
             *open = Some(o); // the changeset stays open; repair and finish again
             return v;
         }
+        let batch_id = o.id.clone();
         let mut reply = self.commit_open(&mut o);
+        *self.finished.lock().unwrap() = Some(batch_id);
         drop(open);
         // The consumer that empties the board runs the deterministic tail.
         let board = crate::board::Board::compute(&self.project, &self.out);

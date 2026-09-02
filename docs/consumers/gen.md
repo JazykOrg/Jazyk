@@ -96,6 +96,10 @@ medium:
 
 - The input is the requirements that say what the deliverable is: the same graph every
   session reads, budgeted like any [loaded set](../compiler/context.md#the-loaded-set).
+- When the deliverable directory already holds files (a planted fixture, an earlier
+  run), the decision also reads the tree's file listing: an existing tree pins the
+  language and toolchain, and deciding from the statements alone applies only to an
+  empty deliverable.
 - `produced: written` means the generated files are the deliverable. `produced: built`
   means they are the source that produces `artifact`, and [the build](#the-build) runs
   it.
@@ -390,7 +394,10 @@ two carriers:
   hash:a1b2c3d4` in the medium's comment syntax, nothing else on the line. The marker
   is a wire format, not part of the product: `record_generation` strips every marker
   line from the written files and records each as a site on the requirement's row: the
-  file, the line, and `head`, the verbatim next significant line. The deliverable
+  file, the line, and `head`, the verbatim next significant line. A doubled prefix
+  (`req:req:catalog-3`) normalizes to one on strip; a marker-like line the strip
+  cannot parse (trailing text after the hash, a mangled id) stays in the file, anchors
+  nothing, and the record reply names it under `markerWarnings`. The deliverable
   carries no Jazyk metadata; the binding lives in the out directory.
 
 The division of labor: the worker owns localization (it knows where each requirement

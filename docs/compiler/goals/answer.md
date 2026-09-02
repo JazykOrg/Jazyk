@@ -65,6 +65,9 @@ What derives no goal of this kind:
   stays rejected across rebuilds.
 - A prompt on a diagnostic whose `triage` is `suppressed` or `wontfix`: the owner
   declined the question (below).
+- A prompt on an info-severity diagnostic whose rule is not `decision`. An
+  observation's prompt is advice riding on the node, not a standing question; only
+  `decision` prompts and warning or error severities open the goal.
 - A diagnostic without a prompt. A finding with no enumerable resolution is triage
   work in the [diagnostics queue](../model/diagnostic.md#lifecycle-and-triage), not a
   goal; the board carries questions, not every warning.

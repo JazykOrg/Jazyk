@@ -321,8 +321,10 @@ pub struct RawSite {
 // carrying other alphanumeric content is left alone: the harness never mangles code.
 // Mirrors docs/consumers/gen.md#traceability.
 pub fn strip_markers(text: &str) -> (String, Vec<RawSite>) {
-    let re =
-        regex::Regex::new(r"req:([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})").unwrap();
+    // `(?:req:)+` folds a doubled prefix (`req:req:orders-1`, a model pasting the
+    // full id after a template's literal `req:`) into one clean site.
+    let re = regex::Regex::new(r"(?:req:)+([A-Za-z0-9][A-Za-z0-9_-]*)\s+hash:([0-9a-fA-F]{4,64})")
+        .unwrap();
     let mut clean: Vec<&str> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
     let mut sites: Vec<RawSite> = Vec::new();
@@ -518,6 +520,39 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
     hash_hex(&facts)
 }
 
+// The deliverable's current file listing, relative paths, two levels deep, capped:
+// enough to pin a medium (a Cargo.toml, a src/ tree) without flooding the prompt.
+fn list_existing_files(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > 2 || out.len() >= 40 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<std::fs::DirEntry> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.len() >= 40 {
+                return;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, root, out, depth + 1);
+            } else if let Ok(rel) = p.strip_prefix(root) {
+                out.push(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out, 0);
+    out
+}
+
 // Decide what the deliverable is made of, once, from the statements that say so. The
 // answer is recorded in the ledger and stated as a fact to every later task, so no
 // per-entity task has to work it out again.
@@ -525,6 +560,7 @@ pub fn fact_hash(store: &Store, id: &str) -> String {
 pub fn decide_medium(
     store: &Store,
     runner: &crate::acp::runner::AcpRunner,
+    deliverable: &Path,
 ) -> Result<Medium, String> {
     // Every statement in the graph, capped: the medium is stated somewhere in the
     // documents, and which statement says it is exactly what the model must find.
@@ -550,11 +586,25 @@ pub fn decide_medium(
         .map(|e| e.name.as_str())
         .take(40)
         .collect();
+    // An existing deliverable pins the medium: a planted fixture or an earlier run
+    // already chose the language and toolchain, and a guess from CLI-flavored
+    // statements must not override it. "From the statements alone" applies only to
+    // an empty deliverable.
+    // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    let existing = list_existing_files(deliverable);
+    let tree = if existing.is_empty() {
+        "The deliverable directory is empty: decide from the statements alone.".to_string()
+    } else {
+        format!(
+            "The deliverable directory already holds these files:\n{}\nAn existing tree pins the medium: decide the form and toolchain these files already use (their language, build manifest, and test layout), never a different one.",
+            existing.join("\n")
+        )
+    };
     let system =
         "You decide what a deliverable is made of. Answer with one JSON object and nothing else.";
     let user = format!(
-        "These statements are the whole specification of one deliverable.\n\n{}\n\nEntities: {}\n\n\
-         Decide the deliverable's medium from the statements alone.\n\
+        "These statements are the whole specification of one deliverable.\n\n{}\n\nEntities: {}\n\n{}\n\n\
+         Decide the deliverable's medium.\n\
          - `form`: what the deliverable is, in a few words (e.g. `Rust library`, `Microsoft PowerPoint deck`, `printed book`).\n\
          - `produced`: `written` when the files a generator writes ARE the deliverable (source code, a manuscript, a configuration). \
          `built` when the medium is a format a tool must produce (a slide deck, a PDF, an image, a compiled binary): the files are the source, and a command turns them into the artifact.\n\
@@ -562,7 +612,8 @@ pub fn decide_medium(
          - `artifact`: for `built` only, the file the build produces, relative to the deliverable directory (e.g. `jazyk.pptx`). Empty for `written`.\n\n\
          Reply with exactly: {{\"form\": \"...\", \"produced\": \"written\"|\"built\", \"toolchain\": \"...\", \"artifact\": \"...\"}}",
         body,
-        entities.join(", ")
+        entities.join(", "),
+        tree
     );
     let mut last = String::new();
     for attempt in 0..2 {
@@ -1033,12 +1084,27 @@ pub fn mark(
     // records and cleans. Runs before hashing so every hash sees the stripped bytes.
     // Mirrors docs/consumers/gen.md#traceability.
     let mut sites_by_rid: BTreeMap<String, Vec<Site>> = BTreeMap::new();
+    // A marker-like line the strip cannot parse (trailing text after the hash, a
+    // mangled id) stays in the file and anchors nothing; name each one, so the row
+    // never reads green over a broken wire format.
+    // Mirrors docs/consumers/gen.md#traceability.
+    let malformed_re =
+        regex::Regex::new(r"req:[A-Za-z0-9][A-Za-z0-9_-]*\s+hash:[0-9a-fA-F]{4,}").unwrap();
+    let mut marker_warnings: Vec<String> = Vec::new();
     for f in &files {
         let path = gs.deliverable.join(f);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
         let (clean, raw) = strip_markers(&text);
+        for (i, line) in clean.lines().enumerate() {
+            if marker_warnings.len() >= 20 {
+                break;
+            }
+            if malformed_re.is_match(line) {
+                marker_warnings.push(format!("{}:{}", f, i + 1));
+            }
+        }
         if raw.is_empty() {
             continue;
         }
@@ -1253,6 +1319,12 @@ pub fn mark(
     if pruned > 0 {
         reply["prunedRows"] = json!(pruned);
         reply["note"] = json!("pruned ledger row(s) whose requirement left the graph");
+    }
+    if !marker_warnings.is_empty() {
+        reply["markerWarnings"] = json!(marker_warnings);
+        reply["markerNote"] = json!(
+            "marker-like lines the strip could not parse remain in these files and anchor no site; a marker is `req:<id> hash:<hash8>` alone on its line"
+        );
     }
     Ok(reply)
 }
@@ -2445,7 +2517,7 @@ pub fn run_all(
     {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() || ledger.entities.is_empty() {
-            let medium = decide_medium(store, runner)?;
+            let medium = decide_medium(store, runner, &gs.deliverable)?;
             trace.line("gen medium", &medium.line());
             ledger.medium = Some(medium);
             ledger.save(&store.out);

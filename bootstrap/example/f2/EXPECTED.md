@@ -87,7 +87,9 @@ orders.md and payment.md describe state changes of the Order. The derived machin
   - Under `states-per-state-machine`; no `abstract-entity` goal on Order.
 
 No other entity has a machine: shipping.md and returns.md name events on Shipment and
-Return ("leaves the warehouse", "received and inspected") but no state pair for them.
+Return ("leaves the warehouse", "received and inspected") but no state pair for them. An
+optional `sm:product` (`in stock → hidden`), grounded in catalog.md's explicit
+shown/hidden pair, is tolerated; Shipment and Return machines stay wrong.
 
 ## Instances
 
@@ -114,10 +116,12 @@ mechanism-faithful for an edge-poor cluster. Expected:
 When Operator is not minted, the admin.md cluster keys on the Admin CLI instead
 (`admin-cli-admin`, title `Admin CLI: Admin CLI`) and the use case draws the initiators
 as actors. The cluster slug follows the actor's recorded name, so a plural `Operators`
-keys `operators-admin`: acceptable. The remaining behavior requirements fall in one-member clusters (the
+keys `operators-admin`: acceptable. The remaining behavior requirements key on non-actor first entities (the
 Customer in system.md, customer.md, payment.md; Payment, Catalog, Return in their own
 pages; Inventory's two stock rules derive `Inventory: Inventory` only when both anchor
-on Inventory first). Each lone member draws `unplaced-behavior` (info) with a
+on Inventory first). A cluster reaching two or more members this way derives its view
+pair too (`Payment: Payment`, `Catalog: Catalog`): mechanism-faithful surplus, and the
+four named clusters above are the graded minimum. Each lone member draws `unplaced-behavior` (info) with a
 `flow-unplaced` record and an optional `curate-view` goal: `optional advised` in the
 verdict, never blocking convergence.
 
@@ -125,8 +129,10 @@ Structural and state defaults:
 
 - `view:class/public`, title `Public`, `query: {scope: public}`: every entity above.
 - `view:component/orderly`, title `Orderly`: derives only when Orderly has at least one
-  child. Members: Orderly's children plus the outside entities that depend on them
-  (Customer, Operator). A compile that lands no containment has no component view; that
+  child. Members per the documented rule: Orderly's children, the interfaces they
+  realize, and the entities depending on those interfaces; f2 states no realization,
+  so the members are the children alone, and a connector-less component diagram is
+  mechanism-faithful. A compile that lands no containment has no component view; that
   is acceptable but weaker. A component view derives per containment root with at least
   one child (graph.md reads "system" structurally), so a `view:component/<root>` for
   another root that gained a child (Catalog over Catalog category) is mechanism-faithful,
@@ -163,9 +169,10 @@ No `diagrams/object/` directory. What the pictures show:
   `Catalog o-- Product`, `Payment -- Order`, `Shipment -- Order`,
   `Shipment ..> Customer`, `Return ..> Inventory`, `Inventory -- Stock`,
   `Operator ..> "Admin CLI"`, `"Admin CLI" ..> Orderly`, `Orderly *-- Inventory`.
-- `component/orderly`: `component Catalog`, `component Inventory`,
-  `component "Admin CLI"`, `actor Customer`, `actor Operator`, `Customer ..> Catalog`,
-  `Operator ..> "Admin CLI"`. No interface, so no lollipop or socket.
+- `component/orderly`: a `component` per child that landed (Catalog, Inventory,
+  `"Admin CLI"`). No interface, so no lollipop or socket; with no realization, actors
+  and other dependents are not members, and a diagram of bare components is
+  mechanism-faithful.
 - `usecase/customer-shipping`: `actor Customer`, `usecase "Customer: Shipping"`,
   `Customer -- "Customer: Shipping"`. Never an actor named Buyer.
 - `sequence/customer-shipping`: `actor Customer`; one message per member that carries

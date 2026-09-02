@@ -76,7 +76,9 @@ lands a `derived` or `decree` fact attaches the
 [ratification proposal](#ratification-proposals). A prompt is optional; most
 diagnostics carry none. A diagnostic with an unanswered prompt is the `prompt-unanswered`
 change and opens the blocked [`answer` goal](../goals/answer.md), which rides in the
-verdict's `blocked` count.
+verdict's `blocked` count; an info-severity diagnostic whose rule is not `decision`
+derives no goal from its prompt (an observation's prompt is advice, not a standing
+question).
 
 Gates: an `edit` option's `old_text` must locate in its section
 (whitespace-insensitively) when it is non-empty, `label` is required, and `edit` and

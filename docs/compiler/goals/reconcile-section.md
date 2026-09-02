@@ -198,8 +198,8 @@ transition, facets, and a verbatim quote; leave an unchanged statement alone,
 re-record a changed one, delete one the section stopped making; honor every stale
 anchor; search before creating an entity and read "the system" as the entity another
 document introduced, never minting a sibling for the document's own subject; record
-the facts as stated; set coverage exactly once, with the
-three rejected reasons named; stage nothing when the section already yielded everything
+the facts as stated; account for each normative sentence by the requirement id that
+carries it; set coverage exactly once, with the three rejected reasons named; stage nothing when the section already yielded everything
 it states. Then the change in one line, the gate in one line, and the hints.
 
 The `extraction` skill is active from the first round: the kind names it, and loading a

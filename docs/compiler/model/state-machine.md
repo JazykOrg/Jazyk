@@ -74,7 +74,9 @@ them in place while the condition holds, and resolve them when it clears. See
   trigger) with no transition out of that state on that trigger, self-transitions
   included, is unhandled. The check is silent on a machine with fewer than two
   transitions: with one arrow, every other state is a trivially unhandled dead end
-  that `dead-end-state` already reports. One diagnostic per machine, the message
+  that `dead-end-state` already reports. A state with no outgoing transition is
+  `dead-end-state`'s finding and is skipped here: the check enumerates only states
+  that handle at least one trigger. One diagnostic per machine, the message
   listing the pairs. An
   unhandled pair is a requirements gap detector: the documents say what happens on payment
   success in `placed` and say nothing about it in `held`.

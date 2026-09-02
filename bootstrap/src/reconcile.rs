@@ -1075,6 +1075,12 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
     };
     let mut unhandled: Vec<String> = Vec::new();
     for s in &states {
+        // A state with no outgoing transition is dead-end-state's finding; enumerating
+        // its triggers here would only restate it as a cross-product wall.
+        // Mirrors docs/compiler/model/state-machine.md#checks.
+        if !leaving.contains(s) {
+            continue;
+        }
         for t in &triggers {
             let handled = m
                 .transitions

@@ -337,7 +337,7 @@ pub fn run_all(
     {
         let mut ledger = Ledger::load(&store.out);
         if ledger.medium.is_none() {
-            let medium = crate::gen::decide_medium(store, runner)?;
+            let medium = crate::gen::decide_medium(store, runner, &gs.deliverable)?;
             trace.line("bind medium", &medium.line());
             ledger.medium = Some(medium);
             ledger.save(&store.out);

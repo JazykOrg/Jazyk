@@ -134,8 +134,9 @@ Computed by the harness and rendered under the goal block:
 - Multi-entity requirements on this entity that declare no `edges`, when the
   statements are structural (the `declare-edges` GC goal advises the same; the review
   may settle it while the statements are loaded).
-- Composition edges on the entity's requirements whose part has no `parent`, with the
-  note that `update_entity` on the part sets it.
+- Composition edges on the entity's requirements whose part has no `parent`, or whose
+  part's `parent` disagrees with the stated whole, with the note that `update_entity`
+  on the part sets it.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
   naming the entity itself ride in the loaded set.
 - The project's lint rules, restated with their severities

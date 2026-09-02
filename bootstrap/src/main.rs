@@ -444,6 +444,14 @@ fn main() {
                 i += 1;
                 opts.only = args.get(i).cloned();
             }
+            "--project" => {
+                i += 1;
+                opts.project = args.get(i).cloned();
+            }
+            "--goal" => {
+                i += 1;
+                opts.goal = args.get(i).cloned();
+            }
             "--build-token" => {
                 i += 1;
                 opts.build_token = args.get(i).cloned();
@@ -603,7 +611,20 @@ fn main() {
         }
         "benchmark" => {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
-            benchmark::run_filtered(&llm, &out, &positional)
+            // `--goal` runs one goal's session from a copy of a real project.
+            // Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
+            if let Some(goal) = opts.goal.as_deref() {
+                let root = opts
+                    .project
+                    .as_deref()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    });
+                benchmark::run_goal(&llm, &root, goal)
+            } else {
+                benchmark::run_filtered(&llm, &out, &positional)
+            }
         }
         // The embedded ACP agent, spawned by the host when the `embedded` profile is
         // selected. Not meant to be run by hand. Mirrors docs/frontends/cli.md#jazyk-agent.

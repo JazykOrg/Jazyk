@@ -702,12 +702,21 @@ fn run_case_turn(
     _lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     transcript: Option<&std::path::Path>,
+    // A snippet runs a goal the board derived, change and hints intact; a case
+    // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
+    derived: Option<&crate::model::Goal>,
 ) -> (Vec<crate::store::Op>, u32, Option<TurnFail>) {
     use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
-    let scope = WorkScope::from_item(item);
-    let goal = item.to_goal(crate::model::GoalState::Open);
+    let goal = match derived {
+        Some(g) => g.clone(),
+        None => item.to_goal(crate::model::GoalState::Open),
+    };
+    let scope = match derived {
+        Some(g) => WorkScope::for_batch(&format!("snippet-{}", g.id), std::slice::from_ref(g)),
+        None => WorkScope::from_item(item),
+    };
     let prompt = crate::session::preview(&snapshot, std::slice::from_ref(&goal));
     let names = toolset(&item.task);
     let tools: Vec<GenericTool> = catalog()
@@ -820,6 +829,160 @@ fn run_case_turn(
 
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
     run_filtered(llm, out, &[])
+}
+
+// A project copied whole into a sandbox, except what is never state: the repository,
+// build output, and installed packages.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let n = name.to_string_lossy();
+        if n == ".git" || n == "target" || n == "node_modules" {
+            continue;
+        }
+        let src = entry.path();
+        let dst = to.join(&name);
+        if src.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+// `jazyk benchmark --project <dir> --goal <id>`: one goal's session from a copy of a
+// real project at a real moment. The board derives in the sandbox, the goal runs with
+// its derived change and hints, the commit lands in the sandbox, and the project is
+// never touched. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
+pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str) -> i32 {
+    use crate::model::GoalState;
+    let tmp = std::env::temp_dir().join(format!(
+        "jazyk-snippet-{}-{}",
+        std::process::id(),
+        crate::md::slug(goal_id)
+    ));
+    std::fs::remove_dir_all(&tmp).ok();
+    if let Err(e) = copy_tree(root, &tmp) {
+        eprintln!(
+            "jazyk: cannot copy {} into a sandbox: {}",
+            root.display(),
+            e
+        );
+        return 2;
+    }
+    let proj = crate::project::Project::load(&tmp);
+    let mut store = Store::load(&proj.out);
+    let (parsed, _) = crate::reconcile::parse_all(&proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(&proj, &proj.out);
+    let board = crate::board::Board::derive(&store, &proj, &control);
+    let Some(goal) = board
+        .goals
+        .iter()
+        .find(|g| g.id == goal_id && matches!(g.state, GoalState::Open))
+        .cloned()
+    else {
+        let open: Vec<&str> = board
+            .goals
+            .iter()
+            .filter(|g| matches!(g.state, GoalState::Open))
+            .map(|g| g.id.as_str())
+            .take(40)
+            .collect();
+        eprintln!(
+            "jazyk: `{}` is not an open goal here; open goals: {}",
+            goal_id,
+            if open.is_empty() {
+                "(none)".to_string()
+            } else {
+                open.join(", ")
+            }
+        );
+        return 2;
+    };
+    if let Some(crate::goals::Ready::Blocked(reason)) = board.readiness.get(goal_id) {
+        eprintln!("jazyk: `{}` is not ready: {}", goal_id, reason);
+        return 2;
+    }
+    let before: std::collections::BTreeSet<String> = board
+        .goals
+        .iter()
+        .filter(|g| matches!(g.state, GoalState::Open))
+        .map(|g| g.id.clone())
+        .collect();
+    let item = WorkItem::from_goal(&goal);
+    let gs = crate::gen::GenSettings::resolve(&proj);
+    let trace_dir = proj.out.join("benchmark").join("trace");
+    std::fs::create_dir_all(&trace_dir).ok();
+    let transcript = trace_dir.join(format!("snippet-{}.json", crate::md::slug(goal_id)));
+    println!("snippet: {} in {}", goal_id, tmp.display());
+    let (ops, rounds, failed) = run_case_turn(
+        llm,
+        store.clone(),
+        &item,
+        &Default::default(),
+        &gs,
+        Some(&transcript),
+        Some(&goal),
+    );
+    let code = match failed {
+        Some(TurnFail::Abort(why)) => {
+            println!("outcome: aborted: {}", why);
+            1
+        }
+        Some(TurnFail::GoalFailed(reason)) => {
+            println!("outcome: the model failed the goal: {}", reason);
+            1
+        }
+        None => {
+            println!("staged: {} mutation(s) in {} round(s)", ops.len(), rounds);
+            for op in &ops {
+                let v = serde_json::to_value(op).unwrap_or_default();
+                println!(
+                    "  - {} {}",
+                    v["op"].as_str().unwrap_or("?"),
+                    v["id"].as_str().or(v["keep"].as_str()).unwrap_or("")
+                );
+            }
+            if !ops.is_empty() {
+                store.apply(ops, &item.commit(rounds, 0));
+            }
+            let after = crate::board::Board::derive(&store, &proj, &control);
+            let resolved = !after.open(goal_id);
+            println!(
+                "outcome: {}",
+                if resolved {
+                    "resolved"
+                } else {
+                    "the goal is still open after the commit"
+                }
+            );
+            let opened: Vec<&str> = after
+                .goals
+                .iter()
+                .filter(|g| matches!(g.state, GoalState::Open) && !before.contains(&g.id))
+                .map(|g| g.id.as_str())
+                .collect();
+            println!(
+                "opened: {}",
+                if opened.is_empty() {
+                    "(nothing)".to_string()
+                } else {
+                    opened.join(", ")
+                }
+            );
+            if resolved {
+                0
+            } else {
+                1
+            }
+        }
+    };
+    println!("transcript: {}", transcript.display());
+    code
 }
 
 // `jazyk benchmark [case...]`: grade only the named cases. A filtered run is for
@@ -974,6 +1137,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                             .join("trace")
                             .join(format!("{}-{}.json", codec_name, case.name)),
                     ),
+                    None,
                 );
                 let staged = staged_ops.len();
                 match &failed {

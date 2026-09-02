@@ -502,6 +502,9 @@ can drive jazyk's [sessions](../compiler/sessions.md). See
 land in `<out>/benchmark/results.yaml`, per-case transcripts under
 `<out>/benchmark/trace/`. `jazyk benchmark [case...]` grades
 [a subset](../benchmark/benchmark.md#running-a-subset) for iterating on one failure.
+`jazyk benchmark --project <dir> --goal <goal-id>` runs one goal's session from a
+copy of a real project, prints the outcome and the transcript path, and touches
+nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project)).
 
 ## Common options
 

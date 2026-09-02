@@ -43,6 +43,10 @@ pub struct Options {
     pub serve_files: bool,
     pub edit_sink: Option<String>,
     pub packaged: bool,
+    // `jazyk benchmark --project <dir> --goal <id>`: one goal's session from a copy
+    // of a real project (docs/benchmark/benchmark.md#snippets-from-a-real-project).
+    pub project: Option<String>,
+    pub goal: Option<String>,
 }
 
 impl Default for Options {
@@ -78,6 +82,8 @@ impl Default for Options {
             serve_files: false,
             edit_sink: None,
             packaged: false,
+            project: None,
+            goal: None,
         }
     }
 }

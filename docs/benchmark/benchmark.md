@@ -58,6 +58,25 @@ field. See [cases](./cases.md#case-format).
 `jazyk benchmark [case...]` grades only the named cases (e.g. `jazyk benchmark
 density reuse`), for iterating on one failure without paying for the full set. An unknown case name is an error that lists the available names. Verdicts still
 print but a filtered run is never a capability grade; the history entry is skipped.
+
+## Snippets from a real project
+
+A case seeds its fixture from yaml. A snippet seeds it from a real project at a real
+moment: `jazyk benchmark --project <dir> --goal <goal-id>` copies the project (its
+documents and its `jazyk-out`) into a sandbox, derives the [board](../compiler/reconciler.md#goal-derivation)
+there, and runs exactly one session holding that one goal, with the goal's derived
+`change` and hints intact (a fan-out goal carries its coupling candidates, a
+rejudge-pair goal its shared entity). The session commits into the sandbox; the
+project is never touched. The run prints the goal's outcome (resolved, failed with
+the model's reason, or aborted), the mutations staged, the goals the commit opened,
+the sandbox path, and the transcript path under the sandbox's `benchmark/trace/`.
+
+A goal that is not open is an error listing the open goals; a goal that is not ready
+is an error naming what blocks it (the compile goals still open in its cone, a
+release, a human). Snapshot a project at any moment (copy its directory), then run
+the snippet as often as the prompt or the harness changes: one interaction, a few
+minutes, inspected in the transcript, until it satisfies. A snippet never lands in
+the history and is never a capability grade.
 A tier with no graded case prints `-` for its score and verdict instead of
 claiming a result it never measured.
 

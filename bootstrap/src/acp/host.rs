@@ -142,8 +142,13 @@ impl AcpHost {
                         }),
                 );
                 if let Err(e) = result {
+                    let e = err_s(e);
+                    // The driver died after initialize: nothing waits on ready_tx
+                    // then, so say it out loud instead of dying silently (pending
+                    // prompts would surface only as dropped reply channels).
+                    eprintln!("[acp] host driver for `{}` ended: {}", spawn_agent.name, e);
                     // If initialize never completed, start() is still waiting.
-                    let _ = ready_tx.send(Err(err_s(e)));
+                    let _ = ready_tx.send(Err(e));
                 }
             })
             .map_err(|e| format!("cannot spawn acp host thread: {}", e))?;

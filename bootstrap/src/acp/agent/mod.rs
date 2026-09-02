@@ -264,7 +264,18 @@ pub fn run() -> i32 {
                                 responder.respond(PromptResponse::new(StopReason::MaxTurnRequests))
                             }
                             Stop::Cancelled => responder.respond(PromptResponse::new(StopReason::Cancelled)),
-                            Stop::Error(e) => responder.respond_with_internal_error(e),
+                            // A loop failure answers as a refusal with the error in a
+                            // message chunk, never as a protocol error: the client
+                            // library treats an error response to session/prompt as
+                            // fatal to the whole connection, so one rate-limited call
+                            // would take down the host and every later session with it.
+                            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+                            Stop::Error(e) => {
+                                notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                    ContentBlock::from(format!("agent error: {}", e)),
+                                )));
+                                responder.respond(PromptResponse::new(StopReason::Refusal))
+                            }
                         };
                     });
                     Ok(())

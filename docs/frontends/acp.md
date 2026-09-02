@@ -96,7 +96,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   stall, not an answer: reasoning models narrate the action they intend and stop, as
   if the thinking were visible. The loop answers with a corrective nudge naming that
   ("reasoning is not shown and does not count as acting"), at most twice per prompt,
-  before the empty reply is allowed to end it.
+  before the empty reply is allowed to end it. A turn the loop cannot finish (the
+  endpoint erroring past its retries) answers as a `refusal` stop with the error
+  emitted as a message chunk, never as a protocol error: the client side treats an
+  error response to `session/prompt` as fatal to the whole connection, and one
+  rate-limited call must not take down the host and every later session with it.
 - On `session/new` it also offers the endpoint's models as a session config option,
   so the person in the IDE picks one (below).
 - `session/cancel` stops the loop at the next round.

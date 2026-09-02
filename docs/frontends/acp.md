@@ -108,7 +108,10 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
 The codecs live here: `native` (OpenAI-style `tools` and `tool_calls`, with the
 calls for one step batched into a single reply) and `text` (tools described in the
 system prompt, one JSON action object per reply, because small models cannot
-reliably emit several). A text reply that reads as a JSON action but does not parse
+reliably emit several). The one-per-reply line is the ask, not the parse: a reply
+that packs several action objects executes them all in order, one result each,
+because executing the first and dropping the rest leaves the model believing work
+happened that never did. A text reply that reads as a JSON action but does not parse
 is answered with a repair message naming the error, three strikes before the prompt
 fails: a dropped brace is a resend, not an answer. The agent probes on the first
 round: an endpoint that rejects the `tools` parameter, or a model that answers prose

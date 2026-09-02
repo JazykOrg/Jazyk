@@ -117,6 +117,60 @@ impl Codec for NativeCodec {
 
 struct TextCodec;
 
+// Balanced top-level `{...}` blocks in reply text, in order, string-aware: the
+// text codec's action extractor.
+fn balanced_objects(content: &str) -> Vec<String> {
+    let bytes = content.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            let start = i;
+            let mut depth = 0i32;
+            let mut in_str = false;
+            let mut esc = false;
+            let mut j = i;
+            let mut end = None;
+            while j < bytes.len() {
+                let c = bytes[j];
+                if esc {
+                    esc = false;
+                } else if in_str {
+                    match c {
+                        b'\\' => esc = true,
+                        b'"' => in_str = false,
+                        _ => {}
+                    }
+                } else {
+                    match c {
+                        b'"' => in_str = true,
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = Some(j);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                j += 1;
+            }
+            match end {
+                Some(e) => {
+                    out.push(content[start..=e].to_string());
+                    i = e + 1;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 impl Codec for TextCodec {
     fn system_suffix(&self, tools: &[GenericTool]) -> String {
         if tools.is_empty() {
@@ -138,19 +192,36 @@ impl Codec for TextCodec {
     }
     fn parse(&self, msg: &Value) -> Vec<Action> {
         let content = msg["content"].as_str().unwrap_or_default();
-        if let Some(obj) = llm::extract_json_object(content) {
+        // Every balanced top-level object in the reply, in order: the protocol
+        // asks for one action per message, but a model that packs several must
+        // see them all executed, never the first with the rest silently dropped
+        // (a session that believes 26 goals are marked while one landed spends
+        // its rounds re-proposing the other 25).
+        let mut calls: Vec<Action> = Vec::new();
+        let mut first_err: Option<String> = None;
+        for obj in balanced_objects(content) {
             match serde_json::from_str::<Value>(&obj) {
                 Ok(v) => {
                     if let Some(name) = v["tool"].as_str() {
-                        return vec![Action::Call {
+                        calls.push(Action::Call {
                             id: None,
                             name: name.to_string(),
                             args: v["args"].clone(),
-                        }];
+                        });
                     }
                 }
-                Err(e) => return vec![Action::Malformed(e.to_string())],
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e.to_string());
+                    }
+                }
             }
+        }
+        if !calls.is_empty() {
+            return calls;
+        }
+        if let Some(e) = first_err {
+            return vec![Action::Malformed(e)];
         }
         // Content that opens like an action but never yielded one is a broken
         // action, not prose: a truncated object must not end the turn as an answer.
@@ -405,6 +476,23 @@ mod tests {
                 assert_eq!(args["query"], "cart");
             }
             _ => panic!("expected a call"),
+        }
+    }
+
+    #[test]
+    fn text_codec_executes_every_action_object() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "Marking both.\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\"}}\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:b\"}}"});
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 2);
+        for (a, g) in actions.iter().zip(["g:a", "g:b"]) {
+            match a {
+                Action::Call { name, args, .. } => {
+                    assert_eq!(name, "mark_goal_done");
+                    assert_eq!(args["goal"], g);
+                }
+                _ => panic!("expected calls"),
+            }
         }
     }
 

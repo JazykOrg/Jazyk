@@ -48,7 +48,9 @@ loaded set as a stub.
   this and to create the entity instead. A bare empty list reads as "ask again", and
   models loop on it; naming the whole graph lets the caller decide without another
   call.
-- `read_section({ref})`: one section's raw body and its child titles.
+- `read_section({ref})`: one section's raw body and its child titles. A bare document
+  name (`orders.md`, or `orders.md#`) reads the document's root section, the way a
+  reader opens a file to see what it is about.
 - `get_entity({id})`: one entity with its definition, stereotype, parent, attributes,
   mentions, requirements, relationships, and its derived state machine when one exists.
   The lookup sees the session's own staged entities, same as `search`.

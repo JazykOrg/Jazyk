@@ -4478,9 +4478,12 @@ mod tests {
 
         // Step 7: the board is stable: a repeated derivation opens nothing new, and no
         // fan-out goal stands on the backend. What stands is the ripple the loop
-        // itself opened: every reparent (the grouped children, the two decree moves,
-        // the sweep's move of the cache) and every minted grouping is an entity change
-        // the review goal reads; a model session resolves those, none is a level goal.
+        // itself opened: a move is the parents' business, so the backend (children
+        // left it for the groupings, the cache came back) and each minted grouping
+        // (a fresh entity, then a parent that gained and lost children) is an entity
+        // change the review goal reads; the moved children themselves are not, one
+        // review per grouping instead of one per member. A model session resolves
+        // those, none is a level goal.
         let ids =
             |b: &Board| -> Vec<String> { b.open_goals().iter().map(|g| g.id.clone()).collect() };
         let first = ids(&Board::derive(&s, &project_for(&s), &control_auto()));
@@ -4491,13 +4494,14 @@ mod tests {
             "{:?}",
             first
         );
-        let mut ripple: Vec<String> = children
-            .iter()
-            .map(|(id, _, _, _)| id.to_string())
-            .chain(["ent:fulfillment".to_string(), "ent:ordering".to_string()])
-            .map(|id| format!("g:review-entity:{}", id))
-            .collect();
-        ripple.sort();
-        assert_eq!(first, ripple);
+        let _ = &children;
+        assert_eq!(
+            first,
+            vec![
+                "g:review-entity:ent:backend".to_string(),
+                "g:review-entity:ent:fulfillment".to_string(),
+                "g:review-entity:ent:ordering".to_string(),
+            ]
+        );
     }
 }

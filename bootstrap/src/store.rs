@@ -2341,10 +2341,12 @@ impl Store {
                             prior.insert("stereotype".into(), serde_json::json!(e.stereotype));
                         }
                     }
+                    let mut moved_between: Option<(Option<String>, String)> = None;
                     if let Some(p) = &parent {
                         if e.parent.as_deref() != Some(p.as_str()) {
                             prior.insert("parent".into(), serde_json::json!(e.parent));
                             moves.push((rid.clone(), e.parent.clone(), Some(p.clone()), m));
+                            moved_between = Some((e.parent.clone(), p.clone()));
                         }
                     }
                     if !prior.is_empty() {
@@ -2391,7 +2393,28 @@ impl Store {
                         dirt.pending(&rid, m, p);
                     }
                     e.updated = Some(build.clone());
-                    dirt.entity(&rid, m, "fields");
+                    // A move is the parents' business: `parent` lands on the parent
+                    // left and the one joined, and a move alone writes no `fields`
+                    // record on the child. Mirrors
+                    // docs/compiler/goals/review-entity.md#created-when.
+                    if let Some((from, to)) = &moved_between {
+                        if let Some(f) = from {
+                            dirt.entity(f, m, "parent");
+                        }
+                        dirt.entity(to, m, "parent");
+                    }
+                    let move_only = parent.is_some()
+                        && name.is_none()
+                        && definition.is_none()
+                        && add_aliases.is_empty()
+                        && add_mention.is_none()
+                        && stereotype.is_none()
+                        && set_attributes.is_none()
+                        && add_attributes.is_empty()
+                        && provenance.is_none();
+                    if !move_only {
+                        dirt.entity(&rid, m, "fields");
+                    }
                     applied.push(Op::UpdateEntity {
                         id: rid,
                         name,
@@ -2459,7 +2482,12 @@ impl Store {
                     let (parent, children) = self.dissolve(&rid, &build);
                     for c in &children {
                         moves.push((c.clone(), Some(rid.clone()), parent.clone(), m));
-                        dirt.entity(c, m, "parent");
+                    }
+                    // The children moved up: the grandparent gained them.
+                    if let Some(p) = &parent {
+                        if !children.is_empty() {
+                            dirt.entity(p, m, "parent");
+                        }
                     }
                     dirt.deleted(&rid, m);
                     applied.push(Op::DissolveEntity {
@@ -4572,7 +4600,11 @@ impl Store {
             let (parent, children) = self.dissolve(&id, &build);
             for c in &children {
                 moves.push((c.clone(), Some(id.clone()), parent.clone(), 0));
-                batch.push(0, CHANGE_ENTITY, c, "parent", serde_json::Value::Null);
+            }
+            // The move is the parents' business: the grandparent gained the children.
+            // Mirrors docs/compiler/goals/review-entity.md#created-when.
+            if let (Some(p), false) = (&parent, children.is_empty()) {
+                batch.push(0, CHANGE_ENTITY, p, "parent", serde_json::Value::Null);
             }
             actions.push(format!(
                 "dissolved {} ({} child(ren) reparented to {})",
@@ -5516,6 +5548,77 @@ mod tests {
         assert!(r.skipped[0].contains("own ancestor"), "{:?}", r.skipped);
     }
 
+    // A move alone writes `parent` on the parent left and the one joined and no
+    // `fields` record on the child; a move with a definition still reviews the child.
+    // Mirrors docs/compiler/goals/review-entity.md#created-when.
+    #[test]
+    fn a_move_alone_records_parent_on_both_parents_and_nothing_on_the_child() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nshop\n");
+        s.apply(
+            vec![
+                create("ent:orders", "Orders"),
+                create("ent:shipping", "Shipping"),
+                Op::CreateEntity {
+                    id: "ent:parcel".into(),
+                    entity: Entity {
+                        name: "Parcel".into(),
+                        parent: Some("ent:orders".into()),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        let update = |id: &str, parent: &str, definition: Option<&str>| Op::UpdateEntity {
+            id: id.into(),
+            name: None,
+            definition: definition.map(String::from),
+            add_aliases: Vec::new(),
+            add_mention: None,
+            stereotype: None,
+            parent: Some(parent.into()),
+            set_attributes: None,
+            add_attributes: Vec::new(),
+            provenance: None,
+        };
+        let r = s.apply(vec![update("ent:parcel", "ent:shipping", None)], &session());
+        let entity_records: Vec<(String, String)> = r
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_ENTITY)
+            .map(|c| (c.subject.clone(), c.via.clone()))
+            .collect();
+        assert!(
+            entity_records.contains(&("ent:orders".into(), "parent".into())),
+            "{:?}",
+            entity_records
+        );
+        assert!(
+            entity_records.contains(&("ent:shipping".into(), "parent".into())),
+            "{:?}",
+            entity_records
+        );
+        assert!(
+            !entity_records.iter().any(|(s, _)| s == "ent:parcel"),
+            "a move alone never reviews the child: {:?}",
+            entity_records
+        );
+        // Moved back with a new definition: the child's own facts changed, so it
+        // gets its `fields` record beside the parents' `parent` records.
+        let r = s.apply(
+            vec![update("ent:parcel", "ent:orders", Some("The package."))],
+            &session(),
+        );
+        assert!(r
+            .changes
+            .iter()
+            .any(|c| c.kind == CHANGE_ENTITY && c.subject == "ent:parcel" && c.via == "fields"));
+    }
+
     // The commit-time gates: a parent cycle, an unknown view member, and deleting a
     // parent are refused with the rule spelled out. Mirrors docs/compiler/graph.md#validation-gates.
     #[test]
@@ -6095,7 +6198,10 @@ mod tests {
             Some("ent:shell")
         );
         assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:storage"));
-        assert!(s.status.has_change(CHANGE_ENTITY, "ent:cache"));
+        // The move is the parents' business: the backend gained the cache; the
+        // cache itself is not reviewed for a move alone.
+        assert!(s.status.has_change(CHANGE_ENTITY, "ent:backend"));
+        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cache"));
         assert!(!s.status.has_change(CHANGE_REPARENT_FLIP, "ent:cache"));
         let entry = journal_entry(&s, s.status.generation);
         assert_eq!(entry.kind, "gc");

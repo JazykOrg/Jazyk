@@ -159,8 +159,11 @@ scope, addressed as `scope:<scope>`) is the top level. See
 [levels](../concepts/levels.md#levels). For every node with two or more children, the
 scope root included, one structural view of its level derives:
 
-- Kind: `component` when the node or any of its children carries a structural
-  stereotype (`system`, `component`, `service`, `interface`, `actor`), `class` otherwise.
+- Kind: `component` when the node, any of its children, or any descendant below a
+  child carries a structural stereotype (`system`, `component`, `service`,
+  `interface`, `actor`), `class` otherwise. A grouping of components is a component
+  level, so the top diagram stays a component view after the components move under
+  their groupings.
 - Id: `view:component/<node-slug>` or `view:class/<node-slug>` with the node's slug;
   `view:component/<scope>` or `view:class/<scope>` for the scope root
   (`view:component/public` in the default scope).

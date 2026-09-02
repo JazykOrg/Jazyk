@@ -241,8 +241,9 @@ one structural level view, recomputed on every commit like every default
 - Members: the node's direct children plus every outside entity with a lifted edge into
   the level, in document order. The top diagram shows User beside Frontend and Backend.
   The node itself is not a member: it is the frame the level sits in.
-- Kind: `component` when the node or any child carries a structural stereotype
-  (`system`, `component`, `service`, `interface`, `actor`), `class` otherwise.
+- Kind: `component` when the node, any child, or any descendant below a child carries
+  a structural stereotype (`system`, `component`, `service`, `interface`, `actor`),
+  `class` otherwise: a grouping of components is a component level.
 - Id: `view:component/<node-slug>` or `view:class/<node-slug>`. The root form takes the
   scope's slug: `view:component/public` is the top level of the default scope.
 - `default: true`. Any mutation naming the view clears the default, as for every

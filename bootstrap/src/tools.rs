@@ -2705,6 +2705,23 @@ impl ToolSession {
     // Resolve a section argument: either "doc.md#/ref" or a bare "/ref" against the
     // batch's document.
     fn resolve_section(&self, section: &str) -> Result<(String, String), ToolError> {
+        // A bare document name (`orders.md`, `orders.md#`) is its root section.
+        // Mirrors docs/compiler/tools.md#read-tools.
+        let bare = section.strip_suffix('#').unwrap_or(section);
+        if !bare.contains('#') {
+            if let Some(rec) = self.snapshot.docs.get(bare) {
+                let mut roots: Vec<&String> = rec
+                    .sections
+                    .iter()
+                    .filter(|(_, c)| c.parent.is_none())
+                    .map(|(r, _)| r)
+                    .collect();
+                roots.sort_by_key(|r| r.len());
+                if let Some(root) = roots.first() {
+                    return Ok((bare.to_string(), (*root).clone()));
+                }
+            }
+        }
         let full = if section.starts_with('/') {
             match self.scope.doc() {
                 Some(d) => format!("{}#{}", d, section),
@@ -7051,6 +7068,24 @@ mod tests {
     // A WorkItem built from a GC goal carries the kind's name as its task; the
     // toolset is the kind's slice, never the read-only fallback (the snippet and
     // the MCP case path build their tool list from it).
+    #[test]
+    fn a_bare_document_reference_reads_its_root_section() {
+        let mut t = session();
+        for r in ["shop.md", "shop.md#"] {
+            let v = t.dispatch("read_section", &json!({"ref": r})).unwrap();
+            assert_eq!(v["title"], "Shop", "{}", r);
+            assert!(v["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c.as_str().unwrap().starts_with("shop.md#/shop/cart")));
+        }
+        let err = t
+            .dispatch("read_section", &json!({"ref": "nope.md#"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-section");
+    }
+
     #[test]
     fn toolset_of_a_goal_kind_task_is_its_slice() {
         let names = toolset("abstract-entity");

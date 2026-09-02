@@ -532,10 +532,11 @@ fn level_of_target(store: &Store, target: &str, rank: &BTreeMap<String, usize>) 
         .filter(|l| l.children.len() >= 2)
 }
 
-// The kind rule: component when the node or any child carries a structural
-// stereotype, class otherwise. Mirrors docs/compiler/model/view.md#level-views.
+// The kind rule: component when the node, any child, or any descendant below a
+// child carries a structural stereotype (a grouping of components is a component
+// level), class otherwise. Mirrors docs/compiler/model/view.md#level-views.
 fn level_kind(store: &Store, level: &Level) -> &'static str {
-    let structural = |id: &str| {
+    fn structural(store: &Store, id: &str) -> bool {
         store
             .graph
             .entities
@@ -546,9 +547,23 @@ fn level_kind(store: &Store, level: &Level) -> &'static str {
                     .iter()
                     .any(|x| s.eq_ignore_ascii_case(x))
             })
-    };
-    let any = level.node.as_deref().is_some_and(structural)
-        || level.children.iter().any(|c| structural(c));
+    }
+    fn structural_below(store: &Store, id: &str, depth: usize) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        store
+            .graph
+            .entities
+            .iter()
+            .filter(|(_, e)| e.parent.as_deref() == Some(id))
+            .any(|(c, _)| structural(store, c) || structural_below(store, c, depth + 1))
+    }
+    let any = level.node.as_deref().is_some_and(|n| structural(store, n))
+        || level
+            .children
+            .iter()
+            .any(|c| structural(store, c) || structural_below(store, c, 0));
     if any {
         "component"
     } else {
@@ -1929,6 +1944,59 @@ pub(crate) mod tests {
         recompute(&mut s, "g3", &mut batch);
         assert!(!s.graph.views.contains_key("view:class/order"));
         assert_eq!(level_view_id(&s, "ent:order"), None);
+    }
+
+    // Mirrors docs/compiler/model/view.md#level-views: a grouping of components is a
+    // component level, so the top diagram stays a component view after the
+    // components move under plain groupings.
+    #[test]
+    fn a_level_over_groupings_of_components_is_a_component_view() {
+        let mut s = Store::default();
+        let ent = |name: &str, parent: Option<&str>, stereotype: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            stereotype: stereotype.map(String::from),
+            ..Default::default()
+        };
+        s.graph
+            .entities
+            .insert("ent:ledger".into(), ent("Ledger", None, Some("backend")));
+        s.graph
+            .entities
+            .insert("ent:platform".into(), ent("Platform", None, None));
+        s.graph
+            .entities
+            .insert("ent:orders".into(), ent("Orders", None, None));
+        s.graph.entities.insert(
+            "ent:queue".into(),
+            ent("Queue", Some("ent:platform"), Some("component")),
+        );
+        s.graph.entities.insert(
+            "ent:cache".into(),
+            ent("Cache", Some("ent:platform"), Some("component")),
+        );
+        s.graph
+            .entities
+            .insert("ent:order".into(), ent("Order", Some("ent:orders"), None));
+        s.graph
+            .entities
+            .insert("ent:invoice".into(), ent("Invoice", Some("ent:orders"), None));
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        assert_eq!(
+            level_view_id(&s, "scope:public").as_deref(),
+            Some("view:component/public"),
+            "components two levels down keep the root a component level"
+        );
+        assert_eq!(
+            level_view_id(&s, "ent:platform").as_deref(),
+            Some("view:component/platform")
+        );
+        assert_eq!(
+            level_view_id(&s, "ent:orders").as_deref(),
+            Some("view:class/orders"),
+            "a grouping of plain entities is a class level"
+        );
     }
 
     // Mirrors docs/compiler/concepts/levels.md#the-scope-root: the root form keeps the

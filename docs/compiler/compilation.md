@@ -63,9 +63,10 @@ Goals come in two classes, and a build interleaves them in bursts.
   statements needing re-judgment, dangling references, instance conformance, stale
   ledger rows. They are mandatory.
 - Garbage collection (GC) goals restructure and tidy: decoupling, splitting, combining.
-  An entity over its requirement cap, a view over its member cap, lookalike duplicates,
-  missing edges, view curation. They are optional until a hard threshold makes them
-  mandatory ([escalation](./reconciler.md#escalation)).
+  An entity over its requirement cap, a level over its fan-out
+  ([fan-out](./reconciler.md#fan-out)), a view over its member cap, lookalike
+  duplicates, missing edges, view curation. They are optional until a hard threshold
+  makes them mandatory ([escalation](./reconciler.md#escalation)).
 
 GC also names the store's deterministic sweep at commit (orphaned facts deleted,
 tombstone redirects left, stranded diagnostics settled): the sweep is the mechanical
@@ -198,6 +199,17 @@ Every check run journals a `checks` entry under its own generation.
   [`curate-view`](./goals/curate-view.md).
 - Containment consistency: `containment-mismatch` when a `composition` edge and the
   `parent` field disagree ([containment](./model/entity.md#containment)).
+- `level-shape`, wherever a node has children ([levels](./concepts/levels.md#levels)):
+  a node with two or more children (the scope root included) that has no structural
+  [level view](./diagrams.md#level-views); a node whose direct children exceed the hard
+  `children-per-entity` threshold ([limits](./graph.md#limits), or the node's own
+  [bump](./graph.md#per-node-bumps)); a derived
+  [grouping](./concepts/levels.md#groupings) with fewer than two children. The first
+  and the third name a store the commit did not settle: level views recompute on every
+  commit and the sweep dissolves an under-membered grouping
+  ([the sweep](./graph.md#the-sweep)). The second is the level the mandatory
+  [fan-out](./reconciler.md#fan-out) goal must regroup before the build converges; the
+  finding stands beside the goal and clears with it.
 - Conformance, the mechanical part: `nonconformant-instance` when an instance carries an
   attribute name its type does not declare. Value and link conformance is
   [`conform-instance`](./goals/conform-instance.md)'s judgment.
@@ -236,6 +248,15 @@ The verdict in `status.yaml` is `verdict: {state, open, failed, blocked, optiona
   (failed mandatory goals), `blocked`, and `optional`. Printed as
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
 
+A mandatory [fan-out](./reconciler.md#fan-out) goal
+([`abstract-entity`](./goals/abstract-entity.md) on a node, or on `scope:<scope>` for
+the top level) open or failed blocks `converged`: it is a mandatory GC goal, and the rule
+above already counts it. An optional fan-out goal rides under `optional`. A level a
+session declared genuinely flat stays a failed goal until a human bumps the node's limit
+([per-node bumps](./graph.md#per-node-bumps)), retries the goal, or the level changes
+again ([parked and failed](./reconciler.md#parked-and-failed)), so a verdict never hides
+an over-fan-out level.
+
 A build with open blocked goals is `converged, 2 blocked`, never silently done.
 A hard per-build cap (3 × derived goals + 8 sessions) backstops the loop; work still open
 when it runs out is parked in `status.yaml` and reported as an `incomplete-build`
@@ -252,6 +273,18 @@ diagnostic counts by severity (suppressed excluded) ride beside it: in `status.y
 the same breath as `converged`. Costs ride there too: `costs {sessions, tokens,
 by_kind, by_class}`, and [`jazyk ripple <generation>`](../frontends/cli.md#jazyk-ripple)
 renders the whole build's causality with cost beside it.
+
+The shape of the containment tree rides beside the verdict as well.
+[`jazyk status`](../frontends/cli.md#jazyk-status) prints one shape line: the nodes per
+depth (the scope root's parentless entities at depth 1, their children at depth 2, and so
+on) and the fan-out histogram (how many nodes hold how many direct children, bucketed
+against the `children-per-entity` soft and hard values). The line is derived from the
+graph like the board counts. It says at a glance whether the graph is a navigable pyramid
+or a flat list, before anyone opens a diagram. E.g.:
+
+```
+shape: 3 / 9 / 31 / 118 nodes per depth; fan-out 2-9: 14, 10-15: 2, over 15: 0
+```
 
 ## Coverage
 

@@ -23,7 +23,9 @@ The page, in order:
   and the children as links to their pages
   ([containment](../compiler/model/entity.md#containment)), and the `attributes` (name,
   type, value, each with its provenance). An entity whose provenance is `derived` or
-  `decree` says so here and links to its proposal.
+  `decree` says so here and links to its proposal. An entity with a level (two or more
+  children) links to its [level page](#level-pages); every entity links to the level
+  page of its parent, or of the scope root when it has no parent.
 - `## Diagrams`: the rendered views the entity appears in
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
 - `## Requirements`: one block per requirement that names the entity, under a `###`
@@ -91,10 +93,11 @@ the `.svg`; it never requests a `.png`. E.g.:
 The views an entity page embeds, in this order
 ([default views](../compiler/model/view.md#default-views)):
 
-- The class neighborhood: the default class view of the entity's scope
-  (`view:class/<scope>`), and the default component view of the containing system
-  (`view:component/<system-slug>`) when the entity is that system or lies in its
-  subtree.
+- The level neighborhood: the [level view](../compiler/diagrams.md#level-views) of
+  the entity's parent (`view:class/<parent-slug>` or `view:component/<parent-slug>`),
+  or of the scope root (`view:class/scope-<scope>` or `view:component/scope-<scope>`)
+  when the entity has no parent, and the entity's own level view when it has two or
+  more children.
 - The entity's state machine: `view:state/<entity-slug>`, when any `transition` names
   the entity as subject ([state machine](../compiler/model/state-machine.md#rendering)).
   The caption lists the states.
@@ -119,6 +122,43 @@ the `.puml` link and no image; nothing is invented.
 
 The rendering is the third layer of a diagram, build output: the page embeds it, never
 reads it back ([rendering](../compiler/diagrams.md#rendering)).
+
+## Level pages
+
+A [level](../compiler/concepts/levels.md#levels) is a node's direct children. Every
+node with at least two children has a level page, and so does the
+[scope root](../compiler/concepts/levels.md#the-scope-root), the parentless entities of a
+scope. The pages nest as the containment tree does: a reader starts at the scope root,
+reads one level, and digs into a member to read the level below it
+([drill-down](../compiler/concepts/levels.md#drill-down)). The pages render with the
+entity pages, on every commit and on `jazyk docsgen`, into
+`<out>/docsgen/levels/<slug>.md` with the node's slug; the scope root's page is
+`levels/scope-<scope>.md` (`levels/scope-public.md` for the default scope). A level
+page whose node lost its level (fewer than two children, or the node dissolved) is
+pruned like an entity page.
+
+The page, in order:
+
+- The breadcrumb: the chain from the scope root down to the node, each ancestor a link
+  to its level page, the node itself last and unlinked. This is the link up.
+- The header: the node's name, `stereotype`, and `definition` (the scope root: the
+  scope name), with a link to the node's entity page. A node with `derived` provenance
+  (a grouping) says so and links to its ratification proposal.
+- `## Diagrams`: the node's [level views](../compiler/diagrams.md#level-views)
+  embedded as on entity pages: the structural level view first, then the flow views
+  per level (`use-case` and `sequence`), each with the caption line described above.
+  The embedded `.svg` carries the renderer's drill-down anchors between diagrams
+  ([drill-down](../compiler/diagrams.md#drill-down)); the links between pages are the
+  members list below.
+- `## Members`: the direct children in document order, one line each: the name as a
+  link to its entity page, its `stereotype`, its `definition`, and, when the member has
+  a level of its own, a link to its level page with its child count. This is the link
+  down. An outside entity a level view includes through a lifted edge is not a member;
+  it appears in the diagram and its caption only.
+
+Only the entity page carries requirements. A grouping holds no requirements of its own;
+its level page shows what its members relate to through lifting, and each member's
+entity page shows the statements.
 
 ## Ratification proposals
 
@@ -171,10 +211,13 @@ matches. The compiler never writes a source document without an accepted proposa
 ## Relationships view
 
 The index (`<out>/docsgen/index.md`) lists every entity with a link to its page, then
-embeds the class views rendered from the graph: one image per scope
-(`view:class/<scope>`), each with the caption line described above, and the component
-view per system (`view:component/<system-slug>`) beside it where one exists, default or
-curated ([default views](../compiler/model/view.md#default-views)). An edit turns a
+embeds the top level of each scope rendered from the graph: one image per scope, the
+scope root's level view (`view:class/scope-<scope>` or `view:component/scope-<scope>`
+by the kind rule), each with the caption line described above, default or curated
+([default views](../compiler/model/view.md#default-views)). The scope root's level view
+is the per-scope view ([level views](../compiler/diagrams.md#level-views)), so the
+index's picture of a scope is its top level, and its caption links to the scope root's
+[level page](#level-pages). An edit turns a
 default view curated without changing its id, so the index never drops a scope's view
 over an edit. The images are generated on
 every run like everything else here, so they cannot drift from the graph the way a

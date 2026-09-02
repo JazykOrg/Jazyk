@@ -58,7 +58,9 @@ record.
 The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is
-  any node id (entity, requirement, view, diagnostic) or a section reference. `depth`
+  any node id (entity, requirement, view, diagnostic), a section reference, or
+  `scope:<scope>`, the top level of a scope, which loads its parentless entities as
+  stubs ([the scope root](./concepts/levels.md#the-scope-root)). `depth`
   defaults to `1`: the target in full, its edges, each neighbor as a stub. `depth: 2`
   loads the neighbors in full too and their neighbors as stubs, still under the budget.
   The reply renders what was loaded and the status block.

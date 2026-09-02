@@ -56,6 +56,8 @@ derivation:
 - A decision is a diagnostic with a `prompt` (rule `decision`). A decision the documents
   state is prose, extracted like any other statement.
 - A state machine is derived data: no write tool, recomputed at commit.
+- A level is a node's children, and a grouping is an entity that holds one. See
+  [levels](./concepts/levels.md).
 
 The graph is medium-neutral. Nothing enumerates stereotypes, and the same kinds read a
 software system, a slide deck, an organization, or a novel. The model adapts to what it

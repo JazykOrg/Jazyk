@@ -220,6 +220,15 @@ the board:
   will run,
 - [coverage](../compiler/compilation.md#coverage) percentage,
 - open diagnostics by severity,
+- the shape line: the entity count per depth of the containment tree (the
+  [scope root](../compiler/concepts/levels.md#the-scope-root) at depth 0, its
+  parentless entities at depth 1, and so on), then the fan-out histogram: how many
+  nodes with children (the scope root included) hold how many direct children, in
+  bands against the `children-per-entity` limit
+  ([limits](../compiler/graph.md#limits)): at or under soft, over soft and at or
+  under hard, over hard. A node over hard is what the `level-shape` check
+  ([checks](../compiler/compilation.md#checks)) reports and what a mandatory
+  `abstract-entity` goal on the board line is open for,
 - the last build's cost (`costs`: sessions, tokens, the share per goal kind),
 - the [unattached remainder](../consumers/gen.md#the-unattached-remainder): generated
   mass no requirement claims, summed over the ledger, with the worst entity's ratio,
@@ -234,6 +243,7 @@ verdict: converged, 2 blocked, 1 optional advised
 board: 0 open (0 compile, 0 gc), 2 blocked, 0 parked, 0 failed, 1 optional
 coverage: 96% (185 of 193 sections)
 diagnostics: 1 error, 4 warnings
+shape: 3 / 11 / 42 nodes per depth; fan-out 2-9: 12, 10-15: 2, over 15: 0
 cost: 41 sessions, 310k tokens (78% reconcile-section)
 unattached: 3 file(s), 120 line(s) (worst cart at 0.32)
 unclaimed: 3 file(s) no binding names (`jazyk decompile` drafts docs for them)

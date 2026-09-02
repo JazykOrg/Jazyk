@@ -99,8 +99,11 @@ g:retrace:view:usecase/holds:
 
 - `kind` names a row of the [catalog](#the-catalog). `class` is `compile` or `gc`.
 - `mandatory` goals block convergence; optional goals advise.
-- `target` is a node id, a section reference (`doc.md#/ref`), a document path, or a pair
-  (`req:a~req:b`, smaller id first). The goal id is `g:<kind>:<target>`.
+- `target` is a node id, a section reference (`doc.md#/ref`), a document path, a pair
+  (`req:a~req:b`, smaller id first), or `scope:<scope>` (the top level of a scope, its
+  parentless entities; `scope:public` for the default scope, see
+  [the scope root](./concepts/levels.md#the-scope-root)). The goal id is
+  `g:<kind>:<target>`.
 - `change` is the attached evidence and the goal's identity: re-deriving the board
   matches a goal to its predecessor by the change, so a goal survives across builds and
   processes without being stored.
@@ -256,6 +259,60 @@ design: a contradiction expressible only through concrete example values shares 
 tokens with its opposite and derives no pair. `review-entity` is the net for those; it
 sees the entity's whole statement set.
 
+### Fan-out
+
+An [`abstract-entity`](./goals/abstract-entity.md) goal derives on a node whose direct
+children exceed the `children-per-entity` limit, or on the scope root when its
+parentless entities do ([levels](./concepts/levels.md#levels),
+[the scope root](./concepts/levels.md#the-scope-root)). This is the fan-out variant of
+the goal, beside the caps variant on requirement and state counts. The harness counts
+and computes coupling; the model names and judges.
+
+- The record is `threshold-crossed` with `detail.limit: children-per-entity`, written
+  by the limit counts at commit ([the registry](./graph.md#the-registry): soft 9, hard
+  15). Its subject is the node, or `scope:<scope>` for the scope root; `via` is
+  `limits`. It is level-triggered like every threshold record: crossing soft derives
+  the goal optional, hard makes it mandatory at every derivation, and a count back
+  under soft clears the record without a session ([escalation](#escalation)).
+- The goal is `g:abstract-entity:<ent>` or `g:abstract-entity:scope:<scope>`. Its
+  `change` is `{fan_out: n, limit: {soft, hard}, candidates: [[id, ...], ...]}`: the
+  count, the thresholds in force, and the coupling partitions the hint computer
+  proposes. A record for another limit on the same node folds into the same goal, as
+  records do ([change records](#change-records)).
+- The cone is the node's subtree, the downward walk from the node ([cones](#cones)).
+  The root form's cone is the whole scope. The goal is ready under the GC rule, when no
+  compile goal is open or parked in the cone ([GC gating](#gc-gating)), so a level is
+  regrouped once, over settled children.
+- Hints: the fan-out count, the candidate partitions with their cohesion scores, the
+  members' stereotypes, the document each member is mentioned in most (documents and
+  headings are strong naming hints, see [naming](./concepts/levels.md#naming)), and
+  any existing grouping under the node ([groupings](./concepts/levels.md#groupings)).
+
+The hint computer (the `abstract-entity` kind's, in the [registry](#the-registry))
+works over the target's direct children:
+
+- `weight(a, b)` is the number of requirements referencing both `a` and `b` plus the
+  number of derived relationships between them. Descendants count: a requirement or a
+  relationship on a descendant lifts to the child it sits under, so a leaf's edges reach
+  the level.
+- Greedy agglomeration: start with every child as a singleton cluster; repeatedly merge
+  the pair of clusters with the highest total weight between them (the sum of `weight`
+  over their member pairs); stop when the cluster count is at or under the soft
+  threshold and every cluster has at least two members or is a singleton no other
+  cluster touches (zero weight to every other cluster).
+- Ties break by id: among merges of equal weight, the pair whose ids sort first.
+- Output: each cluster as an ordered id list with its internal weight, largest first,
+  capped at the soft threshold of clusters and at 12 ids per cluster (the rest
+  summarized as a count).
+- Deterministic: a re-derivation over the same graph yields the same candidates, so the
+  goal's `change` is stable and matches its predecessor across builds and processes.
+
+The candidates are suggestions; the gate is the truth. The model may accept a
+candidate, adjust it with reasons, or decline it with a reason. The harness never names
+a grouping, and the model never counts. A grouping lands through `group_entities` and
+undoes through `dissolve_entity` ([write tools](./tools.md#write-tools)); a level that
+is genuinely flat fails the goal with that reason rather than gaining invented tiers.
+
 ### The catalog
 
 Compile goals bring the graph in line with the documents. GC goals restructure and tidy.
@@ -281,7 +338,7 @@ tools.
 | [`dedupe-candidates`](./goals/dedupe-candidates.md) | gc | | O | entity pair | `lookalike` |
 | [`curate-view`](./goals/curate-view.md) | gc | | O | view | `query-match`, `flow-unplaced` |
 | [`split-view`](./goals/split-view.md) | gc | | O→M | view | `threshold-crossed` (view limits) |
-| [`abstract-entity`](./goals/abstract-entity.md) | gc | | O→M | entity | `threshold-crossed` (entity limits, state limit) |
+| [`abstract-entity`](./goals/abstract-entity.md) | gc | | O→M | entity | `threshold-crossed` (entity limits, state limit; the [fan-out](#fan-out) form on a node or on `scope:<scope>`) |
 
 `retrace` is one kind: delete a requirement, and the flow view that stepped through it,
 the instance that conformed to it, and the derived fact that cited it each surface as a
@@ -396,8 +453,12 @@ document contains such a section.
 The cone of a leaf entity is its requirements, its views, the derived facts built on it,
 and the sections that anchor them. The cone of a top-level «system» entity is most of
 the graph, which is correct: abstracting the top of the tree must wait for everything
-under it. The same computation answers `jazyk explain <target>`: the goals a change to
-the target would open ([`jazyk explain`](../frontends/cli.md#jazyk-explain)).
+under it. The target `scope:<scope>` names the scope root
+([the scope root](./concepts/levels.md#the-scope-root)); its cone is the downward walk
+from every parentless entity of the scope, which is the whole scope, so the top level
+is regrouped only when everything in the scope has settled ([fan-out](#fan-out)). The
+same computation answers `jazyk explain <target>`: the goals a change to the target
+would open ([`jazyk explain`](../frontends/cli.md#jazyk-explain)).
 
 ## Batching
 
@@ -412,6 +473,9 @@ a batch from goals of one class and one tier that resolve to one
   judgment sees the merges and diagnostics of its neighbors. Entities that share
   requirements or relationships form one group.
 - view locality: view goals batch with the goals on the view's members.
+- level locality: an `abstract-entity` goal on a node or on `scope:<scope>` has node
+  locality through the level's members, the direct children or the scope's parentless
+  entities ([fan-out](#fan-out)).
 - ledger locality: `bind`, `generate`, and `verify` goals join through their entity's
   component group root, so the ready goals of one component subtree form one batch
   ([grouping by component](../consumers/gen.md#grouping-by-component)). A flat graph
@@ -476,7 +540,9 @@ this delete will open: retrace view:usecase/holds (member gone), retrace ent:ord
 
 Every [limit](./graph.md#limits) carries a soft and a hard threshold. Crossing the soft
 threshold writes a `threshold-crossed` record and derives an optional goal (`split-view`
-for view limits, `abstract-entity` for entity limits and the state limit). Crossing the
+for view limits, `abstract-entity` for entity limits and the state limit, the
+`children-per-entity` row on a node or on `scope:<scope>` included, see
+[fan-out](#fan-out)). Crossing the
 hard threshold escalates the same goal to mandatory: `mandatory` is recomputed at every
 derivation from the current count, so a count that drops back under the hard threshold
 de-escalates, and one that drops under the soft threshold clears the record without a
@@ -547,8 +613,22 @@ stored: the journal is the history, and tombstone redirects mark deletions
   [prompt](./model/diagnostic.md#prompts): keep the split, keep the merge, or a
   freeform ruling. The pair is blocked on that answer; answering it clears the parked
   entries and the next build resumes the chosen direction.
+- A reparent flip is a child that moves between the same two parents across
+  generations: `ent:cache` moves from `ent:backend` under `ent:storage` in one
+  generation (a `group_entities`, a `dissolve_entity`, an `update_entity` or
+  `edit_fact` on `parent`, or the sweep's dissolve) and back in a later one. The check
+  replays every journaled `parent` change, each mutation carrying the prior parent
+  ([journal](./graph.md#journal)), into a per-child event list keyed on the child's
+  natural key with the two parents matched by natural key too, so a grouping dissolved
+  and re-minted under a new id counts as the same parent. The second move parks like a
+  cross-class flip: the goal behind it moves to `parked` and stays there, and one
+  diagnostic is filed on the child with both justifications side by side and a
+  [prompt](./model/diagnostic.md#prompts): keep it under the first parent, keep it
+  under the second, or a freeform ruling. Answering it clears the parked entry and the
+  next build resumes the chosen direction.
 
-Flip detection and the budgets bound the alternation between the classes. With them,
+Flip detection and the budgets bound the alternation between the classes and the
+alternation of a child between parents. With them,
 idempotence makes convergence a fixed point rather than a loop: a session that re-derives
 an unchanged conclusion stages a no-op upsert, no mutation lands, no record is written,
 and that branch of the cascade dies.

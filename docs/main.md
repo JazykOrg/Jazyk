@@ -74,6 +74,9 @@ views, so a picture cannot drift from the documents behind it. Downstream consum
 the same way: they query the graph one entity, one requirement, or one view at a time,
 staying in the small-prompt regime where LLMs are reliable.
 
+Entities nest in one containment tree, every level of the tree gets its own diagrams,
+and digging into an entity shows the level below it ([levels](./compiler/concepts/levels.md)).
+
 ## Architecture
 
 ```mermaid

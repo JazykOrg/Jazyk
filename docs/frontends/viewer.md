@@ -12,6 +12,15 @@ never compiles.
 
 - A header with the build stats: entity, requirement, and relationship counts, open
   [diagnostics](../compiler/model/diagnostic.md) by severity, and the coverage fraction.
+- The tree: the containment tree the `parent` field makes
+  ([levels](../compiler/concepts/levels.md#levels)), one root per scope
+  ([the scope root](../compiler/concepts/levels.md#the-scope-root)), printed with
+  indentation. Each node prints its name, its child count when it has a level, and the
+  ids of its [level views](../compiler/diagrams.md#level-views) (the structural view
+  and the flow views per level), each id linked to its view card. The scope root
+  prints as `scope:<scope>` with its own level view ids. This is the terminal viewer's
+  drill-down ([drill-down](../compiler/concepts/levels.md#drill-down)): reading down
+  the tree is reading down the levels.
 - Entities: id, `name`, `scope` when not `public`, `definition`, `aliases`, mentions
   (document, section, and the located `quote`), and the requirements referencing the
   entity.

@@ -35,9 +35,11 @@ that already have one.
 Derived data is the deliberate exception. Relationships, state machines, and default
 views are recomputed on every commit, and their ids are functions of their inputs:
 `rel:<a>~<b>` from the member pair, `sm:<entity-slug>` from the subject, and default
-views from their rule (`view:class/<scope>`, `view:component/<system-slug>`,
-`view:usecase/<cluster-slug>`, `view:sequence/<cluster-slug>`,
-`view:state/<entity-slug>`, `view:object/<type-slug>`), per
+views from their rule (`view:class/<node-slug>` or `view:component/<node-slug>` for a
+level view, `view:class/scope-<scope>` or `view:component/scope-<scope>` for the scope
+root's, `view:usecase/<node-slug>-<cluster-slug>`,
+`view:sequence/<node-slug>-<cluster-slug>`, `view:state/<entity-slug>`,
+`view:object/<type-slug>`), per
 [default views](../model/view.md#default-views). A curated view slugs its title once,
 at creation, and keeps that id like any authored node. Recomputation reproduces the
 same id without minting, so a consumer holding `rel:customer~shopping-cart` still lands

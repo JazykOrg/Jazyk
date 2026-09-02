@@ -204,6 +204,68 @@ definitions:
       id:
         type: string
     additionalProperties: false
+  getViewResponse:
+    description: >-
+      Response of get_view. children is computed from the containment tree and the
+      level views at call time, never stored on the view
+    type: object
+    required:
+      - id
+      - kind
+      - title
+      - members
+    properties:
+      id:
+        type: string
+      kind:
+        $ref: 'graph.json#/definitions/viewKind'
+      title:
+        type: string
+      members:
+        description: Ordered node ids
+        type: array
+        items:
+          type: string
+      excluded:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/exclusion'
+      query:
+        $ref: 'graph.json#/definitions/viewQuery'
+      collapse:
+        type: array
+        items:
+          type: string
+      default:
+        type: boolean
+        description: Present on a default view the store recomputes every commit
+      relationships:
+        description: The relationships among the members, lifted where a member is collapsed
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/relationship'
+      rendering:
+        type: string
+        description: Path of the rendering under the out directory, diagrams/<kind>/<slug>.svg
+      children:
+        description: >-
+          The members that hold a level of their own, each with the id of its level
+          view. The drill-down links the rendering carries
+        type: array
+        items:
+          type: object
+          required:
+            - member
+            - view
+          properties:
+            member:
+              type: string
+              description: Entity id, among members
+            view:
+              type: string
+              description: The id of the member's structural level view
+          additionalProperties: false
+    additionalProperties: false
   diagnosticsRequest:
     description: Request payload of diagnostics. Open diagnostics by default
     type: object
@@ -432,6 +494,78 @@ definitions:
       absorb:
         type: string
         description: Entity id that is absorbed
+      reason:
+        type: string
+    additionalProperties: false
+  groupEntities:
+    description: >-
+      Request payload of group_entities. Stages one derived entity from members and
+      reparents every member under it, as one changeset. Gates: at least two members,
+      every member resolves, all members share one current parent, name passes the
+      near-duplicate gate as upsert_entity does, definition and reasoning non-empty
+    type: object
+    required:
+      - name
+      - definition
+      - members
+      - reasoning
+    properties:
+      name:
+        type: string
+      definition:
+        type: string
+        description: One sentence stating the grouping's responsibility
+      members:
+        description: Entity ids. All members share one current parent; a grouping never crosses levels
+        type: array
+        minItems: 2
+        items:
+          type: string
+      stereotype:
+        type: string
+        description: From the existing vocabulary, or absent. There is no grouping stereotype
+      reasoning:
+        type: string
+        description: Becomes the reasoning of the grouping's derived provenance, whose from is exactly members
+    additionalProperties: false
+  groupEntitiesResponse:
+    description: Response of group_entities
+    type: object
+    required:
+      - id
+      - moved
+    properties:
+      id:
+        type: string
+        description: The new grouping's id
+      moved:
+        description: The member ids reparented under it
+        type: array
+        minItems: 2
+        items:
+          type: string
+      opens:
+        description: The goals this mutation will open at commit (bubbling)
+        type: array
+        items:
+          type: string
+      status:
+        type: string
+        description: The condensed status block
+    additionalProperties: false
+  dissolveEntity:
+    description: >-
+      Request payload of dissolve_entity. Reparents a derived grouping's children to
+      its parent and tombstones it with a redirect to its parent. Refused on an entity
+      a document states (stated-entity)
+    type: object
+    required:
+      - id
+      - reason
+    properties:
+      id:
+        type: string
+        description: A grouping with derived provenance and no mentions
       reason:
         type: string
     additionalProperties: false

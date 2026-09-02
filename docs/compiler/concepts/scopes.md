@@ -33,9 +33,11 @@ one concept; `parent` says which entity contains this one. See
 [containment](../model/entity.md#containment). An entity's scope is stated for that
 entity; containment does not set it, and a child does not inherit its parent's scope.
 
-Both axes shape the default views: a class view derives per scope, a component view per
-system, a containment root with at least one child. See
-[default views](../model/view.md#default-views). The package
+Both axes shape the default views: a level view derives per node with two or more
+children, the scope root's level view is the per-scope view, and its kind is
+`component` where a structural stereotype is present and `class` otherwise. See
+[default views](../model/view.md#default-views) and
+[level views](../model/view.md#level-views). The package
 projection groups by scope or by containment subtree. See
 [the emitters](../diagrams.md#the-emitters).
 

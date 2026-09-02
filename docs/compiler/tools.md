@@ -54,8 +54,13 @@ loaded set as a stub.
   The lookup sees the session's own staged entities, same as `search`.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
   collapse list, the relationships among its members (lifted where a member is
-  collapsed), and the path of its rendering under `diagrams/`
-  ([output layout](./diagrams.md#output-layout)).
+  collapsed), the path of its rendering under `diagrams/`
+  ([output layout](./diagrams.md#output-layout)), and `children`: the members that
+  hold a [level](./concepts/levels.md#levels) of their own, each with the id of its
+  level view. These are the drill-down links the rendering carries
+  ([drill-down](./diagrams.md#drill-down)). `children` is computed from the
+  containment tree and the [level views](./diagrams.md#level-views) at call time,
+  never stored on the view.
 - `diagnostics({lifecycle?, rule?, subject?})`: the diagnostics, `open` by default
   (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
   further). Each entry carries id, rule, severity, lifecycle, triage, subjects,
@@ -186,6 +191,38 @@ a mutating reply previews the goals the mutation will open
 There is no write tool for relationships, state machines, or default views. They are
 [derived data](./graph.md#derived-data), recomputed on every commit from requirement
 `edges` and `transition` facets and from the graph's structure.
+
+### Grouping tools
+
+Two write tools in the graph group build and unbuild
+[levels](./concepts/levels.md#levels). A [grouping](./concepts/levels.md#groupings) is
+an entity with derived provenance from its members and no mentions. Each tool stages
+one changeset under the same gates as the other write tools. They serve the fan-out
+variant of [`abstract-entity`](./goals/abstract-entity.md)
+([fan-out](./reconciler.md#fan-out)).
+
+- `group_entities({name, definition, members, stereotype?, reasoning})` → `{id, moved}`:
+  stage one derived entity and reparent every member under it, as one changeset. The
+  new entity takes provenance `derived` with `from` exactly the `members` and
+  `reasoning` why, the members' shared current parent as its `parent` (none for a
+  grouping at the [scope root](./concepts/levels.md#the-scope-root)), and the
+  members' scope. `stereotype` comes from the existing vocabulary or is omitted;
+  there is no grouping stereotype. Gates: at least two `members`; every member
+  resolves; all members share one current parent (a grouping never crosses levels);
+  `name` passes the `near-duplicate` gate against existing names, the same gate as
+  `upsert_entity` ([validation gates](./graph.md#validation-gates)), so a lookalike
+  of an existing area reuses that entity ([naming](./concepts/levels.md#naming));
+  `definition` and `reasoning` are non-empty. The reply carries the new `id` and
+  `moved`, the member ids reparented under it.
+- `dissolve_entity({id, reason})`: the inverse, for a grouping with derived provenance
+  and no mentions. Its children reparent to its parent (they become parentless when
+  the grouping was at the scope root), and the entity tombstones with a redirect to
+  its parent. Refused on an entity a document states (`stated-entity`): revise the
+  documents instead. The deterministic sweep applies the same operation to a derived
+  grouping left with fewer than two children ([the sweep](./graph.md#the-sweep)).
+
+`update_entity`'s `parent` stays the single-move path: one child under one new parent,
+under the same gates.
 
 ## View tools
 
@@ -534,6 +571,8 @@ The named errors a caller meets beyond the gates:
   proposals.
 - `wrong-document`: a quote from a document the reconciled section merely links to.
 - `undecided-proposal`: `done` in a `place-anchors` session with a proposal undecided.
+- `stated-entity`: `dissolve_entity` on an entity a document states; revise the
+  documents instead ([grouping tools](#grouping-tools)).
 - `awaiting-release`: `begin_goals` or a ledger `begin_*` under a `manual` mode with no
   release ([modes and releases](./control-plane.md#modes-and-releases)).
 - `build-running`: `begin_goals` or a ledger `begin_*` while an internal build holds
@@ -591,9 +630,11 @@ GC goals:
 - [`split-view`](./goals/split-view.md): the view tools.
 - [`abstract-entity`](./goals/abstract-entity.md): `upsert_entity` (derived
   provenance), `update_entity`, `upsert_requirement` (derived provenance, the docs
-  proposals `ratify` follows), `update_requirement`, `upsert_view`, `update_view`, and
-  `report_diagnostic` (`decision`, for structure the documents cannot yet support). No
-  deletes, no merges, no `delete_view`.
+  proposals `ratify` follows), `update_requirement`, `upsert_view`, `update_view`,
+  `group_entities` and `dissolve_entity` (the [fan-out](./reconciler.md#fan-out)
+  variant, see [grouping tools](#grouping-tools)), and `report_diagnostic`
+  (`decision`, for structure the documents cannot yet support). No deletes, no
+  merges, no `delete_view`; a dissolve leaves a redirect, it is not a delete.
 
 Servings (`jazyk mcp <toolsets>`, see [MCP](../frontends/mcp.md#toolsets)); every
 serving carries the read tools, `report_feedback`, and `await_changes`

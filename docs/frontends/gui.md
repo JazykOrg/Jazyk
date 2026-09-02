@@ -81,7 +81,11 @@ Project and store reads:
   relationship among the members with lifting applied (one arrow per direction-and-type
   group, the concrete edges beneath each lifted arrow, each with its requirements). A
   flow view carries its ordered steps with their participants; a state view carries
-  the derived machine. This is what the map draws.
+  the derived machine. The `children` list names, for every member that has a
+  [level view](../compiler/diagrams.md#level-views) of its own, the member id and that
+  view's id: the same list `get_view` answers
+  ([drill-down](../compiler/concepts/levels.md#drill-down)). This is what the map
+  draws.
 - `GET /api/search?q=`: the [search tool](../compiler/tools.md#read-tools).
 - `GET /api/context?target=&depth=`: what [`load`](../compiler/context.md#tools)
   renders for the target: the loaded set of that one load, with its expansion handles.
@@ -430,6 +434,21 @@ other surfaces ([diagrams](../compiler/diagrams.md#rendering)).
   as such, each with its member count and its limits state. Suppressed diagnostics
   never render. A row opens the node in the inspector and focuses it on the map; a
   view row overlays the view.
+- The containment tree: the entity list in the sidebar is the tree the `parent` field
+  makes ([levels](../compiler/concepts/levels.md#levels)), one root per scope
+  ([the scope root](../compiler/concepts/levels.md#the-scope-root)), each node
+  expandable to its children. A node with a level shows its child count and its
+  [level view](../compiler/diagrams.md#level-views) ids; clicking one overlays that
+  view. A grouping (an entity with `derived` provenance) is marked as such, with its
+  ratification proposal one click away.
+- The breadcrumb: while a level view is overlaid, a breadcrumb sits over the diagram
+  panel: the chain from the scope root down to the level's node. Each crumb overlays
+  that ancestor's level view; the last crumb is the current level. A member drawn
+  with a level of its own is the link down ([drill-down](../compiler/concepts/levels.md#drill-down)):
+  double-clicking it, or picking it from the view's `children` list
+  (`GET /api/views/{id}`), overlays the member's level view and extends the
+  breadcrumb. `?view=` holds the overlaid view, so a drilled-down position is an
+  addressable URL. Clearing the overlay clears the breadcrumb.
 - The center: the map. Nodes are typed: entities (with their stereotype as a badge),
   documents, requirements, and deliverable files. Edges are typed too:
   - The [derived relationships](../compiler/graph.md#derived-data) between

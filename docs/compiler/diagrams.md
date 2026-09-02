@@ -89,8 +89,9 @@ The kinds, with what each reads from the graph:
 
 - `class`: the member entities, each `attributes` entry as `name : type` (the type when
   stated), the stereotype, and every relationship among the members with type and
-  cardinality. The default is one per scope
-  ([default views](./model/view.md#default-views)). E.g.:
+  cardinality. The default is the [level view](#level-views) of a node whose level
+  carries no structural stereotype; the scope root's level view is the per-scope class
+  view ([default views](./model/view.md#default-views)). E.g.:
 
   ```
   @startuml
@@ -122,8 +123,9 @@ The kinds, with what each reads from the graph:
 - `component`: the member entities by stereotype: «actor» as `actor`, «interface» as
   `interface`, everything else as `component`. A `realization` toward an interface draws
   the lollipop; a `dependency` from a component toward an interface draws the socket; a
-  dependency from an actor draws a dashed arrow. The default is one per system (a
-  containment root with at least one child), over its subtree. E.g.:
+  dependency from an actor draws a dashed arrow. The default is the
+  [level view](#level-views) of a node whose level carries a structural stereotype,
+  over its direct children and the outside entities their lifted edges reach. E.g.:
 
   ```
   @startuml
@@ -210,7 +212,8 @@ without drawing every leaf:
 - Views nest. A collapsed node links to the sub-view detailing it: the view of the same
   kind whose `query.parent` is the node, or whose members are all children of the node.
   The rendered node carries a PlantUML link to that sub-view's rendering
-  (`[[../<kind>/<slug>.svg]]`).
+  (`[[../<kind>/<slug>.svg]]`). A member whose entity has a level view carries the link
+  whether it is collapsed or not ([drill-down](#drill-down)).
 
 E.g.: `ent:a` contains `ent:a1`, `ent:b` contains `ent:b1`, and a requirement declares
 `{a: ent:a1, b: ent:b1, type: dependency}`. A view showing only `a` and `b` draws one
@@ -219,6 +222,107 @@ arrow, and clicking it lists the one concrete edge:
 ```
 A ..> B
 ```
+
+## Levels
+
+A node's level is its set of direct children, and the scope root (the parentless
+entities of a scope) is the top level ([levels](./concepts/levels.md#levels),
+[the scope root](./concepts/levels.md#the-scope-root)). Each level gets its own diagrams,
+and digging into a member shows the level below it
+([drill-down](./concepts/levels.md#drill-down)). The tree is as deep as the documents and
+the model's judgment make it; nothing here fixes a depth.
+
+### Level views
+
+Derivation emits, for every node with at least two children (the scope root included),
+one structural level view, recomputed on every commit like every default
+([default views](./model/view.md#default-views)):
+
+- Members: the node's direct children plus every outside entity with a lifted edge into
+  the level, in document order. The top diagram shows User beside Frontend and Backend.
+  The node itself is not a member: it is the frame the level sits in.
+- Kind: `component` when the node or any child carries a structural stereotype
+  (`system`, `component`, `service`, `interface`, `actor`), `class` otherwise.
+- Id: `view:component/<node-slug>` or `view:class/<node-slug>`. The root form takes the
+  scope's slug: `view:component/scope-public` is the top level of the default scope.
+- `default: true`. Any mutation naming the view clears the default, as for every
+  default view. The per-scope class view and the per-root component view of earlier
+  designs fold into this rule: the scope root's level view is the per-scope view.
+- Relationships lift at render time as in [lifting and collapse](#lifting-and-collapse):
+  an edge between two hidden descendants of two members draws as one arrow between the
+  members, an edge from an outside entity to a descendant draws toward the member that
+  contains it.
+
+Flow views derive per level, and lifting is applied at derivation, not at render time:
+
+- The harness takes the behavior-facet requirements whose entities lift to at least one
+  member of the level, maps each requirement's entities to their nearest ancestor in the
+  level, drops a requirement from a level none of its entities reach, and dedupes the
+  participants.
+- The lifted requirements cluster by the lifted actor (or the lifted first entity when
+  no actor is among them) and document. A cluster of two or more derives a `use-case`
+  view and a `sequence` view whose participants are the lifted members, ids
+  `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/<node-slug>-<cluster-slug>`.
+- A leaf level keeps today's clustering unchanged: lifting to a leaf is identity.
+- State and object views stay per machine and per instantiated type; they do not
+  derive per level.
+
+`members-per-structural-view` and `edges-per-view` bound every level view. A level view
+over a limit renders with its largest subtrees auto-collapsed and a visible note
+([over-limit views](#over-limit-views)). A level over its fan-out limit is the
+[fan-out](./reconciler.md#fan-out) variant of
+[`abstract-entity`](./goals/abstract-entity.md), never the renderer's problem: the view
+still draws every child until a session regroups them.
+
+E.g., the reference graph's «system» `shop` has two children, so it gets a level view.
+`order-service` and `inventory-service` carry «service», so the kind is `component`.
+`customer` is outside the level, and its dependency on `checkout-api` lifts to
+`order-service`, so `customer` is a member. `order-service`'s dependency on `stock-api`
+lifts to `inventory-service`:
+
+```
+@startuml
+actor Customer
+component "Order Service" as OS [[../component/order-service.svg]]
+component "Inventory Service" as IS
+Customer ..> OS
+OS ..> IS
+@enduml
+```
+
+`order-service` has four children, so it has a level view and its element carries the
+link. `inventory-service` has one child, so it has no level view and no link.
+
+### Drill-down
+
+Every rendered member whose entity has a level view links to it:
+
+- In the `.puml`, the member's element carries a PlantUML `[[...]]` hyperlink to the
+  level view's rendering: `[[../<kind>/<slug>.svg]]`, the same form as the collapsed-node
+  link under [lifting and collapse](#lifting-and-collapse). The link is part of the
+  emitted text, so it takes part in determinism and in the skip rule: a member gaining
+  or losing a level view changes the `.puml` and the view renders again.
+- In the `.svg`, the renderer emits the link as an anchor on the member's element. The
+  path is relative under `diagrams/`: from `diagrams/component/shop.svg` the link to the
+  level below `order-service` is `../component/order-service.svg`, and a `component`
+  level may link down into a `class` level the same way. A rendering opened from the out
+  directory navigates on click with no server behind it.
+- A member with fewer than two children has no level view and carries no link.
+- The view carries a `children` list beside its members, in `get_view`
+  ([read tools](./tools.md#read-tools)) and in the GUI API: the level views reachable
+  from its members, one entry per linked member.
+
+What consumes the links:
+
+- [Docsgen](../consumers/docsgen.md) nests a page per level: the node's definition, its
+  level views embedded as `.svg`, its members with links down to their level pages, and a
+  breadcrumb up to the parent's page. The `.svg` anchors work inside the embedded
+  diagram, so a reader can dig through the picture or through the member list.
+- The [GUI](../frontends/gui.md#graph) draws from the graph, not from the files. It
+  shows the containment tree beside the diagram panel and a breadcrumb over it, and
+  follows `children` to open the level below a clicked member.
+- The [terminal viewer](../frontends/viewer.md) prints the containment tree with each
+  node's view ids, so the level views are addressable without a browser.
 
 ## Over-limit views
 
@@ -260,6 +364,11 @@ the goal stands. The renderer never truncates silently:
   next request.
 - The `.svg` files are what other outputs link: an entity page under `docsgen/` embeds
   `../diagrams/<kind>/<slug>.svg`.
+- Links between renderings are relative paths under `diagrams/`: a
+  [drill-down](#drill-down) link in `diagrams/component/shop.svg` reads
+  `../component/order-service.svg`. Nothing in a rendering names the out directory or
+  the project root, so the `diagrams/` tree can be copied or served whole and every link
+  holds.
 - The out directory is never docs input ([never-input paths](./project-settings.md#glob)).
 
 ## The renderer

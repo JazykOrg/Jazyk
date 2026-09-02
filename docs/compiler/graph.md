@@ -329,17 +329,19 @@ from the facts because it is a function of them.
   [derivation](./model/state-machine.md#derivation).
   The [checks](./model/state-machine.md#checks) run on the derived machine at the end of
   the build.
-- Default views derive by rule, six kinds with stable ids: a class view per scope
-  (`view:class/<scope>`), a component view per system (`view:component/<system-slug>`,
-  a containment root with at least one child), a use-case view and a sequence view per
-  flow cluster (`view:usecase/<cluster-slug>`, `view:sequence/<cluster-slug>`), a
-  state view per derived state machine (`view:state/<entity-slug>`), and an object
-  view per type (`view:object/<type-slug>`, an entity that is `b` of an
-  `instantiation` group). Flow clustering is deterministic: a `behavior` or
-  `failure-mode` requirement is keyed by its actor (the entity labeled `actor` among
-  its `entities`, or its first entity when none is) and by its document, the cluster
-  slug is `<actor-slug>-<doc-stem>`, members are in document order, and a cluster of
-  fewer than two members derives no view. A default view is stored in `views.yaml`
+- Default views derive by rule, six kinds with stable ids: a structural level view per
+  node with at least two children, the scope root included (`view:class/<slug>` or
+  `view:component/<slug>` by the stereotypes present; the scope root's view is the
+  per-scope view, see [level views](./diagrams.md#level-views)), a use-case view and a
+  sequence view per flow cluster of a level (`view:usecase/<node-slug>-<cluster-slug>`,
+  `view:sequence/<node-slug>-<cluster-slug>`), a state view per derived state machine
+  (`view:state/<entity-slug>`), and an object view per type (`view:object/<type-slug>`,
+  an entity that is `b` of an `instantiation` group). Flow clustering is deterministic:
+  a `behavior` or `failure-mode` requirement is keyed by its actor (the entity labeled
+  `actor` among its `entities`, or its first entity when none is) and by its document,
+  each entity lifted to its nearest ancestor in the level, the cluster slug is
+  `<actor-slug>-<doc-stem>`, members are in document order, and a cluster of fewer
+  than two members derives no view. A default view is stored in `views.yaml`
   under its stable id with the boolean field `default: true` and provenance
   `{derived: {from: [...], reasoning: "default view: <rule>"}}`. On every commit the
   store creates the views whose rule holds, rewrites `title` and `members` on the ones
@@ -350,10 +352,12 @@ from the facts because it is a function of them.
 - A committed requirement adds its source as a mention on every entity it references
   (deduplicated). An entity reused by reference accumulates cross-document presence
   without an explicit `upsert_entity` call.
-- Limit counts: requirements per entity, children per entity, members and rendered edges
-  per view, participants per sequence view, instances per object view, states per
-  state machine. A count that crosses its node's threshold writes a `threshold-crossed`
-  record. See [the limits registry](#limits).
+- Limit counts: requirements per entity, children per entity (the scope root's
+  parentless entities counted under the same limit, the record written on
+  `scope:<scope>`), members and rendered edges per view, participants per sequence
+  view, instances per object view, states per state machine. A count that crosses its
+  node's threshold writes a `threshold-crossed` record. See
+  [the limits registry](#limits).
 - The name index (name and alias → entity id) is rebuilt on load and after each commit.
   The [search tool](./tools.md#read-tools) queries it, and lookalike scoring across
   documents reads it.
@@ -382,7 +386,9 @@ its `change` from exactly one record.
 - `id` is `c<generation>-<index>`, the record's index within its generation. `mutation`
   names the journal mutation behind it, `0` for a store-level cause (the sweep, a
   recompute, a check).
-- `subject` is a node id or a full section reference `doc.md#/ref`. `via` is the stored
+- `subject` is a node id, a full section reference `doc.md#/ref`, or `scope:<scope>`
+  (the scope root's `threshold-crossed` record, see
+  [fan-out](./reconciler.md#fan-out)). `via` is the stored
   reference or computation that carried the dirtiness (`section`, `entities`, `members`,
   `parent`, `from`, `ledger`, `sweep`, and the rest of the closed list in
   [change records](./reconciler.md#change-records)); a goal kind is never a `via`.
@@ -449,7 +455,7 @@ The entry kinds:
   parse finds changes, one mutation per dirtied or removed section, so the root of every
   ripple is itself a generation. Carries `dirtied`.
 - `align`: alignment's mechanical moves and the proposals it left pending, once per build.
-- `gc`: the [sweep](#the-sweep)'s deletions, when it deleted anything.
+- `gc`: the [sweep](#the-sweep)'s deletions and dissolutions, when it did either.
 - `settle-diagnostics`: diagnostics the store resolved because their subjects are gone.
 - `checks`: the deterministic checks' findings and the diagnostics they settled, once
   per check run, under a generation of its own ([checks](./compilation.md#checks)).
@@ -465,6 +471,11 @@ The entry kinds:
 - `answer`: a human answer recorded on a prompt ([answers](./model/diagnostic.md#answers)).
   When the chosen option carries an `edit`, the entry also carries the prose replacement
   and graph mutation, like a dual write.
+
+A mutation that moves an entity's `parent` (`update_entity`, `edit_fact`,
+`group_entities`, `dissolve_entity`, the sweep's dissolve) records the prior parent in
+its journal mutation, so the reparent flip replays from the journal alone
+([flip detection](./reconciler.md#flip-detection)).
 
 Every kind can carry `resolved_goals` (each with its one-line `justification`, and
 `evidence` where the gate wanted some) and `opened_goals` (each with its `cause`:
@@ -490,12 +501,20 @@ harness derives and a session resolves. Both are named `gc` on every surface.
   loaded sets). Quoted attributes pointing at removed sections are pruned.
 - An entity with zero mentions, zero requirements, zero attributes, zero children, and no
   derived or decree provenance is deleted, with a tombstone redirect.
+- A derived grouping (derived provenance, no mentions,
+  [groupings](./concepts/levels.md#groupings)) with fewer than two children dissolves:
+  its children reparent to its parent (parentless when the grouping was top-level), and
+  the entity tombstones with a redirect to its parent, exactly as `dissolve_entity`
+  would ([write tools](./tools.md#write-tools)). The dissolution is journaled as a
+  sweep mutation in the `gc` entry. Below two children there is nothing to judge. An
+  entity a document states holds children in role, not in provenance, and the rule
+  never touches it.
 - A deleted requirement takes its edges and its transition with it: relationships and
   state machines recompute; default and query views recompute. A curated view keeps its
   member list, and a `view-member-gone` record opens [`retrace`](./goals/retrace.md) on
   it. A derived node whose `from` names the dead node gets a `node-deleted` record and a
-  `retrace` of its own. The sweep never deletes derived or decreed nodes: their fate is
-  judgment.
+  `retrace` of its own. Apart from the dissolve rule, the sweep never deletes derived
+  or decreed nodes: their fate is judgment.
 - Deleting a node settles the open judged diagnostics naming it as a subject: one whose
   subjects are all gone is resolved by the store, journaled; one with surviving subjects
   writes a record on them, so a session re-judges the finding. This runs on every
@@ -516,7 +535,9 @@ the build interleaves the classes in bursts
 ([compile and garbage collection](./compilation.md#compile-and-garbage-collection),
 [readiness](./reconciler.md#readiness)). GC mutations are ordinary changesets: they open
 compile goals like any other commit, and [flip detection](./reconciler.md#flip-detection)
-bounds the alternation.
+bounds the alternation: a natural key flipping between the classes, or a child
+reparented back and forth between the same two parents (the reparent flip, which
+`group_entities`, `dissolve_entity`, and the sweep's dissolve can all cause).
 
 ## Limits
 
@@ -532,13 +553,25 @@ work: it runs once its target's cone is quiet and sees final counts.
 | limit | soft | hard | goal |
 |---|---|---|---|
 | `requirements-per-entity` | 50 | 80 | `abstract-entity` |
-| `children-per-entity` | 10 | 20 | `abstract-entity` |
+| `children-per-entity` | 9 | 15 | `abstract-entity` (the fan-out variant) |
 | `members-per-structural-view` | 20 | 30 | `split-view` |
 | `edges-per-view` | 40 | 60 | `split-view` |
 | `members-per-flow-view` | 12 | 20 | `split-view` |
 | `participants-per-sequence-view` | 8 | 12 | `split-view` |
 | `instances-per-object-view` | 15 | 25 | `split-view` |
 | `states-per-state-machine` | 12 | 20 | `abstract-entity` (on the subject) |
+
+`children-per-entity` counts one node's direct children, its
+[level](./concepts/levels.md#levels). The scope root (the parentless entities of a
+scope) counts under the same row, its record written on `scope:<scope>`
+([the scope root](./concepts/levels.md#the-scope-root)). Crossing soft derives an
+optional `abstract-entity` goal on the node or the scope with the fan-out change; hard
+escalates it to mandatory; a count back under soft clears the record without a session
+([fan-out](./reconciler.md#fan-out)). Minimum membership is not a limit row: a derived
+grouping with fewer than two children dissolves in [the sweep](#the-sweep).
+`members-per-structural-view` and `edges-per-view` bound every level view too, and an
+over-limit level view renders with its largest subtrees auto-collapsed like any other
+([level views](./diagrams.md#level-views)).
 
 A new limit joins the table with both thresholds and the goal that resolves it. A state
 machine over its cap opens `abstract-entity` on its subject, because the machine derives

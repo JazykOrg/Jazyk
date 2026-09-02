@@ -31,7 +31,8 @@ Shopping Cart shows a line-item count" is a requirement on `ent:shopping-cart`, 
 Structure the documents state ("the shop consists of the order service and the inventory
 service") is [containment](#containment). Structure invented to tame scale comes from the
 [`abstract-entity` goal](../goals/abstract-entity.md) and carries `derived` provenance
-until the documents state it.
+until the documents state it. An entity minted to hold a level of the tree is a
+[grouping](#groupings).
 
 One sentence, one subject: a sentence that names its subject twice introduces one
 entity, not two. "This software is a warehouse management system" defines a single
@@ -64,7 +65,9 @@ coincidental.
   on the label: an entity is interface-like because something realizes it, a container
   because it has children. Two labels are conventions the renderer and the provider check
   recognize: `actor` draws as an actor, and `interface` counts as interface-like before
-  anything realizes it. Every other label is drawn as text. The stereotype is a judgment,
+  anything realizes it. Five labels count as structural for the kind of a
+  [level view](./view.md#level-views): `system`, `component`, `service`, `interface`,
+  `actor`. Every other label is drawn as text. The stereotype is a judgment,
   recorded with `reasoning` and backed by the entity's mentions like every other fact on
   the node.
 - `parent`: the containing entity. One tree, unlimited depth. See
@@ -78,7 +81,8 @@ coincidental.
   `quote` is verbatim. Mentions are the entity's quote provenance.
 - `provenance`: `{derived: {from, reasoning}}` or `{decree: {author, at, note}}`,
   present on an entity no document states, whatever mentions its requirements add by
-  reference. A mention that names the entity removes it: an `upsert_entity` whose
+  reference. On a [grouping](#groupings) `from` names exactly its members. A mention
+  that names the entity removes it: an `upsert_entity` whose
   `mention` names it, or an accepted
   [ratification proposal](./diagnostic.md#ratification-proposals). The entity is then
   quoted. A mention a committed requirement adds by reference does not remove it: that
@@ -144,19 +148,87 @@ ent:ana:
   `ent:order-item` (parent `ent:order-service`) composed into `ent:shopping-cart` (parent
   `ent:order-service`) is consistent; the same part under `ent:inventory-service` is a
   mismatch. See [checks](../compilation.md#checks).
-- Limits. `children-per-entity` (10 soft, 20 hard) and `requirements-per-entity` (50
-  soft, 80 hard) open the [`abstract-entity` goal](../goals/abstract-entity.md) on the
-  entity: sub-entities with `parent`, detail moved down, docs proposals staged. The
-  `states-per-state-machine` limit opens the same goal on the machine's subject. A per-node
-  bump in `limits` raises the threshold. See [limits](../graph.md#limits).
+- Levels. A node's level is its set of direct children. The scope root (the parentless
+  entities of a scope) is the top level, addressed as `scope:<scope>` where a goal or a
+  view needs a target for it. See [levels](../concepts/levels.md#levels) and
+  [the scope root](../concepts/levels.md#the-scope-root).
+- Limits. `children-per-entity` (9 soft, 15 hard) counts a node's direct children; the
+  scope root counts its parentless entities under the same row. Crossing it opens the
+  [`abstract-entity` goal](../goals/abstract-entity.md) on the node (or on
+  `scope:<scope>`) with the `fan-out` change: the session groups children into
+  [groupings](#groupings) until the count is back under the threshold. See
+  [fan-out](../reconciler.md#fan-out). `requirements-per-entity` (50 soft, 80 hard)
+  opens the same goal on the entity: sub-entities with `parent`, detail moved down, docs
+  proposals staged. The `states-per-state-machine` limit opens it on the machine's
+  subject. A per-node bump in `limits` raises the threshold. See
+  [limits](../graph.md#limits).
 - Lifting. Containment is what lets a coarse view stay true. When a view shows an ancestor
   and hides its descendants, every relationship touching a hidden descendant lifts to the
   nearest shown ancestor at render time. Lifting stores nothing. See
   [rendering](./relationship.md#rendering) and
   [lifting and collapse](../diagrams.md#lifting-and-collapse).
 - Consumers read the tree. Generation groups by container where containment exists;
-  package, component, and composite views draw it. See
-  [generation](../../consumers/gen.md) and [view kinds](./view.md#kinds).
+  package, component, and composite views draw it. Every node with two or more children
+  gets a [level view](./view.md#level-views) of its level, and a rendered member with a
+  level view links down to it. See [generation](../../consumers/gen.md),
+  [view kinds](./view.md#kinds), and [drill-down](../concepts/levels.md#drill-down).
+
+## Groupings
+
+A grouping is an entity in role, not a node kind: an entity that exists to hold a level
+of the tree. See [groupings](../concepts/levels.md#groupings).
+
+- Provenance. A grouping the documents never state carries `derived` provenance whose
+  `from` names exactly its members (the children it was minted over) and whose
+  `reasoning` says why the domain would recognize it. It has no mentions. An entity the
+  documents state (quote provenance) can hold children too: it is a grouping in role,
+  not in provenance, and the dissolve rule below never touches it.
+- Fields. A grouping carries a `definition` (one sentence stating its responsibility), a
+  `stereotype` from the existing vocabulary (`system`, `component`, `module`, and so on)
+  or none, and the scope of its members. No stereotype is reserved for groupings.
+- The parent rule. A grouping never crosses levels: its members share one current
+  parent, and the grouping takes that parent. The members then move under the grouping.
+  `group_entities` stages the entity and the moves as one changeset and refuses members
+  under different parents. See [write tools](../tools.md#write-tools).
+- No requirements of its own. Lifting carries the members' edges and flows up to the
+  grouping in the [level views](./view.md#level-views) above it. See
+  [lifting and collapse](../diagrams.md#lifting-and-collapse).
+- Ratification. The grouping's [ratification proposal](./diagnostic.md#ratification-proposals)
+  phrases it as prose for the document that owns its parent, or for the front door when
+  the grouping is top-level. Accepting it makes the grouping a stated entity.
+- Naming. A grouping's name is judged like any entity name: search before create, and a
+  lookalike of an existing area reuses it. See [naming](../concepts/levels.md#naming).
+- Dissolve. A derived grouping with fewer than two children dissolves: its children
+  reparent to its parent (the grandparent) and the entity tombstones with a redirect to
+  its parent. Below two there is nothing to judge. The deterministic sweep applies this
+  rule at every commit, journaled as a sweep mutation; a session applies it early with
+  `dissolve_entity`, which refuses a stated entity (`stated-entity`: revise the
+  documents instead). See [the sweep](../graph.md#the-sweep).
+- The reparent flip. A child that moves between the same two parents across generations
+  parks the second move, like a cross-class flip. See
+  [flip detection](../reconciler.md#flip-detection).
+- Persistence. A grouping is an authored node: it persists across rebuilds and never
+  recomputes at commit. Only a crossed limit reopens the level it sits in.
+
+E.g.:
+
+```yaml
+ent:payments:
+  name: Payments
+  definition: Takes payment for an order and records its outcome.
+  scope: commerce
+  stereotype: module
+  parent: ent:backend
+  provenance: {derived: {from: [ent:payment-gateway, ent:refund, ent:invoice],
+                         reasoning: "payment.md treats these three as one area"}}
+  confidence: 0.8
+  reasoning: The documents name the area Payments and never split it further.
+  created: g14
+  updated: g14
+```
+
+`ent:payment-gateway`, `ent:refund`, and `ent:invoice` all had `parent: ent:backend`
+before the grouping and `parent: ent:payments` after it.
 
 ## Identity
 
@@ -172,6 +244,8 @@ ent:ana:
 - A merge keeps one entity and leaves a redirect from the absorbed id to the survivor, so
   downstream consumers holding the old id still resolve. The absorbed entity's mentions,
   attributes, children, and edges move to the survivor before derived data recomputes.
+- A dissolved [grouping](#groupings) leaves a redirect from its id to its parent, so an
+  id that named the grouping resolves to the node its children now sit under.
 - A natural key deleted and recreated across builds is `unstable-extraction`. A key that a
   GC split and a compile merge flip back and forth is `unstable-derivation`: the pair
   parks, blocked on a human. See [flip detection](../reconciler.md#flip-detection).

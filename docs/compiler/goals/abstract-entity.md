@@ -9,9 +9,16 @@ documents should gain. Containment is the structural answer to scale
 coarse view true, and the ratification loop pushes the invented structure into prose or
 out of the graph.
 
+The kind has two changes. The caps variant (this page up to [the fan-out
+variant](#the-fan-out-variant)) splits one node downward when its requirements or states
+are over a limit. The fan-out variant groups a level upward when a node's direct children
+are over the `children-per-entity` limit ([levels](../concepts/levels.md#levels)).
+
 - Kind: `abstract-entity`. Class: GC. Optional past the soft threshold, mandatory past
   the hard one ([escalation](../reconciler.md#escalation)).
-- Unit: one entity. Id: `g:abstract-entity:<ent>`.
+- Unit: one entity. Id: `g:abstract-entity:<ent>`; under the fan-out variant the target
+  may be a scope root, `g:abstract-entity:scope:<scope>`
+  ([the scope root](../concepts/levels.md#the-scope-root)).
 - Ready when no compile goal is open or parked in the entity's
   [cone](../reconciler.md#cones): everything under it in the containment tree, its
   requirements, the views that show it, and the sections anchoring them
@@ -25,13 +32,14 @@ out of the graph.
 One [change record](../graph.md#change-records) kind derives the goal:
 `threshold-crossed` on an entity (`via: limits`), written by the limit counts at commit
 ([derived data](../graph.md#derived-data)) when a count is over the entity's threshold.
-Three limits of [the registry](../graph.md#the-registry) apply:
+Two limits of [the registry](../graph.md#the-registry) derive the caps variant; the
+third, `children-per-entity`, derives the [fan-out variant](#the-fan-out-variant):
 
 | limit | soft | hard | counts |
 |---|---|---|---|
 | `requirements-per-entity` | 50 | 80 | requirements listing the entity in `entities` |
-| `children-per-entity` | 10 | 20 | entities whose `parent` is the entity |
 | `states-per-state-machine` | 12 | 20 | states of the entity's derived [state machine](../model/state-machine.md#derivation) `sm:<slug>`; the record's subject is the machine's subject, since the machine derives from the subject's requirements |
+| `children-per-entity` | 9 | 15 | entities whose `parent` is the entity, or the parentless entities of a scope for the root form; the fan-out variant |
 
 The entity's own bump (`limits: {<limit>: n}`) is the soft threshold for that entity
 ([per-node bumps](../graph.md#per-node-bumps)). `detail` carries the limit, the count,
@@ -205,9 +213,10 @@ any alternative the requirements support), `freeform: true`. The commit writes
   changed fact set for [`generate`](./generate.md)
   ([compile and garbage collection](../compilation.md#compile-and-garbage-collection)).
 - Derived data recomputes at commit: relationships regroup around the sub-entities, the
-  target's machine shrinks to the transitions still on it, a component view derives for
-  the target once it has a child (`view:component/<slug>`), and the class view of the
-  scope gains the sub-entities ([default views](../model/view.md#default-views)).
+  target's machine shrinks to the transitions still on it, a level view derives for the
+  target once it has two children ([level views](../diagrams.md#level-views)), and the
+  scope root's level view keeps showing the target with the sub-entities lifted into it
+  ([default views](../model/view.md#default-views)).
 - Lifting keeps the coarse views true: a relationship touching a sub-entity lifts to the
   target wherever a view shows the target collapsed
   ([lifting and collapse](../diagrams.md#lifting-and-collapse)). The session collapses
@@ -293,8 +302,8 @@ The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
   part, the target kept when the statement is about the whole. `transition.subject` and
   every edge end stay in `entities`. Attributes move with their concept through
   `update_entity` on the sub-entity.
-- Over the children limit, introduce an intermediate parent grouping children by
-  cohesion the same way, the children re-pointed to it with `update_entity` `parent`.
+- Over the children limit, the goal derives with the fan-out change instead, and the
+  level is grouped rather than the node split ([the fan-out variant](#the-fan-out-variant)).
 - Over the state limit, the subject conflates phases or concepts. Split it into a
   sub-entity per phase whose states are that phase's, and re-point each transition
   statement's `entities` and `transition.subject` to the phase whose states it uses.
@@ -319,4 +328,196 @@ records what the call carries and never synthesizes `from`; the gate reads `from
 the staged call ([gate](#gate)). No deletes and no merges: an
 abstraction adds structure and moves detail, and what a merged or dead node needs is
 [`review-entity`](./review-entity.md)'s or [`retrace`](./retrace.md)'s work. See
-[write tools](../tools.md#write-tools).
+[write tools](../tools.md#write-tools). The toolset also carries `group_entities` and
+`dissolve_entity`, the tools of the [fan-out variant](#fan-out-tools).
+
+## The fan-out variant
+
+A level is a node's direct children ([levels](../concepts/levels.md#levels)); the top
+level of a scope is its parentless entities
+([the scope root](../concepts/levels.md#the-scope-root)). When a level outgrows the
+`children-per-entity` limit, the goal derives on the node that holds it with the
+`fan-out` change, and the session groups the children into groupings under the node
+([groupings](../concepts/levels.md#groupings)). The caps variant splits one node
+downward; the fan-out variant builds the level above its members. Both add structure with
+derived provenance and leave the ratification loop to push it into prose. A grouping is
+an entity with derived provenance from its members, a definition, the members' former
+parent as its parent, and no mentions; it persists across rebuilds, and only a crossed
+limit reopens it.
+
+### When it derives
+
+- The limit: `children-per-entity`, soft 9, hard 15, counting the entities whose
+  `parent` is the node; the scope root counts its parentless entities under the same row
+  ([the registry](../graph.md#the-registry)).
+- Crossing soft writes the record at commit and derives the goal optional; hard
+  escalates it to mandatory; dropping back under soft clears the record without a
+  session, the level-triggered rule of [created when](#created-when). The reconciler's
+  [fan-out](../reconciler.md#fan-out) derivation names the record and the target form.
+- Target: the node whose children are over the limit, or `scope:<scope>` for the top
+  level (`g:abstract-entity:scope:public` for the default scope). The cone is the node's
+  subtree, the whole scope for the root form; the goal is ready when no compile goal is
+  open in it, the existing GC rule ([GC gating](../reconciler.md#gc-gating)). Leaves
+  reconcile first, groupings form cone by cone, and each new level's views derive after.
+- Minimum membership is not a limit row: a derived grouping with fewer than two children
+  dissolves in [the sweep](../graph.md#the-sweep) at commit, so nothing derives for it.
+
+### The change
+
+`change: {fan_out: n, limit: {soft, hard}, candidates: [[id, ...], ...]}`. `fan_out` is
+the count of direct children, `limit` the thresholds in force (the node's own bump is its
+soft value, [per-node bumps](../graph.md#per-node-bumps)), `candidates` the coupling
+partitions the hint computer proposes: a deterministic greedy agglomeration over the
+node's children, weighted by the requirements and derived relationships shared between
+them, descendants lifted to the child ([coupling hints](../reconciler.md#fan-out)). The
+harness computes coupling and never names a grouping; the model names and judges and
+never counts. E.g.:
+
+```yaml
+change:
+  fan_out: 12
+  limit: {soft: 9, hard: 15}
+  candidates:
+    - [ent:cart, ent:pricing, ent:checkout, ent:discount]
+    - [ent:shipment, ent:carrier, ent:tracking]
+    - [ent:invoice, ent:payment]
+```
+
+### The fan-out gate
+
+At `mark_goal_done` the harness checks over the staged state:
+
+- The node's direct children count is at or under the hard threshold when the goal is
+  mandatory, or at or under the soft threshold (or the node's bump) when it is optional.
+- Every grouping the session created has at least two children, a non-empty
+  `definition`, derived provenance whose `from` names exactly its members, and the node
+  as its `parent` ([provenance](../model.md#provenance)). A grouping never crosses
+  levels: its members share one current parent, and it takes that parent.
+- No member changed scope
+  ([scope and containment](../concepts/scopes.md#scope-and-containment)).
+- A child moved under an existing sibling that already contains it conceptually
+  (`update_entity` `parent`) lowers fan-out without a new grouping; the justification
+  carries the reason.
+- `parent` stays acyclic and agrees with stated composition
+  ([validation gates](../graph.md#validation-gates)).
+- The docs proposals follow mechanically: the commit files `ratification-pending` per
+  grouping and one [`ratify`](./ratify.md) goal derives per grouping, blocked on a
+  human. The proposal phrases the grouping as prose for the document that owns the node,
+  or the front door for a top-level grouping ([naming](../concepts/levels.md#naming)).
+
+What the gate does not check: whether the domain would recognize the grouping, its name,
+or its boundary. The [abstraction skill](../skills/abstraction.md) carries that judgment.
+The justification is one or two sentences naming the groupings and why the domain would
+recognize them.
+
+Stability: a grouping re-derived on a later build lands on the same natural key (the
+same name under the same parent), so the upsert is a no-op. A child that moves between
+the same two parents across generations is a reparent flip: the second move parks like a
+cross-class flip ([flip detection](../reconciler.md#flip-detection)).
+
+### Declining
+
+A level can be genuinely flat: nine peers with no cohesion among them, each a concept of
+its own. Then the goal fails (`mark_goal_failed`) with a reason naming why the level is
+flat, never a grouping invented to satisfy the count. The failure surfaces on the target
+([parked and failed](../reconciler.md#parked-and-failed)); a failed mandatory goal blocks
+convergence ([convergence](../compilation.md#convergence)), and a human answers it by
+decree (the node's own bump) or with prose that states the structure. Declining is honest
+work, graded like a grouping.
+
+### Fan-out hints
+
+The hint computer emits, per fan-out goal:
+
+- `load <target>`: the node with its direct children as stubs, or `scope:<scope>`, which
+  loads the top level as stubs.
+- `fan-out <n> > <soft> (children-per-entity, soft 9, hard 15)`: the change.
+- `candidate [<id>, ...] (weight <w>)`: one line per coupling partition, largest first,
+  at most the soft threshold of candidates and 12 ids per candidate (the rest summarized
+  as a count), each with its internal weight. Suggestions from counts, never judgments.
+- `member <ent> «<stereotype>» (<document>)`: each child with its stereotype and the
+  document it is mentioned in most. Documents and headings are strong naming hints.
+- `grouping <ent> (<n> children)`: every existing grouping under the node, so a child
+  that belongs in one is moved there, never regrouped beside it.
+- `skill abstraction`.
+- `group_entities`, `update_entity`, `dissolve_entity`: the tools that resolve the
+  variant.
+
+### The fan-out prompt
+
+The goal block carries the fan-out paragraph of
+[`./prompts/abstract-entity.md`](./prompts/abstract-entity.md), the change in one line,
+the gate in one line, and the hints. E.g.:
+
+```text
+- [g:abstract-entity:scope:public] optional
+  This level is over its fan-out limit. Load the target and its children; the cone is
+  quiet, so the level is final for this build. A grouping is a concept a reader of the
+  documents would recognize and name, never a coupling artifact: the candidates are
+  boundaries to accept, adjust with reasons, or decline. Prefer a name the documents
+  use for the area; search before creating. Stage each grouping with group_entities
+  (name, a one-sentence definition of its responsibility, members, a stereotype from
+  the existing vocabulary or none, reasoning). A flat level fails with that reason.
+  Change: fan-out 12 > 9 (children-per-entity, soft 9, hard 15) (g431).
+  Gate: children at or under the limit; every grouping with two or more members, a
+  definition, derived provenance naming its members, and this node as parent.
+  Hints: load scope:public; candidate [ent:cart, ent:pricing, ent:checkout,
+  ent:discount] (weight 14); candidate [ent:shipment, ent:carrier, ent:tracking]
+  (weight 9); member ent:cart «component» (orders.md); skill abstraction.
+```
+
+The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
+
+- The node in full, or the scope's top level as stubs for the root form.
+- Each child as a stub with its stereotype, requirement count, child count, and the
+  document it is mentioned in most.
+- The derived relationships among the children
+  ([relationship](../model/relationship.md)), the material of the candidates.
+- The level's views as stubs ([level views](../diagrams.md#level-views)).
+- The existing groupings under the node with their children.
+
+Requirements are not loaded up front: the level is judged by its members and their
+relationships, and `expand` reaches a member's statements when a boundary needs them.
+
+### Grouping
+
+- A grouping is a concept a reader of the documents would recognize and name, never a
+  coupling artifact. The candidates are boundaries: accept one, adjust it with a reason
+  (a candidate mixing two responsibilities splits, two candidates the documents treat as
+  one area merge), or decline it.
+- Name it in the documents' wording: a document's name or heading is the strongest hint
+  (`payment.md` suggests a Payments grouping), and a lookalike of an existing area
+  reuses that entity ([naming](../concepts/levels.md#naming)). The stereotype comes from
+  the existing vocabulary (`system`, `component`, `module`, and so on) or is absent; no
+  stereotype marks a grouping.
+- A split the documents do not suggest (a model, view, controller split) is a choice.
+  State it as one in the reasoning and let the ratification proposal carry it to the
+  owner.
+- Stage each grouping with `group_entities`; move a child that belongs under an existing
+  sibling with `update_entity` `parent`; dissolve a grouping that lost its reason with
+  `dissolve_entity`. Higher levels carry no requirements of their own: lifting covers
+  edges and flows ([lifting and collapse](../diagrams.md#lifting-and-collapse)).
+- After the commit, a level view derives for each grouping with two or more children and
+  the diagrams link down into it ([drill-down](../concepts/levels.md#drill-down),
+  [drill-down rendering](../diagrams.md#drill-down)); the ancestor's goal re-derives
+  from the counts the commit leaves ([batching](#batching)).
+
+### Fan-out tools
+
+The `abstract-entity` [toolset](../tools.md#toolsets) carries two tools for this
+variant, both gated at staging ([write tools](../tools.md#write-tools)):
+
+- `group_entities({name, definition, members, stereotype?, reasoning})`: stages one
+  derived entity (provenance `derived` from `members`, the members' shared current
+  parent as its parent, the members' scope) and reparents every member under it, as one
+  changeset. Gates: at least two members; every member resolves; all members share one
+  current parent; `near-duplicate` against existing names as `upsert_entity`;
+  `definition` and `reasoning` non-empty. Answers with the new id and the members moved.
+- `dissolve_entity({id, reason})`: the inverse, for a grouping with derived provenance
+  and no mentions: children reparent to its parent, and the entity tombstones with a
+  redirect to its parent. Refused on an entity a document states (`stated-entity`:
+  revise the documents instead).
+
+`update_entity` `parent` stays the single-move path. The read tools, the goal tools, the
+view tools, and `report_feedback` apply as in [tools](#tools). No `delete_entity` and no
+`merge_entities`.

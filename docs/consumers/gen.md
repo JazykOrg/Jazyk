@@ -192,9 +192,9 @@ component and its subtree generate as one group, in one session, so the parts of
 component are written together under one set of conventions. The group is derived from
 the graph at batch time, never stored:
 
-- A system is a containment root with at least one child, the same match that derives
-  the default component view `view:component/<system-slug>`
-  ([default views](../compiler/model/view.md#default-views)). A group root is a direct
+- A system is a containment root with at least one child; with two or more it holds a
+  level view of its own, `view:component/<system-slug>`
+  ([level views](../compiler/model/view.md#level-views)). A group root is a direct
   child of a system: the «service»-like tier of the tree, whatever stereotype the
   documents gave it. A group is its root plus every descendant through `parent`.
 - Every other entity generates alone: the system itself, for the requirements that name

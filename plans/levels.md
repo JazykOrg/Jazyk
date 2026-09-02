@@ -1,7 +1,13 @@
 # Plan: levels
 
-Status: the next landing after `uml`. Written for a fresh session with no prior
-context: read this file first, then work the stages. The owner's ask, verbatim in
+Status: in progress on the `levels` branch (branched from `uml`). Landed: stage 1
+(docs), stage 2 (harness), stage 3 (tools, level views, lifted flows, drill-down
+links), stage 4 (docsgen, GUI, viewer), stage 5 (the abstraction skill and the
+fan-out contract, rewritten with the docs stage and embedded by the release build),
+and stage 6 (`example-saas` with ten traps). Running: stage 7, validation
+(`example-saas` on the local model, then `f2` and `example-org` regressions on the
+levels binary, then the dogfood; grading cycles follow). Written for a fresh session
+with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own
 diagrams (structure, use cases, sequences) describing the relationships among that

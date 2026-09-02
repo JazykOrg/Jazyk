@@ -100,8 +100,8 @@ two parents across generations parks the second move. See
   goal's cone is the whole scope.
 - A grouping minted at the root has no parent, so it becomes a new parentless entity,
   and its ratification proposal targets the front door.
-- The scope root's level view is the per-scope view: `view:component/scope-<scope>` or
-  `view:class/scope-<scope>` by the kind rule in [level views](../diagrams.md#level-views).
+- The scope root's level view is the per-scope view: `view:component/<scope>` or
+  `view:class/<scope>` by the kind rule in [level views](../diagrams.md#level-views).
 - Loading `scope:<scope>` renders the top level as stubs. See
   [the loaded set](../context.md#the-loaded-set).
 

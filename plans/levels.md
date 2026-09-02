@@ -162,7 +162,7 @@ included):
 - One structural level view. Kind: `component` when the node or any child carries a
   structural stereotype (`system`, `component`, `service`, `interface`, `actor`),
   `class` otherwise. Id `view:component/<slug>` or `view:class/<slug>` with the
-  node's slug (`view:component/scope-public` for the root form). Members: the
+  node's slug (`view:component/public` for the root form). Members: the
   direct children plus every outside entity with a lifted edge into the level, in
   document order. `default: true`; any mutation naming the view clears the default
   as today. The existing per-scope class view and per-root component view fold

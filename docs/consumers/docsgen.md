@@ -95,7 +95,7 @@ The views an entity page embeds, in this order
 
 - The level neighborhood: the [level view](../compiler/diagrams.md#level-views) of
   the entity's parent (`view:class/<parent-slug>` or `view:component/<parent-slug>`),
-  or of the scope root (`view:class/scope-<scope>` or `view:component/scope-<scope>`)
+  or of the scope root (`view:class/<scope>` or `view:component/<scope>`)
   when the entity has no parent, and the entity's own level view when it has two or
   more children.
 - The entity's state machine: `view:state/<entity-slug>`, when any `transition` names
@@ -212,7 +212,7 @@ matches. The compiler never writes a source document without an accepted proposa
 
 The index (`<out>/docsgen/index.md`) lists every entity with a link to its page, then
 embeds the top level of each scope rendered from the graph: one image per scope, the
-scope root's level view (`view:class/scope-<scope>` or `view:component/scope-<scope>`
+scope root's level view (`view:class/<scope>` or `view:component/<scope>`
 by the kind rule), each with the caption line described above, default or curated
 ([default views](../compiler/model/view.md#default-views)). The scope root's level view
 is the per-scope view ([level views](../compiler/diagrams.md#level-views)), so the

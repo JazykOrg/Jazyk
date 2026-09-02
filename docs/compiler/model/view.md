@@ -135,7 +135,7 @@ has no object view. Six kinds derive, each with a stable id:
 
 | kind | id | one per | members |
 | --- | --- | --- | --- |
-| `class` or `component` | `view:class/<node-slug>` or `view:component/<node-slug>`; `view:class/scope-<scope>` or `view:component/scope-<scope>` for the scope root | level: a node with two or more children, the scope root included | the node's direct children plus every outside entity with a lifted edge into the level, in document order |
+| `class` or `component` | `view:class/<node-slug>` or `view:component/<node-slug>`; `view:class/<scope>` or `view:component/<scope>` for the scope root | level: a node with two or more children, the scope root included | the node's direct children plus every outside entity with a lifted edge into the level, in document order |
 | `use-case` | `view:usecase/<node-slug>-<cluster-slug>` | flow cluster of a level | the cluster's requirements in document order |
 | `sequence` | `view:sequence/<node-slug>-<cluster-slug>` | flow cluster of a level | the cluster's requirements that carry an edge, in document order |
 | `state` | `view:state/<entity-slug>` | state machine | the subject |
@@ -162,8 +162,8 @@ scope root included, one structural view of its level derives:
 - Kind: `component` when the node or any of its children carries a structural
   stereotype (`system`, `component`, `service`, `interface`, `actor`), `class` otherwise.
 - Id: `view:component/<node-slug>` or `view:class/<node-slug>` with the node's slug;
-  `view:component/scope-<scope>` or `view:class/scope-<scope>` for the scope root
-  (`view:component/scope-public` in the default scope).
+  `view:component/<scope>` or `view:class/<scope>` for the scope root
+  (`view:component/public` in the default scope).
 - Members: the direct children, plus every outside entity with a lifted edge into the
   level (an entity outside the node's subtree whose relationship, direct or lifted,
   touches a child), in document order. The top diagram shows the user beside the frontend
@@ -268,7 +268,7 @@ Recompute rules keep curation and derivation from fighting:
 - The id is `view:<kind>/<slug>`, the kind segment being the catalog kind with its hyphens
   removed and the slug from the title at creation (`use-case` → `usecase`). Default views
   take the stable ids of [their rule](#default-views): a level view's slug is its node's
-  (`scope-<scope>` for the scope root), a level's flow view prefixes the cluster slug
+  (the scope root keeps the unprefixed ids flow views have today), a level's flow view prefixes the cluster slug
   with the node's. An id is minted once and never changes. A retitle through `update_view` keeps the id, so the slug can go stale. See
   [identifiers](../model.md#identifiers).
 - The natural key is `kind` plus `title`. `upsert_view` keys on it, so a retried create

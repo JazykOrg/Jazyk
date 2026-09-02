@@ -86,6 +86,10 @@ Project and store reads:
   view's id: the same list `get_view` answers
   ([drill-down](../compiler/concepts/levels.md#drill-down)). This is what the map
   draws.
+- `GET /api/tree`: the containment tree, one node per scope root (`scope:<scope>`)
+  and per entity, each with its children in document order, its child count, and
+  its level view id when it has one (`null` on a leaf). The tree panel and the
+  breadcrumb draw from it ([levels](../compiler/concepts/levels.md#the-scope-root)).
 - `GET /api/search?q=`: the [search tool](../compiler/tools.md#read-tools).
 - `GET /api/context?target=&depth=`: what [`load`](../compiler/context.md#tools)
   renders for the target: the loaded set of that one load, with its expansion handles.

@@ -4,7 +4,6 @@
 // pages through the views they share. Mirrors docs/consumers/docsgen.md.
 use crate::derive::{entity_slug, instance_types, view_edge_count};
 use crate::gen::GenSettings;
-use crate::md;
 use crate::model::{Diagnostic, Goal, Provenance, StateMachine, View};
 use crate::store::Store;
 use std::collections::{BTreeMap, BTreeSet};
@@ -182,26 +181,6 @@ fn embed(store: &Store, view_id: &str, view: &View) -> String {
     s
 }
 
-// The topmost containment ancestor of an entity (the entity itself when a root).
-fn containment_root<'a>(store: &'a Store, id: &'a str) -> &'a str {
-    let mut cur = id;
-    let mut hops = 0;
-    while let Some(p) = store
-        .graph
-        .entities
-        .get(cur)
-        .and_then(|e| e.parent.as_deref())
-    {
-        let p = store.resolve_id(p);
-        if !store.graph.entities.contains_key(p) || hops > 64 {
-            break;
-        }
-        cur = p;
-        hops += 1;
-    }
-    cur
-}
-
 // The synthesized state view of an entity's machine, when no stored view exists (the
 // renderer synthesizes the same one). Mirrors render targets.
 fn synthesized_state_view(store: &Store, id: &str) -> Option<View> {
@@ -223,9 +202,10 @@ fn synthesized_state_view(store: &Store, id: &str) -> Option<View> {
     })
 }
 
-// The views an entity page embeds, in the order the docs state: the scope class view,
-// the containing system's component view, the entity's own state view, every flow view
-// naming it, the object view of its type, then every other curated view listing it.
+// The views an entity page embeds, in the order the docs state: the level neighborhood
+// (the parent's level view, or the scope root's, then the entity's own), the entity's
+// own state view, every flow view naming it, the object view of its type, then every
+// other curated view listing it.
 // Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
 fn relevant_views(
     store: &Store,
@@ -242,16 +222,19 @@ fn relevant_views(
     };
     let stored = |vid: &str| store.graph.views.get(vid).cloned();
 
-    let scope_view = format!("view:class/{}", md::slug(&ent.scope));
-    if let Some(v) = stored(&scope_view) {
-        push(scope_view, v, &mut out);
-    }
-    let comp = format!(
-        "view:component/{}",
-        entity_slug(containment_root(store, id))
-    );
-    if let Some(v) = stored(&comp) {
-        push(comp, v, &mut out);
+    // The level neighborhood: the parent's level view (the scope root's for a
+    // parentless entity), then the entity's own level view when it holds a level.
+    // Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
+    let above = match ent.parent.as_deref() {
+        Some(p) => store.resolve_id(p).to_string(),
+        None => crate::store::scope_root_target(&ent.scope),
+    };
+    for target in [above, id.to_string()] {
+        if let Some(vid) = crate::derive::level_view_id(store, &target) {
+            if let Some(v) = stored(&vid) {
+                push(vid, v, &mut out);
+            }
+        }
     }
     let state_id = format!("view:state/{}", entity_slug(id));
     match stored(&state_id) {
@@ -884,11 +867,20 @@ mod tests {
         write_all(&s, &gs(&out));
 
         let page = std::fs::read_to_string(out.join("docsgen/order.md")).unwrap();
-        // The images, in the stated order: scope class view, component view of the
-        // containing system, own state view, the flow view naming the order.
-        assert!(page.contains("](../diagrams/class/public.svg)"), "{}", page);
+        // The images, in the stated order: the level neighborhood (the parent's level
+        // view, order-service holding four children; the order itself holds none), own
+        // state view, the flow view naming the order. The scope root's level view and
+        // the shop's belong to the pages of their members, not to the order's.
+        let level = crate::derive::level_view_id(&s, "ent:order-service").unwrap();
+        let level_svg = format!("](../diagrams/{}.svg)", &level["view:".len()..]);
+        assert!(page.contains(&level_svg), "{}", page);
         assert!(
-            page.contains("](../diagrams/component/shop.svg)"),
+            !page.contains("](../diagrams/component/public.svg)"),
+            "{}",
+            page
+        );
+        assert!(
+            !page.contains("](../diagrams/component/shop.svg)"),
             "{}",
             page
         );
@@ -898,26 +890,34 @@ mod tests {
             "{}",
             page
         );
-        let class_pos = page.find("../diagrams/class/public.svg").unwrap();
-        let comp_pos = page.find("../diagrams/component/shop.svg").unwrap();
+        let level_pos = page.find(&level_svg).unwrap();
         let state_pos = page.find("../diagrams/state/order.svg").unwrap();
         let flow_pos = page.find("../diagrams/usecase/customer-shop.svg").unwrap();
-        assert!(class_pos < comp_pos && comp_pos < state_pos && state_pos < flow_pos);
-        // The state caption lists the states; the class caption cross-links members.
+        assert!(level_pos < state_pos && state_pos < flow_pos);
+        // The state caption lists the states; the level caption cross-links members.
         assert!(page.contains("3 states: placed, paid, held"), "{}", page);
-        assert!(page.contains("(./order-service.md)"), "{}", page);
+        assert!(page.contains("(./checkout-api.md)"), "{}", page);
         assert!(
-            page.contains("[source](../diagrams/class/public.puml)"),
+            page.contains(&format!(
+                "[source](../diagrams/{}.puml)",
+                &level["view:".len()..]
+            )),
             "{}",
             page
         );
         // The rendered files exist, so the links resolve.
         assert!(out.join("diagrams/state/order.svg").exists());
 
-        // The index embeds the default class views as images (no mermaid), lists
-        // every view, and cross-links the pages.
+        // The index embeds the structural level views as images (no mermaid), the
+        // scope root's (view:component/public: shop is a system, customer an actor)
+        // and the shop's, lists every view, and cross-links the pages.
         let idx = std::fs::read_to_string(out.join("docsgen/index.md")).unwrap();
-        assert!(idx.contains("](../diagrams/class/public.svg)"), "{}", idx);
+        assert!(
+            idx.contains("](../diagrams/component/public.svg)"),
+            "{}",
+            idx
+        );
+        assert!(!idx.contains("](../diagrams/class/public.svg)"), "{}", idx);
         assert!(idx.contains("](../diagrams/component/shop.svg)"), "{}", idx);
         assert!(!idx.contains("mermaid"), "{}", idx);
         assert!(idx.contains("- [Order](./order.md) `ent:order`"), "{}", idx);

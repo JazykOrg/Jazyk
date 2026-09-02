@@ -50,7 +50,10 @@ pub enum Op {
     // Dissolve a grouping: its children reparent to its parent and it tombstones with
     // a redirect to that parent. Refused on an entity a document states. The store
     // fills `parent` and `children` as applied, so the reparent flip replays from the
-    // journal alone. Mirrors docs/compiler/concepts/levels.md#groupings.
+    // journal alone. Its inverse, `group_entities`, has no op of its own: it composes
+    // one `CreateEntity` (derived provenance from the members) with one `UpdateEntity`
+    // `parent` move per member, so the journal shows the create and each move with
+    // its prior parent. Mirrors docs/compiler/concepts/levels.md#groupings.
     DissolveEntity {
         id: String,
         reason: String,
@@ -5491,6 +5494,12 @@ mod tests {
         );
         assert_eq!(r.applied, 0);
         assert!(r.skipped[0].contains("default view"), "{:?}", r.skipped);
+        // The scope root's level view lists its members and carries no query.
+        assert_eq!(
+            s.graph.views["view:class/public"].members,
+            vec!["ent:cart", "ent:order"]
+        );
+        assert!(s.graph.views["view:class/public"].query.is_none());
         // An upsert on the default's kind and title lands on it and curates it.
         let r = s.apply(
             vec![Op::CreateView {
@@ -5499,6 +5508,10 @@ mod tests {
                     kind: "class".into(),
                     title: "public".into(),
                     members: vec!["ent:cart".into()],
+                    query: Some(ViewQuery {
+                        scope: Some("public".into()),
+                        ..Default::default()
+                    }),
                     provenance: Some(derived(&["ent:cart"])),
                     ..Default::default()
                 },
@@ -5508,8 +5521,8 @@ mod tests {
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         let v = &s.graph.views["view:class/public"];
         assert!(!v.default);
-        // The default's query keeps recomputing membership on the curated view: the
-        // match the session left out joins as a query-match change.
+        // The query the session gave the curated view keeps recomputing membership:
+        // the match the session left out joins as a query-match change.
         assert_eq!(v.members, vec!["ent:cart", "ent:order"]);
         assert!(s.status.has_change(CHANGE_QUERY_MATCH, "view:class/public"));
         assert!(!s.graph.views.contains_key("view:class/whatever"));

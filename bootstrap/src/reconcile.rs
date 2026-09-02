@@ -1140,10 +1140,12 @@ pub fn levels(store: &Store) -> Vec<(String, Vec<String>)> {
     out
 }
 
-// The slug segment of a level view id: the node's slug, `scope-<scope>` for the root.
+// The slug segment of a level view id: the node's slug, the scope's slug for the root
+// form (the per-scope id the root view has always had, `view:component/public`).
+// Mirrors docs/compiler/model/view.md#level-views.
 fn level_slug(target: &str) -> String {
     match crate::board::scope_target(target) {
-        Some(scope) => format!("scope-{}", md::slug(scope)),
+        Some(scope) => md::slug(scope),
         None => crate::derive::entity_slug(target).to_string(),
     }
 }
@@ -3447,7 +3449,7 @@ mod tests {
             ..Default::default()
         };
         s.graph.views.insert(
-            "view:component/scope-public".into(),
+            "view:component/public".into(),
             view("component", "Public", &["ent:frontend", "ent:backend"]),
         );
         s.graph.views.insert(
@@ -3485,7 +3487,7 @@ mod tests {
         );
         assert_eq!(
             level_view_of(&s, "scope:public").as_deref(),
-            Some("view:component/scope-public")
+            Some("view:component/public")
         );
         assert_eq!(
             level_view_of(&s, "ent:backend").as_deref(),
@@ -3510,7 +3512,7 @@ mod tests {
         );
         assert!(hits[0].3.contains("view:class/backend"), "{}", hits[0].3);
 
-        s.graph.views.remove("view:component/scope-public");
+        s.graph.views.remove("view:component/public");
         let hits = level_shape(&s);
         assert_eq!(hits.len(), 2, "{:?}", hits);
         assert!(hits.iter().any(|h| h.1 == ["scope:public"]), "{:?}", hits);

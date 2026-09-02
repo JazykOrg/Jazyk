@@ -125,21 +125,44 @@ four named clusters above are the graded minimum. Each lone member draws `unplac
 `flow-unplaced` record and an optional `curate-view` goal: `optional advised` in the
 verdict, never blocking convergence.
 
-Structural and state defaults:
+Structural defaults are level views: one per node with two or more children, the scope
+root included (docs/compiler/model/view.md#level-views). The kind is `component` when
+the node or any child carries a structural stereotype (`system`, `component`,
+`service`, `interface`, `actor`), `class` otherwise. Members are the direct children
+plus every outside entity with a lifted edge into the level, in document order; no
+`query`. Expected:
 
-- `view:class/public`, title `Public`, `query: {scope: public}`: every entity above.
-- `view:component/orderly`, title `Orderly`: derives only when Orderly has at least one
-  child. Members per the documented rule: Orderly's children, the interfaces they
-  realize, and the entities depending on those interfaces; f2 states no realization,
-  so the members are the children alone, and a connector-less component diagram is
-  mechanism-faithful. A compile that lands no containment has no component view; that
-  is acceptable but weaker. A component view derives per containment root with at least
-  one child (graph.md reads "system" structurally), so a `view:component/<root>` for
-  another root that gained a child (Catalog over Catalog category) is mechanism-faithful,
-  not a defect.
+- `view:component/public`, title `Public`: the scope root's level view, the per-scope
+  view under its old id. Members: the parentless entities (Orderly, Customer, Operator
+  when minted, and every domain concept left without a parent), never "every entity":
+  a child of Orderly appears in Orderly's level, not the root's. The kind is
+  `component` because Orderly «system» and Customer «actor» are parentless; a compile
+  that records neither stereotype derives `view:class/public` with the same members.
+- `view:component/orderly`, title `Orderly`: derives only when Orderly has two or more
+  children (Admin CLI, Inventory, Catalog per the entities above). Members: the
+  children plus the outside entities whose edges lift into the level: Customer
+  (browses the Catalog), Operator (uses the Admin CLI), and any parentless domain
+  concept with an edge into a child (Order → Stock lifts to Inventory when Stock sits
+  under Inventory; Return → Inventory). A compile that lands no containment has no
+  Orderly level view; that is acceptable but weaker.
+- A level view for any other node that gained two or more children (Catalog over
+  Product and Catalog category: `view:class/catalog`; Inventory over Stock and a
+  warehouse concept: `view:class/inventory`) is mechanism-faithful, not a defect. A
+  node with one child has no level view.
 - `view:state/order`, title `Order`, over `sm:order`.
 - No `view:object/*`, no package, activity, deployment, or timing view: nothing curates
   them and no instance or time measure exists.
+
+Flow views derive per level too. The root form keeps the unprefixed ids in the table
+above (lifting to a parentless entity is identity). A deeper level clusters the
+behavior requirements whose entities lift into its members, by the lifted actor and
+document, under `view:usecase/<node-slug>-<cluster-slug>` and
+`view:sequence/<node-slug>-<cluster-slug>`: `view:usecase/orderly-operator-admin` when
+Admin CLI sits under Orderly and Operator is minted. These are mechanism-faithful
+surplus; the four root clusters above are the graded minimum. Every rendered member
+with a level view of its own carries a drill-down link (`[[../<kind>/<slug>.svg]]` in
+the `.puml`, an anchor in the `.svg`): Orderly in `component/public` links to
+`../component/orderly.svg`.
 
 Every default carries `default: true` and derived provenance. A no-op rebuild derives
 zero goals, makes zero LLM calls, and leaves every view and diagram byte-identical.
@@ -149,8 +172,8 @@ zero goals, makes zero LLM calls, and leaves every view and diagram byte-identic
 A compile must produce, each `.puml` with its `.svg` beside it and no `.png`:
 
 ```
-jazyk-out/diagrams/class/public.puml            .svg
-jazyk-out/diagrams/component/orderly.puml       .svg   (when Orderly has children)
+jazyk-out/diagrams/component/public.puml        .svg   (class/public.puml when no parentless entity carries a structural stereotype)
+jazyk-out/diagrams/component/orderly.puml       .svg   (when Orderly has two or more children)
 jazyk-out/diagrams/usecase/customer-shipping.puml   .svg
 jazyk-out/diagrams/sequence/customer-shipping.puml  .svg
 jazyk-out/diagrams/usecase/operator-admin.puml      .svg
@@ -160,19 +183,28 @@ jazyk-out/diagrams/sequence/customer-returns.puml   .svg
 jazyk-out/diagrams/state/order.puml             .svg
 ```
 
-No `diagrams/object/` directory. What the pictures show:
+No `diagrams/object/` directory. Deeper level views (`usecase/orderly-*`,
+`sequence/orderly-*`, `class/catalog`) add files under the same layout when their
+levels exist. What the pictures show:
 
-- `class/public`: `class Customer <<actor>>` with `email`; `class Product` with `name`,
-  `price`, `category`; `class Orderly <<system>>`; `class "Admin CLI"` with its
-  stereotype; exactly one `Customer` and one `Order` class; no class for a flag, path,
-  or command. Arrows: `Customer -- Order`, `Order o-- "1..*" Product`,
-  `Catalog o-- Product`, `Payment -- Order`, `Shipment -- Order`,
-  `Shipment ..> Customer`, `Return ..> Inventory`, `Inventory -- Stock`,
-  `Operator ..> "Admin CLI"`, `"Admin CLI" ..> Orderly`, `Orderly *-- Inventory`.
+- `component/public`: `actor Customer`, `component Orderly` with its stereotype, each
+  parentless entity once (exactly one `Customer`, one `Order` when Order is
+  parentless); no element for a flag, path, or command. Arrows among the parentless
+  entities, lifted from their descendants: `Customer -- Orderly` (the account, plus
+  the browse of the Catalog lifted to Orderly), `Operator ..> Orderly` (the Admin CLI
+  lifted), and, for the domain concepts left parentless, their stated types
+  (`Order o-- "1..*" Product`, `Payment -- Order`, `Shipment -- Order`,
+  `Shipment ..> Customer`). Orderly's element carries the drill-down link
+  `[[../component/orderly.svg]]` when its level view exists. When the root view
+  derives as `class/public`, the same members draw as classes with their attributes
+  (`class Customer <<actor>>` with `email`, `class Product` with `name`, `price`,
+  `category`).
 - `component/orderly`: a `component` per child that landed (Catalog, Inventory,
-  `"Admin CLI"`). No interface, so no lollipop or socket; with no realization, actors
-  and other dependents are not members, and a diagram of bare components is
-  mechanism-faithful.
+  `"Admin CLI"`) plus the outside entities whose edges lift into the level
+  (`actor Customer`, `actor Operator`, a parentless Order or Return). No interface, so
+  no lollipop or socket. Arrows: `Customer ..> Catalog`, `Operator ..> "Admin CLI"`,
+  `Order ..> Inventory` (Stock lifted) when those edges exist; a child with a level of
+  its own (Catalog over two or more) carries its link.
 - `usecase/customer-shipping`: `actor Customer`, `usecase "Customer: Shipping"`,
   `Customer -- "Customer: Shipping"`. Never an actor named Buyer.
 - `sequence/customer-shipping`: `actor Customer`; one message per member that carries

@@ -10,7 +10,7 @@ use crate::store::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-// Everything derived, in dependency order: relationships feed the object and component
+// Everything derived, in dependency order: relationships feed the level and object
 // rules, state machines feed the state rule, views feed the limit counts.
 pub fn recompute(store: &mut Store, build: &str, batch: &mut RecordBatch) {
     recompute_relationships(store);
@@ -379,9 +379,251 @@ pub fn query_matches(
         .collect()
 }
 
-// The actor of a requirement: the first entity labeled actor among its entities, or
-// its first entity. Mirrors docs/compiler/model/view.md#default-views.
-fn actor_of(store: &Store, r: &Requirement) -> Option<String> {
+// ---- levels ----
+
+// The stereotypes that make a level's view a component view.
+// Mirrors docs/compiler/model/view.md#level-views.
+const STRUCTURAL_STEREOTYPES: [&str; 5] = ["system", "component", "service", "interface", "actor"];
+
+// One level: a node's direct children, or the parentless entities of a scope for the
+// root form (`node` is None, `target` is `scope:<scope>`). Children are in document
+// order. Mirrors docs/compiler/concepts/levels.md#levels.
+struct Level {
+    target: String,
+    node: Option<String>,
+    scope: String,
+    children: Vec<String>,
+}
+
+// Entities ranked in document order: the earliest position among an entity's mentions
+// and the sources of the requirements naming it (document link level, then path, then
+// section line), entities no document places last, ties by id.
+// Mirrors docs/compiler/model/view.md#level-views.
+fn entity_document_rank(store: &Store) -> BTreeMap<String, usize> {
+    let levels = doc_levels_from(store, &store.status.roots);
+    let position = |s: &SourceRef| -> (usize, String, usize) {
+        let line = store
+            .docs
+            .get(&s.doc)
+            .and_then(|d| d.sections.get(&s.section))
+            .map(|sec| sec.lines[0])
+            .unwrap_or(usize::MAX);
+        let level = levels.get(&s.doc).copied().unwrap_or(usize::MAX);
+        (level, s.doc.clone(), line)
+    };
+    let last = (usize::MAX, "~".to_string(), usize::MAX);
+    let mut best: BTreeMap<String, (usize, String, usize)> = BTreeMap::new();
+    for (id, e) in &store.graph.entities {
+        let mut key = last.clone();
+        for m in &e.mentions {
+            key = key.min(position(m));
+        }
+        best.insert(id.clone(), key);
+    }
+    for r in store.graph.requirements.values() {
+        let Some(src) = r.source.as_ref() else {
+            continue;
+        };
+        let pos = position(src);
+        for e in &r.entities {
+            if let Some(key) = best.get_mut(store.resolve_id(e)) {
+                if pos < *key {
+                    *key = pos.clone();
+                }
+            }
+        }
+    }
+    let mut keyed: Vec<((usize, String, usize), String)> =
+        best.into_iter().map(|(id, key)| (key, id)).collect();
+    keyed.sort();
+    keyed
+        .into_iter()
+        .enumerate()
+        .map(|(i, (_, id))| (id, i))
+        .collect()
+}
+
+fn in_document_order(ids: &mut Vec<String>, rank: &BTreeMap<String, usize>) {
+    ids.sort_by_key(|id| (rank.get(id).copied().unwrap_or(usize::MAX), id.clone()));
+}
+
+// Every level of the store with at least one child: the scope roots and every node
+// that is a parent. Children in document order.
+fn levels(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<Level> {
+    let mut by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut scopes: BTreeSet<&str> = BTreeSet::new();
+    for (id, e) in &store.graph.entities {
+        scopes.insert(&e.scope);
+        let key = match &e.parent {
+            Some(p) => p.clone(),
+            None => scope_root_target(&e.scope),
+        };
+        by_parent.entry(key).or_default().push(id.clone());
+    }
+    let mut out = Vec::new();
+    for scope in scopes {
+        let target = scope_root_target(scope);
+        let mut children = by_parent.remove(&target).unwrap_or_default();
+        in_document_order(&mut children, rank);
+        out.push(Level {
+            target,
+            node: None,
+            scope: scope.to_string(),
+            children,
+        });
+    }
+    for (node, mut children) in by_parent {
+        let Some(e) = store.graph.entities.get(&node) else {
+            continue;
+        };
+        in_document_order(&mut children, rank);
+        out.push(Level {
+            target: node.clone(),
+            node: Some(node),
+            scope: e.scope.clone(),
+            children,
+        });
+    }
+    out
+}
+
+// The level a target names, with two or more children: a node id (redirects
+// followed) or `scope:<scope>`. None for a leaf, a one-child node, or an unknown id.
+fn level_of_target(store: &Store, target: &str, rank: &BTreeMap<String, usize>) -> Option<Level> {
+    let target = match crate::board::scope_target(target) {
+        Some(_) => target.to_string(),
+        None => store.resolve_id(target).to_string(),
+    };
+    levels(store, rank)
+        .into_iter()
+        .find(|l| l.target == target)
+        .filter(|l| l.children.len() >= 2)
+}
+
+// The kind rule: component when the node or any child carries a structural
+// stereotype, class otherwise. Mirrors docs/compiler/model/view.md#level-views.
+fn level_kind(store: &Store, level: &Level) -> &'static str {
+    let structural = |id: &str| {
+        store
+            .graph
+            .entities
+            .get(id)
+            .and_then(|e| e.stereotype.as_deref())
+            .is_some_and(|s| {
+                STRUCTURAL_STEREOTYPES
+                    .iter()
+                    .any(|x| s.eq_ignore_ascii_case(x))
+            })
+    };
+    let any = level.node.as_deref().is_some_and(structural)
+        || level.children.iter().any(|c| structural(c));
+    if any {
+        "component"
+    } else {
+        "class"
+    }
+}
+
+// The slug segment of a level view id: the node's slug, the scope's for the root form.
+fn level_slug(level: &Level) -> String {
+    match level.node.as_deref() {
+        Some(node) => entity_slug(node).to_string(),
+        None => md::slug(&level.scope),
+    }
+}
+
+// The title of a level view: the node's name, the scope's name title-cased for the root.
+fn level_title(store: &Store, level: &Level) -> String {
+    match level.node.as_deref() {
+        Some(node) => store.graph.entities[node].name.clone(),
+        None => title_case(&level.scope),
+    }
+}
+
+// The nearest ancestor of `id` (itself included) among `members`: the renderer's
+// lifting applied at derivation. None when no ancestor is a member.
+// Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
+pub fn lift_into(store: &Store, members: &[String], id: &str) -> Option<String> {
+    let mut cur = store.resolve_id(id).to_string();
+    let mut depth = 0;
+    loop {
+        if members.iter().any(|m| *m == cur) {
+            return Some(cur);
+        }
+        let parent = store
+            .graph
+            .entities
+            .get(&cur)
+            .and_then(|e| e.parent.clone())?;
+        cur = parent;
+        depth += 1;
+        if depth > 64 {
+            return None;
+        }
+    }
+}
+
+// The members of a level view: the direct children, then every outside entity with a
+// lifted edge into the level (one end lifts to a child, the other lifts to nothing and
+// is not the node), each group in document order. An instantiation contribution does
+// not count: instances live in object views, so the reference graph's shop level lists
+// the customer and not Ana's cart. Mirrors docs/compiler/model/view.md#level-views.
+fn level_members_of(store: &Store, level: &Level, rank: &BTreeMap<String, usize>) -> Vec<String> {
+    let children = &level.children;
+    let mut outside: Vec<String> = Vec::new();
+    for rel in store.graph.relationships.values() {
+        for c in &rel.contributions {
+            if c.r#type == INSTANTIATION {
+                continue;
+            }
+            for (x, y) in [(&c.a, &c.b), (&c.b, &c.a)] {
+                let y = store.resolve_id(y).to_string();
+                if lift_into(store, children, x).is_some()
+                    && lift_into(store, children, &y).is_none()
+                    && level.node.as_deref() != Some(y.as_str())
+                    && store.graph.entities.contains_key(&y)
+                    && !outside.contains(&y)
+                {
+                    outside.push(y);
+                }
+            }
+        }
+    }
+    in_document_order(&mut outside, rank);
+    let mut members = children.clone();
+    members.extend(outside);
+    members
+}
+
+// The members of a target's level view: the direct children plus the outside entities
+// with a lifted edge into the level, in document order. Empty for a target that has
+// no level view. Mirrors docs/compiler/model/view.md#level-views.
+pub fn level_view_members(store: &Store, target: &str) -> Vec<String> {
+    let rank = entity_document_rank(store);
+    match level_of_target(store, target, &rank) {
+        Some(level) => level_members_of(store, &level, &rank),
+        None => Vec::new(),
+    }
+}
+
+// The structural level view a target has: `view:<kind>/<node-slug>` for a node with
+// two or more children, `view:<kind>/<scope>` for a scope root with two or more
+// parentless entities, the kind by the kind rule. None otherwise.
+// Mirrors docs/compiler/model/view.md#level-views.
+pub fn level_view_id(store: &Store, target: &str) -> Option<String> {
+    let rank = entity_document_rank(store);
+    let level = level_of_target(store, target, &rank)?;
+    Some(format!(
+        "view:{}/{}",
+        level_kind(store, &level),
+        level_slug(&level)
+    ))
+}
+
+// The actor of a requirement as lifted to a level: the first entity labeled actor
+// whose lift exists, else the first entity in listed order whose lift exists. None
+// when no entity reaches the level. Mirrors docs/compiler/model/view.md#default-views.
+fn lifted_actor(store: &Store, r: &Requirement, members: &[String]) -> Option<String> {
     let resolved: Vec<String> = r
         .entities
         .iter()
@@ -390,110 +632,23 @@ fn actor_of(store: &Store, r: &Requirement) -> Option<String> {
         .collect();
     resolved
         .iter()
-        .find(|e| {
+        .filter(|e| {
             store.graph.entities[*e]
                 .stereotype
                 .as_deref()
                 .is_some_and(|s| s.eq_ignore_ascii_case("actor"))
         })
-        .or_else(|| resolved.first())
-        .cloned()
+        .chain(resolved.iter())
+        .find_map(|e| lift_into(store, members, e))
 }
 
-// The rule instances that hold on the current graph.
-fn default_view_rules(store: &Store) -> Vec<DefaultView> {
-    let instances = instance_types(store);
+// The flow rule instances of one level: the behavior and failure-mode requirements
+// whose entities lift to at least one member, clustered by the lifted actor and the
+// document; a cluster of two or more derives a use-case view and, when two or more of
+// its members carry an edge, a sequence view. The root form keeps the unprefixed ids;
+// a node prefixes its slug. Mirrors docs/compiler/model/view.md#level-views.
+fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<DefaultView> {
     let mut out = Vec::new();
-
-    // A class view per scope.
-    let scopes: BTreeSet<&str> = store
-        .graph
-        .entities
-        .iter()
-        .filter(|(id, _)| !instances.contains_key(*id))
-        .map(|(_, e)| e.scope.as_str())
-        .collect();
-    for scope in scopes {
-        let query = ViewQuery {
-            scope: Some(scope.to_string()),
-            ..Default::default()
-        };
-        let members = query_matches(store, &query, &[], &instances);
-        if members.is_empty() {
-            continue;
-        }
-        out.push(DefaultView {
-            id: format!("view:class/{}", md::slug(scope)),
-            kind: "class",
-            title: title_case(scope),
-            from: members.clone(),
-            members,
-            query: Some(query),
-            rule: "class per scope",
-        });
-    }
-
-    // A component view per system: a containment root with at least one child.
-    let children_of = |id: &str| -> Vec<String> {
-        store
-            .graph
-            .entities
-            .iter()
-            .filter(|(_, e)| e.parent.as_deref() == Some(id))
-            .map(|(cid, _)| cid.clone())
-            .collect()
-    };
-    for (sid, system) in &store.graph.entities {
-        if system.parent.is_some() {
-            continue;
-        }
-        let children = children_of(sid);
-        if children.is_empty() {
-            continue;
-        }
-        let inside = |id: &str| id == sid || depth_below(store, sid, id).is_some();
-        let mut realized: Vec<String> = Vec::new();
-        for rel in store.graph.relationships.values() {
-            for c in &rel.contributions {
-                if c.r#type == "realization" && inside(&c.a) && !realized.contains(&c.b) {
-                    realized.push(c.b.clone());
-                }
-            }
-        }
-        realized.sort();
-        let mut dependents: Vec<String> = Vec::new();
-        for rel in store.graph.relationships.values() {
-            for c in &rel.contributions {
-                if c.r#type == "dependency"
-                    && realized.contains(&c.b)
-                    && !inside(&c.a)
-                    && !dependents.contains(&c.a)
-                {
-                    dependents.push(c.a.clone());
-                }
-            }
-        }
-        dependents.sort();
-        let mut members = children;
-        for id in realized.into_iter().chain(dependents) {
-            if !members.contains(&id) {
-                members.push(id);
-            }
-        }
-        let mut from = vec![sid.clone()];
-        from.extend(members.iter().cloned());
-        out.push(DefaultView {
-            id: format!("view:component/{}", entity_slug(sid)),
-            kind: "component",
-            title: system.name.clone(),
-            members,
-            query: None,
-            from,
-            rule: "component per system",
-        });
-    }
-
-    // A use-case view and a sequence view per flow cluster.
     let mut clusters: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for rid in document_order(store) {
         let r = &store.graph.requirements[&rid];
@@ -507,39 +662,49 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
         if !flows {
             continue;
         }
-        let Some(actor) = actor_of(store, r) else {
+        let Some(actor) = lifted_actor(store, r, members) else {
             continue;
         };
         clusters.entry((actor, doc)).or_default().push(rid);
     }
-    for ((actor, doc), members) in clusters {
-        if members.len() < 2 {
+    let prefix = match level.node.as_deref() {
+        Some(node) => format!("{}-", entity_slug(node)),
+        None => String::new(),
+    };
+    for ((actor, doc), cluster) in clusters {
+        if cluster.len() < 2 {
             continue;
         }
-        let slug = format!("{}-{}", entity_slug(&actor), md::slug(&doc_stem(&doc)));
+        let slug = format!(
+            "{}{}-{}",
+            prefix,
+            entity_slug(&actor),
+            md::slug(&doc_stem(&doc))
+        );
         let title = format!(
             "{}: {}",
             store.graph.entities[&actor].name,
             doc_title(store, &doc)
         );
-        let mut from = vec![actor.clone()];
-        from.extend(members.iter().cloned());
-        let with_edges: Vec<String> = members
+        let mut from: Vec<String> = level.node.iter().cloned().collect();
+        from.push(actor.clone());
+        let with_edges: Vec<String> = cluster
             .iter()
             .filter(|m| !store.graph.requirements[*m].edges.is_empty())
             .cloned()
             .collect();
+        let mut uc_from = from.clone();
+        uc_from.extend(cluster.iter().cloned());
         out.push(DefaultView {
             id: format!("view:usecase/{}", slug),
             kind: "use-case",
             title: title.clone(),
-            members,
+            members: cluster,
             query: None,
-            from: from.clone(),
-            rule: "use-case per flow cluster",
+            from: uc_from,
+            rule: "use-case per flow cluster of a level",
         });
         if with_edges.len() >= 2 {
-            let mut from = vec![actor.clone()];
             from.extend(with_edges.iter().cloned());
             out.push(DefaultView {
                 id: format!("view:sequence/{}", slug),
@@ -548,9 +713,100 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
                 members: with_edges,
                 query: None,
                 from,
-                rule: "sequence per flow cluster",
+                rule: "sequence per flow cluster of a level",
             });
         }
+    }
+    out
+}
+
+// The level a default flow view was derived for: the node id, or `scope:<scope>` for
+// the root form. None for a flow view no level's rule names (a curated flow).
+pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
+    let rank = entity_document_rank(store);
+    levels(store, &rank)
+        .into_iter()
+        .filter(|l| l.children.len() >= 2)
+        .find(|l| {
+            let members = level_members_of(store, l, &rank);
+            flow_view_rules(store, l, &members)
+                .iter()
+                .any(|w| w.id == view_id)
+        })
+        .map(|l| l.target)
+}
+
+// The entities a view draws: the entity members of a structural, object, or state
+// view; the participants of a flow view (each member's message endpoints, lifted to the
+// view's level when it has one), in first-appearance order.
+fn drawn_entities(store: &Store, view_id: &str, v: &View) -> Vec<String> {
+    let members = live_members(store, v);
+    if !FLOW_KINDS.contains(&v.kind.as_str()) {
+        return members
+            .into_iter()
+            .filter(|m| store.graph.entities.contains_key(m))
+            .collect();
+    }
+    let level = flow_view_level(store, view_id).map(|t| level_view_members(store, &t));
+    let mut out: Vec<String> = Vec::new();
+    for m in &members {
+        for p in flow_participants(store, std::slice::from_ref(m)) {
+            let drawn = match level.as_deref() {
+                Some(level) => lift_into(store, level, &p),
+                None => Some(p),
+            };
+            if let Some(d) = drawn {
+                if !out.contains(&d) {
+                    out.push(d);
+                }
+            }
+        }
+    }
+    out
+}
+
+// The member views one level down: for every entity the view draws that has a level
+// view, `(member, view)` in member order. Computed at read time, never stored.
+// Mirrors docs/compiler/model/view.md#fields.
+pub fn children_of_view(store: &Store, view_id: &str) -> Vec<(String, String)> {
+    let Some(v) = store.graph.views.get(view_id) else {
+        return Vec::new();
+    };
+    drawn_entities(store, view_id, v)
+        .into_iter()
+        .filter_map(|m| level_view_id(store, &m).map(|id| (m, id)))
+        .collect()
+}
+
+// The rule instances that hold on the current graph.
+fn default_view_rules(store: &Store) -> Vec<DefaultView> {
+    let instances = instance_types(store);
+    let rank = entity_document_rank(store);
+    let mut out = Vec::new();
+
+    // One structural level view per level of two or more, the scope root included, and
+    // the flow views of the requirements lifted into it.
+    for level in levels(store, &rank) {
+        if level.children.len() < 2 {
+            continue;
+        }
+        let members = level_members_of(store, &level, &rank);
+        let mut from: Vec<String> = level.node.iter().cloned().collect();
+        from.extend(members.iter().cloned());
+        out.push(DefaultView {
+            id: format!("view:{}/{}", level_kind(store, &level), level_slug(&level)),
+            kind: level_kind(store, &level),
+            title: level_title(store, &level),
+            members: members.clone(),
+            query: None,
+            from,
+            rule: if level.node.is_some() {
+                "level view of a node"
+            } else {
+                "level view of the scope root"
+            },
+        });
+        out.extend(flow_view_rules(store, &level, &members));
     }
 
     // A state view per derived machine.
@@ -609,13 +865,19 @@ pub fn recompute_default_views(store: &mut Store, build: &str, batch: &mut Recor
         };
         match store.graph.views.get_mut(&w.id) {
             Some(v) if v.default => {
+                // The view's exclusions survive the rewrite and keep their nodes out.
+                let members: Vec<String> = w
+                    .members
+                    .into_iter()
+                    .filter(|m| !v.excluded.iter().any(|x| x.id == *m))
+                    .collect();
                 let changed = v.title != w.title
-                    || v.members != w.members
+                    || v.members != members
                     || v.query != w.query
                     || v.provenance.as_ref() != Some(&provenance);
                 if changed {
                     v.title = w.title;
-                    v.members = w.members;
+                    v.members = members;
                     v.query = w.query;
                     v.provenance = Some(provenance);
                     v.updated = Some(build.to_string());
@@ -1329,33 +1591,25 @@ pub(crate) mod tests {
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
         let views = &s.graph.views;
-        // Class per scope: every non-instance entity of the public scope.
-        let class = &views["view:class/public"];
-        assert_eq!(class.kind, "class");
-        assert_eq!(class.title, "Public");
-        assert!(class.default);
-        assert_eq!(class.members.len(), 9, "{:?}", class.members);
-        assert!(!class.members.contains(&"ent:ana".to_string()));
+        // The scope root's level view is the per-scope view: the parentless entities
+        // of the public scope, component because the shop is a system.
+        let root = &views["view:component/public"];
+        assert_eq!(root.kind, "component");
+        assert_eq!(root.title, "Public");
+        assert!(root.default);
         assert_eq!(
-            class.query,
-            Some(ViewQuery {
-                scope: Some("public".into()),
-                ..Default::default()
-            })
+            root.members,
+            vec!["ent:shop", "ent:customer", "ent:ana", "ent:anas-cart"]
         );
-        // Component per system: the children, the interfaces they realize, and the
-        // outside dependents on those interfaces.
+        assert_eq!(root.query, None);
+        assert!(!views.contains_key("view:class/public"));
+        // The shop's level: its two services and the customer, whose edges lift into
+        // the order service. The interfaces are descendants, not members.
         let comp = &views["view:component/shop"];
         assert_eq!(comp.title, "Shop");
         assert_eq!(
             comp.members,
-            vec![
-                "ent:inventory-service",
-                "ent:order-service",
-                "ent:checkout-api",
-                "ent:stock-api",
-                "ent:customer"
-            ]
+            vec!["ent:inventory-service", "ent:order-service", "ent:customer"]
         );
         // State per machine, object per type.
         let state = &views["view:state/order"];
@@ -1366,7 +1620,8 @@ pub(crate) mod tests {
             views["view:object/shopping-cart"].members,
             vec!["ent:anas-cart"]
         );
-        // Flow cluster: the customer's behavior in shop.md, in document order.
+        // Root-level flow cluster: the customer's behavior in shop.md, in document
+        // order, under the unprefixed ids.
         let uc = &views["view:usecase/customer-shop"];
         assert_eq!(uc.kind, "use-case");
         assert_eq!(uc.title, "Customer: Shop");
@@ -1378,7 +1633,7 @@ pub(crate) mod tests {
         assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
         assert!(matches!(
             uc.provenance.as_ref(),
-            Some(Provenance::Derived { reasoning, .. }) if reasoning == "default view: use-case per flow cluster"
+            Some(Provenance::Derived { reasoning, .. }) if reasoning == "default view: use-case per flow cluster of a level"
         ));
         assert!(batch.records().is_empty());
 
@@ -1390,21 +1645,23 @@ pub(crate) mod tests {
         recompute(&mut s, "g2", &mut batch);
         assert_eq!(s.graph.views["view:state/order"].members, vec!["ent:shop"]);
         assert!(!s.graph.views.contains_key("view:object/customer"));
-        assert!(s.graph.views.contains_key("view:class/public"));
-        // Excluded and collapse survive on a still-default view.
-        let class = s.graph.views.get_mut("view:class/public").unwrap();
-        class.excluded.push(Exclusion {
-            id: "ent:shop".into(),
-            note: "the boundary, not a class".into(),
+        assert!(s.graph.views.contains_key("view:component/public"));
+        // Excluded and collapse survive on a still-default view; the rule rewrites
+        // the members without the exclusion.
+        let root = s.graph.views.get_mut("view:component/public").unwrap();
+        root.excluded.push(Exclusion {
+            id: "ent:ana".into(),
+            note: "an instance, drawn in the object view".into(),
         });
-        class.collapse.push("ent:order-service".into());
+        root.collapse.push("ent:shop".into());
         let mut batch = RecordBatch::new(3);
         recompute(&mut s, "g3", &mut batch);
-        let class = &s.graph.views["view:class/public"];
-        assert!(class.default);
-        assert_eq!(class.excluded.len(), 1);
-        assert_eq!(class.collapse, vec!["ent:order-service"]);
-        assert!(!class.members.contains(&"ent:shop".to_string()));
+        let root = &s.graph.views["view:component/public"];
+        assert!(root.default);
+        assert_eq!(root.excluded.len(), 1);
+        assert_eq!(root.collapse, vec!["ent:shop"]);
+        assert!(!root.members.contains(&"ent:ana".to_string()));
+        assert!(root.members.contains(&"ent:shop".to_string()));
         // A curated query view gets new matches as a query-match record.
         s.graph.views.insert(
             "view:class/services".into(),
@@ -1433,6 +1690,285 @@ pub(crate) mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].kind, CHANGE_QUERY_MATCH);
         assert_eq!(records[0].subject, "view:class/services");
+    }
+
+    // Mirrors docs/compiler/model/view.md#level-views: one structural view per node
+    // with two or more children, none for a one-child node, the kind by the
+    // stereotypes present.
+    #[test]
+    fn level_views_derive_per_node_with_two_or_more_children() {
+        let mut s = showcase_store();
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        // The order service holds four children (three first named in the root
+        // section, tied by id, then the order) and the customer's edges lift in; its
+        // interface child makes the view a component view.
+        let os = &s.graph.views["view:component/order-service"];
+        assert_eq!(os.title, "Order Service");
+        assert!(os.default);
+        assert_eq!(
+            os.members,
+            vec![
+                "ent:checkout-api",
+                "ent:order-item",
+                "ent:shopping-cart",
+                "ent:order",
+                "ent:customer"
+            ]
+        );
+        assert!(matches!(
+            os.provenance.as_ref(),
+            Some(Provenance::Derived { from, reasoning })
+                if from[0] == "ent:order-service" && reasoning == "default view: level view of a node"
+        ));
+        assert_eq!(
+            level_view_id(&s, "ent:order-service").as_deref(),
+            Some("view:component/order-service")
+        );
+        // One child: no level view, and no id.
+        assert!(!s
+            .graph
+            .views
+            .contains_key("view:component/inventory-service"));
+        assert!(!s.graph.views.contains_key("view:class/inventory-service"));
+        assert_eq!(level_view_id(&s, "ent:inventory-service"), None);
+        assert_eq!(level_view_id(&s, "ent:order"), None);
+        // Two plain children under a plain node: a class view.
+        for id in ["ent:line-a", "ent:line-b"] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    parent: Some("ent:order".into()),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut batch = RecordBatch::new(2);
+        recompute(&mut s, "g2", &mut batch);
+        assert_eq!(
+            level_view_id(&s, "ent:order").as_deref(),
+            Some("view:class/order")
+        );
+        assert_eq!(
+            s.graph.views["view:class/order"].members,
+            vec!["ent:line-a", "ent:line-b"]
+        );
+        // A node that drops below two children loses its view at the same commit.
+        s.graph.entities.remove("ent:line-b");
+        let mut batch = RecordBatch::new(3);
+        recompute(&mut s, "g3", &mut batch);
+        assert!(!s.graph.views.contains_key("view:class/order"));
+        assert_eq!(level_view_id(&s, "ent:order"), None);
+    }
+
+    // Mirrors docs/compiler/concepts/levels.md#the-scope-root: the root form keeps the
+    // per-scope id, lists the parentless entities, and adds the outside entities whose
+    // edges lift into the level.
+    #[test]
+    fn root_level_view_keeps_the_per_scope_id_and_lists_parentless_entities_plus_interactors() {
+        let mut s = showcase_store();
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        assert_eq!(
+            level_view_id(&s, "scope:public").as_deref(),
+            Some("view:component/public")
+        );
+        assert_eq!(
+            s.graph.views["view:component/public"].members,
+            vec!["ent:shop", "ent:customer", "ent:ana", "ent:anas-cart"]
+        );
+        assert_eq!(
+            level_view_members(&s, "scope:public"),
+            vec!["ent:shop", "ent:customer", "ent:ana", "ent:anas-cart"]
+        );
+        // A second scope with two plain roots gets a class view under its own name; an
+        // entity of the public scope depending on one of them is an interactor.
+        for (id, name) in [("ent:ledger", "Ledger"), ("ent:invoice", "Invoice")] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: name.into(),
+                    scope: "billing".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        s.graph.requirements.insert(
+            "req:shop-12".into(),
+            Requirement {
+                statement: "The order posts to the ledger.".into(),
+                entities: vec!["ent:order".into(), "ent:ledger".into()],
+                edges: vec![edge("ent:order", "ent:ledger", "dependency", None)],
+                source: Some(src("shop.md", "/shop/orders", "posts")),
+                ..Default::default()
+            },
+        );
+        let mut batch = RecordBatch::new(2);
+        recompute(&mut s, "g2", &mut batch);
+        let billing = &s.graph.views["view:class/billing"];
+        assert_eq!(billing.kind, "class");
+        assert_eq!(billing.title, "Billing");
+        assert!(billing.default);
+        assert_eq!(billing.query, None);
+        assert_eq!(
+            billing.members,
+            vec!["ent:ledger", "ent:invoice", "ent:order"]
+        );
+        assert!(matches!(
+            billing.provenance.as_ref(),
+            Some(Provenance::Derived { from, reasoning })
+                if from == &billing.members && reasoning == "default view: level view of the scope root"
+        ));
+        // The same edge makes the ledger an interactor of the order service's level.
+        assert!(s.graph.views["view:component/order-service"]
+            .members
+            .contains(&"ent:ledger".to_string()));
+        // A scope with one parentless entity has no root view.
+        s.graph.entities.remove("ent:invoice");
+        let mut batch = RecordBatch::new(3);
+        recompute(&mut s, "g3", &mut batch);
+        assert!(!s.graph.views.contains_key("view:class/billing"));
+        assert_eq!(level_view_id(&s, "scope:billing"), None);
+    }
+
+    // Mirrors docs/compiler/model/view.md#level-views: the flows lift into a node's
+    // level under prefixed ids, while the root form keeps the unprefixed ones.
+    #[test]
+    fn lifted_flow_clustering_at_a_non_root_level_uses_prefixed_ids() {
+        let mut s = showcase_store();
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        // The shop level: every customer flow reaches it through the services.
+        let uc = &s.graph.views["view:usecase/shop-customer-shop"];
+        assert_eq!(uc.kind, "use-case");
+        assert_eq!(uc.title, "Customer: Shop");
+        assert_eq!(
+            uc.members,
+            vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
+        );
+        assert!(matches!(
+            uc.provenance.as_ref(),
+            Some(Provenance::Derived { from, .. })
+                if from[0] == "ent:shop" && from[1] == "ent:customer"
+        ));
+        let seq = &s.graph.views["view:sequence/shop-customer-shop"];
+        assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
+        assert_eq!(seq.title, "Customer: Shop");
+        // The order service's level: the same four requirements reach it (the stock
+        // API step through the customer, who is an interactor).
+        assert_eq!(
+            s.graph.views["view:usecase/order-service-customer-shop"].members,
+            vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
+        );
+        // The root form keeps today's ids, and each flow view knows its level.
+        assert!(s.graph.views.contains_key("view:usecase/customer-shop"));
+        assert_eq!(
+            flow_view_level(&s, "view:usecase/customer-shop").as_deref(),
+            Some("scope:public")
+        );
+        assert_eq!(
+            flow_view_level(&s, "view:sequence/shop-customer-shop").as_deref(),
+            Some("ent:shop")
+        );
+        assert_eq!(flow_view_level(&s, "view:usecase/nope"), None);
+        // An actor that does not reach the level yields to the first entity that
+        // does: a flow among the order service's children with the customer absent
+        // clusters by its first lifted entity.
+        for (id, text) in [
+            ("req:shop-13", "The cart totals its items."),
+            ("req:shop-14", "The cart prices its items."),
+        ] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: text.into(),
+                    entities: vec!["ent:shopping-cart".into(), "ent:order-item".into()],
+                    edges: vec![edge(
+                        "ent:shopping-cart",
+                        "ent:order-item",
+                        "dependency",
+                        None,
+                    )],
+                    facets: vec![behavior()],
+                    source: Some(src("shop.md", "/shop/orders", text)),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut batch = RecordBatch::new(2);
+        recompute(&mut s, "g2", &mut batch);
+        let cart = &s.graph.views["view:usecase/order-service-shopping-cart-shop"];
+        assert_eq!(cart.members, vec!["req:shop-13", "req:shop-14"]);
+        assert_eq!(cart.title, "Shopping Cart: Shop");
+        // At the shop level both entities lift to the order service, so the cluster
+        // keys on it; at the root it keys on the shop.
+        assert!(s
+            .graph
+            .views
+            .contains_key("view:usecase/shop-order-service-shop"));
+        assert!(s.graph.views.contains_key("view:usecase/shop-shop"));
+        assert_eq!(
+            lift_into(&s, &["ent:shop".to_string()], "ent:order-item").as_deref(),
+            Some("ent:shop")
+        );
+        assert_eq!(
+            lift_into(&s, &["ent:order".to_string()], "ent:customer"),
+            None
+        );
+    }
+
+    // Mirrors docs/compiler/model/view.md#fields: children lists, per drawn entity
+    // with a level view, the view one level down, in member order.
+    #[test]
+    fn children_of_view_lists_the_level_views_below_a_view() {
+        let mut s = showcase_store();
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        assert_eq!(
+            children_of_view(&s, "view:component/public"),
+            vec![("ent:shop".to_string(), "view:component/shop".to_string())]
+        );
+        assert_eq!(
+            children_of_view(&s, "view:component/shop"),
+            vec![(
+                "ent:order-service".to_string(),
+                "view:component/order-service".to_string()
+            )]
+        );
+        assert!(children_of_view(&s, "view:component/order-service").is_empty());
+        // A flow view's participants are its level's lifted members: the shop-level
+        // sequence draws the customer, the order service, and the inventory service.
+        assert_eq!(
+            children_of_view(&s, "view:sequence/shop-customer-shop"),
+            vec![(
+                "ent:order-service".to_string(),
+                "view:component/order-service".to_string()
+            )]
+        );
+        // The root sequence draws the raw participants lifted to the roots: the shop.
+        assert_eq!(
+            children_of_view(&s, "view:sequence/customer-shop"),
+            vec![("ent:shop".to_string(), "view:component/shop".to_string())]
+        );
+        // A curated view is read the same way; an unknown view has no children.
+        s.graph.views.insert(
+            "view:class/mine".into(),
+            View {
+                kind: "class".into(),
+                title: "Mine".into(),
+                members: vec!["ent:order".into(), "ent:order-service".into()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            children_of_view(&s, "view:class/mine"),
+            vec![(
+                "ent:order-service".to_string(),
+                "view:component/order-service".to_string()
+            )]
+        );
+        assert!(children_of_view(&s, "view:class/nope").is_empty());
     }
 
     #[test]

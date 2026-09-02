@@ -93,8 +93,32 @@ conformant, no `nonconformant-instance`. `view:object/team` renders it as
   actor each step lists first). "Employee: Expenses" is expected with the submit and
   resubmit steps at least. The two `failure-mode` steps (missing receipt, non-business
   line) are members of some cluster, so no `unrepresented-failure-mode`.
-- `view:class/<scope>` (one scope expected): the org chart.
-- `view:component/ridgeline-outfitters`: the four departments as components.
+- Structural defaults are level views, one per node with two or more children, the
+  scope root included (docs/compiler/model/view.md#level-views); members are the direct
+  children plus every outside entity with a lifted edge into the level, no `query`.
+  - `view:component/public` (one scope expected), the scope root's level view under
+    the per-scope id: the parentless entities, Ridgeline Outfitters beside Employee,
+    Manager, Candidate, Hiring Manager, Team, Application, Expense Claim, and the
+    Employee Handbook, never "every entity" (the departments sit in Ridgeline
+    Outfitters' level). Kind `component` because the parentless actors (Candidate,
+    Hiring Manager, Employee, Manager) carry `actor`; `view:class/public` with the
+    same members when no parentless entity carries a structural stereotype. Both are
+    mechanism-faithful.
+  - `view:class/ridgeline-outfitters`: the four departments (the node's children) plus
+    the outside entities whose edges lift into the level: Employee (associated to a
+    Department), Manager (forwards to Finance), Team when it sits outside (a Department
+    composes Team). Kind `class` unless a department carries a structural stereotype.
+  - `view:class/<department>` for each department with two or more children (its two
+    roles, and Team or Boulder Warehouse Crew when parented there):
+    `view:class/operations`, `view:class/sales`, `view:class/finance`,
+    `view:class/people`. Members: the roles plus lifted interactors (Candidate and
+    Application into People through the Recruiter; Employee into Finance through the
+    reimbursement).
+  - Deeper flow views cluster the behavior requirements that lift into a level under
+    `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/...`
+    (`view:usecase/ridgeline-outfitters-employee-expenses` when the expenses steps lift
+    into the departments' level). The root form keeps the unprefixed ids above.
+    Mechanism-faithful surplus, not graded.
 - `view:state/application`, `view:object/team`.
 - No timing view derives (timing views are curated). The time bounds in hiring.md
   ("within 5 business days of the application") are what a curated timing view over
@@ -133,14 +157,27 @@ conformant, no `nonconformant-instance`. `view:object/team` renders it as
 
 ## Diagrams
 
-- Class (`view:class/<scope>`): Ridgeline Outfitters composed of four departments, each
-  department composed of its roles and of Team (`1..*`); Manager generalizes Employee;
-  Employee associated to Department and Manager; Team carries `lead`, `size`,
-  `members`. Instances (Boulder Warehouse Crew, Dana) are absent from the class view.
+- The root level (`view:component/public`): the parentless entities, actors as
+  `actor`, the rest as `component`. Ridgeline Outfitters with its lifted arrows (the
+  departments' composition of Team lifts to the company:
+  `"Ridgeline Outfitters" *-- "1..*" Team` when Team is parentless,
+  `"Ridgeline Outfitters" -- Employee` from the Employee-to-Department association);
+  Manager generalizes Employee; Employee associated to Manager. When the root derives as
+  `class/public`, Team draws as a class with `lead`, `size`, `members`. Instances
+  (Boulder Warehouse Crew, Dana) are absent from every level view. Ridgeline
+  Outfitters' element carries the drill-down link
+  `[[../class/ridgeline-outfitters.svg]]`.
+- The company's level (`view:class/ridgeline-outfitters`): the four departments as
+  classes, each composed of its roles and of Team (`1..*`) as lifted arrows to the
+  department, plus the lifted interactors (Employee, Manager). A department with two or
+  more children carries its link down to `view:class/<department>`, where the roles
+  draw as classes with the department's own arrows.
 - Object (`view:object/team`): one object `Boulder Warehouse Crew : Team` with
   `lead = Priya Natarajan`, `size = 6`, `members = ...`.
-- Component (`view:component/ridgeline-outfitters`): four department components, no
-  interfaces, no sockets.
+- No separate component view: the per-root component view of earlier designs folded
+  into the level rule, and no entity here carries a structural stereotype unless the
+  compile records the actors as such (then the levels holding them derive as
+  `component` views with the same members).
 - State (`view:state/application`): `[*] --> applied`, six arrows, the offered arrow
   labeled with its trigger and `[both references check out]`, no arrow leaving offered,
   no hired node.

@@ -34,10 +34,14 @@ pub fn render_svg(puml: &str) -> Result<String, RenderError> {
 }
 
 // A panic inside the crate is a renderer defect like any other error: it names itself
-// and never takes the build down.
+// and never takes the build down. The crate reads a `[[...]]` on an element declaration
+// as part of the name (a class takes its alias as its label, an actor splits in two)
+// and never emits an anchor, so the links come off before conversion and go back on
+// as anchors after; the official binary behind JAZYK_PLANTUML does both itself.
 fn in_process_svg(puml: &str) -> Result<String, RenderError> {
-    match std::panic::catch_unwind(|| plantuml_little::convert(puml)) {
-        Ok(Ok(svg)) => Ok(svg),
+    let (plain, links) = strip_element_links(puml);
+    match std::panic::catch_unwind(|| plantuml_little::convert(&plain)) {
+        Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
         Err(panic) => {
             let message = panic
@@ -588,42 +592,154 @@ fn title_line(view: &View, note: Option<&str>) -> Option<String> {
     note.map(|n| format!("{} {}", oneline(&view.title), n))
 }
 
-// ---- sub-views ----
+// ---- drill-down links ----
 
-// The view of the same kind detailing a collapsed node: its query.parent is the node,
-// or its members all sit below the node.
+// The PlantUML hyperlink to a view's rendering, relative under diagrams/: from any
+// diagrams/<kind>/<slug>.svg, `../<kind>/<slug>.svg` is the sibling tree.
+// Mirrors docs/compiler/diagrams.md#output-layout.
+fn view_link(view_id: &str) -> String {
+    format!(
+        "[[../{}.svg]]",
+        view_id.strip_prefix("view:").unwrap_or(view_id)
+    )
+}
+
+// The link a rendered member carries down to its level view, when its entity has one
+// and it is not the view being drawn. Mirrors docs/compiler/diagrams.md#drill-down.
+fn level_link(scene: &Scene, id: &str) -> Option<String> {
+    crate::derive::level_view_id(scene.store, id)
+        .filter(|v| v != scene.id)
+        .map(|v| view_link(&v))
+}
+
+// The view of the same kind detailing a collapsed node: the one whose query.parent is
+// the node, else the one whose members all sit below the node.
+// Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
 fn sub_view_link(scene: &Scene, node: &str) -> Option<String> {
     let store = scene.store;
-    for (id, v) in &store.graph.views {
-        if id == scene.id || v.kind != scene.view.kind {
-            continue;
-        }
-        let by_query = v
-            .query
+    let candidates = || {
+        store
+            .graph
+            .views
+            .iter()
+            .filter(|(id, v)| *id != scene.id && v.kind == scene.view.kind)
+    };
+    let by_query = candidates().find(|(_, v)| {
+        v.query
             .as_ref()
             .and_then(|q| q.parent.as_deref())
-            .is_some_and(|p| store.resolve_id(p) == node);
-        let by_members = !v.members.is_empty()
-            && v.members
-                .iter()
-                .all(|m| is_below(store, node, store.resolve_id(m)));
-        if by_query || by_members {
-            return Some(format!(
-                "[[../{}.svg]]",
-                id.strip_prefix("view:").unwrap_or(id)
-            ));
+            .is_some_and(|p| store.resolve_id(p) == node)
+    });
+    let by_members = || {
+        candidates().find(|(_, v)| {
+            !v.members.is_empty()
+                && v.members
+                    .iter()
+                    .all(|m| is_below(store, node, store.resolve_id(m)))
+        })
+    };
+    by_query.or_else(by_members).map(|(id, _)| view_link(id))
+}
+
+// A member links to its level view whether collapsed or not; a collapsed node without
+// one links to the sub-view detailing it, and a collapsed node with both keeps the
+// curated sub-view's precedence. Mirrors docs/compiler/diagrams.md#drill-down.
+fn link_suffix(scene: &Scene, st: &Structure, node: &str) -> String {
+    let link = if st.collapsed.contains(node) {
+        sub_view_link(scene, node).or_else(|| level_link(scene, node))
+    } else {
+        level_link(scene, node)
+    };
+    link.map(|l| format!(" {}", l)).unwrap_or_default()
+}
+
+// The links on element declarations, taken off the text: `(line without the link,
+// [(element key, href)])`. A link is a ` [[../...]]` on a declaration line; the key is
+// the alias after ` as `, or the quoted name of a package declared without one, the
+// same name the crate writes as the element's `data-qualified-name`.
+fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
+    let mut plain = String::with_capacity(puml.len());
+    let mut links: Vec<(String, String)> = Vec::new();
+    for line in puml.lines() {
+        let stripped = line.find(" [[../").and_then(|start| {
+            let after = &line[start + 3..];
+            let end = after.find("]]")?;
+            let href = &after[..end];
+            let head = &line[..start];
+            let tail = &after[end + 2..];
+            let key = match head.rsplit_once(" as ") {
+                Some((_, alias)) => alias.split_whitespace().next()?.to_string(),
+                None => head
+                    .split_once(' ')
+                    .map(|(_, name)| name.trim().trim_matches('"').to_string())?,
+            };
+            Some((format!("{}{}", head, tail), key, href.to_string()))
+        });
+        match stripped {
+            Some((clean, key, href)) => {
+                plain.push_str(&clean);
+                links.push((key, href));
+            }
+            None => plain.push_str(line),
+        }
+        plain.push('\n');
+    }
+    (plain, links)
+}
+
+fn xml_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+// Every `<g class="entity" data-qualified-name="<key>" ...>...</g>` the crate drew for a
+// linked element, wrapped in `<a href>`: the whole shape is the click target, as the
+// official renderer draws it. An element the crate did not draw under that key keeps
+// no link; nothing else in the document changes.
+fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
+    let mut out = svg.to_string();
+    for (key, href) in links {
+        let marker = format!(
+            "<g class=\"entity\" data-qualified-name=\"{}\"",
+            xml_attr(key)
+        );
+        let mut from = 0;
+        while let Some(rel) = out[from..].find(&marker) {
+            let start = from + rel;
+            let Some(end) = group_end(&out, start) else {
+                break;
+            };
+            let anchor = format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href));
+            out.insert_str(end, "</a>");
+            out.insert_str(start, &anchor);
+            from = end + anchor.len() + "</a>".len();
+        }
+    }
+    out
+}
+
+// The index just past the `</g>` closing the group opened at `start`, nesting counted.
+fn group_end(svg: &str, start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < svg.len() {
+        let rest = &svg[i..];
+        if rest.starts_with("<g ") || rest.starts_with("<g>") {
+            depth += 1;
+            i += 2;
+        } else if rest.starts_with("</g>") {
+            depth -= 1;
+            i += 4;
+            if depth == 0 {
+                return Some(i);
+            }
+        } else {
+            i += rest.chars().next()?.len_utf8();
         }
     }
     None
-}
-
-fn link_suffix(scene: &Scene, st: &Structure, node: &str) -> String {
-    if !st.collapsed.contains(node) {
-        return String::new();
-    }
-    sub_view_link(scene, node)
-        .map(|l| format!(" {}", l))
-        .unwrap_or_default()
 }
 
 // `keyword "Name" as alias [<<stereotype>>] [[[link]]]`
@@ -1064,11 +1180,16 @@ fn emit_use_case(scene: &Scene) -> String {
     let uc = use_case_alias(scene);
     let mut out = Vec::new();
     let actors = flow_actors(scene, &msgs);
+    // An actor holding a level of its own links down to it like any rendered member.
     for a in &actors {
+        let link = level_link(scene, a)
+            .map(|l| format!(" {}", l))
+            .unwrap_or_default();
         out.push(format!(
-            "actor {} as {}",
+            "actor {} as {}{}",
             quoted(&scene.name(a)),
-            alias_of(a)
+            alias_of(a),
+            link
         ));
     }
     out.push(format!("usecase {} as {}", quoted(&scene.view.title), uc));
@@ -1648,16 +1769,18 @@ mod tests {
     }
 
     // Structural lines: aliases replaced by display names, quotes dropped, whitespace
-    // collapsed, free-text labels reduced to their requirement id or step number.
+    // collapsed, free-text labels reduced to their requirement id or step number, the
+    // drill-down links dropped (their own tests read the raw text).
     fn canon(puml: &str) -> Vec<String> {
         let decl = Regex::new(r#"^(\w+) (?:"([^"]*)"|([^\s"]+)) as ([^\s{\[]+)(.*)$"#).unwrap();
         let part = Regex::new(r"^\[([^\]]+)\] as (\S+)(.*)$").unwrap();
         let req = Regex::new(r"\((req:[^)]+)\)").unwrap();
         let num = Regex::new(r"^(\d+\.)").unwrap();
+        let link = Regex::new(r" \[\[[^\]]*\]\]").unwrap();
         let mut map: Vec<(String, String)> = Vec::new();
         let mut out = Vec::new();
         for raw in puml.lines() {
-            let line = oneline(raw);
+            let line = link.replace_all(&oneline(raw), "").to_string();
             if line.is_empty() {
                 continue;
             }
@@ -1814,10 +1937,16 @@ mod tests {
     #[test]
     fn component_emitter_draws_lollipops_and_sockets() {
         let s = showcase();
-        let puml = emit(
+        let puml = emit_kind(
             &s,
-            "view:component/shop",
-            &s.graph.views["view:component/shop"],
+            "component",
+            &[
+                "ent:customer",
+                "ent:order-service",
+                "ent:inventory-service",
+                "ent:checkout-api",
+                "ent:stock-api",
+            ],
         );
         // The showcase block, plus the customer's association with the shopping cart
         // lifted to the order service that hides it.
@@ -1841,6 +1970,41 @@ mod tests {
                 "Inventory Service -- stock API",
                 "Order Service --( stock API : use"
             ]
+        );
+        // The shop's derived level view is the docs' example: the two services, the
+        // customer whose edges lift into the level, and the drill-down link on the
+        // service that holds a level of its own (its four children); the customer's
+        // association with the hidden cart joins its lifted dependency under one arrow.
+        let puml = emit(
+            &s,
+            "view:component/shop",
+            &s.graph.views["view:component/shop"],
+        );
+        assert_eq!(
+            canon(&puml),
+            vec![
+                "@startuml",
+                "component Inventory Service",
+                "component Order Service",
+                "actor Customer",
+                "Customer -- Order Service : 2 edges",
+                "Order Service ..> Inventory Service",
+                "@enduml"
+            ],
+            "{}",
+            puml
+        );
+        assert!(
+            puml.contains(
+                "component \"Order Service\" as order_service [[../component/order-service.svg]]\n"
+            ),
+            "{}",
+            puml
+        );
+        assert!(
+            puml.contains("component \"Inventory Service\" as inventory_service\n"),
+            "{}",
+            puml
         );
     }
 
@@ -2141,6 +2305,113 @@ mod tests {
         );
     }
 
+    // ent:a holds two children and ent:b one: a has a level view, b is a leaf for
+    // drill-down.
+    fn level_tree() -> Store {
+        let mut s = tree_store();
+        add_req(&mut s, "req:t-1", "ent:a1", "ent:b1", "dependency");
+        recompute(&mut s, "g1", &mut RecordBatch::new(1));
+        s
+    }
+
+    #[test]
+    fn structural_emitters_link_members_with_level_views() {
+        let s = level_tree();
+        let a_view = crate::derive::level_view_id(&s, "ent:a").expect("two children make a level");
+        assert!(crate::derive::level_view_id(&s, "ent:b").is_none());
+        let link = view_link(&a_view);
+        for kind in ["class", "component"] {
+            let v = view(kind, "System", &["ent:a", "ent:b"]);
+            let puml = emit(&s, &format!("view:{}/system", kind), &v);
+            assert!(
+                puml.contains(&format!("{} \"A\" as a {}", kind, link)),
+                "{}",
+                puml
+            );
+            assert!(puml.contains(&format!("{} \"B\" as b\n", kind)), "{}", puml);
+            assert_eq!(puml.matches("[[").count(), 1, "{}", puml);
+        }
+        // A view never links to itself, and a leaf carries nothing.
+        let own = view("class", "A", &["ent:a", "ent:a1", "ent:a2"]);
+        assert!(!emit(&s, &a_view, &own).contains("[["));
+    }
+
+    #[test]
+    fn use_case_actors_link_to_their_level() {
+        let mut s = tree_store();
+        for id in ["ent:a", "ent:b"] {
+            s.graph.entities.get_mut(id).unwrap().stereotype = Some("actor".into());
+        }
+        add_req(&mut s, "req:t-1", "ent:a", "ent:b1", "dependency");
+        add_req(&mut s, "req:t-2", "ent:b", "ent:a1", "dependency");
+        recompute(&mut s, "g1", &mut RecordBatch::new(1));
+        let link = view_link(&crate::derive::level_view_id(&s, "ent:a").unwrap());
+        let v = view("use-case", "Flow", &["req:t-1", "req:t-2"]);
+        let puml = emit(&s, "view:usecase/flow", &v);
+        assert!(
+            puml.contains(&format!("actor \"A\" as a {}\n", link)),
+            "{}",
+            puml
+        );
+        assert!(puml.contains("actor \"B\" as b\n"), "{}", puml);
+        // The in-process crate would split a linked actor in two: one actor per member.
+        let svg = in_process_svg(&puml).unwrap();
+        assert_eq!(svg.matches("class=\"entity\"").count(), 3, "{}", svg);
+        assert!(svg.contains("xlink:href=\"../"), "{}", svg);
+        assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
+    }
+
+    #[test]
+    fn in_process_renderings_carry_anchors_for_links() {
+        let s = level_tree();
+        let a_view = crate::derive::level_view_id(&s, "ent:a").unwrap();
+        let href = format!("../{}.svg", &a_view["view:".len()..]);
+        for kind in ["class", "component"] {
+            let v = view(kind, "System", &["ent:a", "ent:b"]);
+            let puml = emit(&s, &format!("view:{}/system", kind), &v);
+            assert!(puml.contains("[["), "{}", puml);
+            let svg = render_svg(&puml).unwrap();
+            let anchor = format!(
+                "<a href=\"{0}\" xlink:href=\"{0}\"><g class=\"entity\" data-qualified-name=\"a\"",
+                href
+            );
+            assert_eq!(svg.matches(&anchor).count(), 1, "{}", svg);
+            assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
+            assert_eq!(svg.matches("</a>").count(), 1, "{}", svg);
+            // The label survives the link: the crate alone would draw the alias.
+            assert!(svg.contains(">A</text>"), "{}", svg);
+            assert!(!svg.contains(">a</text>"), "{}", svg);
+            assert!(!svg.contains("[["), "{}", svg);
+            // The anchored svg still rasterizes.
+            render_png(&svg).unwrap();
+        }
+    }
+
+    #[test]
+    fn element_links_strip_by_alias_or_name_and_anchor_by_key() {
+        let puml = "@startuml\nclass \"A b\" as a <<svc>> [[../class/a.svg]] {\n  x : int\n}\npackage \"P q\" [[../class/p.svg]]\nA -- B : see [[not a link]]\n@enduml\n";
+        let (plain, links) = strip_element_links(puml);
+        assert_eq!(
+            plain,
+            "@startuml\nclass \"A b\" as a <<svc>> {\n  x : int\n}\npackage \"P q\"\nA -- B : see [[not a link]]\n@enduml\n"
+        );
+        assert_eq!(
+            links,
+            vec![
+                ("a".to_string(), "../class/a.svg".to_string()),
+                ("P q".to_string(), "../class/p.svg".to_string())
+            ]
+        );
+        // A key the crate drew nothing for keeps no anchor; nested groups close where
+        // the entity's own group does.
+        let svg = "<svg><g><g class=\"entity\" data-qualified-name=\"a\" id=\"e1\"><g><text>A b</text></g></g><g class=\"entity\" data-qualified-name=\"b\"><text>B</text></g></g></svg>";
+        assert_eq!(
+            anchor_entities(svg, &links),
+            "<svg><g><a href=\"../class/a.svg\" xlink:href=\"../class/a.svg\"><g class=\"entity\" data-qualified-name=\"a\" id=\"e1\"><g><text>A b</text></g></g></a><g class=\"entity\" data-qualified-name=\"b\"><text>B</text></g></g></svg>"
+        );
+        assert_eq!(anchor_entities(svg, &[]), svg);
+    }
+
     #[test]
     fn over_limit_views_auto_collapse_or_mark_every_member() {
         // Twenty-one roots over a bump of ten (hard twenty): nothing to collapse.
@@ -2324,14 +2595,52 @@ mod tests {
         render_svg(&puml).unwrap_or_else(|e| panic!("{}\n{}", e, puml));
     }
 
+    // The scope root's level view: view:class/public or view:component/public by the
+    // kind rule, whichever the derivation minted.
+    fn root_view(s: &Store) -> String {
+        ["view:component/public", "view:class/public"]
+            .into_iter()
+            .find(|id| s.graph.views.contains_key(*id))
+            .map(String::from)
+            .expect("the showcase derives a root level view")
+    }
+
     #[test]
-    fn render_svg_draws_the_showcase_class_view() {
+    fn render_svg_draws_the_showcase_root_view() {
         let s = showcase();
-        let (puml, svg) = render_view(&s, "view:class/public").unwrap();
+        let root = root_view(&s);
+        let (puml, svg) = render_view(&s, &root).unwrap();
         assert!(puml.starts_with("@startuml\n"));
-        for name in ["Customer", "Shopping Cart", "Order Item", "checkout API"] {
-            assert!(svg.contains(name), "{} missing from\n{}", name, svg);
+        // Every top-level member is drawn by its element group, except the actor: the
+        // in-process crate draws no actor in a component diagram (a renderer gap the
+        // official binary does not share, so the emitter keeps declaring it). The
+        // shop, which holds a level, is the one anchor; the customer beside it is a
+        // leaf and would carry none.
+        let members = &s.graph.views[&root].members;
+        assert!(members.contains(&"ent:shop".to_string()), "{:?}", members);
+        assert!(
+            members.contains(&"ent:customer".to_string()),
+            "{:?}",
+            members
+        );
+        assert!(
+            puml.contains("actor \"Customer\" as customer\n"),
+            "{}",
+            puml
+        );
+        for m in members.iter().filter(|m| **m != "ent:customer") {
+            let group = format!("data-qualified-name=\"{}\"", alias_of(m));
+            assert!(svg.contains(&group), "{} missing from\n{}", m, svg);
         }
+        assert!(svg.contains(">Shop</text>"), "{}", svg);
+        assert!(
+            svg.contains(
+                "<a href=\"../component/shop.svg\" xlink:href=\"../component/shop.svg\"><g class=\"entity\" data-qualified-name=\"shop\""
+            ),
+            "{}",
+            svg
+        );
+        assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
         assert!(render_view(&s, "view:class/nope").is_err());
         assert!(render_svg("@startuml\nthis is not plantuml at all ((\n@enduml\n").is_err());
         // A defect inside the crate (it measures edge labels byte by byte, so a
@@ -2384,18 +2693,24 @@ mod tests {
         let report = render_all(&s, &out);
         assert!(report.failed.is_empty(), "{:?}", report.failed);
         assert!(report.skipped.is_empty());
-        let expected = [
-            "class/public",
+        // Every target renders; the curated views and the defaults whose rule is fixed
+        // by the showcase are named, the level and flow defaults come from derivation.
+        let expected: Vec<String> = render_targets(&s)
+            .into_iter()
+            .map(|(id, _)| id.strip_prefix("view:").unwrap().to_string())
+            .collect();
+        for rel in [
             "component/shop",
-            "usecase/customer-shop",
-            "sequence/customer-shop",
             "state/order",
             "object/customer",
             "object/shopping-cart",
             "usecase/checkout",
             "sequence/checkout",
-        ];
-        for rel in expected {
+        ] {
+            assert!(expected.contains(&rel.to_string()), "{:?}", expected);
+        }
+        assert!(expected.contains(&root_view(&s)[5..].to_string()));
+        for rel in &expected {
             assert!(
                 out.join("diagrams").join(format!("{}.puml", rel)).exists(),
                 "{}",

@@ -82,7 +82,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_view",
-            description: "One view with its members in order, its exclusions, query, and collapse list, and the relationships among its members.",
+            description: "One view with its members in order, its exclusions, query, and collapse list, the relationships among its members, and children: the members that hold a level of their own, each with the id of its level view (the drill-down links the rendering carries).",
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {
@@ -137,6 +137,25 @@ pub fn catalog() -> Vec<ToolDef> {
             name: "merge_entities",
             description: "Merge two entities that are the same concept. keep survives; absorb's aliases, mentions, and references are rewired onto it.",
             parameters: obj(json!({"keep": {"type": "string"}, "absorb": {"type": "string"}, "reason": {"type": "string"}}), &["keep", "absorb", "reason"]),
+        },
+        ToolDef {
+            name: "group_entities",
+            description: "Build one level: stage a derived grouping entity from members (provenance derived from exactly them, reasoning why the domain would recognize them as one thing) and reparent every member under it, as one changeset. The grouping takes the members' shared current parent (none at the scope root) and their scope. At least two members; every member resolves; all members share one current parent (a grouping never crosses levels); the name passes the near-duplicate gate, so a lookalike of an existing area reuses that entity instead; definition is one sentence stating the grouping's responsibility. stereotype is from the existing vocabulary (system, component, module) or absent; there is no grouping stereotype.",
+            parameters: obj(
+                json!({
+                    "name": {"type": "string"},
+                    "definition": {"type": "string"},
+                    "members": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+                    "stereotype": {"type": "string"},
+                    "reasoning": {"type": "string"}
+                }),
+                &["name", "definition", "members", "reasoning"],
+            ),
+        },
+        ToolDef {
+            name: "dissolve_entity",
+            description: "Unbuild one level: a grouping with derived provenance and no mentions dissolves; its children reparent to its parent (parentless when it was at the scope root) and it tombstones with a redirect to its parent. Refused on an entity a document states (stated-entity): revise the documents instead. Not a delete: a redirect stays.",
+            parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
             name: "upsert_requirement",
@@ -565,6 +584,8 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
                 "update_entity",
                 "delete_entity",
                 "merge_entities",
+                "group_entities",
+                "dissolve_entity",
                 "upsert_requirement",
                 "update_requirement",
                 "delete_requirement",
@@ -1592,6 +1613,10 @@ impl ToolSession {
     }
 
     // The parent of an entity as this session sees it: staged first, then the snapshot.
+    // The parent an entity holds once this session's staged work applies: a staged
+    // move wins, a staged create carries its own, and a child of a staged dissolve
+    // lands on the dissolved grouping's parent (recursively, when that parent
+    // dissolves in the same changeset). Mirrors docs/compiler/tools.md#grouping-tools.
     fn parent_of(&self, id: &str) -> Option<String> {
         if let Some(p) = self.staged_parents.get(id) {
             return Some(p.clone());
@@ -1599,11 +1624,233 @@ impl ToolSession {
         if let Some(e) = self.staged_entities.get(id) {
             return e.parent.clone();
         }
-        self.snapshot
+        let stored = self
+            .snapshot
             .graph
             .entities
             .get(self.snapshot.resolve_id(id))
-            .and_then(|e| e.parent.clone())
+            .and_then(|e| e.parent.clone())?;
+        if self.staged_dissolved(&stored) {
+            return self.parent_of(&stored);
+        }
+        Some(stored)
+    }
+
+    // Whether this session staged a dissolve of the entity.
+    fn staged_dissolved(&self, id: &str) -> bool {
+        self.staged
+            .iter()
+            .any(|o| matches!(o, Op::DissolveEntity { id: d, .. } if d == id))
+    }
+
+    // Every entity id alive once the staged work applies: the snapshot's minus the
+    // ones this session deletes, absorbs, or dissolves, plus this session's creates.
+    fn entities_after(&self) -> Vec<String> {
+        let gone: BTreeSet<&str> = self
+            .staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::DeleteEntity { id, .. }
+                | Op::MergeEntities { absorb: id, .. }
+                | Op::DissolveEntity { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.snapshot
+            .graph
+            .entities
+            .keys()
+            .filter(|id| !gone.contains(id.as_str()))
+            .chain(self.staged_entities.keys())
+            .cloned()
+            .collect()
+    }
+
+    // An entity's scope, snapshot or staged.
+    fn scope_of(&self, id: &str) -> Option<String> {
+        self.staged_entities
+            .get(id)
+            .or_else(|| {
+                self.snapshot
+                    .graph
+                    .entities
+                    .get(self.snapshot.resolve_id(id))
+            })
+            .map(|e| e.scope.clone())
+    }
+
+    // The level an entity sits in, as a target: its parent's id, or `scope:<scope>`
+    // for a parentless entity. Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    fn level_target_of(&self, id: &str) -> String {
+        match self.parent_of(id) {
+            Some(p) => p,
+            None => crate::store::scope_root_target(
+                &self.scope_of(id).unwrap_or_else(|| "public".to_string()),
+            ),
+        }
+    }
+
+    // The direct children of a level once the staged work applies, in id order: the
+    // entities whose parent is the node, or the parentless entities of the scope for
+    // `scope:<scope>`. Mirrors docs/compiler/concepts/levels.md#levels.
+    fn level_after(&self, target: &str) -> Vec<String> {
+        let mut ids = self.entities_after();
+        ids.sort();
+        ids.retain(|id| self.level_target_of(id) == target);
+        ids
+    }
+
+    // The level view of one entity: `view:component/<slug>` or `view:class/<slug>`
+    // when the snapshot or this session's staged views hold it, or the id the kind
+    // rule mints at commit when the entity holds two or more children after the
+    // staged work (component when the node or any child carries a structural
+    // stereotype, class otherwise). Mirrors docs/compiler/model/view.md#level-views.
+    fn level_view_of(&self, id: &str) -> Option<String> {
+        let slug = crate::derive::entity_slug(id);
+        for kind in ["component", "class"] {
+            let vid = format!("view:{}/{}", kind, slug);
+            if self.view_known(&vid).is_some() {
+                return Some(vid);
+            }
+        }
+        let children = self.level_after(id);
+        if children.len() < 2 {
+            return None;
+        }
+        let structural = |x: &str| {
+            self.staged_entities
+                .get(x)
+                .or_else(|| self.snapshot.graph.entities.get(x))
+                .and_then(|e| e.stereotype.as_deref())
+                .is_some_and(|s| {
+                    matches!(
+                        s.trim().to_lowercase().as_str(),
+                        "system" | "component" | "service" | "interface" | "actor"
+                    )
+                })
+        };
+        let kind = if structural(id) || children.iter().any(|c| structural(c)) {
+            "component"
+        } else {
+            "class"
+        };
+        Some(format!("view:{}/{}", kind, slug))
+    }
+
+    // The entities a view draws: a structural view's entity members, a flow view's
+    // participants (its member requirements' entities), in member order, deduped.
+    fn drawn_entities(&self, v: &View) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for m in &v.members {
+            let rid = self.snapshot.resolve_id(m).to_string();
+            if self.snapshot.graph.entities.contains_key(&rid) {
+                if !out.contains(&rid) {
+                    out.push(rid);
+                }
+            } else if let Some(r) = self.snapshot.graph.requirements.get(&rid) {
+                for e in &r.entities {
+                    let e = self.snapshot.resolve_id(e).to_string();
+                    if !out.contains(&e) {
+                        out.push(e);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // The drill-down links of a view: for every entity it draws that has a level
+    // view, `{member, view}`. Computed at call time from the containment tree and the
+    // level views, never stored. Mirrors docs/compiler/model/view.md#fields.
+    fn view_children(&self, v: &View) -> Vec<Value> {
+        self.drawn_entities(v)
+            .into_iter()
+            .filter_map(|m| {
+                self.level_view_of(&m)
+                    .map(|view| json!({"member": m, "view": view}))
+            })
+            .collect()
+    }
+
+    // The fan-out goals a grouping or a dissolve will open at commit: every level the
+    // staged ops touch (the parent a grouping joins, the parents a move leaves and
+    // joins, the parent a dissolve's children land on, the grouping's own level) is
+    // counted after the changeset against `children-per-entity`, and a level past
+    // the soft or hard threshold previews `abstract-entity` on its target.
+    // Mirrors docs/compiler/reconciler.md#bubbling and #fan-out.
+    fn level_opens(&self, ops: &[Op]) -> Vec<String> {
+        use crate::limits::{threshold, CHILDREN_PER_ENTITY};
+        let mut targets: Vec<String> = Vec::new();
+        let mut touch = |t: String| {
+            if !targets.contains(&t) {
+                targets.push(t);
+            }
+        };
+        for op in ops {
+            match op {
+                Op::CreateEntity { id, entity } => {
+                    touch(match &entity.parent {
+                        Some(p) => p.clone(),
+                        None => crate::store::scope_root_target(&entity.scope),
+                    });
+                    touch(id.clone());
+                }
+                Op::UpdateEntity {
+                    id,
+                    parent: Some(p),
+                    ..
+                } => {
+                    touch(p.clone());
+                    if let Some(prior) = self
+                        .snapshot
+                        .graph
+                        .entities
+                        .get(id)
+                        .and_then(|e| e.parent.clone())
+                    {
+                        touch(prior);
+                    }
+                }
+                Op::DissolveEntity { id, .. } => {
+                    if let Some(e) = self.snapshot.graph.entities.get(id) {
+                        touch(match &e.parent {
+                            Some(p) => p.clone(),
+                            None => crate::store::scope_root_target(&e.scope),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for t in targets {
+            if self.staged_dissolved(&t) {
+                continue;
+            }
+            let count = self.level_after(&t).len() as u64;
+            let bump = self
+                .snapshot
+                .graph
+                .entities
+                .get(&t)
+                .and_then(|e| e.limits.get(CHILDREN_PER_ENTITY))
+                .map(|b| b.value);
+            let Some((soft, hard)) = threshold(CHILDREN_PER_ENTITY, bump) else {
+                continue;
+            };
+            if count > hard {
+                out.push(format!(
+                    "abstract-entity {} (fan-out {} over hard {}, mandatory)",
+                    t, count, hard
+                ));
+            } else if count > soft {
+                out.push(format!(
+                    "abstract-entity {} (fan-out {} over soft {}, optional)",
+                    t, count, soft
+                ));
+            }
+        }
+        out
     }
 
     // Gate a `parent` argument: it must resolve, and the containment tree stays
@@ -2837,7 +3084,14 @@ impl ToolSession {
         // re-renders the condensed status block.
         // Mirrors docs/compiler/reconciler.md#bubbling.
         if self.staged.len() > before && v.is_object() {
-            let opens = crate::board::staged_opens(&self.snapshot, &self.staged[before..]);
+            let mut opens = crate::board::staged_opens(&self.snapshot, &self.staged[before..]);
+            // A grouping or a dissolve moves children between levels, so the levels it
+            // touches face the fan-out limit in the same preview.
+            for line in self.level_opens(&self.staged[before..]) {
+                if !opens.contains(&line) {
+                    opens.push(line);
+                }
+            }
             if !opens.is_empty() {
                 v["opens"] = json!(opens);
             }
@@ -2937,11 +3191,15 @@ impl ToolSession {
                     ));
                 };
                 let slug = id.rsplit('/').next().unwrap_or_default();
+                // The drill-down links: computed here from the containment tree and
+                // the level views, never stored. Mirrors docs/compiler/tools.md#read-tools.
+                let children = self.view_children(v);
                 let reply = json!({
                     "id": id, "kind": v.kind, "title": v.title, "members": v.members,
                     "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
                     "collapse": v.collapse, "query": v.query, "default": v.default,
                     "rendering": format!("diagrams/{}/{}.svg", v.kind, slug),
+                    "children": children,
                 });
                 self.loaded.load_stub(&self.snapshot, &id);
                 Ok(reply)
@@ -3417,6 +3675,221 @@ impl ToolSession {
                     reason,
                 })?;
                 Ok(json!({"kept": keep}))
+            }
+            // Build one level: one derived entity from the members, every member moved
+            // under it, as one changeset. Composed from CreateEntity and one
+            // UpdateEntity parent move per member, so the journal shows the create and
+            // each move with its prior parent. Mirrors docs/compiler/tools.md#grouping-tools.
+            "group_entities" => {
+                let name_arg = Self::str_arg(args, "name")?;
+                let definition = Self::opt_str(args, "definition").unwrap_or_default();
+                if definition.trim().is_empty() {
+                    return Err(ToolError::new(
+                        "definition-required",
+                        "definition is one sentence stating the grouping's responsibility; it is the sentence the documents should gain".into(),
+                    ));
+                }
+                let reasoning = Self::opt_str(args, "reasoning").unwrap_or_default();
+                if reasoning.trim().is_empty() {
+                    return Err(ToolError::new(
+                        "reasoning-required",
+                        "reasoning says why the domain would recognize the members as one thing; it becomes the grouping's derived provenance".into(),
+                    ));
+                }
+                // Every member resolves, once.
+                let mut members: Vec<String> = Vec::new();
+                for raw in Self::str_list(args, "members") {
+                    let Some(id) = self.canon_entity_id(&raw) else {
+                        let e = self.unknown_entity_error(&raw);
+                        return Err(ToolError::new(
+                            "unknown-id",
+                            format!("member {}", e.message),
+                        ));
+                    };
+                    if !members.contains(&id) {
+                        members.push(id);
+                    }
+                }
+                if members.len() < 2 {
+                    return Err(ToolError::new(
+                        "too-few-members",
+                        format!(
+                            "a grouping holds at least two members ({} given); below two there is nothing to judge. To move one child, use update_entity with parent",
+                            members.len()
+                        ),
+                    ));
+                }
+                // All members share one current parent, staged moves counted: a
+                // grouping never crosses levels, and it takes that parent.
+                let parent = self.parent_of(&members[0]);
+                if let Some(other) = members.iter().find(|m| self.parent_of(m) != parent) {
+                    let level = |p: &Option<String>| {
+                        p.clone().unwrap_or_else(|| "the scope root".to_string())
+                    };
+                    return Err(ToolError::new(
+                        "cross-level",
+                        format!(
+                            "a grouping never crosses levels: {} sits under {} while {} sits under {}; group members that share one parent, or move one first with update_entity parent",
+                            members[0],
+                            level(&parent),
+                            other,
+                            level(&self.parent_of(other))
+                        ),
+                    ));
+                }
+                let scope = self
+                    .scope_of(&members[0])
+                    .unwrap_or_else(|| "public".to_string());
+                if let Some(other) = members
+                    .iter()
+                    .find(|m| self.scope_of(m).as_deref() != Some(scope.as_str()))
+                {
+                    return Err(ToolError::new(
+                        "scope-mismatch",
+                        format!(
+                            "a grouping never crosses a scope: {} is in {}, {} is not",
+                            members[0], scope, other
+                        ),
+                    ));
+                }
+                // The near-duplicate gate, as upsert_entity: a lookalike of an existing
+                // area reuses that entity, and an exact name is that entity already.
+                // Mirrors docs/compiler/concepts/levels.md#naming.
+                if let Ok(Some(existing)) = self.snapshot.find_natural(&name_arg, &scope, None) {
+                    return Err(ToolError::new(
+                        "near-duplicate",
+                        format!(
+                            "`{}` already exists as {}; a grouping's name is judged like an entity name, so reparent the members under it with update_entity parent instead of minting a twin",
+                            name_arg, existing
+                        ),
+                    ));
+                }
+                if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
+                    return Err(ToolError::new(
+                        "near-duplicate",
+                        format!(
+                            "`{}` looks like a name variant of existing `{}` ({}); a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
+                            name_arg, eid, ename, eid
+                        ),
+                    ));
+                }
+                // One changeset: the create and every move, or nothing.
+                if self.staged.len() + members.len() + 1 > self.mutation_limit {
+                    return Err(ToolError::new(
+                        "mutation-budget",
+                        format!(
+                            "turn mutation budget ({}) cannot fit a grouping of {} members; call done",
+                            self.mutation_limit,
+                            members.len()
+                        ),
+                    ));
+                }
+                let id = self.snapshot.mint_entity_id(&name_arg, &self.taken_ids);
+                self.taken_ids.insert(id.clone());
+                let entity = Entity {
+                    name: name_arg,
+                    definition: Some(definition),
+                    scope,
+                    stereotype: Self::opt_str(args, "stereotype"),
+                    parent,
+                    provenance: Some(Provenance::Derived {
+                        from: members.clone(),
+                        reasoning,
+                    }),
+                    ..Default::default()
+                };
+                self.staged_entities.insert(id.clone(), entity.clone());
+                self.stage(Op::CreateEntity {
+                    id: id.clone(),
+                    entity,
+                })?;
+                for m in &members {
+                    self.staged_parents.insert(m.clone(), id.clone());
+                    self.stage(Op::UpdateEntity {
+                        id: m.clone(),
+                        name: None,
+                        definition: None,
+                        add_aliases: Vec::new(),
+                        add_mention: None,
+                        stereotype: None,
+                        parent: Some(id.clone()),
+                        set_attributes: None,
+                        add_attributes: Vec::new(),
+                        provenance: None,
+                    })?;
+                }
+                Ok(json!({"id": id, "moved": members}))
+            }
+            // Unbuild one level: a derived grouping's children reparent to its parent
+            // and it tombstones with a redirect there. A stated entity is refused
+            // toward the documents. Mirrors docs/compiler/tools.md#grouping-tools.
+            "dissolve_entity" => {
+                let id = Self::str_arg(args, "id")?;
+                let reason = Self::str_arg(args, "reason")?;
+                let Some(rid) = self.canon_entity_id(&id) else {
+                    return Err(self.unknown_entity_error(&id));
+                };
+                if self.staged_entities.contains_key(&rid) {
+                    return Err(ToolError::new(
+                        "staged-entity",
+                        format!(
+                            "{} is staged in this session and not yet in the graph; it lands at commit, so dissolve it in a later session or leave it out now",
+                            rid
+                        ),
+                    ));
+                }
+                if self.staged_dissolved(&rid) {
+                    return Err(ToolError::new(
+                        "already-dissolved",
+                        format!("{} is already dissolved in this changeset", rid),
+                    ));
+                }
+                let e = self.snapshot.graph.entities.get(&rid).cloned();
+                let Some(e) = e else {
+                    return Err(self.unknown_entity_error(&id));
+                };
+                let derived = matches!(e.provenance, Some(Provenance::Derived { .. }));
+                if !e.mentions.is_empty() || !derived {
+                    return Err(ToolError::new(
+                        "stated-entity",
+                        format!(
+                            "{} is an entity the documents state ({}); it holds its children in role, not in provenance, and only a grouping with derived provenance and no mentions dissolves. Revise the documents instead",
+                            rid,
+                            if e.mentions.is_empty() {
+                                "provenance is not derived".to_string()
+                            } else {
+                                format!("{} mention(s)", e.mentions.len())
+                            }
+                        ),
+                    ));
+                }
+                let refs = self.snapshot.requirements_referencing(&rid);
+                if !refs.is_empty() {
+                    return Err(ToolError::new(
+                        "not-a-grouping",
+                        format!(
+                            "{} carries requirements of its own ({}); higher levels carry none, so it is a sub-entity, not a grouping. Re-point its requirements first, or leave it",
+                            rid,
+                            refs.join(", ")
+                        ),
+                    ));
+                }
+                let parent = self.parent_of(&rid);
+                let children = self.level_after(&rid);
+                // The store fills parent and children as applied; this session's own
+                // gates read the children's moves through parent_of.
+                self.stage(Op::DissolveEntity {
+                    id: rid.clone(),
+                    reason,
+                    parent: None,
+                    children: Vec::new(),
+                })?;
+                Ok(json!({
+                    "dissolved": rid,
+                    "parent": parent,
+                    "children": children,
+                    "note": "a redirect to the parent stays; anything holding the old id resolves there",
+                }))
             }
             "upsert_requirement" => {
                 let statement = Self::str_arg(args, "statement")?;
@@ -6964,5 +7437,383 @@ mod tests {
             &json!({"goal": "g:abstract-entity:ent:backend", "justification": "C1 belongs under C0, which already contains it conceptually."}),
         )
         .unwrap();
+    }
+
+    // A level under `ent:backend`: four stated children, a derived grouping
+    // `ent:messaging` holding two of them, a stated sibling area whose name a grouping
+    // could look like, and a parentless entity on another level. The session runs a
+    // fan-out goal on the backend.
+    fn level_session() -> ToolSession {
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:backend".into(), plain("Backend"));
+        for i in 0..4 {
+            s.graph.entities.insert(
+                format!("ent:c{}", i),
+                under(&format!("C{}", i), "ent:backend"),
+            );
+        }
+        s.graph.entities.insert(
+            "ent:messaging".into(),
+            Entity {
+                name: "Messaging".into(),
+                definition: Some("moves events between the services".into()),
+                parent: Some("ent:backend".into()),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["ent:c2".into(), "ent:c3".into()],
+                    reasoning: "the documents treat the queue and the bus as one area".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        for c in ["ent:c2", "ent:c3"] {
+            s.graph.entities.get_mut(c).unwrap().parent = Some("ent:messaging".into());
+        }
+        s.graph.entities.insert(
+            "ent:storage-layer".into(),
+            under("Storage Layer", "ent:backend"),
+        );
+        s.graph.entities.insert("ent:other".into(), plain("Other"));
+        let goal = Goal {
+            id: "g:abstract-entity:ent:backend".into(),
+            kind: "abstract-entity".into(),
+            mandatory: false,
+            target: "ent:backend".into(),
+            change: json!({"fan_out": 5, "limit": {"soft": 9, "hard": 15}, "candidates": []}),
+            ..Default::default()
+        };
+        ToolSession::new(s, WorkScope::for_batch("b0-1", &[goal]), 64, 24_000)
+    }
+
+    // group_entities stages one derived entity from the members and one parent move
+    // per member, and refuses a lone member, a cross-level set, and a lookalike name.
+    // Mirrors docs/compiler/tools.md#grouping-tools.
+    #[test]
+    fn group_entities_accepts_a_valid_grouping_and_rejects_bad_ones() {
+        let mut t = level_session();
+        let grouping = json!({
+            "name": "Compute",
+            "definition": "Runs the request handlers.",
+            "members": ["ent:c0", "c1"],
+            "stereotype": "component",
+            "reasoning": "the compute page describes both as one tier",
+        });
+        let r = t.dispatch("group_entities", &grouping).unwrap();
+        assert_eq!(r["id"], "ent:compute");
+        assert_eq!(r["moved"], json!(["ent:c0", "ent:c1"]));
+        assert_eq!(t.staged.len(), 3, "{:?}", t.staged);
+        match &t.staged[0] {
+            Op::CreateEntity { id, entity } => {
+                assert_eq!(id, "ent:compute");
+                assert_eq!(entity.parent.as_deref(), Some("ent:backend"));
+                assert_eq!(entity.stereotype.as_deref(), Some("component"));
+                assert_eq!(
+                    entity.provenance,
+                    Some(Provenance::Derived {
+                        from: vec!["ent:c0".into(), "ent:c1".into()],
+                        reasoning: "the compute page describes both as one tier".into(),
+                    })
+                );
+            }
+            other => panic!("expected a create, got {:?}", other),
+        }
+        for (op, member) in t.staged[1..].iter().zip(["ent:c0", "ent:c1"]) {
+            match op {
+                Op::UpdateEntity { id, parent, .. } => {
+                    assert_eq!(id, member);
+                    assert_eq!(parent.as_deref(), Some("ent:compute"));
+                }
+                other => panic!("expected a move, got {:?}", other),
+            }
+        }
+        // The session's own gates see the moves: the grouping now holds the level.
+        assert_eq!(t.level_after("ent:compute"), vec!["ent:c0", "ent:c1"]);
+        assert_eq!(
+            t.level_view_of("ent:compute").as_deref(),
+            Some("view:component/compute")
+        );
+        // The abstract-entity gate accepts the grouping as staged.
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:abstract-entity:ent:backend", "justification": "Compute groups the two handlers the compute page describes."}),
+        )
+        .unwrap();
+
+        let mut t = level_session();
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Solo", "definition": "One.", "members": ["ent:c0"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "too-few-members");
+        assert!(err.message.contains("update_entity"), "{}", err.message);
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Mixed", "definition": "Two levels.", "members": ["ent:c0", "ent:other"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "cross-level");
+        assert!(
+            err.message.contains("ent:other") && err.message.contains("the scope root"),
+            "{}",
+            err.message
+        );
+        // A staged move counts as the current parent: c2 moved beside c0 groups with it.
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Mixed", "definition": "Two levels.", "members": ["ent:c0", "ent:c2"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "cross-level");
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:c2", "parent": "ent:backend"}),
+        )
+        .unwrap();
+        let before = t.staged.len();
+        t.dispatch(
+            "group_entities",
+            &json!({"name": "Pair", "definition": "Two handlers.", "members": ["ent:c0", "ent:c2"], "reasoning": "why"}),
+        )
+        .unwrap();
+        assert_eq!(t.staged.len(), before + 3);
+        // A lookalike of an existing area reuses it; an exact name is that entity.
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Storage", "definition": "Keeps the data.", "members": ["ent:c1", "ent:messaging"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(err.message.contains("ent:storage-layer"), "{}", err.message);
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Storage Layer", "definition": "Keeps the data.", "members": ["ent:c1", "ent:storage-layer"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(err.message.contains("already exists"), "{}", err.message);
+        // definition and reasoning are non-empty; a member must resolve.
+        for (args, rule) in [
+            (
+                json!({"name": "Bare", "definition": " ", "members": ["ent:c1", "ent:messaging"], "reasoning": "why"}),
+                "definition-required",
+            ),
+            (
+                json!({"name": "Bare", "definition": "Keeps the data.", "members": ["ent:c1", "ent:messaging"], "reasoning": ""}),
+                "reasoning-required",
+            ),
+            (
+                json!({"name": "Bare", "definition": "Keeps the data.", "members": ["ent:c1", "ent:nope"], "reasoning": "why"}),
+                "unknown-id",
+            ),
+        ] {
+            assert_eq!(t.dispatch("group_entities", &args).unwrap_err().rule, rule);
+        }
+    }
+
+    // dissolve_entity refuses an entity the documents state and stages the dissolve
+    // of a derived grouping, its children landing on the grouping's parent for the
+    // session's own gates. Mirrors docs/compiler/tools.md#grouping-tools.
+    #[test]
+    fn dissolve_entity_refuses_a_stated_entity_and_dissolves_a_grouping() {
+        let mut t = level_session();
+        let err = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:backend", "reason": "flatten"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "stated-entity");
+        assert!(
+            err.message.contains("Revise the documents"),
+            "{}",
+            err.message
+        );
+        // A derived entity holding requirements is a sub-entity, not a grouping.
+        t.snapshot.graph.requirements.insert(
+            "req:shop-1".into(),
+            quoted_req(
+                "Messaging retries once.",
+                &["ent:messaging"],
+                "retries once",
+            ),
+        );
+        let err = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:messaging", "reason": "flatten"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "not-a-grouping");
+        assert!(err.message.contains("req:shop-1"), "{}", err.message);
+        t.snapshot.graph.requirements.clear();
+        let r = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "messaging", "reason": "the two belong beside the cache"}),
+            )
+            .unwrap();
+        assert_eq!(r["dissolved"], "ent:messaging");
+        assert_eq!(r["parent"], "ent:backend");
+        assert_eq!(r["children"], json!(["ent:c2", "ent:c3"]));
+        assert!(matches!(
+            &t.staged[0],
+            Op::DissolveEntity { id, reason, parent: None, children }
+                if id == "ent:messaging" && reason == "the two belong beside the cache" && children.is_empty()
+        ));
+        // The session reads the children's moves: they sit under the backend now,
+        // and the dissolved grouping is no level.
+        assert_eq!(t.parent_of("ent:c2").as_deref(), Some("ent:backend"));
+        assert_eq!(
+            t.level_after("ent:backend"),
+            vec!["ent:c0", "ent:c1", "ent:c2", "ent:c3", "ent:storage-layer"]
+        );
+        assert!(t.level_after("ent:messaging").is_empty());
+        let err = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:messaging", "reason": "again"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "already-dissolved");
+        // A grouping staged this session is not in the graph yet.
+        t.dispatch(
+            "group_entities",
+            &json!({"name": "Compute", "definition": "Runs the handlers.", "members": ["ent:c0", "ent:c1"], "reasoning": "why"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:compute", "reason": "undo"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "staged-entity");
+    }
+
+    // A dissolve that lands a level past the fan-out threshold previews the goal it
+    // opens. Mirrors docs/compiler/reconciler.md#bubbling.
+    #[test]
+    fn dissolve_previews_the_fan_out_goal_it_opens() {
+        use crate::limits::{threshold, CHILDREN_PER_ENTITY};
+        let (soft, _) = threshold(CHILDREN_PER_ENTITY, None).unwrap();
+        let mut t = level_session();
+        // The backend holds five after the dissolve; pad it to the soft threshold first.
+        for i in 0..(soft as usize - 4) {
+            t.snapshot.graph.entities.insert(
+                format!("ent:pad{}", i),
+                under(&format!("Pad{}", i), "ent:backend"),
+            );
+        }
+        let r = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:messaging", "reason": "flatten"}),
+            )
+            .unwrap();
+        let opens = r["opens"].as_array().cloned().unwrap_or_default();
+        assert!(
+            opens.iter().any(|o| {
+                o.as_str()
+                    .is_some_and(|s| s.starts_with("abstract-entity ent:backend (fan-out"))
+            }),
+            "{:?}",
+            opens
+        );
+    }
+
+    // get_view lists, for every member with a level view, the member and that view:
+    // one present in the snapshot, one the containment tree yields at commit, none
+    // for a member without a level. Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn get_view_lists_the_members_level_views_as_children() {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:backend".into(),
+            Entity {
+                name: "Backend".into(),
+                stereotype: Some("system".into()),
+                ..Default::default()
+            },
+        );
+        for (id, name) in [
+            ("ent:server", "Server"),
+            ("ent:db", "Database"),
+            ("ent:cache", "Cache"),
+        ] {
+            s.graph
+                .entities
+                .insert(id.into(), under(name, "ent:backend"));
+        }
+        for (id, name) in [("ent:model", "Model"), ("ent:controller", "Controller")] {
+            s.graph
+                .entities
+                .insert(id.into(), under(name, "ent:server"));
+        }
+        for (id, name) in [
+            ("ent:orders-table", "Orders Table"),
+            ("ent:users-table", "Users Table"),
+        ] {
+            s.graph.entities.insert(id.into(), under(name, "ent:db"));
+        }
+        let view = |title: &str, kind: &str, members: &[&str]| View {
+            kind: kind.into(),
+            title: title.into(),
+            members: members.iter().map(|m| m.to_string()).collect(),
+            default: true,
+            ..Default::default()
+        };
+        s.graph.views.insert(
+            "view:component/backend".into(),
+            view(
+                "Backend",
+                "component",
+                &["ent:server", "ent:db", "ent:cache"],
+            ),
+        );
+        s.graph.views.insert(
+            "view:class/server".into(),
+            view("Server", "class", &["ent:model", "ent:controller"]),
+        );
+        let mut t = ToolSession::new(s, WorkScope::serving("mcp-compile"), 64, 24_000);
+        let r = t
+            .dispatch("get_view", &json!({"id": "view:component/backend"}))
+            .unwrap();
+        assert_eq!(
+            r["children"],
+            json!([
+                {"member": "ent:server", "view": "view:class/server"},
+                {"member": "ent:db", "view": "view:class/db"},
+            ])
+        );
+        // A flow view links through its participants.
+        t.snapshot.graph.requirements.insert(
+            "req:shop-1".into(),
+            quoted_req(
+                "The server reads the model.",
+                &["ent:server", "ent:model"],
+                "reads",
+            ),
+        );
+        t.snapshot.graph.views.insert(
+            "view:usecase/backend-server-shop".into(),
+            view("Server: Shop", "use-case", &["req:shop-1"]),
+        );
+        let r = t
+            .dispatch(
+                "get_view",
+                &json!({"id": "view:usecase/backend-server-shop"}),
+            )
+            .unwrap();
+        assert_eq!(
+            r["children"],
+            json!([{"member": "ent:server", "view": "view:class/server"}])
+        );
     }
 }

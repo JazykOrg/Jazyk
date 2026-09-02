@@ -434,10 +434,19 @@ The event kinds:
 - `batchStart`: the scheduler formed a batch. Carries the batch id, the class and tier,
   the goals with their kinds and targets, and the resolved executor, so a reader sees
   what is about to run before any session starts.
-- `sessionStart`, `sessionDone`, `sessionFailed`: the session lifecycle. `sessionStart`
-  carries the batch id, the goals, the executor, the size of the initially loaded set,
-  and the active skills; `sessionDone` the committed generation, the outcome per goal,
-  rounds, and tokens; `sessionFailed` the reason and whether a retry follows.
+- `sessionStart`, `sessionDone`, `sessionFailed`, `sessionEnded`: the session
+  lifecycle. `sessionStart` opens one attempt on a batch and carries the batch id, the
+  goals, the executor, the size of the initially loaded set, and the active skills;
+  `sessionDone` the committed generation, the outcome per goal, rounds, and tokens;
+  `sessionFailed` the reason and the attempt number, so a reader knows whether a retry
+  follows; `sessionEnded` the reason nothing landed when the attempt was not the
+  session's own failure: the build was cancelled, a ledger batch returned and its
+  ledger judges what landed, or the runner left the attempt without a verdict (a
+  panic). Every attempt ends with exactly one terminal event, `sessionDone`,
+  `sessionFailed`, or `sessionEnded`. The runner emits it on every exit path
+  (success, failure, cancellation, host death, the round budget), and the trace drops a
+  second terminal event for an attempt it already closed. A `sessionStart` with no
+  terminal event means the process died.
 - `goal`: a goal changed state. `opened` carries the `cause` (generation, mutation,
   `via`); `resolved` carries the `justification`; `failed` the `reason`; `parked` the
   session that left it. Resolved and failed events fire when the claim is accepted at

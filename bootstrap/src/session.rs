@@ -136,6 +136,17 @@ pub enum TraceEvent {
         attempt: u32,
         error: String,
     },
+    // The attempt ended with nothing landed and no failure of its own: the build was
+    // cancelled, a ledger batch returned for its ledger to judge, or the runner left
+    // without a verdict. One of the three terminal kinds closes every attempt
+    // (docs/compiler/sessions.md#trace-events).
+    #[serde(rename = "sessionEnded")]
+    SessionEnded {
+        label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        goals: Vec<String>,
+        reason: String,
+    },
     #[serde(rename = "note")]
     Note {
         label: String,
@@ -349,6 +360,9 @@ fn render_stderr(ev: &TraceEvent) {
                 label, attempt, error
             )
         }
+        TraceEvent::SessionEnded { label, reason, .. } => {
+            eprintln!("[{}] session ended: {}", label, reason)
+        }
         TraceEvent::Note { label, text, .. } => eprintln!("[{}] {}", label, text),
         // The section path is implicit in the tool rows the default level already
         // prints; naming it again would double every line.
@@ -450,6 +464,11 @@ pub struct Trace {
     // The run's transcript name under <out>/trace, when the run leaves one. Carried so
     // a record made mid-run (a feedback entry) can name the run it came from.
     run: Option<String>,
+    // Per session label, whether its latest attempt is still open: `sessionStart`
+    // opens it, the first terminal event closes it, and a second terminal event for a
+    // closed attempt is dropped. Shared across clones so every runner sees one
+    // ledger of attempts. Mirrors docs/compiler/sessions.md#trace-events.
+    attempts: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, bool>>>,
 }
 
 impl Trace {
@@ -460,6 +479,7 @@ impl Trace {
             cancel: Default::default(),
             transcript: None,
             run: None,
+            attempts: Default::default(),
         }
     }
     pub fn to_sink(
@@ -473,6 +493,35 @@ impl Trace {
             cancel,
             transcript: None,
             run: None,
+            attempts: Default::default(),
+        }
+    }
+    // The attempt ledger behind the terminal-event invariant: an attempt opens on
+    // `sessionStart` and closes on its first terminal event; a terminal event for an
+    // attempt already closed is a duplicate and is dropped. A label this trace never
+    // saw start passes (a serving's own trace reports its finish without a start).
+    // Returns false when the event must be dropped.
+    // Mirrors docs/compiler/sessions.md#trace-events.
+    fn admit(&self, ev: &TraceEvent) -> bool {
+        let (label, terminal) = match ev {
+            TraceEvent::SessionStart { label, .. } => (label, false),
+            TraceEvent::SessionDone { label, .. }
+            | TraceEvent::SessionFailed { label, .. }
+            | TraceEvent::SessionEnded { label, .. } => (label, true),
+            _ => return true,
+        };
+        let mut attempts = self.attempts.lock().unwrap();
+        if !terminal {
+            attempts.insert(label.clone(), true);
+            return true;
+        }
+        match attempts.get_mut(label) {
+            Some(open) if !*open => false,
+            Some(open) => {
+                *open = false;
+                true
+            }
+            None => true,
         }
     }
     // The transcript name of the run this trace belongs to. A GUI job names its own
@@ -541,6 +590,9 @@ impl Trace {
         }
     }
     pub fn event(&self, ev: TraceEvent) {
+        if !self.admit(&ev) {
+            return;
+        }
         // The transcript records what a Normal-level trace shows, independent of the
         // terminal level: --quiet still leaves a full transcript.
         if let Some(t) = &self.transcript {

@@ -12,3 +12,4 @@ system with the [Admin CLI](./admin.md). Shared terms live in the
 
 The system shall keep every Order traceable from placement to delivery or return.
 When any component rejects a request, the system shall tell the Customer why.
+Orderly shall be delivered as a Rust crate verified by `cargo test`.

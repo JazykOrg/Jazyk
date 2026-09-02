@@ -19,8 +19,9 @@ One requirement per goal, `g:bind:<requirement id>`
 full: its `statement`, facets, edges, and transition, the verbatim quote, and its entity
 as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
-test name, the decided medium and build when they exist, the entity's recorded files, and
-the ledger's recorded conventions (the run commands, the files other rows name)
+test name, the decided medium and build when they exist, the entity's recorded files,
+the ledger's recorded conventions (the run commands, the files other rows name), and
+the open error diagnostics naming the requirement
 ([binding tools](../compiler/tools.md#binding-tools)). The steps:
 
 - Search the deliverable for an implementation, starting at the entity's recorded files.
@@ -62,6 +63,16 @@ exists, the kind is `llm` and the artifact is a
 [decided medium](./gen.md#the-medium-is-decided-once-before-anything-is-generated) yet
 gets the decision from the first bind goal, the same way the first generation session
 decides it: a test is written in the medium's toolchain, so the decision cannot wait.
+`record_binding` replies with a `mediumWarning` when the recorded run commands
+[diverge](./gen.md#the-medium-is-decided-once-before-anything-is-generated) from
+the decided medium; while no entity has been generated yet the medium is cleared
+instead, and the next bind session re-decides it from the recorded commands.
+
+A requirement under an open `error` diagnostic binds anyway. The package names the
+diagnostic (`openDiagnostics`), the row lands in the ledger's `contradicted` map, and
+the reply says so
+([rows recorded over an open contradiction](./gen.md#rows-recorded-over-an-open-contradiction)):
+the verdict judges one side of a dispute, and the record says which.
 
 ## What the verdict means
 

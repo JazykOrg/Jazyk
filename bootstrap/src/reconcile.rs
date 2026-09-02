@@ -1047,16 +1047,21 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
                 (Some(x), Some(y)) => norm(x) == norm(y),
             };
             if overlap && norm(&a.to) != norm(&b.to) {
-                // One diagnostic per pair, the two requirements as subjects, so deleting
-                // either one re-triggers rejudge through deletion propagation.
+                // One diagnostic per pair of arrows, the contributing requirements of
+                // both arrows as subjects, so deleting any one re-triggers rejudge
+                // through deletion propagation.
                 f.push((
                     "nondeterministic-transition".to_string(),
-                    vec![a.requirement.clone(), b.requirement.clone()],
+                    a.requirements
+                        .iter()
+                        .chain(&b.requirements)
+                        .cloned()
+                        .collect(),
                     "warning".to_string(),
                     format!(
                         "{} and {} both leave {} on {} with overlapping guards",
-                        a.requirement,
-                        b.requirement,
+                        a.requirements.join(", "),
+                        b.requirements.join(", "),
                         a.from,
                         a.trigger.as_deref().unwrap_or("")
                     ),
@@ -2253,6 +2258,13 @@ fn sweep(store: &mut Store, trace: &Trace) {
     if !settled.is_empty() {
         trace.line("build", &format!("settle: {}", settled.join("; ")));
     }
+    // The markers settle here, not only at the tail: a starved build never reaches
+    // the checks, and a standing marker is evidence a session would adjudicate.
+    // Mirrors docs/compiler/graph.md#the-sweep.
+    let markers = store.settle_cleared_markers();
+    if !markers.is_empty() {
+        trace.line("build", &format!("settle: {}", markers.join("; ")));
+    }
 }
 
 // The deterministic tail of a build: the checks, flip detection, the verdict with its
@@ -3257,14 +3269,14 @@ mod tests {
                     to: "paid".into(),
                     trigger: Some("payment succeeds".into()),
                     guard: None,
-                    requirement: "req:shop-7".into(),
+                    requirements: vec!["req:shop-7".into()],
                 },
                 StateTransition {
                     from: "placed".into(),
                     to: "held".into(),
                     trigger: Some("payment succeeds".into()),
                     guard: None,
-                    requirement: "req:shop-8".into(),
+                    requirements: vec!["req:shop-8".into()],
                 },
             ],
         };
@@ -3272,6 +3284,70 @@ mod tests {
         let hits = rules_for(&f, "nondeterministic-transition");
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].1, ["req:shop-7", "req:shop-8"]);
+    }
+
+    // A merged arrow (a restated transition) reads as one arrow to every machine check:
+    // its requirements all become subjects of a nondeterministic pair, and dead-end and
+    // unhandled-event see it neither twice nor as a distinct event.
+    // Mirrors docs/compiler/model/state-machine.md#checks.
+    #[test]
+    fn machine_checks_read_a_merged_arrow_as_one_arrow() {
+        let arrow = |from: &str, to: &str, trigger: &str, reqs: &[&str]| StateTransition {
+            from: from.into(),
+            to: to.into(),
+            trigger: Some(trigger.into()),
+            guard: None,
+            requirements: reqs.iter().map(|r| r.to_string()).collect(),
+        };
+        let m = StateMachine {
+            subject: "ent:order".into(),
+            states: vec!["placed".into(), "paid".into(), "held".into()],
+            initial: Some("placed".into()),
+            transitions: vec![
+                arrow(
+                    "placed",
+                    "paid",
+                    "payment succeeds",
+                    &["req:shop-12", "req:shop-7"],
+                ),
+                arrow("placed", "held", "payment declined", &["req:shop-8"]),
+                arrow(
+                    "paid",
+                    "held",
+                    "payment declined",
+                    &["req:shop-13", "req:shop-9"],
+                ),
+            ],
+        };
+        let f = machine_checks(&m);
+        assert!(rules_for(&f, "nondeterministic-transition").is_empty());
+        let dead = rules_for(&f, "dead-end-state");
+        assert_eq!(dead.len(), 1, "{:?}", dead);
+        assert!(
+            dead[0].3.contains("held") && !dead[0].3.contains("paid"),
+            "{}",
+            dead[0].3
+        );
+        let unhandled = rules_for(&f, "unhandled-event");
+        assert_eq!(unhandled.len(), 1, "{:?}", unhandled);
+        assert_eq!(
+            unhandled[0].3,
+            "ent:order: no transition for paid on payment succeeds"
+        );
+        // A second arrow out of placed on the merged arrow's trigger names every
+        // contributor of both arrows.
+        let mut m = m;
+        m.states.push("refunded".into());
+        m.transitions.push(arrow(
+            "placed",
+            "refunded",
+            "payment succeeds",
+            &["req:shop-99"],
+        ));
+        let f = machine_checks(&m);
+        let hits = rules_for(&f, "nondeterministic-transition");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["req:shop-12", "req:shop-7", "req:shop-99"]);
     }
 
     #[test]

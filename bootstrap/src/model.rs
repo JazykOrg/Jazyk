@@ -371,7 +371,9 @@ impl Relationship {
     }
 }
 
-// One transition of a derived state machine.
+// One arrow of a derived state machine: a restated transition draws one arrow, its
+// contributing requirements listed and never empty.
+// Mirrors docs/compiler/model/state-machine.md#derivation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StateTransition {
     pub from: String,
@@ -380,7 +382,7 @@ pub struct StateTransition {
     pub trigger: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<String>,
-    pub requirement: String,
+    pub requirements: Vec<String>,
 }
 
 // Derived: one per entity any transition names as subject, recomputed on every commit.

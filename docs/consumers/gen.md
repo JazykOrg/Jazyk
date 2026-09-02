@@ -100,6 +100,9 @@ medium:
   run), the decision also reads the tree's file listing: an existing tree pins the
   language and toolchain, and deciding from the statements alone applies only to an
   empty deliverable.
+- When the ledger already records run commands (tests bound before any entity
+  generated), the decision reads them too: recorded commands pin the toolchain the
+  same way an existing tree does.
 - `produced: written` means the generated files are the deliverable. `produced: built`
   means they are the source that produces `artifact`, and [the build](#the-build) runs
   it.
@@ -110,6 +113,17 @@ medium:
   re-decided only when nothing is generated: a ledger with no entities decides again,
   so wiping the deliverable is how a project changes its mind. `--force` regenerates
   against the recorded decision.
+- The decision is checked against what the sessions actually wrote. When the medium's
+  `toolchain` and the ledger's programmatic run commands name different tool families
+  (a Python toolchain beside `cargo test` rows), the medium diverged. The check names
+  a family per known tool word (`cargo` and `rustc` are Rust, `python3` and `pytest`
+  are Python, `npm` and `jest` are Node) and fires only when both sides name a family
+  and share none; unknown words decide nothing. A divergence is a `mediumWarning`
+  naming both sides in the `record_generation` and `record_binding` reply, in every
+  goal package while it stands, and in [`jazyk status`](../frontends/cli.md#jazyk-status).
+  While no entity has been generated yet, the record clears the medium instead, and
+  the next session re-decides it with the recorded commands as evidence. Once an
+  entity is generated the medium stands and the warning is the record.
 - Under `produced: built`, recording a build is not optional. The manifest step is
   rejected when it records none and none is recorded yet, with one corrective retry,
   the same gate that catches an unrunnable test command. A generator that cannot name
@@ -424,11 +438,12 @@ metadata file. Two maps:
   deliverable and how it is verified. Rows are born by `record_binding` and updated by
   `record_generation` and test runs.
 
-Three more keys sit beside them: `support`, the deliverable-wide files any session may
+Four more keys sit beside them: `support`, the deliverable-wide files any session may
 rewrite; `medium`, the deliverable's
 [decided form](#the-medium-is-decided-once-before-anything-is-generated), written by
-the first run; and `build`, present only when that medium must be produced by a tool
-([the build](#the-build)).
+the first run; `build`, present only when that medium must be produced by a tool
+([the build](#the-build)); and `contradicted`, the rows recorded over an open error
+diagnostic ([rows recorded over an open contradiction](#rows-recorded-over-an-open-contradiction)).
 
 ```yaml
 support:                                  # deliverable-wide files any session may rewrite
@@ -446,6 +461,10 @@ build:                                    # optional; absent when the files are 
   cwd: .                                  # deliverable-relative working dir
   produces:                               # deliverable-relative artifact paths
     - jazyk.pptx
+
+contradicted:                             # rows recorded over an open error diagnostic
+  req:catalog-3:                          # the diagnostic ids open at record time
+    - diag:contradiction-1
 
 entities:
   catalog:
@@ -548,6 +567,28 @@ Deleting a requirement ends its obligation, and its ledger row must not outlive 
 Without pruning, a compilation that deletes a requirement leaves a row no tool can
 remove: the manifest only adds and updates, reruns skip the row, and the board would
 keep deriving a repair (regenerate) that provably does not clear it.
+
+### Rows recorded over an open contradiction
+
+A requirement that is a subject of an open `error`
+[diagnostic](../compiler/model/diagnostic.md) (a `contradiction`, an unresolved
+ambiguity) states something the graph itself disputes, and code written against it is
+code written against one side of an open question. Generation and binding do not wait
+for the answer (that is the [`answer` goal](../compiler/goals/answer.md)'s seam), but
+they never run green over it silently:
+
+- Every `generate` and `bind` package names the open error diagnostics on each of its
+  requirements (`openDiagnostics`: the id, the rule, the message; suppressed ones
+  excluded), so the session knows which statements are disputed before it writes a
+  line.
+- `record_generation` and `record_binding` write the rows that landed over an open
+  error diagnostic into the ledger's `contradicted` map (requirement id to the
+  diagnostic ids open at record time) and name them in the reply. A later record of
+  the same row under a clean graph clears its entry.
+- The flag is a record, never a verdict. A `verified` row that is `contradicted` is
+  verified against one side of a dispute. Resolving the diagnostic (an answer, a docs
+  edit) reworks the statement, [re-binds](./bind.md#when-binding-runs) the row, and
+  the next record clears the flag.
 
 ## Criteria files for llm tests
 

@@ -877,6 +877,11 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str) -> i32 {
     let mut store = Store::load(&proj.out);
     let (parsed, _) = crate::reconcile::parse_all(&proj);
     store.sync_docs(&parsed);
+    // A typed command is its own approval (docs/compiler/control-plane.md): the
+    // snippet releases both classes in the sandbox, so a fresh manual-mode project
+    // shows its goals open instead of blocked on a release nobody can give here.
+    crate::control::release(&proj, &proj.out, Some("compile"));
+    crate::control::release(&proj, &proj.out, Some("generate"));
     let control = crate::control::Control::load(&proj, &proj.out);
     let board = crate::board::Board::derive(&store, &proj, &control);
     let Some(goal) = board
@@ -892,13 +897,25 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str) -> i32 {
             .map(|g| g.id.as_str())
             .take(40)
             .collect();
+        let states: Vec<String> = board
+            .goals
+            .iter()
+            .filter(|g| !matches!(g.state, GoalState::Open))
+            .map(|g| format!("{} ({:?})", g.id, g.state))
+            .take(12)
+            .collect();
         eprintln!(
-            "jazyk: `{}` is not an open goal here; open goals: {}",
+            "jazyk: `{}` is not an open goal here; open goals: {}{}",
             goal_id,
             if open.is_empty() {
                 "(none)".to_string()
             } else {
                 open.join(", ")
+            },
+            if states.is_empty() {
+                String::new()
+            } else {
+                format!("; other goals: {}", states.join(", "))
             }
         );
         return 2;

@@ -186,7 +186,7 @@ export interface StateTransition {
   to: string
   trigger?: string
   guard?: string
-  requirement: string
+  requirements: string[]
 }
 
 export interface StateMachine {

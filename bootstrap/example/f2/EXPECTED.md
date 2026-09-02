@@ -58,6 +58,19 @@ missing. Edges the prose states, `a` acting on `b`:
 Multi-entity requirements left without edges open optional `declare-edges` goals; they
 count as `optional advised`, never as open mandatory work.
 
+system.md's delivery sentence ("Orderly shall be delivered as a Rust crate verified by
+`cargo test`") yields exactly one requirement on Orderly, no edge. `Rust`, `crate`, and
+`cargo test` name the medium and the tool that verifies it, never an entity.
+
+## Generation medium
+
+The delivery sentence is the only statement of what the deliverable is made of. The
+[medium decision](../../../docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+reads it (and the planted `product/` tree, which pins the same answer): the ledger's
+`medium` records a Rust crate with `cargo` as the toolchain, and every test row runs
+`cargo test`. A ledger naming Python, argparse, or pytest is a failure: the medium was
+guessed from admin.md's command-line flavor instead of read from the statement.
+
 ## The Order lifecycle
 
 orders.md and payment.md describe state changes of the Order. The derived machine

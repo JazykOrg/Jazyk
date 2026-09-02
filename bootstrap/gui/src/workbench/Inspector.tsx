@@ -282,7 +282,13 @@ function NodeDetail({ id }: { id: string }) {
           <p key={i} className="mono" style={{ margin: '1px 0' }}>
             {t.from} → {t.to}
             {t.trigger && <span className="muted"> on {t.trigger}</span>}
-            {t.guard && <span className="muted"> [{t.guard}]</span>} <NodeLink id={t.requirement} />
+            {t.guard && <span className="muted"> [{t.guard}]</span>}
+            {t.requirements.map((r) => (
+              <span key={r}>
+                {' '}
+                <NodeLink id={r} />
+              </span>
+            ))}
           </p>
         ))}
       </div>

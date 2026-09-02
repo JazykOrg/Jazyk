@@ -102,8 +102,14 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "deliverable": gs.deliverable.to_string_lossy(),
         "suggestedTestName": crate::gen::test_name(&rid, &r.statement),
         "medium": ledger.medium.as_ref().map(|m| m.line()),
+        // The medium's standing divergence from the recorded commands, if any
+        // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+        "mediumWarning": crate::gen::medium_divergence(&ledger),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd})),
         "testConventions": conventions,
+        // The statement is disputed while these stand; the test judges one side of an
+        // open question (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
+        "openDiagnostics": crate::gen::open_errors_on(store, &rid),
         "entityFiles": entity_files,
         "context": pack,
         "instructions": instructions(),
@@ -211,11 +217,29 @@ pub fn record(
         evidence: evidence.map(|e| crate::llm::truncate(e, 400).to_string()),
     };
     ledger.requirements.insert(rid.clone(), row);
+    // The row lands over an open error diagnostic or not; either way the ledger says
+    // which (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
+    let contradicted = ledger.record_contradicted(store, &rid);
+    // The decided medium against what this binding actually wrote. With no entity
+    // generated yet the medium is cleared and the next session re-decides it from the
+    // recorded commands; once one is generated the medium stands and the warning is
+    // the record (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+    let medium_warning = crate::gen::medium_divergence(&ledger).map(|w| {
+        if ledger.entities.is_empty() {
+            ledger.medium = None;
+            format!(
+                "{}; no entity is generated yet, so the medium is cleared and the next session re-decides it from the recorded commands",
+                w
+            )
+        } else {
+            w
+        }
+    });
     ledger.save(&store.out);
     let ledger = Ledger::load(&store.out);
     let (status, reason) =
         crate::verify::status_of(store, &rid, ledger.requirements.get(&rid).unwrap(), gs);
-    Ok(json!({
+    let mut reply = json!({
         "recorded": rid,
         "verdict": verdict,
         "status": status,
@@ -226,7 +250,17 @@ pub fn record(
             "failing" => "implementing files exist but the test fails: the deliverable contradicts the statement; surface it to the author, never regenerate silently",
             _ => "recorded",
         },
-    }))
+    });
+    if !contradicted.is_empty() {
+        reply["contradicted"] = json!(contradicted);
+        reply["contradictedNote"] = json!(
+            "the row was recorded while an open error diagnostic disputes its statement; the verdict judges one side of an open question until it is resolved"
+        );
+    }
+    if let Some(w) = medium_warning {
+        reply["mediumWarning"] = json!(w);
+    }
+    Ok(reply)
 }
 
 // The unclaimed report: deliverable files no binding names. Scope comes from the
@@ -331,23 +365,26 @@ pub fn run_all(
     if owed.is_empty() {
         return Ok(json!({"bound": 0, "failures": 0, "note": "every requirement is bound"}));
     }
-    // A test is written in the medium's toolchain, so a deliverable with no decided
-    // medium decides it at the first bind, the same way the first generation task does
-    // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
-    {
-        let mut ledger = Ledger::load(&store.out);
-        if ledger.medium.is_none() {
-            let medium = crate::gen::decide_medium(store, runner, &gs.deliverable)?;
-            trace.line("bind medium", &medium.line());
-            ledger.medium = Some(medium);
-            ledger.save(&store.out);
-        }
-    }
     std::fs::create_dir_all(&gs.deliverable).ok();
     let (mut bound, mut failures) = (0u64, 0u64);
     for t in &owed {
         if trace.is_cancelled() {
             break;
+        }
+        // A test is written in the medium's toolchain, so a deliverable with no decided
+        // medium decides it before the bind, the same way the first generation task
+        // does. Checked per goal: a record that found the medium diverged from the
+        // recorded commands while nothing is generated clears it, and the next bind
+        // re-decides it from those commands
+        // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+        {
+            let mut ledger = Ledger::load(&store.out);
+            if ledger.medium.is_none() {
+                let medium = crate::gen::decide_medium(store, runner, &gs.deliverable)?;
+                trace.line("bind medium", &medium.line());
+                ledger.medium = Some(medium);
+                ledger.save(&store.out);
+            }
         }
         let rid = t["requirement"].as_str().unwrap_or_default().to_string();
         trace.line(
@@ -521,6 +558,74 @@ mod tests {
             "claimed file listed unclaimed: {:?}",
             un
         );
+    }
+
+    // A bind recorded over a diverged medium while nothing is generated clears the
+    // medium so the next session re-decides it from the recorded commands.
+    // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    #[test]
+    fn a_bind_over_a_diverged_medium_re_decides_while_nothing_is_generated() {
+        let s = tmp_store();
+        let gs = GenSettings {
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        let mut ledger = Ledger::default();
+        ledger.medium = Some(crate::gen::Medium {
+            form: "Python package".into(),
+            produced: "written".into(),
+            toolchain: "python3 with pytest".into(),
+            artifact: String::new(),
+        });
+        ledger.save(&s.out);
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        std::fs::write(
+            gs.deliverable.join("tests/shop.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.rs", "name": name, "run": format!("cargo test {}", name)});
+        let v = record(&s, "req:shop-1", &[], &test, "fail", None, &gs).unwrap();
+        let w = v["mediumWarning"].as_str().expect("the record warns");
+        assert!(w.contains("re-decides"), "{}", w);
+        assert!(
+            Ledger::load(&s.out).medium.is_none(),
+            "nothing generated: the medium is cleared for re-decision"
+        );
+        // The re-bind package carries nothing stale: no medium, no warning.
+        let pkg = task(&s, "req:shop-1", &gs).unwrap();
+        assert!(pkg["mediumWarning"].is_null(), "{}", pkg);
+
+        // With an entity generated, the medium stands and the warning is the record.
+        let mut ledger = Ledger::load(&s.out);
+        ledger.medium = Some(crate::gen::Medium {
+            form: "Python package".into(),
+            produced: "written".into(),
+            toolchain: "python3 with pytest".into(),
+            artifact: String::new(),
+        });
+        ledger.entities.insert(
+            "shop".into(),
+            crate::gen::EntityGen {
+                fact_hash: "x".into(),
+                requirements: vec!["req:shop-1".into()],
+                files: vec!["tests/shop.rs".into()],
+                unattached: None,
+            },
+        );
+        ledger.save(&s.out);
+        let v = record(&s, "req:shop-1", &[], &test, "fail", None, &gs).unwrap();
+        let w = v["mediumWarning"].as_str().expect("the record still warns");
+        assert!(!w.contains("re-decides"), "{}", w);
+        assert!(Ledger::load(&s.out).medium.is_some(), "the medium stands");
+        let pkg = task(&s, "req:shop-1", &gs).unwrap();
+        assert!(pkg["mediumWarning"].as_str().is_some(), "{}", pkg);
+        assert!(pkg["openDiagnostics"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false));
     }
 
     #[test]

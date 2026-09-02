@@ -237,7 +237,21 @@ computed deterministically:
 - neighbors sharing at least two content tokens qualify, and so do neighbors sharing
   at least two entities: a restatement built from the same entities can share every
   noun and still share no other token, because the shared names leave the token pool.
-  Best six by score.
+- a pair whose requirements both carry a `transition` with the same subject and the
+  same `from` and `to` qualifies on its own and scores two more: a restated transition
+  is the likeliest duplicate (`expenses-1` against `expenses-15`, one sentence in the
+  opening paragraph and one in the steps).
+- an intro-versus-steps restatement (both sourced in one document, one in its opening
+  section, the other in a later section) qualifies with one shared entity and one
+  shared content token, typically the verb stem, and scores one more: an opening
+  paragraph summarizes the steps below it (`expenses-5` against `expenses-6` share
+  `expense claim` and `file` and nothing else).
+- a pair whose only shared entity is the graph's hub counts no entity toward its score
+  and qualifies on three shared content tokens, never two. The hub is the entity
+  co-referenced with the most other entities across requirements; a tie names none.
+  Sharing the hub says little: one hub-sharing flood derived forty-nine pair goals
+  with one real pair among them.
+- Best six by score.
 
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed
 requirement also pairs with every partner such a diagnostic ties it to, so editing one

@@ -519,6 +519,14 @@ harness derives and a session resolves. Both are named `gc` on every surface.
   subjects are all gone is resolved by the store, journaled; one with surviving subjects
   writes a record on them, so a session re-judges the finding. This runs on every
   deleting commit, session and sweep alike.
+- Two marker diagnostics settle at every sweep, the moment their condition clears, so a
+  session never adjudicates them. An `incomplete-build` diagnostic resolves once a later
+  build has resumed its goal (the goal left `parked` in `status.yaml`). An
+  `uncovered-section` diagnostic resolves once its section is marked `covered` or
+  `non-normative`, or the section is gone. The [checks](./compilation.md#checks) file a
+  marker whose condition holds again and update a standing one in place, so a target
+  carries at most one open marker, the newest build's. The settle is journaled as
+  `settle-diagnostics`.
 
 Deletion runs the edit paths in reverse: dead prose kills quotes, which kills quoted
 facts, which opens `retrace` on the views and instances that referenced them; derived

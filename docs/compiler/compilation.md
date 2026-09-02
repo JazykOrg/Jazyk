@@ -228,7 +228,9 @@ Every check run journals a `checks` entry under its own generation.
 The checks also settle stranded diagnostics: every open judged diagnostic whose subjects
 are all missing from the graph is resolved and journaled (`settle-diagnostics`), so a
 store deleted into a stranded state heals at the next build or board poll instead of
-staying wedged.
+staying wedged. The `incomplete-build` and `uncovered-section` markers do not wait for
+the tail: [the sweep](./graph.md#the-sweep) resolves them at every commit once their
+condition clears, and the checks re-file a marker whose condition holds again.
 
 ## Convergence
 

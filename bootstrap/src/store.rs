@@ -1278,13 +1278,21 @@ impl Store {
             "and", "if", "with", "by", "it", "its", "when", "then", "that", "which", "this",
             "system", "not", "no", "only", "all", "each",
         ];
+        // The suffix goes, then a trailing "e", so "files" and "filed" both land on
+        // "fil" and "reverses" meets "reversed": the one stem per word the pairing
+        // rules count on.
         let stem = |t: &str| -> String {
+            let mut s = t.to_string();
             for suffix in ["ing", "ed", "s"] {
                 if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
-                    return t[..t.len() - suffix.len()].to_string();
+                    s = t[..t.len() - suffix.len()].to_string();
+                    break;
                 }
             }
-            t.to_string()
+            if s.len() > 3 && s.ends_with('e') {
+                s.pop();
+            }
+            s
         };
         let mut name_toks: BTreeSet<String> = BTreeSet::new();
         for e in entities {
@@ -1304,6 +1312,43 @@ impl Store {
             .collect()
     }
 
+    // The graph's hub: the entity co-referenced with the most other entities across
+    // requirements. A tie names none, and so does a graph whose entities never meet.
+    // Mirrors docs/compiler/reconciler.md#pairs.
+    fn hub_entity(&self) -> Option<String> {
+        let mut peers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in self.graph.requirements.values() {
+            let ids: BTreeSet<&str> = r.entities.iter().map(|e| self.resolve_id(e)).collect();
+            for a in &ids {
+                for b in &ids {
+                    if a != b {
+                        peers.entry(a).or_default().insert(b);
+                    }
+                }
+            }
+        }
+        let best = peers.values().map(|p| p.len()).max().unwrap_or(0);
+        if best == 0 {
+            return None;
+        }
+        let mut hubs = peers.iter().filter(|(_, p)| p.len() == best);
+        let hub = hubs.next().map(|(id, _)| id.to_string());
+        if hubs.next().is_some() {
+            return None;
+        }
+        hub
+    }
+
+    // The section reference a document opens with: its first section in order.
+    fn opening_section(&self, doc: &str) -> Option<&str> {
+        self.docs
+            .get(doc)?
+            .sections
+            .iter()
+            .min_by_key(|(_, s)| s.order)
+            .map(|(r, _)| r.as_str())
+    }
+
     // Deterministic neighbor set for one requirement: other requirements sharing an
     // entity, scored by overlapping content tokens, at least two shared, best six.
     // The rejudge-pair locality. Mirrors docs/compiler/reconciler.md#pairs.
@@ -1314,6 +1359,20 @@ impl Store {
         let subject_entities: BTreeSet<&str> =
             req.entities.iter().map(|e| self.resolve_id(e)).collect();
         let toks = self.content_tokens(&req.statement, &req.entities);
+        let hub = self.hub_entity();
+        let norm = crate::derive::normalize_state;
+        // The transition the subject carries, its subject resolved and its states
+        // normalized, so a restated transition meets its original.
+        let transition = req
+            .transition
+            .as_ref()
+            .map(|t| (self.resolve_id(&t.subject), norm(&t.from), norm(&t.to)));
+        // Whether the subject sits in its document's opening section, or in a later one.
+        let placement = req.source.as_ref().and_then(|s| {
+            let opening = self.opening_section(&s.doc)?;
+            let order = self.docs.get(&s.doc)?.sections.get(&s.section)?.order;
+            Some((s.doc.as_str(), s.section == opening, order))
+        });
         let mut scored: Vec<(usize, &String)> = Vec::new();
         for (oid, other) in &self.graph.requirements {
             if oid == rid {
@@ -1329,12 +1388,60 @@ impl Store {
                 .content_tokens(&other.statement, &other.entities)
                 .intersection(&toks)
                 .count();
+            // A pair whose only shared entity is the hub counts no entity and needs
+            // three shared tokens: sharing the hub says little, and a hub-sharing
+            // flood once derived forty-nine pair goals with one real pair among them.
+            let hub_only = shared_entities == 1
+                && hub
+                    .as_deref()
+                    .map(|h| subject_entities.contains(h) && other_entities.contains(h))
+                    .unwrap_or(false);
+            let (entity_score, token_bar) = if hub_only {
+                (0, 3)
+            } else {
+                (shared_entities, 2)
+            };
+            // Both carry a transition with the same subject and the same from and to:
+            // a restated transition is the likeliest duplicate. Qualifies on its own,
+            // scores two more.
+            let same_transition = match (&transition, &other.transition) {
+                (Some((subj, from, to)), Some(t)) => {
+                    self.resolve_id(&t.subject) == *subj
+                        && norm(&t.from) == *from
+                        && norm(&t.to) == *to
+                }
+                _ => false,
+            };
+            // An intro-versus-steps restatement: one sourced in the document's opening
+            // section, the other in a later section of the same document. Qualifies
+            // with one shared entity and one shared token (typically the verb stem),
+            // scores one more.
+            let intro_restatement = match (&placement, &other.source) {
+                (Some((doc, intro, order)), Some(s)) if s.doc == *doc => {
+                    let other_order = self
+                        .docs
+                        .get(&s.doc)
+                        .and_then(|d| d.sections.get(&s.section))
+                        .map(|sec| sec.order);
+                    let other_intro = self.opening_section(&s.doc) == Some(s.section.as_str());
+                    match other_order {
+                        Some(o) => (*intro && o > *order) || (other_intro && *order > o),
+                        None => false,
+                    }
+                }
+                _ => false,
+            };
             // Two shared content tokens qualify, and so do two shared entities: a
             // restatement built from the same entities can share every noun and
             // still share no other token, because the shared names leave the token
             // pool. Mirrors docs/compiler/reconciler.md#pairs.
-            if shared >= 2 || shared_entities >= 2 {
-                scored.push((shared + shared_entities, oid));
+            let qualifies = shared >= token_bar
+                || shared_entities >= 2
+                || same_transition
+                || (intro_restatement && shared >= 1);
+            if qualifies {
+                let boost = usize::from(same_transition) * 2 + usize::from(intro_restatement);
+                scored.push((shared + entity_score + boost, oid));
             }
         }
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
@@ -1621,10 +1728,83 @@ impl Store {
             .collect()
     }
 
-    // Whether any open judged diagnostic names a subject the graph no longer holds:
-    // the signal that the deterministic tail has settling to do.
+    // The marker diagnostics whose condition cleared: an incomplete-build marker whose
+    // goal left `parked`, an uncovered-section marker whose section is marked covered
+    // or non-normative, or is gone. Each with the reason its resolution records.
+    // Mirrors docs/compiler/graph.md#the-sweep.
+    fn cleared_markers(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (id, d) in &self.graph.diagnostics {
+            if d.lifecycle != "open" || d.subjects.len() != 1 {
+                continue;
+            }
+            let subject = &d.subjects[0];
+            match d.rule.as_str() {
+                "incomplete-build" => {
+                    if !self.status.parked.iter().any(|p| &p.target == subject) {
+                        out.push((
+                            id.clone(),
+                            format!("{} is no longer parked; a later build resumed it", subject),
+                        ));
+                    }
+                }
+                "uncovered-section" => {
+                    let Some((doc, r)) = subject.split_once('#') else {
+                        continue;
+                    };
+                    let rec = self.docs.get(doc);
+                    let gone = rec.map(|rec| !rec.sections.contains_key(r)).unwrap_or(true);
+                    let marked = rec
+                        .and_then(|rec| rec.coverage.get(r))
+                        .map(|c| c.state == "covered" || c.state == "non-normative")
+                        .unwrap_or(false);
+                    if gone {
+                        out.push((id.clone(), format!("section {} is gone", subject)));
+                    } else if marked {
+                        out.push((id.clone(), format!("section {} is covered", subject)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    // Whether any open judged diagnostic names a subject the graph no longer holds, or
+    // a marker's condition cleared: the signal that the deterministic tail has settling
+    // to do.
     pub fn has_dangling_diags(&self) -> bool {
-        !self.missing_diag_subjects().is_empty()
+        !self.missing_diag_subjects().is_empty() || !self.cleared_markers().is_empty()
+    }
+
+    // The level-triggered settle of the marker diagnostics, run at every sweep so a
+    // session never adjudicates a marker whose condition already cleared. Journaled as
+    // settle-diagnostics. Mirrors docs/compiler/graph.md#the-sweep.
+    pub fn settle_cleared_markers(&mut self) -> Vec<String> {
+        let _flock = FileLock::acquire(&self.out);
+        let cleared = self.cleared_markers();
+        if cleared.is_empty() {
+            return Vec::new();
+        }
+        let generation = self.status.generation + 1;
+        let build = format!("g{}", generation);
+        let mut actions = Vec::new();
+        let mut ops = Vec::new();
+        for (id, reason) in cleared {
+            if let Some(d) = self.graph.diagnostics.get_mut(&id) {
+                d.lifecycle = "resolved".to_string();
+                d.updated = Some(build.clone());
+            }
+            actions.push(format!("resolved {} ({})", id, reason));
+            ops.push(
+                serde_json::to_value(Op::ResolveDiagnostic { id, reason }).unwrap_or_default(),
+            );
+        }
+        self.status.generation = generation;
+        let entry = self.journal_entry(&build, &Commit::store("settle-diagnostics"), ops);
+        self.write_journal(&entry);
+        self.save();
+        actions
     }
 
     // The level-triggered half of deletion propagation: sweep every open judged
@@ -6778,6 +6958,209 @@ mod tests {
         assert!(!n.contains(&"req:other".to_string()), "{:?}", n);
     }
 
+    // The example-org expenses shapes: an opening-paragraph sentence against a step
+    // below it sharing one entity and the verb stem pairs (expenses-5 against
+    // expenses-6), and so does a restated transition (expenses-1 against expenses-15).
+    // Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn requirement_neighbors_pair_intro_restatements_and_same_transitions() {
+        let mut s = Store::default();
+        seed_doc(
+            &mut s,
+            "expenses.md",
+            "# Expenses\n\nAn employee files an expense claim.\n\n## The claim\n\nClaims are filed on form EX-12.\n\n## Steps\n\nFinance reimburses.\n",
+        );
+        let opening = s.opening_section("expenses.md").unwrap().to_string();
+        let mut later: Vec<String> = s.docs["expenses.md"]
+            .sections
+            .iter()
+            .filter(|(r, _)| **r != opening)
+            .map(|(r, _)| r.clone())
+            .collect();
+        later.sort();
+        assert_eq!(later.len(), 2, "{:?}", later);
+        s.graph
+            .entities
+            .insert("ent:expense-claim".into(), entity("Expense claim"));
+        s.graph
+            .entities
+            .insert("ent:employees".into(), entity("Employees"));
+        s.graph
+            .entities
+            .insert("ent:expense-tool".into(), entity("Expense tool"));
+        s.graph
+            .entities
+            .insert("ent:finance".into(), entity("Finance"));
+        s.graph
+            .entities
+            .insert("ent:payroll".into(), entity("Payroll"));
+        let mk = |statement: &str, entities: &[&str], section: &str| Requirement {
+            statement: statement.into(),
+            entities: entities.iter().map(|e| e.to_string()).collect(),
+            source: Some(mention("expenses.md", section, "q")),
+            ..Default::default()
+        };
+        // expenses-5 ~ expenses-6: one shared entity, one shared token ("file").
+        s.graph.requirements.insert(
+            "req:expenses-5".into(),
+            mk(
+                "An employee who spends their own money on company business files an expense claim to be reimbursed.",
+                &["ent:employees", "ent:expense-claim"],
+                &opening,
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:expenses-6".into(),
+            mk(
+                "Claims are filed on form EX-12 in the expense tool.",
+                &["ent:expense-claim", "ent:expense-tool"],
+                &later[0],
+            ),
+        );
+        // The same shape between two later sections: one token is not enough.
+        s.graph.requirements.insert(
+            "req:expenses-9".into(),
+            mk(
+                "A claim is filed with a receipt for every line.",
+                &["ent:expense-claim"],
+                &later[1],
+            ),
+        );
+        let n = s.requirement_neighbors("req:expenses-5");
+        assert!(n.contains(&"req:expenses-6".to_string()), "{:?}", n);
+        let n = s.requirement_neighbors("req:expenses-6");
+        assert!(n.contains(&"req:expenses-5".to_string()), "{:?}", n);
+        assert!(!n.contains(&"req:expenses-9".to_string()), "{:?}", n);
+        // expenses-1 ~ expenses-15 as a transition pair alone: same subject, same from
+        // and to, no shared token, one shared entity, different documents.
+        let tr = |from: &str, to: &str| {
+            Some(crate::model::Transition {
+                subject: "ent:expense-claim".into(),
+                from: from.into(),
+                to: to.into(),
+                trigger: None,
+                guard: None,
+            })
+        };
+        s.graph.requirements.insert(
+            "req:expenses-1".into(),
+            Requirement {
+                transition: tr("approved", "reimbursed"),
+                ..mk(
+                    "Finance pays it back.",
+                    &["ent:finance", "ent:expense-claim"],
+                    &later[1],
+                )
+            },
+        );
+        s.graph.requirements.insert(
+            "req:policies-4".into(),
+            Requirement {
+                transition: tr("Approved", "Reimbursed"),
+                source: Some(mention("policies.md", "/policies", "q")),
+                ..mk(
+                    "The next run settles the money owed.",
+                    &["ent:expense-claim", "ent:payroll"],
+                    &later[1],
+                )
+            },
+        );
+        s.graph.requirements.insert(
+            "req:policies-5".into(),
+            Requirement {
+                transition: tr("approved", "rejected"),
+                source: Some(mention("policies.md", "/policies", "q")),
+                ..mk(
+                    "A wrong total sends it back.",
+                    &["ent:expense-claim"],
+                    &later[1],
+                )
+            },
+        );
+        let n = s.requirement_neighbors("req:expenses-1");
+        assert!(n.contains(&"req:policies-4".to_string()), "{:?}", n);
+        assert!(!n.contains(&"req:policies-5".to_string()), "{:?}", n);
+    }
+
+    // The qwen pair flood: requirements sharing only the hub entity need three shared
+    // tokens, a pair sharing any other entity still needs two, and a graph whose
+    // entities never meet has no hub. Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn requirement_neighbors_discount_the_hub() {
+        let mut s = Store::default();
+        for (id, name) in [
+            ("ent:order", "Order"),
+            ("ent:customer", "Customer"),
+            ("ent:shipment", "Shipment"),
+            ("ent:payment", "Payment"),
+        ] {
+            s.graph.entities.insert(id.into(), entity(name));
+        }
+        let mk = |statement: &str, entities: &[&str]| Requirement {
+            statement: statement.into(),
+            entities: entities.iter().map(|e| e.to_string()).collect(),
+            source: Some(mention("m.md", "/m", "q")),
+            ..Default::default()
+        };
+        // ent:order meets three peers; every other entity meets one.
+        s.graph.requirements.insert(
+            "req:o-1".into(),
+            mk(
+                "The Customer places an Order; the tool records the total and the date.",
+                &["ent:order", "ent:customer"],
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:o-2".into(),
+            mk(
+                "An Order ships in one Shipment; the tool records the carrier.",
+                &["ent:order", "ent:shipment"],
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:o-3".into(),
+            mk(
+                "An Order is paid by one Payment; the tool records the date.",
+                &["ent:order", "ent:payment"],
+            ),
+        );
+        assert_eq!(s.hub_entity().as_deref(), Some("ent:order"));
+        // Two generic tokens over the hub alone ("tool", "record"): not a pair.
+        s.graph.requirements.insert(
+            "req:o-4".into(),
+            mk("The tool records every Order change.", &["ent:order"]),
+        );
+        // Three shared tokens over the hub alone: still a pair.
+        s.graph.requirements.insert(
+            "req:o-5".into(),
+            mk(
+                "The tool records the date of an Order total.",
+                &["ent:order"],
+            ),
+        );
+        // Two shared tokens over a non-hub entity: a pair as before.
+        s.graph.requirements.insert(
+            "req:c-1".into(),
+            mk(
+                "A Customer who places nothing records no total.",
+                &["ent:customer"],
+            ),
+        );
+        let n = s.requirement_neighbors("req:o-1");
+        assert!(!n.contains(&"req:o-4".to_string()), "{:?}", n);
+        assert!(n.contains(&"req:o-5".to_string()), "{:?}", n);
+        assert!(n.contains(&"req:c-1".to_string()), "{:?}", n);
+        // A graph of one entity, or of tied peers, names no hub.
+        let mut lone = Store::default();
+        lone.graph
+            .entities
+            .insert("ent:util".into(), entity("Util"));
+        lone.graph
+            .requirements
+            .insert("req:u-1".into(), mk("Util sorts.", &["ent:util"]));
+        assert_eq!(lone.hub_entity(), None);
+    }
+
     #[test]
     fn pair_diagnostic_sticky_regardless_of_subject_order() {
         let mut s = Store {
@@ -7071,6 +7454,102 @@ mod tests {
         );
         // Idempotent: a second sweep resolves nothing new.
         assert!(s.settle_dangling_diags().is_empty());
+    }
+
+    // The marker diagnostics settle at the sweep once their condition clears: an
+    // incomplete-build marker whose goal left parked, an uncovered-section marker whose
+    // section is marked or gone. Mirrors docs/compiler/graph.md#the-sweep.
+    #[test]
+    fn sweep_settles_cleared_markers() {
+        let mut s = Store {
+            out: own_dir("markers"),
+            ..Default::default()
+        };
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\n\nThe Cart holds items.\n\n## A\n\nA body.\n\n## B\n\nB body.\n\n## C\n\nC body.\n",
+        );
+        let refs: Vec<String> = s.docs["t.md"].sections.keys().cloned().collect();
+        assert_eq!(refs.len(), 4, "{:?}", refs);
+        let mark = |s: &mut Store, r: &str, state: &str| {
+            s.docs.get_mut("t.md").unwrap().coverage.insert(
+                r.to_string(),
+                Coverage {
+                    state: state.into(),
+                    note: None,
+                    claimed_by: None,
+                },
+            );
+        };
+        mark(&mut s, &refs[1], "covered");
+        mark(&mut s, &refs[2], "non-normative");
+        let marker = |rule: &str, subject: &str| Diagnostic {
+            rule: rule.into(),
+            severity: "warning".into(),
+            subjects: vec![subject.into()],
+            message: "marker".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        };
+        for (i, r) in refs.iter().enumerate() {
+            s.graph.diagnostics.insert(
+                format!("diag:uncovered-section-{}", i),
+                marker("uncovered-section", &format!("t.md#{}", r)),
+            );
+        }
+        s.graph.diagnostics.insert(
+            "diag:uncovered-section-9".into(),
+            marker("uncovered-section", "t.md#/t/gone"),
+        );
+        s.status.parked.push(Goal {
+            id: "g:reconcile-section:t.md#/t/c".into(),
+            kind: "reconcile-section".into(),
+            target: format!("t.md#{}", refs[3]),
+            ..Default::default()
+        });
+        s.graph.diagnostics.insert(
+            "diag:incomplete-build-1".into(),
+            marker("incomplete-build", &format!("t.md#{}", refs[3])),
+        );
+        s.graph.diagnostics.insert(
+            "diag:incomplete-build-2".into(),
+            marker("incomplete-build", &format!("t.md#{}", refs[1])),
+        );
+        assert!(s.has_dangling_diags());
+
+        let actions = s.settle_cleared_markers();
+        let lc = |s: &Store, id: &str| s.graph.diagnostics[id].lifecycle.clone();
+        // Unmarked sections keep their marker; covered, non-normative, and gone resolve.
+        assert_eq!(lc(&s, "diag:uncovered-section-0"), "open");
+        assert_eq!(lc(&s, "diag:uncovered-section-1"), "resolved");
+        assert_eq!(lc(&s, "diag:uncovered-section-2"), "resolved");
+        assert_eq!(lc(&s, "diag:uncovered-section-3"), "open");
+        assert_eq!(lc(&s, "diag:uncovered-section-9"), "resolved");
+        // The goal still parked keeps its marker; the resumed one's resolves.
+        assert_eq!(lc(&s, "diag:incomplete-build-1"), "open");
+        assert_eq!(lc(&s, "diag:incomplete-build-2"), "resolved");
+        assert_eq!(actions.len(), 4, "{:?}", actions);
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", s.status.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "settle-diagnostics");
+        assert_eq!(entry.mutations.len(), 4);
+        // Idempotent, and the goal leaving parked clears the last marker next sweep.
+        assert!(s.settle_cleared_markers().is_empty());
+        s.status.parked.clear();
+        let actions = s.settle_cleared_markers();
+        assert_eq!(actions.len(), 1, "{:?}", actions);
+        assert_eq!(lc(&s, "diag:incomplete-build-1"), "resolved");
+        assert!(!s.has_dangling_diags());
     }
 
     // Check reconciliation resolves only its own single-subject findings; a judged

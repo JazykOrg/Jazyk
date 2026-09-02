@@ -93,6 +93,89 @@ pub struct AcpRunner {
     // The build's worker id when this runner is part of one internal build; its
     // servings skip the build-lease refusal and the release gate for their batches.
     build_token: Mutex<Option<String>>,
+    // Attempts spent per batch, keyed by its first goal, so `sessionFailed` names the
+    // attempt number the scheduler will count. A resolved goal clears its count.
+    attempts: Mutex<BTreeMap<String, u32>>,
+}
+
+// One session attempt's terminal line, owed from `sessionStart` until exactly one of
+// `sessionDone`, `sessionFailed`, or `sessionEnded` lands. Dropping it still open (a
+// panic, an exit path nobody closed) emits `sessionEnded` naming that, so no attempt
+// vanishes from the trace. Mirrors docs/compiler/sessions.md#trace-events.
+pub(crate) struct Attempt {
+    trace: Trace,
+    label: String,
+    goals: Vec<String>,
+    attempt: u32,
+    open: bool,
+}
+
+impl Attempt {
+    pub(crate) fn open(trace: &Trace, start: TraceEvent, attempt: u32) -> Attempt {
+        let (label, goals) = match &start {
+            TraceEvent::SessionStart { label, goals, .. } => (label.clone(), goals.clone()),
+            _ => unreachable!("an attempt opens on sessionStart"),
+        };
+        trace.event(start);
+        Attempt {
+            trace: trace.clone(),
+            label,
+            goals,
+            attempt,
+            open: true,
+        }
+    }
+
+    // The batch landed: the store's word, never the agent's.
+    pub(crate) fn done(mut self, staged: usize, rounds: u32) {
+        self.open = false;
+        self.trace.event(TraceEvent::SessionDone {
+            label: self.label.clone(),
+            goals: self.goals.clone(),
+            staged,
+            rounds,
+            mode: "done".into(),
+            summary: String::new(),
+        });
+    }
+
+    // The attempt failed: the session errored, or the batch did not land.
+    pub(crate) fn failed(mut self, error: &str) {
+        self.open = false;
+        self.trace.event(TraceEvent::SessionFailed {
+            label: self.label.clone(),
+            goals: self.goals.clone(),
+            attempt: self.attempt,
+            error: error.to_string(),
+        });
+    }
+
+    // Nothing landed and the session is not to blame.
+    pub(crate) fn ended(mut self, reason: &str) {
+        self.open = false;
+        self.trace.event(TraceEvent::SessionEnded {
+            label: self.label.clone(),
+            goals: self.goals.clone(),
+            reason: reason.to_string(),
+        });
+    }
+}
+
+impl Drop for Attempt {
+    fn drop(&mut self) {
+        if self.open {
+            self.open = false;
+            self.trace.event(TraceEvent::SessionEnded {
+                label: self.label.clone(),
+                goals: self.goals.clone(),
+                reason: if std::thread::panicking() {
+                    "the runner panicked mid-attempt".into()
+                } else {
+                    "the runner left the attempt without a verdict".into()
+                },
+            });
+        }
+    }
 }
 
 impl AcpRunner {
@@ -112,6 +195,7 @@ impl AcpRunner {
             project: project.clone(),
             out: out.to_path_buf(),
             build_token: Mutex::new(None),
+            attempts: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -296,37 +380,86 @@ impl AcpRunner {
             failed: Some(failed),
             resolved: Vec::new(),
         };
+        // The attempt opens before anything can fail, so every exit below closes it
+        // with exactly one terminal event (sessions.md#trace-events).
+        let first_goal = goal_ids.first().cloned().unwrap_or_else(|| label.clone());
+        let attempt_no = self
+            .attempts
+            .lock()
+            .unwrap()
+            .get(&first_goal)
+            .copied()
+            .unwrap_or(0)
+            + 1;
+        let attempt = Attempt::open(
+            trace,
+            TraceEvent::SessionStart {
+                label: label.clone(),
+                goals: goal_ids.clone(),
+                task: batch.kind(),
+                target: batch
+                    .goals
+                    .first()
+                    .map(|g| g.target.clone())
+                    .unwrap_or_default(),
+                doc: scope.doc(),
+                sections: scope
+                    .reconcile_scopes()
+                    .iter()
+                    .flat_map(|g| g.sections.iter().cloned())
+                    .collect(),
+                dirty: scope
+                    .reconcile_scopes()
+                    .iter()
+                    .map(|g| g.sections.len())
+                    .sum(),
+                stale: scope.stale_anchors().len(),
+                proposals: scope.proposals().len(),
+            },
+            attempt_no,
+        );
+        let report = self.run_attempt(batch, trace, attempt, &failed_report);
+        // A goal that resolved starts its count over; anything else spent an attempt.
+        let mut attempts = self.attempts.lock().unwrap();
+        if report.resolved.contains(&first_goal) {
+            attempts.remove(&first_goal);
+        } else {
+            attempts.insert(first_goal, attempt_no);
+        }
+        report
+    }
+
+    // The attempt proper. Every return closes `attempt`: `done` when the store says
+    // the batch landed, `failed` when the session errored or the batch did not land,
+    // `ended` when nothing landed through no fault of the session (the build was
+    // cancelled, or the batch is a ledger batch its caller judges). The guard's drop
+    // covers a panic. Mirrors docs/compiler/sessions.md#trace-events.
+    fn run_attempt(
+        &self,
+        batch: &BatchRun,
+        trace: &Trace,
+        attempt: Attempt,
+        failed_report: &dyn Fn(String, u32, u64) -> SessionReport,
+    ) -> SessionReport {
+        let label = batch.id.clone();
+        let goal_ids = batch.goal_ids();
+        let scope = WorkScope::for_batch(&batch.id, &batch.goals);
         let agent = match self.executor_for(batch) {
             Ok(a) => a,
-            Err(e) => return failed_report(format!("executor: {}", e), 0, 0),
+            Err(e) => {
+                let e = format!("executor: {}", e);
+                attempt.failed(&e);
+                return failed_report(e, 0, 0);
+            }
         };
-        trace.event(TraceEvent::SessionStart {
-            label: label.clone(),
-            goals: goal_ids.clone(),
-            task: batch.kind(),
-            target: batch
-                .goals
-                .first()
-                .map(|g| g.target.clone())
-                .unwrap_or_default(),
-            doc: scope.doc(),
-            sections: scope
-                .reconcile_scopes()
-                .iter()
-                .flat_map(|g| g.sections.iter().cloned())
-                .collect(),
-            dirty: scope
-                .reconcile_scopes()
-                .iter()
-                .map(|g| g.sections.len())
-                .sum(),
-            stale: scope.stale_anchors().len(),
-            proposals: scope.proposals().len(),
-        });
         let gen_before = crate::store::read_generation(&self.out);
         let session = match self.session_on(&agent, vec![self.mcp_spec(batch, &agent)]) {
             Ok(s) => s,
-            Err(e) => return failed_report(format!("session: {}", e), 0, 0),
+            Err(e) => {
+                let e = format!("session: {}", e);
+                attempt.failed(&e);
+                return failed_report(e, 0, 0);
+            }
         };
         let translator = Arc::new(Mutex::new(
             UpdateTranslator::new(&label).with_doc(scope.doc()),
@@ -384,45 +517,48 @@ impl AcpRunner {
                 if e.contains("acp host") {
                     self.hosts.lock().unwrap().remove(&agent.name);
                 }
+                attempt.failed(&e);
                 return failed_report(e, rounds, tokens);
             }
         };
 
         let gen_after = crate::store::read_generation(&self.out);
         let (applied, resolved) = journal_diff(&self.out, gen_before, gen_after, &goal_ids);
-
-        // Success is the store's word: the batch's goals must be resolved, failed,
-        // or parked; a batch whose goals all still stand open did not land. Ledger
-        // batches are judged by their callers against the ledger.
-        let failed = if batch.is_ledger() {
-            None
-        } else {
-            let board = crate::board::Board::compute(&self.project, &self.out);
-            let still_open: Vec<&String> = goal_ids.iter().filter(|id| board.open(id)).collect();
-            if resolved.is_empty() && !still_open.is_empty() {
-                Some(format!(
-                    "the batch did not land (session stopped: {}{})",
-                    stop.stop,
-                    if stop.idled {
-                        ", idle watchdog fired"
-                    } else {
-                        ""
-                    }
-                ))
+        let stopped = format!(
+            "session stopped: {}{}",
+            stop.stop,
+            if stop.idled {
+                ", idle watchdog fired"
             } else {
-                None
+                ""
             }
-        };
-        if failed.is_none() && !batch.is_ledger() {
-            trace.event(TraceEvent::SessionDone {
-                label,
-                goals: goal_ids,
-                staged: applied,
+        );
+
+        // A ledger batch is judged by its caller against the ledger: the attempt ends
+        // with the verdict left to it.
+        if batch.is_ledger() {
+            attempt.ended(&format!("the ledger judges what landed ({})", stopped));
+            return SessionReport {
+                applied,
                 rounds,
-                mode: "done".into(),
-                summary: String::new(),
-            });
+                tokens,
+                failed: None,
+                resolved,
+            };
         }
+        // Success is the store's word: the batch's goals must be resolved, failed,
+        // or parked; a batch whose goals all still stand open did not land.
+        let board = crate::board::Board::compute(&self.project, &self.out);
+        let still_open: Vec<&String> = goal_ids.iter().filter(|id| board.open(id)).collect();
+        let landed = !(resolved.is_empty() && !still_open.is_empty());
+        let failed = close_compile_attempt(
+            attempt,
+            landed,
+            trace.is_cancelled(),
+            &stopped,
+            applied,
+            rounds,
+        );
         SessionReport {
             applied,
             rounds,
@@ -517,4 +653,182 @@ fn journal_diff(out: &Path, from: u64, to: u64, goal_ids: &[String]) -> (usize, 
         }
     }
     (applied, resolved)
+}
+
+// The terminal line of a compile attempt whose session returned: `sessionDone` when
+// the batch landed, `sessionEnded` when it did not because the build was cancelled
+// (the session is not at fault, but the report still says nothing landed), and
+// `sessionFailed` otherwise. Returns the report's failure.
+// Mirrors docs/compiler/sessions.md#trace-events.
+fn close_compile_attempt(
+    attempt: Attempt,
+    landed: bool,
+    cancelled: bool,
+    stopped: &str,
+    applied: usize,
+    rounds: u32,
+) -> Option<String> {
+    match (landed, cancelled) {
+        (true, _) => {
+            attempt.done(applied, rounds);
+            None
+        }
+        (false, true) => {
+            let reason = format!("the build was cancelled ({})", stopped);
+            attempt.ended(&reason);
+            Some(reason)
+        }
+        (false, false) => {
+            let e = format!("the batch did not land ({})", stopped);
+            attempt.failed(&e);
+            Some(e)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::TraceLevel;
+    use std::sync::atomic::AtomicBool;
+
+    // A trace whose events collect in a vector, with the build's cancel flag exposed.
+    fn capture() -> (Trace, Arc<Mutex<Vec<TraceEvent>>>, Arc<AtomicBool>) {
+        let events: Arc<Mutex<Vec<TraceEvent>>> = Default::default();
+        let sink = events.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let trace = Trace::to_sink(
+            TraceLevel::Normal,
+            Arc::new(move |ev| sink.lock().unwrap().push(ev.clone())),
+            cancel.clone(),
+        );
+        (trace, events, cancel)
+    }
+
+    fn start(label: &str) -> TraceEvent {
+        TraceEvent::SessionStart {
+            label: label.into(),
+            goals: vec!["g:reconcile-section:shop.md#/shop".into()],
+            task: "reconcile-section".into(),
+            target: "shop.md#/shop".into(),
+            doc: Some("shop.md".into()),
+            sections: vec![],
+            dirty: 1,
+            stale: 0,
+            proposals: 0,
+        }
+    }
+
+    // The terminal events among what a label produced, as (kind, detail).
+    fn terminals(events: &[TraceEvent], label: &str) -> Vec<(String, String)> {
+        events
+            .iter()
+            .filter_map(|ev| match ev {
+                TraceEvent::SessionDone { label: l, mode, .. } if l == label => {
+                    Some(("sessionDone".to_string(), mode.clone()))
+                }
+                TraceEvent::SessionFailed {
+                    label: l,
+                    attempt,
+                    error,
+                    ..
+                } if l == label => Some((
+                    "sessionFailed".to_string(),
+                    format!("{} {}", attempt, error),
+                )),
+                TraceEvent::SessionEnded {
+                    label: l, reason, ..
+                } if l == label => Some(("sessionEnded".to_string(), reason.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // A failed attempt closes with exactly one `sessionFailed` carrying the attempt
+    // number; the scheduler's own `sessionFailed` for the same attempt is dropped.
+    // Mirrors docs/compiler/sessions.md#trace-events.
+    #[test]
+    fn a_failed_attempt_leaves_exactly_one_terminal_event() {
+        let (trace, events, _) = capture();
+        let attempt = Attempt::open(&trace, start("b15-2"), 2);
+        let failed =
+            close_compile_attempt(attempt, false, false, "session stopped: end_turn", 0, 3);
+        assert_eq!(
+            failed.as_deref(),
+            Some("the batch did not land (session stopped: end_turn)")
+        );
+        // The scheduler restates the failure after the runner returns.
+        trace.event(TraceEvent::SessionFailed {
+            label: "b15-2".into(),
+            goals: vec![],
+            attempt: 2,
+            error: failed.clone().unwrap(),
+        });
+        let t = terminals(&events.lock().unwrap(), "b15-2");
+        assert_eq!(t.len(), 1, "{:?}", t);
+        assert_eq!(t[0].0, "sessionFailed");
+        assert!(t[0].1.starts_with("2 the batch did not land"), "{}", t[0].1);
+        // A host death before the prompt closes the same way.
+        let attempt = Attempt::open(&trace, start("b15-2"), 3);
+        attempt.failed("session: acp host is gone");
+        let t = terminals(&events.lock().unwrap(), "b15-2");
+        assert_eq!(t.len(), 2, "{:?}", t);
+        assert_eq!(t[1].1, "3 session: acp host is gone");
+    }
+
+    // A cancelled attempt with nothing landed closes with `sessionEnded` naming the
+    // cancellation, and the report still says nothing landed; a landed batch stays
+    // `sessionDone` even when the cancel flag is up.
+    // Mirrors docs/compiler/sessions.md#trace-events.
+    #[test]
+    fn a_cancelled_attempt_leaves_a_terminal_event() {
+        let (trace, events, cancel) = capture();
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let attempt = Attempt::open(&trace, start("b21"), 1);
+        let failed = close_compile_attempt(
+            attempt,
+            false,
+            trace.is_cancelled(),
+            "session stopped: cancelled",
+            0,
+            0,
+        );
+        assert!(failed.is_some());
+        let t = terminals(&events.lock().unwrap(), "b21");
+        assert_eq!(t.len(), 1, "{:?}", t);
+        assert_eq!(t[0].0, "sessionEnded");
+        assert_eq!(
+            t[0].1,
+            "the build was cancelled (session stopped: cancelled)"
+        );
+        let attempt = Attempt::open(&trace, start("b22"), 1);
+        assert!(
+            close_compile_attempt(attempt, true, true, "session stopped: end_turn", 4, 6).is_none()
+        );
+        let t = terminals(&events.lock().unwrap(), "b22");
+        assert_eq!(t, vec![("sessionDone".to_string(), "done".to_string())]);
+    }
+
+    // An attempt the runner never closes (a panic mid-attempt) still ends with one
+    // `sessionEnded` naming that, and a ledger attempt ends with the verdict left to
+    // its ledger. Mirrors docs/compiler/sessions.md#trace-events.
+    #[test]
+    fn an_abandoned_attempt_still_leaves_a_terminal_event() {
+        let (trace, events, _) = capture();
+        let t2 = trace.clone();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _attempt = Attempt::open(&t2, start("b30"), 1);
+            panic!("mid-attempt");
+        }));
+        assert!(outcome.is_err());
+        let t = terminals(&events.lock().unwrap(), "b30");
+        assert_eq!(t.len(), 1, "{:?}", t);
+        assert_eq!(t[0].0, "sessionEnded");
+        assert!(t[0].1.contains("panicked"), "{}", t[0].1);
+        let attempt = Attempt::open(&trace, start("g:generate:ent:cart"), 1);
+        attempt.ended("the ledger judges what landed (session stopped: end_turn)");
+        let t = terminals(&events.lock().unwrap(), "g:generate:ent:cart");
+        assert_eq!(t.len(), 1);
+        assert!(t[0].1.starts_with("the ledger judges"));
+    }
 }

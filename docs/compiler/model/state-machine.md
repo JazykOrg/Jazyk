@@ -14,8 +14,8 @@ sm:order:
   states: [placed, paid, held]
   initial: placed
   transitions:
-    - {from: placed, to: paid, trigger: payment succeeds, requirement: req:shop-7}
-    - {from: placed, to: held, trigger: payment declined, requirement: req:shop-8}
+    - {from: placed, to: paid, trigger: payment succeeds, requirements: [req:shop-7, req:shop-12]}
+    - {from: placed, to: held, trigger: payment declined, requirements: [req:shop-8]}
 ```
 
 - The map key is the id: `sm:<entity-slug>`, the subject's slug. See
@@ -23,9 +23,9 @@ sm:order:
 - `subject`: the entity whose lifecycle this is.
 - `states`: the union of the names the transitions use.
 - `initial`: the state no transition enters, when exactly one exists.
-- `transitions`: `[{from, to, trigger?, guard?, requirement}]`, one per contributing
-  requirement. Every transition carries its requirement, so every arrow walks to a
-  sentence.
+- `transitions`: `[{from, to, trigger?, guard?, requirements: [ids]}]`, one per arrow.
+  `requirements` lists the contributing requirement ids and is never empty. Every
+  transition carries its requirements, so every arrow walks to a sentence.
 
 ## Derivation
 
@@ -34,10 +34,21 @@ On every commit, after the changeset lands:
 - Every requirement whose `transition.subject` is the entity contributes one transition.
   The gates guarantee the subject is listed in the requirement's `entities` and exists.
 - State names compare after trimming, lowercasing, and collapsing whitespace. The stored
-  spelling is the first occurrence in document order.
+  spelling is the first occurrence in document order. Triggers and guards compare the
+  same way.
+- A restated transition draws one arrow. Two contributions merge when their `from` and
+  `to` are the same states, their triggers agree, and their guards agree. Two triggers
+  agree when they are equal after normalization or when only one contribution names
+  one; guards agree the same way. The merged arrow carries the trigger and the guard its
+  contributions name, in the first spelling in document order, and lists every
+  contributing requirement in `requirements`, the way a
+  [relationship](./relationship.md#fields) groups its contributions. Two distinct
+  triggers, or two distinct guards, stay two arrows: the model wrote them to
+  distinguish the transitions.
 - `initial` is the state with no incoming transition when exactly one such state exists.
   With none or several, `initial` is absent.
-- Transitions are ordered by requirement id, so the shard diffs cleanly.
+- Arrows are ordered by their lowest requirement id and `requirements` within an arrow
+  by id, so the shard diffs cleanly.
 - A machine whose last transition disappears is removed. Nothing retraces it: the default
   `state` view that renders it is removed at the same commit, and a curated `state` or
   `timing` view over the subject renders without it.
@@ -53,9 +64,10 @@ guards as text and never evaluates them.
 ## Checks
 
 The machine checks run on every derived machine at the end of every build and on
-`jazyk check`. They file diagnostics with the subject entity among the `subjects`, update
-them in place while the condition holds, and resolve them when it clears. See
-[checks](../compilation.md#checks).
+`jazyk check`. They read the merged arrows, so a restated transition never trips a check
+that its single statement would not. They file diagnostics with the subject entity among
+the `subjects`, update them in place while the condition holds, and resolve them when it
+clears. See [checks](../compilation.md#checks).
 
 - `unreachable-state` (warning): a state no path from the initial state reaches. With
   several candidate initial states, reachability is computed from all of them jointly.
@@ -67,8 +79,8 @@ them in place while the condition holds, and resolve them when it clears. See
 - `nondeterministic-transition` (warning): two transitions out of one state on the same
   trigger with overlapping guards. Guards overlap when either transition has none or when
   both guards are equal after normalization. Two distinct guards are taken as disjoint,
-  because the model wrote them to distinguish the transitions. One diagnostic per pair,
-  the two requirements as subjects.
+  because the model wrote them to distinguish the transitions. One diagnostic per pair of
+  arrows, the contributing requirements of both arrows as subjects.
 - `unhandled-event` (info): an event the subject's requirements name that some state does
   not handle. The event set is the union of the machine's triggers. A pair (state,
   trigger) with no transition out of that state on that trigger, self-transitions

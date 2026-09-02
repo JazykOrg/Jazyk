@@ -71,10 +71,131 @@ pub struct Ledger {
     // Mirrors docs/consumers/gen.md#the-build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<Build>,
+    // Rows recorded over an open error diagnostic: requirement id to the diagnostic
+    // ids open at record time. A record, never a verdict; a later record of the row
+    // under a clean graph clears its entry.
+    // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contradicted: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub entities: BTreeMap<String, EntityGen>,
     #[serde(default)]
     pub requirements: BTreeMap<String, ReqRow>,
+}
+
+impl Ledger {
+    // Flag or clear one row against the diagnostics open right now. Called by every
+    // record of a row, so the map never outlives the dispute.
+    // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
+    pub fn record_contradicted(&mut self, store: &Store, rid: &str) -> Vec<String> {
+        let ids: Vec<String> = open_errors_on(store, rid)
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(String::from))
+            .collect();
+        if ids.is_empty() {
+            self.contradicted.remove(rid);
+        } else {
+            self.contradicted.insert(rid.to_string(), ids.clone());
+        }
+        ids
+    }
+}
+
+// The open error diagnostics naming a requirement, suppressed excluded: what a
+// package says before a session writes against a disputed statement. Sorted by id.
+// Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
+pub fn open_errors_on(store: &Store, rid: &str) -> Vec<Value> {
+    let rid = store.resolve_id(rid);
+    let mut out: Vec<(&String, &crate::model::Diagnostic)> = store
+        .graph
+        .diagnostics
+        .iter()
+        .filter(|(_, d)| {
+            d.lifecycle == "open"
+                && d.severity == "error"
+                && d.triage.as_deref() != Some("suppressed")
+                && d.subjects.iter().any(|s| store.resolve_id(s) == rid)
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(b.0));
+    out.iter()
+        .map(|(id, d)| json!({"id": id, "rule": d.rule, "message": d.message}))
+        .collect()
+}
+
+// The tool family a word of a run command or a toolchain description names. Unknown
+// words name none, so a divergence is only ever declared between two known families.
+// Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+fn tool_family(word: &str) -> Option<&'static str> {
+    let w = word
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
+        .to_lowercase();
+    let w = w.rsplit('/').next().unwrap_or(&w);
+    Some(match w {
+        "cargo" | "rustc" | "rust" => "rust",
+        "python" | "python3" | "pytest" | "pip" | "pip3" | "poetry" | "uv" => "python",
+        "node" | "npm" | "npx" | "yarn" | "pnpm" | "jest" | "vitest" | "mocha" | "tsc" | "deno"
+        | "bun" | "javascript" | "typescript" => "node",
+        "go" | "golang" => "go",
+        "mvn" | "maven" | "gradle" | "java" | "javac" | "kotlin" => "jvm",
+        "dotnet" | "csharp" | "c#" => "dotnet",
+        "ruby" | "rspec" | "bundle" | "gem" => "ruby",
+        "swift" => "swift",
+        "gcc" | "clang" | "g++" | "make" | "cmake" | "ctest" => "c",
+        "php" | "phpunit" | "composer" => "php",
+        _ => return None,
+    })
+}
+
+// The decided medium's toolchain against the recorded programmatic run commands.
+// Some when both name a tool family and share none: the medium diverged from what
+// the sessions actually wrote. None when either side names no known family.
+// Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+pub fn medium_divergence(ledger: &Ledger) -> Option<String> {
+    let medium = ledger.medium.as_ref()?;
+    let mut toolchain: Vec<&str> = medium
+        .toolchain
+        .split_whitespace()
+        .filter_map(tool_family)
+        .collect();
+    toolchain.sort();
+    toolchain.dedup();
+    if toolchain.is_empty() {
+        return None;
+    }
+    // One family per command: the first known tool word, so `sh -c 'cargo test'`
+    // reads as Rust and `python -m pytest` as Python.
+    let mut commands: Vec<(&'static str, &str)> = ledger
+        .requirements
+        .values()
+        .filter(|r| r.test.kind == "programmatic")
+        .filter_map(|r| {
+            r.test
+                .run
+                .split_whitespace()
+                .find_map(tool_family)
+                .map(|f| (f, r.test.run.as_str()))
+        })
+        .collect();
+    commands.sort();
+    commands.dedup();
+    if commands.is_empty() || commands.iter().any(|(f, _)| toolchain.contains(f)) {
+        return None;
+    }
+    let mut families: Vec<&str> = commands.iter().map(|(f, _)| *f).collect();
+    families.dedup();
+    let sample: Vec<String> = commands
+        .iter()
+        .take(3)
+        .map(|(_, run)| format!("`{}`", run))
+        .collect();
+    Some(format!(
+        "the decided medium's toolchain `{}` names {}, while the recorded run commands name {} ({})",
+        medium.toolchain,
+        toolchain.join(", "),
+        families.join(", "),
+        sample.join(", ")
+    ))
 }
 
 // What the deliverable is made of, decided once for the whole deliverable before any
@@ -592,7 +713,7 @@ pub fn decide_medium(
     // an empty deliverable.
     // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
     let existing = list_existing_files(deliverable);
-    let tree = if existing.is_empty() {
+    let mut tree = if existing.is_empty() {
         "The deliverable directory is empty: decide from the statements alone.".to_string()
     } else {
         format!(
@@ -600,6 +721,24 @@ pub fn decide_medium(
             existing.join("\n")
         )
     };
+    // Run commands recorded before any entity generated (bound tests) pin the
+    // toolchain the same way an existing tree does: a re-decision after a divergence
+    // must land on what the sessions actually wrote.
+    // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    let mut commands: Vec<String> = Ledger::load(&store.out)
+        .requirements
+        .values()
+        .filter(|r| r.test.kind == "programmatic" && !r.test.run.trim().is_empty())
+        .map(|r| r.test.run.clone())
+        .collect();
+    commands.sort();
+    commands.dedup();
+    if !commands.is_empty() {
+        tree.push_str(&format!(
+            "\n\nThe ledger already records these test run commands:\n{}\nRecorded commands pin the toolchain: decide the toolchain these commands run under, never a different one.",
+            commands.iter().take(10).map(|c| format!("- {}", c)).collect::<Vec<_>>().join("\n")
+        ));
+    }
     let system =
         "You decide what a deliverable is made of. Answer with one JSON object and nothing else.";
     let user = format!(
@@ -846,6 +985,10 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                             "hash": hash_hex(&r.statement),
                             "testName": test_name(rid, &r.statement),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
+                            // The statement is disputed while these stand; the session
+                            // writes against one side of an open question and must
+                            // know it (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
+                            "openDiagnostics": open_errors_on(store, rid),
                         })
                     })
                 })
@@ -942,6 +1085,14 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "changed": changed,
         "generatedFiles": manifest,
         "runCommands": run_commands,
+        // The requirements under an open error diagnostic, and the medium's standing
+        // divergence from the recorded commands, so neither is news at record time.
+        "contradicted": rids
+            .iter()
+            .filter(|rid| !open_errors_on(store, rid).is_empty())
+            .cloned()
+            .collect::<Vec<String>>(),
+        "mediumWarning": medium_divergence(&ledger),
         "supportFiles": ledger.support,
         // The entry the build runs, with what it holds today: a later task returns it
         // updated so the artifact carries its part too
@@ -1127,6 +1278,9 @@ pub fn mark(
         .requirements
         .retain(|rid, _| store.graph.requirements.contains_key(store.resolve_id(rid)));
     let pruned = before - ledger.requirements.len();
+    ledger
+        .contradicted
+        .retain(|rid, _| store.graph.requirements.contains_key(store.resolve_id(rid)));
     // One build per deliverable: the first task that needs one establishes it, later
     // tasks receive it in their package and reuse it.
     // Mirrors docs/consumers/gen.md#the-build.
@@ -1197,6 +1351,10 @@ pub fn mark(
         },
     );
     let mut seeded = 0;
+    // Rows landing over an open error diagnostic: named in the reply and kept in
+    // the ledger, so generation never runs green over a contradiction silently.
+    // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
+    let mut contradicted: BTreeMap<String, Vec<String>> = BTreeMap::new();
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
             // A hollow row or an empty requirement id is a filled-in blank.
@@ -1298,6 +1456,10 @@ pub fn mark(
                     evidence,
                 },
             );
+            let open = ledger.record_contradicted(store, &rid);
+            if !open.is_empty() {
+                contradicted.insert(rid.clone(), open);
+            }
             seeded += 1;
         }
     }
@@ -1325,6 +1487,17 @@ pub fn mark(
         reply["markerNote"] = json!(
             "marker-like lines the strip could not parse remain in these files and anchor no site; a marker is `req:<id> hash:<hash8>` alone on its line"
         );
+    }
+    if !contradicted.is_empty() {
+        reply["contradicted"] = json!(contradicted);
+        reply["contradictedNote"] = json!(
+            "these rows were recorded while an open error diagnostic disputes their statement; the deliverable implements one side of an open question until it is resolved"
+        );
+    }
+    // An entity is generated now, so the medium stands; the divergence is the record
+    // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+    if let Some(w) = medium_divergence(&ledger) {
+        reply["mediumWarning"] = json!(w);
     }
     Ok(reply)
 }
@@ -1905,6 +2078,179 @@ mod tests {
         // Hashes were computed over the stripped bytes: the row is not stale-code.
         let (status, _) = crate::verify::status_of(&s, "req:shop-1", row, &gs);
         assert_eq!(status, "unverified");
+    }
+
+    // A row whose requirement is a subject of an open error diagnostic: the package
+    // names the diagnostic, the record flags the row, and the reply says so.
+    // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
+    #[test]
+    fn a_row_over_an_open_error_diagnostic_is_flagged_contradicted() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-contra-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        let diag = |severity: &str, lifecycle: &str| Diagnostic {
+            rule: "contradiction".into(),
+            severity: severity.into(),
+            subjects: vec!["req:shop-1".into(), "req:shop-9".into()],
+            message: "21 days versus 30 days".into(),
+            reasoning: None,
+            lifecycle: lifecycle.into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        };
+        s.graph
+            .diagnostics
+            .insert("diag:contradiction-1".into(), diag("error", "open"));
+        // A resolved error and an open warning on the same subject count for nothing.
+        s.graph
+            .diagnostics
+            .insert("diag:contradiction-2".into(), diag("error", "resolved"));
+        s.graph
+            .diagnostics
+            .insert("diag:contradiction-3".into(), diag("warning", "open"));
+        let pkg = task_package(&s, "ent:cart", &gs).unwrap();
+        let open = &pkg["requirementGroups"][0][0]["openDiagnostics"];
+        assert_eq!(open.as_array().map(|a| a.len()), Some(1), "{}", pkg);
+        assert_eq!(open[0]["id"], "diag:contradiction-1");
+        assert_eq!(open[0]["rule"], "contradiction");
+        assert_eq!(pkg["contradicted"], json!(["req:shop-1"]));
+
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .ok();
+        let manifest = json!({
+            "files": ["cart.rs", "tests/cart.rs"],
+            "tests": [{
+                "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+                "artifact": "tests/cart.rs", "name": name,
+                "run": format!("cargo test {}", name), "files": ["cart.rs"],
+            }],
+        });
+        let reply = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert_eq!(
+            reply["contradicted"]["req:shop-1"],
+            json!(["diag:contradiction-1"]),
+            "{}",
+            reply
+        );
+        assert_eq!(
+            Ledger::load(&out).contradicted["req:shop-1"],
+            vec!["diag:contradiction-1".to_string()]
+        );
+        // The dispute resolves; the next record clears the flag.
+        s.graph
+            .diagnostics
+            .get_mut("diag:contradiction-1")
+            .unwrap()
+            .lifecycle = "resolved".into();
+        let reply = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert!(reply.get("contradicted").is_none(), "{}", reply);
+        assert!(Ledger::load(&out).contradicted.is_empty());
+    }
+
+    // The divergence check fires only between two known tool families.
+    // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    #[test]
+    fn medium_divergence_names_disjoint_tool_families() {
+        let row = |run: &str| ReqRow {
+            entity: "ent:cart".into(),
+            files: Vec::new(),
+            sites: Vec::new(),
+            test: TestRef {
+                kind: "programmatic".into(),
+                label: "unit".into(),
+                artifact: "tests/cart.rs".into(),
+                name: "req_shop_1".into(),
+                run: run.into(),
+                cwd: ".".into(),
+            },
+            hashes: RowHashes::default(),
+            verdict: "none".into(),
+            last_run: None,
+            exit_code: None,
+            evidence: None,
+        };
+        let mut ledger = Ledger::default();
+        ledger.medium = Some(Medium {
+            form: "Python package".into(),
+            produced: "written".into(),
+            toolchain: "python3 with pytest".into(),
+            artifact: String::new(),
+        });
+        assert!(medium_divergence(&ledger).is_none(), "no rows, no verdict");
+        ledger
+            .requirements
+            .insert("req:shop-1".into(), row("cargo test req_shop_1"));
+        let w = medium_divergence(&ledger).expect("python beside cargo diverges");
+        assert!(
+            w.contains("python") && w.contains("rust") && w.contains("cargo test"),
+            "{}",
+            w
+        );
+        // The same family on both sides, or an unknown one on either, is no divergence.
+        ledger.medium.as_mut().unwrap().toolchain = "rustc and cargo test".into();
+        assert!(medium_divergence(&ledger).is_none());
+        ledger.medium.as_mut().unwrap().toolchain = "a bespoke DSL".into();
+        assert!(medium_divergence(&ledger).is_none());
+        ledger.medium.as_mut().unwrap().toolchain = "python3 with pytest".into();
+        ledger
+            .requirements
+            .insert("req:shop-1".into(), row("sh tests/shop.sh"));
+        assert!(medium_divergence(&ledger).is_none());
+    }
+
+    // Once an entity is generated the medium stands: the record warns and keeps it.
+    // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    #[test]
+    fn mark_warns_when_run_commands_diverge_from_the_medium() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(&out).ok();
+        let mut ledger = Ledger::default();
+        ledger.medium = Some(Medium {
+            form: "Python package".into(),
+            produced: "written".into(),
+            toolchain: "python3 with pytest".into(),
+            artifact: String::new(),
+        });
+        ledger.save(&out);
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("fn {}() {{}}\n", name),
+        )
+        .ok();
+        let manifest = json!({
+            "files": ["cart.rs", "tests/cart.rs"],
+            "tests": [{
+                "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+                "artifact": "tests/cart.rs", "name": name,
+                "run": format!("cargo test {}", name), "files": ["cart.rs"],
+            }],
+        });
+        let reply = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        let w = reply["mediumWarning"].as_str().expect("the record warns");
+        assert!(w.contains("python") && w.contains("rust"), "{}", w);
+        let ledger = Ledger::load(&out);
+        assert_eq!(
+            ledger.medium.as_ref().map(|m| m.toolchain.as_str()),
+            Some("python3 with pytest"),
+            "an entity is generated, so the medium stands"
+        );
+        // Every later package carries the standing divergence.
+        let pkg = task_package(&s, "ent:cart", &gs).unwrap();
+        assert!(pkg["mediumWarning"].as_str().is_some(), "{}", pkg);
     }
 
     // One build per deliverable: the first task that needs one establishes it, later

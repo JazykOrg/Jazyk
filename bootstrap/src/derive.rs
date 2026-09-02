@@ -200,8 +200,9 @@ pub fn normalize_state(s: &str) -> String {
 }
 
 // One machine per entity any transition names as subject: states in document order
-// (first spelling kept), transitions ordered by requirement id, `initial` the one state
-// no transition enters. Mirrors docs/compiler/model/state-machine.md#derivation.
+// (first spelling kept), a restated transition merged into one arrow listing its
+// contributing requirements, arrows ordered by lowest requirement id, `initial` the one
+// state no transition enters. Mirrors docs/compiler/model/state-machine.md#derivation.
 pub fn recompute_state_machines(store: &mut Store) {
     let mut machines: BTreeMap<String, StateMachine> = BTreeMap::new();
     for rid in document_order(store) {
@@ -231,17 +232,48 @@ pub fn recompute_state_machines(store: &mut Store) {
         };
         let from = spelled(&t.from);
         let to = spelled(&t.to);
-        m.transitions.push(StateTransition {
-            from,
-            to,
-            trigger: t.trigger.clone(),
-            guard: t.guard.clone(),
-            requirement: rid.clone(),
-        });
+        // Two contributions merge when from and to are the same states and their
+        // triggers and guards agree: equal after normalization, or named by only one
+        // side. Distinct triggers or distinct guards stay distinct arrows, the way a
+        // relationship keeps one group per direction and type.
+        let agrees = |a: &Option<String>, b: &Option<String>| match (a, b) {
+            (Some(a), Some(b)) => normalize_state(a) == normalize_state(b),
+            _ => true,
+        };
+        match m.transitions.iter_mut().find(|a| {
+            a.from == from
+                && a.to == to
+                && agrees(&a.trigger, &t.trigger)
+                && agrees(&a.guard, &t.guard)
+        }) {
+            Some(a) => {
+                if !a.requirements.contains(&rid) {
+                    a.requirements.push(rid.clone());
+                }
+                // The first spelling in document order stays; a side that named no
+                // trigger or guard takes the one the restatement names.
+                if a.trigger.is_none() {
+                    a.trigger = t.trigger.clone();
+                }
+                if a.guard.is_none() {
+                    a.guard = t.guard.clone();
+                }
+            }
+            None => m.transitions.push(StateTransition {
+                from,
+                to,
+                trigger: t.trigger.clone(),
+                guard: t.guard.clone(),
+                requirements: vec![rid.clone()],
+            }),
+        }
     }
     for m in machines.values_mut() {
+        for a in m.transitions.iter_mut() {
+            a.requirements.sort();
+        }
         m.transitions
-            .sort_by(|a, b| a.requirement.cmp(&b.requirement));
+            .sort_by(|a, b| a.requirements[0].cmp(&b.requirements[0]));
         let entered: BTreeSet<String> = m
             .transitions
             .iter()
@@ -1494,7 +1526,10 @@ pub(crate) mod tests {
         assert_eq!(m.states, vec!["placed", "paid", "held"]);
         assert_eq!(m.initial.as_deref(), Some("placed"));
         assert_eq!(m.transitions.len(), 2);
-        assert_eq!(m.transitions[0].requirement, "req:shop-7");
+        assert_eq!(
+            m.transitions[0].requirements,
+            vec!["req:shop-7".to_string()]
+        );
         assert_eq!(m.transitions[1].to, "held");
         // A second transition out of placed on the same trigger, spelled differently,
         // lands on the same machine as a nondeterministic pair for the checks.
@@ -1543,6 +1578,140 @@ pub(crate) mod tests {
         }
         recompute_state_machines(&mut s);
         assert!(s.graph.state_machines.is_empty());
+    }
+
+    // A restated transition draws one arrow listing its contributors; distinct triggers
+    // or guards stay distinct arrows. Mirrors docs/compiler/model/state-machine.md#derivation.
+    #[test]
+    fn state_machine_merges_a_restated_transition_into_one_arrow() {
+        let mut s = showcase_store();
+        let restate =
+            |statement: &str, from: &str, to: &str, trigger: Option<&str>, guard: Option<&str>| {
+                Requirement {
+                    statement: statement.into(),
+                    entities: vec!["ent:order".into()],
+                    transition: Some(Transition {
+                        subject: "ent:order".into(),
+                        from: from.into(),
+                        to: to.into(),
+                        trigger: trigger.map(str::to_string),
+                        guard: guard.map(str::to_string),
+                    }),
+                    source: Some(src("shop.md", "/shop/orders", statement)),
+                    ..Default::default()
+                }
+            };
+        // The same arrow as req:shop-7, the trigger spelled differently.
+        s.graph.requirements.insert(
+            "req:shop-92".into(),
+            restate(
+                "The order is paid once  Payment Succeeds.",
+                "Placed",
+                "paid",
+                Some("Payment  Succeeds"),
+                None,
+            ),
+        );
+        // The same arrow as req:shop-8 with no trigger of its own: it takes the one
+        // req:shop-8 names.
+        s.graph.requirements.insert(
+            "req:shop-93".into(),
+            restate(
+                "A held order is one whose payment did not go through.",
+                "placed",
+                "held",
+                None,
+                None,
+            ),
+        );
+        // Two guards on one arrow stay two arrows.
+        s.graph.requirements.insert(
+            "req:shop-94".into(),
+            restate(
+                "A paid order ships when the item is in stock.",
+                "paid",
+                "shipped",
+                Some("dispatch"),
+                Some("in stock"),
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:shop-95".into(),
+            restate(
+                "A paid order ships when the item is backordered and arrives.",
+                "paid",
+                "shipped",
+                Some("dispatch"),
+                Some("backordered"),
+            ),
+        );
+        recompute_state_machines(&mut s);
+        let m = &s.graph.state_machines["sm:order"];
+        assert_eq!(m.states, vec!["placed", "paid", "held", "shipped"]);
+        assert_eq!(m.initial.as_deref(), Some("placed"));
+        assert_eq!(m.transitions.len(), 4, "{:?}", m.transitions);
+        // Arrows by lowest requirement id, requirements within an arrow by id.
+        let paid = &m.transitions[0];
+        assert_eq!((paid.from.as_str(), paid.to.as_str()), ("placed", "paid"));
+        assert_eq!(paid.trigger.as_deref(), Some("payment succeeds"));
+        assert_eq!(
+            paid.requirements,
+            vec!["req:shop-7".to_string(), "req:shop-92".to_string()]
+        );
+        let held = &m.transitions[1];
+        assert_eq!(held.to, "held");
+        assert_eq!(held.trigger.as_deref(), Some("payment declined"));
+        assert_eq!(
+            held.requirements,
+            vec!["req:shop-8".to_string(), "req:shop-93".to_string()]
+        );
+        let shipped: Vec<&StateTransition> =
+            m.transitions.iter().filter(|t| t.to == "shipped").collect();
+        assert_eq!(shipped.len(), 2);
+        assert!(shipped.iter().all(|t| t.requirements.len() == 1));
+        // The checks read the merged machine: the two restatements trip nothing, and a
+        // conflicting arrow out of placed names every contributor of the merged one.
+        let rule = |f: &[crate::reconcile::Finding], rule: &str| -> Vec<(Vec<String>, String)> {
+            f.iter()
+                .filter(|x| x.0 == rule)
+                .map(|x| (x.1.clone(), x.3.clone()))
+                .collect()
+        };
+        let f = crate::reconcile::checks(&s, &crate::project::Project::default());
+        assert!(
+            rule(&f, "nondeterministic-transition").is_empty(),
+            "{:?}",
+            f
+        );
+        assert_eq!(rule(&f, "unhandled-event"), vec![(vec!["ent:order".to_string()], "ent:order: no transition for placed on dispatch; paid on payment declined; paid on payment succeeds".to_string())]);
+        assert_eq!(rule(&f, "dead-end-state").len(), 1);
+        assert!(
+            rule(&f, "dead-end-state")[0].1.contains("held, shipped"),
+            "{:?}",
+            rule(&f, "dead-end-state")
+        );
+        s.graph.requirements.insert(
+            "req:shop-99".into(),
+            restate(
+                "When payment succeeds twice, the order is refunded.",
+                "placed",
+                "refunded",
+                Some("payment succeeds"),
+                None,
+            ),
+        );
+        recompute_state_machines(&mut s);
+        let f = crate::reconcile::checks(&s, &crate::project::Project::default());
+        let hits = rule(&f, "nondeterministic-transition");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(
+            hits[0].0,
+            vec![
+                "req:shop-7".to_string(),
+                "req:shop-92".to_string(),
+                "req:shop-99".to_string()
+            ]
+        );
     }
 
     #[test]

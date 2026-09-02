@@ -3862,4 +3862,549 @@ mod tests {
             board.summary_line()
         );
     }
+
+    // The levels loop end to end with no LLM. A stated backend holding twelve stated
+    // children, each mentioned in one of three documents and tied to its document
+    // mates by requirements, crosses `children-per-entity` at commit; the board derives
+    // the optional fan-out goal whose coupling partition follows the documents; a tool
+    // session groups each candidate, marks the goal done behind the fan-out gate, and
+    // commits; the groupings land with derived provenance, the record clears, and every
+    // level derives its view; a later move that thins one grouping under two has the
+    // sweep dissolve it behind a redirect while the views recompute and the check stays
+    // silent. Mirrors docs/compiler/concepts/levels.md.
+    #[test]
+    fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
+        use crate::board::tests::{control_auto, project_for};
+        use crate::derive::{children_of_view, level_view_id};
+        use crate::limits::{
+            CHILDREN_PER_ENTITY, CHILDREN_PER_ENTITY_HARD, CHILDREN_PER_ENTITY_SOFT,
+        };
+        use crate::store::{Commit, Op, CHANGE_THRESHOLD_CROSSED};
+        use crate::tools::{ToolSession, WorkScope};
+
+        let out =
+            std::env::temp_dir().join(format!("jazyk-levels-loop-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        std::fs::create_dir_all(&out).ok();
+        let mut s = Store {
+            out,
+            ..Default::default()
+        };
+
+        // Step 1: the backend's own document and one document per area of its children,
+        // every section covered as a converged build leaves it.
+        let texts: [(&str, &str); 4] = [
+            ("arch.md", "# Architecture\n\nThe backend serves the shop.\n"),
+            (
+                "orders.md",
+                "# Orders\n\nThe cart holds items.\nThe pricing engine prices the cart.\nThe checkout confirms the cart.\nThe discount applies to the checkout.\nThe invoice records the checkout.\nThe cart enqueues work on the queue.\n",
+            ),
+            (
+                "shipping.md",
+                "# Shipping\n\nThe shipment travels with a carrier.\nThe tracking follows the shipment.\nThe label marks the shipment.\nThe shipment notifies through the mailer.\n",
+            ),
+            (
+                "infra.md",
+                "# Infra\n\nThe queue feeds the mailer.\nThe cache fronts the queue.\n",
+            ),
+        ];
+        let mut section_of: BTreeMap<&str, String> = BTreeMap::new();
+        for (doc, text) in texts {
+            seed_doc(&mut s, doc, text);
+            let rec = s.docs.get_mut(doc).unwrap();
+            let refs: Vec<String> = rec.sections.keys().cloned().collect();
+            section_of.insert(doc, refs[0].clone());
+            for r in refs {
+                rec.coverage.insert(
+                    r,
+                    Coverage {
+                        state: "covered".into(),
+                        note: None,
+                        claimed_by: Some("g1".into()),
+                    },
+                );
+            }
+        }
+        let src = |doc: &str, quote: &str| SourceRef {
+            doc: doc.into(),
+            section: section_of[doc].clone(),
+            quote: quote.into(),
+        };
+        let stated = |name: &str, doc: &str, quote: &str, parent: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            mentions: vec![src(doc, quote)],
+            ..Default::default()
+        };
+        // (id, name, document, quote) per child: five in orders, four in shipping,
+        // three in infra.
+        let children: [(&str, &str, &str, &str); 12] = [
+            ("ent:cart", "Cart", "orders.md", "The cart holds items"),
+            (
+                "ent:pricing",
+                "Pricing Engine",
+                "orders.md",
+                "The pricing engine prices",
+            ),
+            (
+                "ent:checkout",
+                "Checkout",
+                "orders.md",
+                "The checkout confirms",
+            ),
+            (
+                "ent:discount",
+                "Discount",
+                "orders.md",
+                "The discount applies",
+            ),
+            ("ent:invoice", "Invoice", "orders.md", "The invoice records"),
+            (
+                "ent:shipment",
+                "Shipment",
+                "shipping.md",
+                "The shipment travels",
+            ),
+            ("ent:carrier", "Carrier", "shipping.md", "with a carrier"),
+            (
+                "ent:tracking",
+                "Tracking",
+                "shipping.md",
+                "The tracking follows",
+            ),
+            ("ent:label", "Label", "shipping.md", "The label marks"),
+            ("ent:queue", "Queue", "infra.md", "The queue feeds"),
+            ("ent:mailer", "Mailer", "infra.md", "feeds the mailer"),
+            ("ent:cache", "Cache", "infra.md", "The cache fronts"),
+        ];
+        let mut ops = vec![Op::CreateEntity {
+            id: "ent:backend".into(),
+            entity: Entity {
+                stereotype: Some("system".into()),
+                ..stated("Backend", "arch.md", "The backend serves", None)
+            },
+        }];
+        for (id, name, doc, quote) in children {
+            ops.push(Op::CreateEntity {
+                id: id.into(),
+                entity: stated(name, doc, quote, Some("ent:backend")),
+            });
+        }
+        // (id, statement, entities, document, edge) per requirement: a requirement with
+        // an edge ties its pair by a requirement and a derived relationship (weight two),
+        // the two cross-area requirements carry no edge (weight one), so the partition
+        // follows the documents.
+        let reqs: [(&str, &str, [&str; 2], &str, bool); 11] = [
+            (
+                "req:orders-1",
+                "The pricing engine prices the cart.",
+                ["ent:pricing", "ent:cart"],
+                "orders.md",
+                true,
+            ),
+            (
+                "req:orders-2",
+                "The checkout confirms the cart.",
+                ["ent:checkout", "ent:cart"],
+                "orders.md",
+                true,
+            ),
+            (
+                "req:orders-3",
+                "The discount applies to the checkout.",
+                ["ent:discount", "ent:checkout"],
+                "orders.md",
+                true,
+            ),
+            (
+                "req:orders-4",
+                "The invoice records the checkout.",
+                ["ent:invoice", "ent:checkout"],
+                "orders.md",
+                true,
+            ),
+            (
+                "req:orders-5",
+                "The cart enqueues work on the queue.",
+                ["ent:cart", "ent:queue"],
+                "orders.md",
+                false,
+            ),
+            (
+                "req:shipping-1",
+                "The shipment travels with a carrier.",
+                ["ent:shipment", "ent:carrier"],
+                "shipping.md",
+                true,
+            ),
+            (
+                "req:shipping-2",
+                "The tracking follows the shipment.",
+                ["ent:tracking", "ent:shipment"],
+                "shipping.md",
+                true,
+            ),
+            (
+                "req:shipping-3",
+                "The label marks the shipment.",
+                ["ent:label", "ent:shipment"],
+                "shipping.md",
+                true,
+            ),
+            (
+                "req:shipping-4",
+                "The shipment notifies through the mailer.",
+                ["ent:shipment", "ent:mailer"],
+                "shipping.md",
+                false,
+            ),
+            (
+                "req:infra-1",
+                "The queue feeds the mailer.",
+                ["ent:queue", "ent:mailer"],
+                "infra.md",
+                true,
+            ),
+            (
+                "req:infra-2",
+                "The cache fronts the queue.",
+                ["ent:cache", "ent:queue"],
+                "infra.md",
+                true,
+            ),
+        ];
+        ops.push(Op::CreateRequirement {
+            id: "req:arch-1".into(),
+            requirement: Requirement {
+                statement: "The backend serves the shop.".into(),
+                entities: vec!["ent:backend".into()],
+                source: Some(src("arch.md", "The backend serves the shop")),
+                ..Default::default()
+            },
+        });
+        for (id, statement, [a, b], doc, edge) in reqs {
+            ops.push(Op::CreateRequirement {
+                id: id.into(),
+                requirement: Requirement {
+                    statement: statement.into(),
+                    entities: vec![a.into(), b.into()],
+                    edges: if edge {
+                        vec![ReqEdge {
+                            a: a.into(),
+                            b: b.into(),
+                            rel_type: None,
+                            cardinality: None,
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    source: Some(src(doc, statement.trim_end_matches('.'))),
+                    ..Default::default()
+                },
+            });
+        }
+
+        // Step 2: one commit lands the level and crosses the limit on the backend.
+        let report = s.apply(ops, &Commit::session(Vec::new(), 1, 0));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let crossed = report
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_THRESHOLD_CROSSED && c.subject == "ent:backend")
+            .expect("threshold-crossed on the backend");
+        assert_eq!(crossed.detail["limit"], CHILDREN_PER_ENTITY);
+        assert_eq!(crossed.detail["count"], 12);
+        assert_eq!(crossed.detail["soft"], CHILDREN_PER_ENTITY_SOFT);
+        assert_eq!(crossed.detail["hard"], CHILDREN_PER_ENTITY_HARD);
+        assert_eq!(crossed.detail["level"], "soft");
+        assert!(!s
+            .status
+            .has_change(CHANGE_THRESHOLD_CROSSED, "scope:public"));
+        // The ingest records this commit wrote open the model's ingest goals; this
+        // scenario has no model, so they are cleared as a resolving session clears them,
+        // leaving the fan-out record the loop stands on.
+        let ingest: Vec<String> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind != CHANGE_THRESHOLD_CROSSED)
+            .map(|c| c.id.clone())
+            .collect();
+        s.clear_changes(&ingest);
+
+        // Step 3: the board derives the optional fan-out goal with the document-shaped
+        // partition, ready because no compile goal is open in its cone.
+        let board = Board::derive(&s, &project_for(&s), &control_auto());
+        let open: Vec<&str> = board.open_goals().iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(open, vec!["g:abstract-entity:ent:backend"]);
+        let goal = board.goal("g:abstract-entity:ent:backend").unwrap().clone();
+        assert!(!goal.mandatory);
+        assert_eq!(goal.class, "gc");
+        assert!(
+            board.is_ready(&goal.id),
+            "blockers: {:?}",
+            board.cone_blockers(&goal.id)
+        );
+        assert_eq!(goal.change["fan_out"], 12);
+        assert_eq!(
+            goal.change["limit"],
+            json!({"soft": CHILDREN_PER_ENTITY_SOFT, "hard": CHILDREN_PER_ENTITY_HARD})
+        );
+        let cands = goal.change["candidates"].clone();
+        assert_eq!(
+            cands,
+            json!([
+                [
+                    "ent:cart",
+                    "ent:checkout",
+                    "ent:discount",
+                    "ent:invoice",
+                    "ent:pricing"
+                ],
+                ["ent:carrier", "ent:label", "ent:shipment", "ent:tracking"],
+                ["ent:cache", "ent:mailer", "ent:queue"],
+            ])
+        );
+
+        // Step 4: a session scoped to the goal groups each candidate, marks the goal
+        // done, and passes the batch gates.
+        let mut t = ToolSession::new(
+            s.clone(),
+            WorkScope::for_batch("b4-1", std::slice::from_ref(&goal)),
+            64,
+            24_000,
+        );
+        let groupings: [(&str, &str, &str, &str); 3] = [
+            (
+                "ent:ordering",
+                "Ordering",
+                "Prices, confirms, and invoices what the cart holds.",
+                "orders.md states every member and treats them as one area",
+            ),
+            (
+                "ent:fulfillment",
+                "Fulfillment",
+                "Carries a shipment to the customer and tracks it.",
+                "shipping.md states every member and treats them as one area",
+            ),
+            (
+                "ent:platform",
+                "Platform",
+                "Queues, mails, and caches the work the areas hand off.",
+                "infra.md states every member and treats them as one area",
+            ),
+        ];
+        for (i, (id, name, definition, reasoning)) in groupings.iter().enumerate() {
+            let members = cands[i].clone();
+            let r = t
+                .dispatch(
+                    "group_entities",
+                    &json!({
+                        "name": name, "definition": definition, "members": members,
+                        "stereotype": "module", "reasoning": reasoning,
+                    }),
+                )
+                .unwrap();
+            assert_eq!(r["id"], *id);
+            assert_eq!(r["moved"], members);
+        }
+        t.dispatch(
+            "mark_goal_done",
+            &json!({
+                "goal": goal.id,
+                "justification": "Ordering, Fulfillment, and Platform are the three areas the documents are written around. Each candidate partition matched one document, so the domain recognizes the split.",
+            }),
+        )
+        .unwrap();
+        t.dispatch(
+            "done",
+            &json!({"summary": "grouped the backend's level into its three documented areas"}),
+        )
+        .unwrap();
+        assert!(t.done.is_some());
+
+        // Step 5: the changeset commits; the groupings stand, the record clears, and the
+        // level views derive.
+        let staged = std::mem::take(&mut t.staged);
+        let commit = t.commit(2, 0);
+        assert_eq!(commit.resolved.len(), 1);
+        assert_eq!(commit.resolved[0].goal, goal.id);
+        let report = s.apply(staged, &commit);
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        for (i, (id, _, _, reasoning)) in groupings.iter().enumerate() {
+            let g = &s.graph.entities[*id];
+            assert_eq!(g.parent.as_deref(), Some("ent:backend"));
+            assert!(g.mentions.is_empty());
+            assert_eq!(g.stereotype.as_deref(), Some("module"));
+            match &g.provenance {
+                Some(Provenance::Derived {
+                    from,
+                    reasoning: why,
+                }) => {
+                    let mut from = from.clone();
+                    from.sort();
+                    assert_eq!(json!(from), cands[i]);
+                    assert_eq!(why, reasoning);
+                }
+                other => panic!("{}: expected derived provenance, got {:?}", id, other),
+            }
+            for m in cands[i].as_array().unwrap() {
+                assert_eq!(
+                    s.graph.entities[m.as_str().unwrap()].parent.as_deref(),
+                    Some(*id),
+                    "{} reparented under {}",
+                    m,
+                    id
+                );
+            }
+            let view_id = format!("view:class/{}", id.trim_start_matches("ent:"));
+            assert_eq!(level_view_id(&s, id).as_deref(), Some(view_id.as_str()));
+            let v = &s.graph.views[&view_id];
+            assert_eq!(v.kind, "class");
+            assert!(v.default);
+            let mut members = v.members.clone();
+            members.sort();
+            assert_eq!(json!(members), cands[i]);
+        }
+        assert_eq!(
+            levels(&s)
+                .into_iter()
+                .find(|(t, _)| t == "ent:backend")
+                .map(|(_, c)| c.len()),
+            Some(3)
+        );
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
+        assert_eq!(
+            level_view_id(&s, "ent:backend").as_deref(),
+            Some("view:component/backend")
+        );
+        let top = &s.graph.views["view:component/backend"];
+        assert_eq!(top.kind, "component");
+        assert!(top.default);
+        assert_eq!(
+            top.members,
+            vec!["ent:fulfillment", "ent:ordering", "ent:platform"]
+        );
+        assert_eq!(
+            children_of_view(&s, "view:component/backend"),
+            vec![
+                (
+                    "ent:fulfillment".to_string(),
+                    "view:class/fulfillment".to_string()
+                ),
+                (
+                    "ent:ordering".to_string(),
+                    "view:class/ordering".to_string()
+                ),
+                (
+                    "ent:platform".to_string(),
+                    "view:class/platform".to_string()
+                ),
+            ]
+        );
+        assert!(level_shape(&s).is_empty(), "{:?}", level_shape(&s));
+
+        // Step 6: a write moves all but one member of the smallest grouping under
+        // another; the sweep dissolves the thin grouping behind a redirect.
+        let mut w = ToolSession::new(s.clone(), WorkScope::serving("mcp-write"), 64, 24_000);
+        for id in ["ent:queue", "ent:mailer"] {
+            w.dispatch(
+                "update_entity",
+                &json!({"id": id, "parent": "ent:fulfillment"}),
+            )
+            .unwrap();
+        }
+        let staged = std::mem::take(&mut w.staged);
+        assert_eq!(staged.len(), 2);
+        let report = s.apply(staged, &Commit::store("decree"));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        // The sweep is its own `gc` commit, run by the build loop after every
+        // generation it lands (`reconcile::run`), never a phase of `Store::apply`.
+        let actions = s.gc();
+        assert!(
+            actions.iter().any(|a| a
+                .starts_with("dissolved ent:platform (1 child(ren) reparented to ent:backend)")),
+            "{:?}",
+            actions
+        );
+        assert!(s.graph.entities.get("ent:platform").is_none());
+        assert_eq!(s.resolve_id("ent:platform"), "ent:backend");
+        assert_eq!(
+            s.graph.entities["ent:cache"].parent.as_deref(),
+            Some("ent:backend")
+        );
+        for id in ["ent:queue", "ent:mailer"] {
+            assert_eq!(
+                s.graph.entities[id].parent.as_deref(),
+                Some("ent:fulfillment")
+            );
+        }
+        let top = &s.graph.views["view:component/backend"];
+        assert_eq!(
+            top.members,
+            vec!["ent:cache", "ent:fulfillment", "ent:ordering"]
+        );
+        assert!(s.graph.views.get("view:class/platform").is_none());
+        // Anything holding the dissolved id resolves through the redirect to the
+        // parent's level.
+        assert_eq!(
+            level_view_id(&s, "ent:platform").as_deref(),
+            Some("view:component/backend")
+        );
+        // The fulfillment level lists its six children and the cache as the outside
+        // entity whose edge to the queue now lifts into the level.
+        let mut fulfillment = s.graph.views["view:class/fulfillment"].members.clone();
+        fulfillment.sort();
+        assert_eq!(
+            fulfillment,
+            vec![
+                "ent:cache",
+                "ent:carrier",
+                "ent:label",
+                "ent:mailer",
+                "ent:queue",
+                "ent:shipment",
+                "ent:tracking"
+            ]
+        );
+        assert_eq!(
+            children_of_view(&s, "view:component/backend"),
+            vec![
+                (
+                    "ent:fulfillment".to_string(),
+                    "view:class/fulfillment".to_string()
+                ),
+                (
+                    "ent:ordering".to_string(),
+                    "view:class/ordering".to_string()
+                ),
+            ]
+        );
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
+        assert!(level_shape(&s).is_empty(), "{:?}", level_shape(&s));
+
+        // Step 7: the board is stable: a repeated derivation opens nothing new, and no
+        // fan-out goal stands on the backend. What stands is the ripple the loop
+        // itself opened: every reparent (the grouped children, the two decree moves,
+        // the sweep's move of the cache) and every minted grouping is an entity change
+        // the review goal reads; a model session resolves those, none is a level goal.
+        let ids =
+            |b: &Board| -> Vec<String> { b.open_goals().iter().map(|g| g.id.clone()).collect() };
+        let first = ids(&Board::derive(&s, &project_for(&s), &control_auto()));
+        let second = ids(&Board::derive(&s, &project_for(&s), &control_auto()));
+        assert_eq!(first, second);
+        assert!(
+            !first.iter().any(|g| g.starts_with("g:abstract-entity:")),
+            "{:?}",
+            first
+        );
+        let mut ripple: Vec<String> = children
+            .iter()
+            .map(|(id, _, _, _)| id.to_string())
+            .chain(["ent:fulfillment".to_string(), "ent:ordering".to_string()])
+            .map(|id| format!("g:review-entity:{}", id))
+            .collect();
+        ripple.sort();
+        assert_eq!(first, ripple);
+    }
 }

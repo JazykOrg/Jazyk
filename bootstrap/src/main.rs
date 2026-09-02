@@ -452,6 +452,10 @@ fn main() {
                 i += 1;
                 opts.goal = args.get(i).cloned();
             }
+            "--sessions" => {
+                i += 1;
+                opts.sessions = args.get(i).and_then(|s| s.parse().ok());
+            }
             "--build-token" => {
                 i += 1;
                 opts.build_token = args.get(i).cloned();

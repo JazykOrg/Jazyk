@@ -1929,6 +1929,19 @@ fn reload(
 }
 
 pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildReport {
+    compile_with(proj, llm, out, trace, None)
+}
+
+// `max_sessions` is the `--sessions` count: at most that many sessions, then an
+// honest incomplete, so a project advances one batch at a time.
+// Mirrors docs/frontends/cli.md#jazyk-compile.
+pub fn compile_with(
+    proj: &Project,
+    llm: &Llm,
+    out: &Path,
+    trace: &Trace,
+    max_sessions: Option<usize>,
+) -> BuildReport {
     let refused = |e: String| {
         trace.line("build", &format!("build refused: {}", e));
         BuildReport {
@@ -1982,7 +1995,9 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         blocked: board.counts().blocked,
     });
     let derived = board.open_goals().len();
-    let cap = crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR;
+    let cap = max_sessions.unwrap_or(
+        crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR,
+    );
 
     let mut sessions = 0u32;
     let mut applied = 0usize;
@@ -2048,6 +2063,8 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                                 "the endpoint answers only errors ({}); the build stopped early",
                                 endpoint_error
                             )
+                        } else if max_sessions.is_some() {
+                            format!("the session limit of {} (--sessions) ran out", cap)
                         } else {
                             format!("the build cap of {} sessions ran out", cap)
                         }),

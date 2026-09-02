@@ -389,7 +389,8 @@ Budgets are registry constants built into the binary, not settings
   ([convergence](./compilation.md#convergence)). Five consecutive failed sessions
   that spent no tokens stop the build early the same way: an endpoint answering only
   errors parks the rest instead of grinding the cap
-  ([escalation](./reconciler.md#escalation)).
+  ([escalation](./reconciler.md#escalation)). `jazyk compile --sessions N` replaces
+  the cap with N for one run ([compile](../frontends/cli.md#jazyk-compile)).
 
 An agent whose session ends with mutations staged and no `done` is treated as having
 called it: the serving runs the same commit gates, a clean batch commits, and the goals

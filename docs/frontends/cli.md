@@ -59,7 +59,10 @@ scheduler [batches](../compiler/reconciler.md#batching) ready goals; and
 [converges](../compiler/compilation.md#convergence). Sessions run as
 [ACP worker sessions](./acp.md#worker-sessions) against the configured
 [agent](../compiler/project-settings.md#acp), one at a time (compilation is sequential;
-the build lease enforces it); the agent process lives for the run.
+the build lease enforces it); the agent process lives for the run. `--sessions N` runs
+at most N sessions and stops with an honest `incomplete`, so a project advances one
+batch at a time and any moment can be copied for a
+[snippet](../benchmark/benchmark.md#snippets-from-a-real-project).
 [Executor overrides](../compiler/project-settings.md#executors) per goal kind or class
 send some sessions to a different agent.
 
@@ -220,6 +223,8 @@ the board:
   will run,
 - [coverage](../compiler/compilation.md#coverage) percentage,
 - open diagnostics by severity,
+- the medium warning, when the ledger's medium and the recorded run commands disagree
+  ([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)),
 - the shape line: the entity count per depth of the containment tree (the
   [scope root](../compiler/concepts/levels.md#the-scope-root) at depth 0, its
   parentless entities at depth 1, and so on), then the fan-out histogram: how many

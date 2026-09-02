@@ -47,6 +47,8 @@ pub struct Options {
     // of a real project (docs/benchmark/benchmark.md#snippets-from-a-real-project).
     pub project: Option<String>,
     pub goal: Option<String>,
+    // `jazyk compile --sessions N`: at most N sessions this run.
+    pub sessions: Option<usize>,
 }
 
 impl Default for Options {
@@ -84,6 +86,7 @@ impl Default for Options {
             packaged: false,
             project: None,
             goal: None,
+            sessions: None,
         }
     }
 }
@@ -656,7 +659,7 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
         llm::set_verbose(true);
     }
     let trace = trace_for(opts).with_transcript(&out, "compile");
-    let report = reconcile::compile(&proj, &llm, &out, &trace);
+    let report = reconcile::compile_with(&proj, &llm, &out, &trace, opts.sessions);
     trace.finish_transcript("done", &serde_json::json!(report));
     println!("{}", verdict_line(&report));
     if report.converged() {
@@ -1202,6 +1205,11 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         if un.len() > 8 {
             println!("  ... and {} more", un.len() - 8);
         }
+    }
+    // The medium warning: the ledger's toolchain and the recorded run commands
+    // disagree. Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+    if let Some(w) = crate::gen::medium_divergence(&crate::gen::Ledger::load(&store.out)) {
+        println!("medium: {}", w);
     }
     0
 }

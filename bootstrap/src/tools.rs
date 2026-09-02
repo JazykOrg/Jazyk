@@ -1453,6 +1453,15 @@ impl ToolSession {
                 return Err(ToolError::new(&v.rule, v.message));
             }
         }
+        // The fan-out variant's own level faces its count even when the changeset left
+        // it alone. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+        if gs.kind == "abstract-entity" {
+            if let Some(v) =
+                crate::goals::fan_out_goal_gate(&self.snapshot, &self.staged, &gs.target)
+            {
+                return Err(ToolError::new(&v.rule, v.message));
+            }
+        }
         if gs.kind == "place-anchors" {
             let undecided = self.undecided_proposals(&gs.proposals);
             if !undecided.is_empty() {
@@ -6891,6 +6900,68 @@ mod tests {
         t.dispatch(
             "mark_goal_failed",
             &json!({"goal": goal, "reason": "the section contradicts itself"}),
+        )
+        .unwrap();
+    }
+
+    // The fan-out variant faces its level's count at mark_goal_done even when the
+    // changeset left the level alone: a done claim over an untouched level over soft is
+    // refused; a move under an existing sibling that brings the count to soft passes.
+    // Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+    #[test]
+    fn mark_goal_done_on_a_fan_out_goal_faces_the_untouched_level() {
+        use crate::limits::{threshold, CHILDREN_PER_ENTITY};
+        let (soft, hard) = threshold(CHILDREN_PER_ENTITY, None).unwrap();
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:backend".into(), plain("Backend"));
+        let n = soft as usize + 1;
+        for i in 0..n {
+            s.graph.entities.insert(
+                format!("ent:c{}", i),
+                under(&format!("C{}", i), "ent:backend"),
+            );
+        }
+        s.status.changes.push(
+            ChangeRecord::new(
+                1,
+                0,
+                0,
+                crate::store::CHANGE_THRESHOLD_CROSSED,
+                "ent:backend",
+                "limits",
+            )
+            .with_detail(json!({
+                "limit": CHILDREN_PER_ENTITY, "count": n, "soft": soft, "hard": hard,
+                "level": "soft", "goal": "abstract-entity",
+            })),
+        );
+        let goal = Goal {
+            id: "g:abstract-entity:ent:backend".into(),
+            kind: "abstract-entity".into(),
+            mandatory: false,
+            target: "ent:backend".into(),
+            change: json!({"fan_out": n, "limit": {"soft": soft, "hard": hard}, "candidates": []}),
+            ..Default::default()
+        };
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &[goal]), 64, 24_000);
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:abstract-entity:ent:backend", "justification": "The level is fine."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "fan-out-over-limit");
+        assert!(err.message.contains("ent:backend"), "{}", err.message);
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:c1", "parent": "ent:c0"}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({"goal": "g:abstract-entity:ent:backend", "justification": "C1 belongs under C0, which already contains it conceptually."}),
         )
         .unwrap();
     }

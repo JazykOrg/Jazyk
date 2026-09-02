@@ -47,6 +47,18 @@ pub enum Op {
         absorb: String,
         reason: String,
     },
+    // Dissolve a grouping: its children reparent to its parent and it tombstones with
+    // a redirect to that parent. Refused on an entity a document states. The store
+    // fills `parent` and `children` as applied, so the reparent flip replays from the
+    // journal alone. Mirrors docs/compiler/concepts/levels.md#groupings.
+    DissolveEntity {
+        id: String,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        children: Vec<String>,
+    },
     CreateRequirement {
         id: String,
         requirement: Requirement,
@@ -185,7 +197,7 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 27] = [
+pub const CHECK_RULES: [&str; 28] = [
     "pinned-fact-drift",
     "empty-file",
     "broken-link",
@@ -203,6 +215,7 @@ pub const CHECK_RULES: [&str; 27] = [
     "unplaced-behavior",
     "unrepresented-failure-mode",
     "containment-mismatch",
+    "level-shape",
     "nonconformant-instance",
     "unreachable-state",
     "dead-end-state",
@@ -248,6 +261,27 @@ pub const CHANGE_THRESHOLD_CROSSED: &str = "threshold-crossed";
 pub const CHANGE_VIEW_MEMBER_GONE: &str = "view-member-gone";
 pub const CHANGE_EDGES_MISSING: &str = "edges-missing";
 pub const CHANGE_QUERY_MATCH: &str = "query-match";
+// A child moved between the same two parents across generations; the subject is the
+// child and `detail.between` names the two parents. Mirrors docs/compiler/reconciler.md#flip-detection.
+pub const CHANGE_REPARENT_FLIP: &str = "reparent-flip";
+// The scope root as a target: the parentless entities of a scope, addressed as
+// `scope:<scope>` wherever a record, goal, or view needs a subject for the top level.
+// Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+pub const SCOPE_ROOT_PREFIX: &str = "scope:";
+
+pub fn scope_root_target(scope: &str) -> String {
+    format!("{}{}", SCOPE_ROOT_PREFIX, scope)
+}
+
+// One entity's parent move as the journal records it. `None` is the scope root.
+// Mirrors docs/compiler/graph.md#journal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParentMove {
+    pub generation: u64,
+    pub child: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
 // Kinds whose subject is the dead node by design; never pruned for a missing subject.
 pub const TRAIL_KINDS: [&str; 3] = [
     CHANGE_SECTION_REMOVED,
@@ -534,6 +568,68 @@ fn provenance_is_pending(p: &Provenance) -> bool {
     !matches!(p, Provenance::Quote(_))
 }
 
+// The parent moves the journal entries record, oldest first. A mutation carrying both
+// `parent` and `prior.parent` (null for parentless) moved its `id`; a `dissolve_entity`
+// moved each of its `children` to its `parent`. Mirrors docs/compiler/graph.md#journal.
+fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
+    let id_or_none = |v: &serde_json::Value| v.as_str().map(String::from);
+    let mut out = Vec::new();
+    for entry in entries {
+        for mv in &entry.mutations {
+            let Some(id) = mv["id"].as_str() else {
+                continue;
+            };
+            if mv["op"] == "dissolve_entity" {
+                let to = id_or_none(&mv["parent"]);
+                for child in mv["children"].as_array().into_iter().flatten() {
+                    if let Some(child) = child.as_str() {
+                        out.push(ParentMove {
+                            generation: entry.generation,
+                            child: child.to_string(),
+                            from: Some(id.to_string()),
+                            to: to.clone(),
+                        });
+                    }
+                }
+                continue;
+            }
+            let has =
+                |v: &serde_json::Value, k: &str| v.as_object().is_some_and(|o| o.contains_key(k));
+            if has(mv, "parent") && has(&mv["prior"], "parent") {
+                out.push(ParentMove {
+                    generation: entry.generation,
+                    child: id.to_string(),
+                    from: id_or_none(&mv["prior"]["parent"]),
+                    to: id_or_none(&mv["parent"]),
+                });
+            }
+        }
+    }
+    out
+}
+
+// The name and scope of every entity the journal created, by id: the natural key of
+// a parent that no longer exists.
+fn created_names_in(entries: &[JournalEntry]) -> BTreeMap<String, (String, String)> {
+    let mut out = BTreeMap::new();
+    for entry in entries {
+        for mv in &entry.mutations {
+            if mv["op"] != "create_entity" {
+                continue;
+            }
+            let (Some(id), Some(name)) = (mv["id"].as_str(), mv["entity"]["name"].as_str()) else {
+                continue;
+            };
+            let scope = mv["entity"]["scope"]
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| Entity::default().scope);
+            out.insert(id.to_string(), (name.to_string(), scope));
+        }
+    }
+    out
+}
+
 // The sticky identity of an invented-choice finding includes the choice sentence:
 // its message opens with the sentence and closes with the unattached measure, which
 // varies per record. Mirrors docs/consumers/gen.md#invented-choices.
@@ -753,9 +849,28 @@ impl Store {
     // entry carries, on a mutation written over a quoted value, the prior value and
     // source.
     fn decree_prior(&self, id: &str, op: &str) -> Option<serde_json::Value> {
+        for entry in self.journal_entries().iter().rev() {
+            for mv in entry.mutations.iter().rev() {
+                // Every parent move carries a prior; only a decree's prior restores.
+                if mv["op"] == op
+                    && mv["id"] == id
+                    && mv["prior"].is_object()
+                    && mv["provenance"]["decree"].is_object()
+                {
+                    return Some(mv["prior"].clone());
+                }
+            }
+        }
+        None
+    }
+
+    // Every journal entry on disk, oldest first.
+    fn journal_entries(&self) -> Vec<JournalEntry> {
         let dir = self.out.join("journal");
-        let mut gens: Vec<u64> = std::fs::read_dir(&dir)
-            .ok()?
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut gens: Vec<u64> = read
             .filter_map(|e| {
                 let name = e.ok()?.file_name();
                 let name = name.to_str()?;
@@ -766,17 +881,83 @@ impl Store {
             })
             .collect();
         gens.sort_unstable();
-        for g in gens.into_iter().rev() {
-            let Some(entry) = yaml_to::<JournalEntry>(&self.journal_path(g)) else {
+        gens.into_iter()
+            .filter_map(|g| yaml_to::<JournalEntry>(&self.journal_path(g)))
+            .collect()
+    }
+
+    // Every journaled parent move, oldest first: an `update_entity` or `retract_decree`
+    // carrying `parent` and `prior.parent`, and each child of a `dissolve_entity` (a
+    // tool's or the sweep's), which moved from the dissolved entity to its parent.
+    // Mirrors docs/compiler/graph.md#journal.
+    pub fn journaled_parent_moves(&self) -> Vec<ParentMove> {
+        parent_moves_in(&self.journal_entries())
+    }
+
+    // The natural key a parent matches on across generations: the live entity's name
+    // and scope, the same from the journal's create for a dead one (a grouping
+    // dissolved and re-minted under a new id counts as the same parent), the id when
+    // neither knows it; the scope root for a parentless child.
+    // Mirrors docs/compiler/reconciler.md#flip-detection.
+    fn parent_key(
+        &self,
+        parent: Option<&str>,
+        child_scope: &str,
+        names: &BTreeMap<String, (String, String)>,
+    ) -> String {
+        let Some(id) = parent else {
+            return scope_root_target(child_scope);
+        };
+        let key = |name: &str, scope: &str| format!("{}|{}", normalize(name), scope);
+        match self.graph.entities.get(id) {
+            Some(e) => key(&e.name, &e.scope),
+            None => names
+                .get(id)
+                .map(|(name, scope)| key(name, scope))
+                .unwrap_or_else(|| id.to_string()),
+        }
+    }
+
+    // The reparent flip: a commit moves a child to a parent it held before and away
+    // from the parent it held last, the same two parents alternating across
+    // generations. The journal's last move of the child went the other way between
+    // the same keys. One `reparent-flip` record lands on the child, `between` naming
+    // the parent it left and the one it returned to (a parentless side as the scope
+    // root). Mirrors docs/compiler/reconciler.md#flip-detection.
+    fn record_reparent_flips(
+        &self,
+        moves: &[(String, Option<String>, Option<String>, usize)],
+        batch: &mut RecordBatch,
+    ) {
+        if moves.is_empty() {
+            return;
+        }
+        let entries = self.journal_entries();
+        let names = created_names_in(&entries);
+        let history = parent_moves_in(&entries);
+        for (child, from, to, m) in moves {
+            let Some(e) = self.graph.entities.get(child) else {
                 continue;
             };
-            for mv in entry.mutations.iter().rev() {
-                if mv["op"] == op && mv["id"] == id && mv["prior"].is_object() {
-                    return Some(mv["prior"].clone());
-                }
+            let scope = e.scope.clone();
+            let key = |p: Option<&str>| self.parent_key(p, &scope, &names);
+            let Some(last) = history.iter().rev().find(|h| h.child == *child) else {
+                continue;
+            };
+            if key(last.from.as_deref()) != key(to.as_deref())
+                || key(last.to.as_deref()) != key(from.as_deref())
+            {
+                continue;
             }
+            let label = |p: &Option<String>| p.clone().unwrap_or_else(|| scope_root_target(&scope));
+            batch.push(
+                *m,
+                CHANGE_REPARENT_FLIP,
+                child,
+                "parent",
+                serde_json::json!({ "between": [label(from), label(to)] }),
+            );
         }
-        None
     }
 
     // The reconciler re-derives the board after a commit and records the goals the
@@ -978,6 +1159,44 @@ impl Store {
             .filter(|(_, e)| e.parent.as_deref() == Some(id))
             .map(|(cid, _)| cid.clone())
             .collect()
+    }
+
+    // A grouping: an entity no document states, holding a level. Derived provenance,
+    // no mentions, and no requirements of its own: higher levels carry none, so a
+    // derived entity holding requirements is a caps-variant sub-entity, never a
+    // grouping. An entity a document states holds children in role, not in
+    // provenance. Mirrors docs/compiler/concepts/levels.md#groupings.
+    pub fn is_grouping(&self, id: &str) -> bool {
+        self.graph.entities.get(id).is_some_and(|e| {
+            matches!(e.provenance, Some(Provenance::Derived { .. }))
+                && e.mentions.is_empty()
+                && self.requirements_referencing(id).is_empty()
+        })
+    }
+
+    // Dissolve one entity: its children reparent to its parent (parentless when it was
+    // top-level, or when that parent dissolved in the same sweep), and it tombstones
+    // with a redirect to that parent, so anything holding the old id resolves there.
+    // Returns the parent and the children moved. Mirrors docs/compiler/graph.md#the-sweep.
+    fn dissolve(&mut self, id: &str, build: &str) -> (Option<String>, Vec<String>) {
+        let parent = self
+            .graph
+            .entities
+            .get(id)
+            .and_then(|e| e.parent.clone())
+            .map(|p| self.resolve_id(&p).to_string())
+            .filter(|p| self.graph.entities.contains_key(p));
+        let children = self.children_of(id);
+        for c in &children {
+            let e = self.graph.entities.get_mut(c).unwrap();
+            e.parent = parent.clone();
+            e.updated = Some(build.to_string());
+        }
+        self.graph.entities.remove(id);
+        self.graph
+            .redirects
+            .insert(id.to_string(), parent.clone().unwrap_or_default());
+        (parent, children)
     }
 
     // Whether a node id names an existing entity or requirement.
@@ -1371,6 +1590,11 @@ impl Store {
                     .chain(v.collapse.iter())
                     .any(|m| !self.node_exists(self.resolve_id(m)))
             }),
+            // A scope root stands while the scope holds any entity.
+            _ if c.subject.starts_with(SCOPE_ROOT_PREFIX) => {
+                let scope = &c.subject[SCOPE_ROOT_PREFIX.len()..];
+                self.graph.entities.values().any(|e| e.scope == scope)
+            }
             _ => match id_kind(&c.subject) {
                 "requirement" => self.graph.requirements.contains_key(&c.subject),
                 "entity" => self.graph.entities.contains_key(&c.subject),
@@ -1710,9 +1934,13 @@ impl Store {
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut applied: Vec<Op> = Vec::new();
-        // Prior values a decree overwrote, attached to the journal mutations by
-        // applied index. Mirrors docs/compiler/graph.md#journal.
-        let mut priors: Vec<(usize, serde_json::Value)> = Vec::new();
+        // Fields added to the journal mutations by applied index: the prior values a
+        // decree overwrote, the prior parent of every move, the parent a retract
+        // restored. Mirrors docs/compiler/graph.md#journal.
+        let mut annotations: Vec<(usize, serde_json::Value)> = Vec::new();
+        // The parent moves this commit made (child, from, to, mutation), the input of
+        // the reparent flip. Mirrors docs/compiler/reconciler.md#flip-detection.
+        let mut moves: Vec<(String, Option<String>, Option<String>, usize)> = Vec::new();
         let mut dirt = Dirt::default();
         let mut batch = RecordBatch::new(generation);
 
@@ -1917,22 +2145,30 @@ impl Store {
                     let e = self.graph.entities.get_mut(&rid).unwrap();
                     // A decree over a quote-anchored entity records the prior values
                     // of the fields it overwrites, so a later retract restores them.
+                    // Every parent move records the prior parent, so the reparent
+                    // flip replays from the journal alone.
+                    let mut prior = serde_json::Map::new();
                     if matches!(&provenance, Some(Provenance::Decree { .. }))
                         && e.provenance.is_none()
                     {
-                        let mut prior = serde_json::Map::new();
                         if definition.is_some() {
                             prior.insert("definition".into(), serde_json::json!(e.definition));
                         }
                         if stereotype.is_some() {
                             prior.insert("stereotype".into(), serde_json::json!(e.stereotype));
                         }
-                        if parent.is_some() {
+                    }
+                    if let Some(p) = &parent {
+                        if e.parent.as_deref() != Some(p.as_str()) {
                             prior.insert("parent".into(), serde_json::json!(e.parent));
+                            moves.push((rid.clone(), e.parent.clone(), Some(p.clone()), m));
                         }
-                        if !prior.is_empty() {
-                            priors.push((applied.len(), serde_json::Value::Object(prior)));
-                        }
+                    }
+                    if !prior.is_empty() {
+                        annotations.push((
+                            applied.len(),
+                            serde_json::json!({ "prior": serde_json::Value::Object(prior) }),
+                        ));
                     }
                     if let Some(n) = &name {
                         e.name = n.clone();
@@ -2014,6 +2250,41 @@ impl Store {
                     self.graph.redirects.insert(rid.clone(), String::new());
                     dirt.deleted(&rid, m);
                     applied.push(Op::DeleteEntity { id: rid, reason });
+                }
+                Op::DissolveEntity { id, reason, .. } => {
+                    let rid = resolve(&remap, self, &id);
+                    if !self.graph.entities.contains_key(&rid) {
+                        skipped.push(format!("dissolve_entity: unknown id {}", rid));
+                        continue;
+                    }
+                    let refs = self.requirements_referencing(&rid);
+                    if !refs.is_empty() {
+                        skipped.push(format!(
+                            "dissolve_entity {}: still referenced by {}",
+                            rid,
+                            refs.join(", ")
+                        ));
+                        continue;
+                    }
+                    if !self.is_grouping(&rid) {
+                        skipped.push(format!(
+                            "dissolve_entity {}: stated-entity; a document states it, revise the documents instead",
+                            rid
+                        ));
+                        continue;
+                    }
+                    let (parent, children) = self.dissolve(&rid, &build);
+                    for c in &children {
+                        moves.push((c.clone(), Some(rid.clone()), parent.clone(), m));
+                        dirt.entity(c, m, "parent");
+                    }
+                    dirt.deleted(&rid, m);
+                    applied.push(Op::DissolveEntity {
+                        id: rid,
+                        reason,
+                        parent,
+                        children,
+                    });
                 }
                 Op::MergeEntities {
                     keep,
@@ -2464,11 +2735,13 @@ impl Store {
                         // source in the journal, so a later retract restores them.
                         if matches!(p, Provenance::Decree { .. }) {
                             if let Some(prior_src) = &r.source {
-                                priors.push((
+                                annotations.push((
                                     applied.len(),
                                     serde_json::json!({
-                                        "statement": statement_before,
-                                        "source": prior_src,
+                                        "prior": {
+                                            "statement": statement_before,
+                                            "source": prior_src,
+                                        }
                                     }),
                                 ));
                             }
@@ -2822,7 +3095,8 @@ impl Store {
                         }
                         if let Some(prior) = self.decree_prior(&rid, "update_entity") {
                             // The decreed fields return to their prior values; the
-                            // mentions still quote the entity.
+                            // mentions still quote the entity. A restored parent is
+                            // a move, journaled with the parent it leaves.
                             let e = self.graph.entities.get_mut(&rid).unwrap();
                             if let Some(v) = prior.get("definition") {
                                 e.definition = v.as_str().map(String::from);
@@ -2831,7 +3105,23 @@ impl Store {
                                 e.stereotype = v.as_str().map(String::from);
                             }
                             if let Some(v) = prior.get("parent") {
-                                e.parent = v.as_str().map(String::from);
+                                let restored = v.as_str().map(String::from);
+                                if restored != e.parent {
+                                    annotations.push((
+                                        applied.len(),
+                                        serde_json::json!({
+                                            "parent": restored,
+                                            "prior": { "parent": e.parent },
+                                        }),
+                                    ));
+                                    moves.push((
+                                        rid.clone(),
+                                        e.parent.clone(),
+                                        restored.clone(),
+                                        m,
+                                    ));
+                                    e.parent = restored;
+                                }
                             }
                             e.provenance = None;
                             e.updated = Some(build.clone());
@@ -3193,6 +3483,7 @@ impl Store {
 
         // Derived data: relationships, state machines, default views, limit counts.
         crate::derive::recompute(self, &build, &mut batch);
+        self.record_reparent_flips(&moves, &mut batch);
 
         // The typed dirtiness this commit caused. Mirrors docs/compiler/graph.md#change-records.
         for (id, (m, via)) in &dirt.entities {
@@ -3399,10 +3690,14 @@ impl Store {
             .map(|o| serde_json::to_value(o).unwrap_or_default())
             .collect();
         // A mutation that decreed over a quoted value carries the prior value and
-        // source it replaced. Mirrors docs/compiler/graph.md#journal.
-        for (i, prior) in priors {
-            if let Some(mv) = mutations.get_mut(i) {
-                mv["prior"] = prior;
+        // source it replaced; one that moved a parent carries the prior parent.
+        // Mirrors docs/compiler/graph.md#journal.
+        for (i, extra) in annotations {
+            let (Some(mv), Some(fields)) = (mutations.get_mut(i), extra.as_object()) else {
+                continue;
+            };
+            for (k, v) in fields {
+                mv[k] = v.clone();
             }
         }
         let entry = self.journal_entry(&build, commit, mutations);
@@ -4072,6 +4367,48 @@ impl Store {
             deleted.insert(id, 0);
         }
         let build = format!("g{}", generation);
+        // The dissolve rule: a derived grouping with fewer than two children dissolves
+        // as dissolve_entity would, journaled as a sweep mutation; below two there is
+        // nothing to judge. Mirrors docs/compiler/graph.md#the-sweep.
+        let mut child_counts: BTreeMap<String, usize> = BTreeMap::new();
+        for e in self.graph.entities.values() {
+            if let Some(p) = &e.parent {
+                *child_counts.entry(p.clone()).or_insert(0) += 1;
+            }
+        }
+        let under: Vec<String> = self
+            .graph
+            .entities
+            .keys()
+            .filter(|id| child_counts.get(*id).copied().unwrap_or(0) < 2 && self.is_grouping(id))
+            .cloned()
+            .collect();
+        let mut moves: Vec<(String, Option<String>, Option<String>, usize)> = Vec::new();
+        let mut dissolved: Vec<serde_json::Value> = Vec::new();
+        for id in under {
+            let (parent, children) = self.dissolve(&id, &build);
+            for c in &children {
+                moves.push((c.clone(), Some(id.clone()), parent.clone(), 0));
+                batch.push(0, CHANGE_ENTITY, c, "parent", serde_json::Value::Null);
+            }
+            actions.push(format!(
+                "dissolved {} ({} child(ren) reparented to {})",
+                id,
+                children.len(),
+                parent.as_deref().unwrap_or("the scope root")
+            ));
+            dissolved.push(
+                serde_json::to_value(Op::DissolveEntity {
+                    id: id.clone(),
+                    reason: "sweep: fewer than two children".into(),
+                    parent,
+                    children,
+                })
+                .unwrap_or_default(),
+            );
+            deleted.insert(id, 0);
+        }
+        self.record_reparent_flips(&moves, &mut batch);
         for op in self.propagate_deletions(&deleted, &build, &mut batch) {
             if let Op::ResolveDiagnostic { id, reason } = op {
                 actions.push(format!("resolved {} ({})", id, reason));
@@ -4141,6 +4478,7 @@ impl Store {
                 actions
                     .iter()
                     .map(|a| serde_json::json!({"op": "gc", "action": a}))
+                    .chain(dissolved)
                     .collect(),
             );
             self.write_journal(&entry);
@@ -5366,6 +5704,396 @@ mod tests {
         );
     }
 
+    // A stated entity with a mention in the seeded section, under an optional parent.
+    fn stated(name: &str, quote: &str, parent: Option<&str>) -> Entity {
+        Entity {
+            name: name.into(),
+            mentions: vec![mention("t.md", "/t", quote)],
+            parent: parent.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    // A grouping: derived from its members, a definition, no mentions.
+    fn grouping(name: &str, members: &[&str], parent: Option<&str>) -> Entity {
+        Entity {
+            name: name.into(),
+            definition: Some(format!("{} holds its members.", name)),
+            provenance: Some(derived(members)),
+            parent: parent.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    fn move_to(id: &str, parent: &str) -> Op {
+        Op::UpdateEntity {
+            id: id.into(),
+            name: None,
+            definition: None,
+            add_aliases: Vec::new(),
+            add_mention: None,
+            stereotype: None,
+            parent: Some(parent.into()),
+            set_attributes: None,
+            add_attributes: Vec::new(),
+            provenance: None,
+        }
+    }
+
+    // children-per-entity: the record lands on the node when its direct children cross
+    // soft, and on `scope:<scope>` when the parentless entities do; a count back under
+    // soft clears it without a session. Mirrors docs/compiler/reconciler.md#fan-out.
+    #[test]
+    fn threshold_crossed_on_children_per_entity_and_cleared_on_dropping_back() {
+        let mut s = Store {
+            out: own_dir("fanout"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nthe hub\n");
+        let (soft, hard) = crate::limits::threshold("children-per-entity", None).unwrap();
+        let part = |i: u64| Op::CreateEntity {
+            id: format!("ent:part-{}", i),
+            entity: stated(&format!("Part {}", i), "the hub", Some("ent:hub")),
+        };
+        let mut ops = vec![Op::CreateEntity {
+            id: "ent:hub".into(),
+            entity: stated("Hub", "the hub", None),
+        }];
+        ops.extend((0..soft).map(part));
+        s.apply(ops, &session());
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:hub"));
+        let r = s.apply(vec![part(soft)], &session());
+        let crossed = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_THRESHOLD_CROSSED && c.subject == "ent:hub")
+            .expect("threshold-crossed on the node");
+        assert_eq!(crossed.via, "limits");
+        assert_eq!(crossed.detail["limit"], "children-per-entity");
+        assert_eq!(crossed.detail["count"], soft + 1);
+        assert_eq!(crossed.detail["soft"], soft);
+        assert_eq!(crossed.detail["hard"], hard);
+        assert_eq!(crossed.detail["level"], "soft");
+        assert_eq!(crossed.detail["goal"], "abstract-entity");
+        // Dropping back under soft clears the record without a session.
+        s.apply(
+            vec![Op::DeleteEntity {
+                id: format!("ent:part-{}", soft),
+                reason: "test".into(),
+            }],
+            &session(),
+        );
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:hub"));
+        // The scope root: the hub plus soft more parentless entities cross on scope:public.
+        let top = |i: u64| Op::CreateEntity {
+            id: format!("ent:top-{}", i),
+            entity: stated(&format!("Top {}", i), "the hub", None),
+        };
+        let r = s.apply((0..soft).map(top).collect(), &session());
+        let crossed = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_THRESHOLD_CROSSED && c.subject == "scope:public")
+            .expect("threshold-crossed on the scope root");
+        assert_eq!(crossed.detail["limit"], "children-per-entity");
+        assert_eq!(crossed.detail["count"], soft + 1);
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:hub"));
+        // An unrelated commit keeps the root's record standing.
+        s.apply(
+            vec![Op::CreateRequirement {
+                id: "req:t-1".into(),
+                requirement: Requirement {
+                    statement: "The hub holds.".into(),
+                    entities: vec!["ent:hub".into()],
+                    source: Some(mention("t.md", "/t", "the hub")),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert!(s
+            .status
+            .has_change(CHANGE_THRESHOLD_CROSSED, "scope:public"));
+        // One parentless entity moved under a sibling drops the root back under soft.
+        s.apply(vec![move_to("ent:top-0", "ent:top-1")], &session());
+        assert!(!s
+            .status
+            .has_change(CHANGE_THRESHOLD_CROSSED, "scope:public"));
+        assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:hub"));
+    }
+
+    // The sweep's dissolve rule: a derived grouping with fewer than two children
+    // dissolves, its children reparent to its parent, a tombstone redirect to the
+    // parent stays, and the gc entry carries the dissolve mutation. A grouping with
+    // two children and a stated entity with one child are untouched.
+    // Mirrors docs/compiler/graph.md#the-sweep.
+    #[test]
+    fn sweep_dissolves_an_under_membered_grouping_with_a_redirect() {
+        let mut s = Store {
+            out: own_dir("dissolve"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nthe backend\n");
+        let ents = [
+            ("ent:infra", grouping("Infra", &["ent:backend"], None)),
+            (
+                "ent:backend",
+                stated("Backend", "the backend", Some("ent:infra")),
+            ),
+            (
+                "ent:storage",
+                grouping("Storage", &["ent:cache"], Some("ent:backend")),
+            ),
+            (
+                "ent:cache",
+                stated("Cache", "the backend", Some("ent:storage")),
+            ),
+            (
+                "ent:messaging",
+                grouping("Messaging", &["ent:queue", "ent:db"], Some("ent:backend")),
+            ),
+            (
+                "ent:queue",
+                stated("Queue", "the backend", Some("ent:messaging")),
+            ),
+            ("ent:db", stated("Db", "the backend", Some("ent:messaging"))),
+            (
+                "ent:shell",
+                stated("Shell", "the backend", Some("ent:backend")),
+            ),
+            ("ent:core", stated("Core", "the backend", Some("ent:shell"))),
+        ];
+        for (id, e) in ents {
+            s.graph.entities.insert(id.into(), e);
+        }
+        let actions = s.gc();
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.starts_with("dissolved ent:storage")),
+            "{:?}",
+            actions
+        );
+        assert!(
+            actions.iter().any(|a| a.starts_with("dissolved ent:infra")),
+            "{:?}",
+            actions
+        );
+        assert!(!s.graph.entities.contains_key("ent:storage"));
+        assert!(!s.graph.entities.contains_key("ent:infra"));
+        assert_eq!(
+            s.graph.entities["ent:cache"].parent.as_deref(),
+            Some("ent:backend")
+        );
+        assert_eq!(s.graph.entities["ent:backend"].parent, None);
+        // The tombstone redirects to the parent, so the old id resolves there; a
+        // top-level grouping leaves a dead tombstone.
+        assert_eq!(s.graph.redirects["ent:storage"], "ent:backend");
+        assert_eq!(s.resolve_id("ent:storage"), "ent:backend");
+        assert_eq!(s.graph.redirects["ent:infra"], "");
+        assert!(s.graph.entities.contains_key("ent:messaging"));
+        assert_eq!(
+            s.graph.entities["ent:queue"].parent.as_deref(),
+            Some("ent:messaging")
+        );
+        assert!(s.graph.entities.contains_key("ent:shell"));
+        assert_eq!(
+            s.graph.entities["ent:core"].parent.as_deref(),
+            Some("ent:shell")
+        );
+        assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:storage"));
+        assert!(s.status.has_change(CHANGE_ENTITY, "ent:cache"));
+        assert!(!s.status.has_change(CHANGE_REPARENT_FLIP, "ent:cache"));
+        let entry = journal_entry(&s, s.status.generation);
+        assert_eq!(entry.kind, "gc");
+        let dissolve = entry
+            .mutations
+            .iter()
+            .find(|m| m["op"] == "dissolve_entity" && m["id"] == "ent:storage")
+            .expect("dissolve mutation");
+        assert_eq!(dissolve["parent"], "ent:backend");
+        assert_eq!(dissolve["children"], serde_json::json!(["ent:cache"]));
+        assert_eq!(
+            s.journaled_parent_moves(),
+            vec![
+                ParentMove {
+                    generation: entry.generation,
+                    child: "ent:backend".into(),
+                    from: Some("ent:infra".into()),
+                    to: None,
+                },
+                ParentMove {
+                    generation: entry.generation,
+                    child: "ent:cache".into(),
+                    from: Some("ent:storage".into()),
+                    to: Some("ent:backend".into()),
+                },
+            ]
+        );
+        // A second sweep is a no-op.
+        assert!(s.gc().is_empty());
+        // The tool path: a stated entity is refused; a grouping dissolves the same way.
+        let r = s.apply(
+            vec![Op::DissolveEntity {
+                id: "ent:shell".into(),
+                reason: "test".into(),
+                parent: None,
+                children: Vec::new(),
+            }],
+            &session(),
+        );
+        assert!(
+            r.skipped.iter().any(|x| x.contains("stated-entity")),
+            "{:?}",
+            r.skipped
+        );
+        assert!(s.graph.entities.contains_key("ent:shell"));
+        let r = s.apply(
+            vec![Op::DissolveEntity {
+                id: "ent:messaging".into(),
+                reason: "the two belong beside the cache".into(),
+                parent: None,
+                children: Vec::new(),
+            }],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        assert_eq!(s.resolve_id("ent:messaging"), "ent:backend");
+        assert_eq!(
+            s.graph.entities["ent:queue"].parent.as_deref(),
+            Some("ent:backend")
+        );
+        assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:messaging"));
+        let entry = journal_entry(&s, r.generation);
+        assert_eq!(entry.mutations[0]["op"], "dissolve_entity");
+        assert_eq!(
+            entry.mutations[0]["children"],
+            serde_json::json!(["ent:db", "ent:queue"])
+        );
+    }
+
+    // The reparent flip: the first move of a child records nothing; the move back
+    // between the same two parents writes `reparent-flip` on the child with the pair
+    // in `between`; a move to a third parent is a first move again; and a grouping
+    // dissolved and re-minted under a new id counts as the same parent.
+    // Mirrors docs/compiler/reconciler.md#flip-detection.
+    #[test]
+    fn reparent_flip_recorded_on_the_second_alternation_not_the_first() {
+        let mut s = Store {
+            out: own_dir("flip"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nthe backend\n");
+        s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:backend".into(),
+                    entity: stated("Backend", "the backend", None),
+                },
+                Op::CreateEntity {
+                    id: "ent:storage".into(),
+                    entity: stated("Storage", "the backend", None),
+                },
+                Op::CreateEntity {
+                    id: "ent:cache".into(),
+                    entity: stated("Cache", "the backend", Some("ent:backend")),
+                },
+            ],
+            &session(),
+        );
+        let r = s.apply(vec![move_to("ent:cache", "ent:storage")], &session());
+        assert!(r.changes.iter().all(|c| c.kind != CHANGE_REPARENT_FLIP));
+        let entry = journal_entry(&s, r.generation);
+        assert_eq!(entry.mutations[0]["parent"], "ent:storage");
+        assert_eq!(entry.mutations[0]["prior"]["parent"], "ent:backend");
+        let r = s.apply(vec![move_to("ent:cache", "ent:backend")], &session());
+        let flip = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REPARENT_FLIP)
+            .expect("reparent-flip");
+        assert_eq!(flip.subject, "ent:cache");
+        assert_eq!(flip.via, "parent");
+        assert_eq!(flip.mutation, 1);
+        assert_eq!(
+            flip.detail["between"],
+            serde_json::json!(["ent:storage", "ent:backend"])
+        );
+        assert!(s.status.has_change(CHANGE_REPARENT_FLIP, "ent:cache"));
+        // A third parent is a first move again.
+        let r = s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:edge".into(),
+                    entity: stated("Edge", "the backend", None),
+                },
+                move_to("ent:cache", "ent:edge"),
+            ],
+            &session(),
+        );
+        assert!(r.changes.iter().all(|c| c.kind != CHANGE_REPARENT_FLIP));
+        // A grouping over the child, dissolved, then re-minted under a collision
+        // suffix: the move back under it matches the dead grouping by natural key.
+        let tier = |id: &str| Op::CreateEntity {
+            id: id.into(),
+            entity: grouping("Tier", &["ent:cache", "ent:other"], Some("ent:edge")),
+        };
+        s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:other".into(),
+                    entity: stated("Other", "the backend", Some("ent:edge")),
+                },
+                tier("ent:tier"),
+                move_to("ent:cache", "ent:tier"),
+                move_to("ent:other", "ent:tier"),
+            ],
+            &session(),
+        );
+        assert_eq!(
+            s.graph.entities["ent:cache"].parent.as_deref(),
+            Some("ent:tier")
+        );
+        let r = s.apply(
+            vec![Op::DissolveEntity {
+                id: "ent:tier".into(),
+                reason: "test".into(),
+                parent: None,
+                children: Vec::new(),
+            }],
+            &session(),
+        );
+        // Grouping and dissolving in consecutive generations is itself the alternation.
+        assert!(r
+            .changes
+            .iter()
+            .any(|c| c.kind == CHANGE_REPARENT_FLIP && c.subject == "ent:cache"));
+        let r = s.apply(
+            vec![tier("ent:tier"), move_to("ent:cache", "ent:tier")],
+            &session(),
+        );
+        let (new_id, _) = s
+            .graph
+            .entities
+            .iter()
+            .find(|(_, e)| e.name == "Tier")
+            .expect("re-minted grouping");
+        assert_ne!(new_id, "ent:tier");
+        assert_eq!(
+            s.graph.entities["ent:cache"].parent.as_deref(),
+            Some(new_id.as_str())
+        );
+        let flip = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REPARENT_FLIP && c.subject == "ent:cache")
+            .expect("reparent-flip across the re-mint");
+        assert_eq!(
+            flip.detail["between"],
+            serde_json::json!(["ent:edge", new_id])
+        );
+    }
+
     // The store version: a build archives an out directory of another version to
     // `<out>.bak` and starts empty; a reader treats it as empty without touching it.
     // Mirrors docs/compiler/graph.md#store-version.
@@ -5787,6 +6515,17 @@ mod tests {
                 ..Default::default()
             },
         );
+        // A derived node holding requirements is a caps-variant sub-entity, never a
+        // grouping: the dissolve rule leaves it to judgment.
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The invented thing holds.".into(),
+                entities: vec!["ent:invented".into()],
+                source: Some(mention("t.md", "/t", "body")),
+                ..Default::default()
+            },
+        );
         s.graph.views.insert(
             "view:class/kept".into(),
             View {
@@ -5799,7 +6538,8 @@ mod tests {
         );
         let actions = s.gc();
         assert!(actions.len() >= 2, "{:?}", actions);
-        assert!(s.graph.requirements.is_empty());
+        assert!(!s.graph.requirements.contains_key("req:gone-1"));
+        assert!(s.graph.requirements.contains_key("req:t-1"));
         assert!(!s.graph.entities.contains_key("ent:x"));
         assert_eq!(s.graph.redirects["ent:x"], "");
         // Derived nodes are judgment's, not the sweep's; the ones citing the dead node

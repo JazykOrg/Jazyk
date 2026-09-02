@@ -3544,6 +3544,613 @@ pub fn cohesion_groups(store: &Store, id: &str) -> Vec<(String, usize, String)> 
     groups
 }
 
+// ---- the fan-out variant ----
+// A level is a node's direct children; the top level of a scope is its parentless
+// entities, addressed as `scope:<scope>`. Mirrors docs/compiler/concepts/levels.md.
+
+// Ids per candidate before the rest folds into a count.
+pub const FAN_OUT_CANDIDATE_IDS: usize = 12;
+
+// The scope behind a `scope:<scope>` target. Mirrors
+// docs/compiler/concepts/levels.md#the-scope-root.
+pub fn scope_target(target: &str) -> Option<&str> {
+    crate::board::scope_target(target)
+}
+
+// The level a node sits in: its parent, or its scope's root form when parentless.
+pub fn level_of(store: &Store, id: &str) -> Option<String> {
+    let e = store.graph.entities.get(store.resolve_id(id))?;
+    Some(level_key(e.parent.as_deref(), &e.scope))
+}
+
+fn level_key(parent: Option<&str>, scope: &str) -> String {
+    match parent.filter(|p| !p.is_empty()) {
+        Some(p) => p.to_string(),
+        None => store::scope_root_target(scope),
+    }
+}
+
+// The members of a level, by id: the direct children of a node, or the parentless
+// entities of a scope for the root form.
+pub fn level_members(store: &Store, target: &str) -> Vec<String> {
+    crate::board::level_members(store, target)
+}
+
+// The standing fan-out crossing on a level: the count and the thresholds in force
+// (the node's bump folded in by the record writer).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FanOut {
+    pub count: u64,
+    pub soft: u64,
+    pub hard: u64,
+}
+
+impl FanOut {
+    // Over hard the goal is mandatory. Mirrors docs/compiler/reconciler.md#escalation.
+    pub fn mandatory(&self) -> bool {
+        self.count > self.hard
+    }
+
+    // The count the level must reach: hard for a mandatory goal, soft otherwise.
+    // Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+    pub fn limit_in_force(&self) -> u64 {
+        if self.mandatory() {
+            self.hard
+        } else {
+            self.soft
+        }
+    }
+}
+
+pub fn fan_out_crossing(store: &Store, target: &str) -> Option<FanOut> {
+    store
+        .status
+        .changes
+        .iter()
+        .find(|c| {
+            c.kind == store::CHANGE_THRESHOLD_CROSSED
+                && c.subject == target
+                && c.detail["limit"] == limits::CHILDREN_PER_ENTITY
+        })
+        .map(|c| FanOut {
+            count: c.detail["count"].as_u64().unwrap_or(0),
+            soft: c.detail["soft"].as_u64().unwrap_or(0),
+            hard: c.detail["hard"].as_u64().unwrap_or(0),
+        })
+}
+
+// One coupling partition: an ordered id list (at most FAN_OUT_CANDIDATE_IDS, the rest
+// counted) with its internal weight.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Candidate {
+    pub ids: Vec<String>,
+    pub rest: usize,
+    pub weight: u64,
+}
+
+// Every descendant of the level's members lifted to its member, the members to
+// themselves.
+fn lift_map(store: &Store, members: &[String]) -> BTreeMap<String, String> {
+    let mut lift = BTreeMap::new();
+    for m in members {
+        lift.insert(m.clone(), m.clone());
+        for d in descendants(store, m) {
+            lift.insert(d, m.clone());
+        }
+    }
+    lift
+}
+
+// weight(a, b) over the level's members: the requirements referencing both plus the
+// derived relationships between them, descendants lifted to the member they sit under.
+// Keys are ordered pairs (a < b). Mirrors docs/compiler/reconciler.md#fan-out.
+pub fn coupling_weights(store: &Store, members: &[String]) -> BTreeMap<(String, String), u64> {
+    let lift = lift_map(store, members);
+    let mut weights: BTreeMap<(String, String), u64> = BTreeMap::new();
+    let mut bump = |a: &str, b: &str| {
+        if a != b {
+            let key = if a < b {
+                (a.to_string(), b.to_string())
+            } else {
+                (b.to_string(), a.to_string())
+            };
+            *weights.entry(key).or_insert(0) += 1;
+        }
+    };
+    for r in store.graph.requirements.values() {
+        let lifted: BTreeSet<&str> = r
+            .entities
+            .iter()
+            .filter_map(|e| lift.get(store.resolve_id(e)))
+            .map(String::as_str)
+            .collect();
+        let lifted: Vec<&str> = lifted.into_iter().collect();
+        for (i, a) in lifted.iter().enumerate() {
+            for b in &lifted[i + 1..] {
+                bump(a, b);
+            }
+        }
+    }
+    for rel in store.graph.relationships.values() {
+        if let [a, b] = rel.members.as_slice() {
+            if let (Some(la), Some(lb)) =
+                (lift.get(store.resolve_id(a)), lift.get(store.resolve_id(b)))
+            {
+                bump(la, lb);
+            }
+        }
+    }
+    weights
+}
+
+// Greedy agglomeration over the level's members: singletons merge by the highest
+// total weight between two clusters, ties to the pair whose ids sort first, until the
+// cluster count is at or under `soft` and every cluster has two or more members or is
+// a singleton nothing touches. A zero-weight merge is a coupling artifact, so the
+// agglomeration stops there. A singleton is no grouping and is not a candidate (the
+// member lines show it); the rest go largest first, capped at `soft` candidates.
+// Deterministic over the same graph. Mirrors docs/compiler/reconciler.md#fan-out.
+pub fn coupling_candidates(store: &Store, target: &str, soft: u64) -> Vec<Candidate> {
+    let members = level_members(store, target);
+    let weights = coupling_weights(store, &members);
+    let weight = |a: &str, b: &str| -> u64 {
+        let key = if a < b {
+            (a.to_string(), b.to_string())
+        } else {
+            (b.to_string(), a.to_string())
+        };
+        weights.get(&key).copied().unwrap_or(0)
+    };
+    let between = |x: &[String], y: &[String]| -> u64 {
+        x.iter()
+            .map(|a| y.iter().map(|b| weight(a, b)).sum::<u64>())
+            .sum()
+    };
+    let internal = |c: &[String]| -> u64 {
+        c.iter()
+            .enumerate()
+            .map(|(i, a)| c[i + 1..].iter().map(|b| weight(a, b)).sum::<u64>())
+            .sum()
+    };
+    let mut clusters: Vec<Vec<String>> = members.iter().map(|m| vec![m.clone()]).collect();
+    loop {
+        let touched = |i: usize| {
+            clusters
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && between(&clusters[i], o) > 0)
+        };
+        let settled = clusters.len() as u64 <= soft
+            && clusters
+                .iter()
+                .enumerate()
+                .all(|(i, c)| c.len() >= 2 || !touched(i));
+        if settled {
+            break;
+        }
+        let mut best: Option<(u64, usize, usize)> = None;
+        for i in 0..clusters.len() {
+            for j in i + 1..clusters.len() {
+                let w = between(&clusters[i], &clusters[j]);
+                if best.is_none_or(|(bw, _, _)| w > bw) {
+                    best = Some((w, i, j));
+                }
+            }
+        }
+        match best {
+            Some((w, i, j)) if w > 0 => {
+                let other = clusters.remove(j);
+                clusters[i].extend(other);
+                clusters[i].sort();
+                clusters.sort_by(|a, b| a[0].cmp(&b[0]));
+            }
+            _ => break,
+        }
+    }
+    let mut scored: Vec<(Vec<String>, u64)> = clusters
+        .into_iter()
+        .filter(|c| c.len() >= 2)
+        .map(|c| {
+            let w = internal(&c);
+            (c, w)
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.len()
+            .cmp(&a.0.len())
+            .then(b.1.cmp(&a.1))
+            .then(a.0[0].cmp(&b.0[0]))
+    });
+    scored.truncate(soft as usize);
+    scored
+        .into_iter()
+        .map(|(mut ids, weight)| {
+            let rest = ids.len().saturating_sub(FAN_OUT_CANDIDATE_IDS);
+            ids.truncate(FAN_OUT_CANDIDATE_IDS);
+            Candidate { ids, rest, weight }
+        })
+        .collect()
+}
+
+// The document a member is mentioned in most, its requirements' sources when it has
+// no mention; ties to the name that sorts first. A naming hint for the model.
+// Mirrors docs/compiler/concepts/levels.md#naming.
+pub fn dominant_document(store: &Store, id: &str) -> Option<String> {
+    let mut by_doc: BTreeMap<String, usize> = BTreeMap::new();
+    if let Some(e) = store.graph.entities.get(id) {
+        for m in &e.mentions {
+            *by_doc.entry(m.doc.clone()).or_insert(0) += 1;
+        }
+    }
+    if by_doc.is_empty() {
+        for rid in store.requirements_referencing(id) {
+            if let Some(s) = &store.graph.requirements[&rid].source {
+                *by_doc.entry(s.doc.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    by_doc
+        .into_iter()
+        .max_by_key(|(d, n)| (*n, std::cmp::Reverse(d.clone())))
+        .map(|(d, _)| d)
+}
+
+// The fan-out hints for a level: the change, the candidates, each member with its
+// stereotype and document, the existing groupings under the node.
+// Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints.
+fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -> Vec<String> {
+    let mut hints = vec![format!(
+        "fan-out {} > {} ({}, soft {}, hard {})",
+        f.count,
+        f.soft,
+        limits::CHILDREN_PER_ENTITY,
+        f.soft,
+        f.hard
+    )];
+    for c in cands {
+        let more = if c.rest > 0 {
+            format!(" +{} more", c.rest)
+        } else {
+            String::new()
+        };
+        hints.push(format!(
+            "candidate [{}]{} (weight {})",
+            c.ids.join(", "),
+            more,
+            c.weight
+        ));
+    }
+    let members = level_members(store, target);
+    for m in &members {
+        let e = &store.graph.entities[m];
+        let mut line = format!("member {}", m);
+        if let Some(s) = &e.stereotype {
+            line.push_str(&format!(" «{}»", s));
+        }
+        if let Some(d) = dominant_document(store, m) {
+            line.push_str(&format!(" ({})", d));
+        }
+        hints.push(line);
+    }
+    for m in &members {
+        let n = level_members(store, m).len();
+        if n > 0 {
+            hints.push(format!("grouping {} ({} children)", m, n));
+        }
+    }
+    hints
+}
+
+// A grouping staged in the changeset: a derived entity with no mentions, its members
+// the entities whose parent becomes it in the same changeset.
+struct StagedGrouping<'a> {
+    id: &'a str,
+    entity: &'a Entity,
+    from: &'a [String],
+    members: Vec<String>,
+}
+
+// The containment tree after the staged changeset: every surviving id with the parent
+// and scope it holds at commit (a created grouping's members, a moved child, a
+// dissolved grouping's children landing on its parent).
+struct Projection<'a> {
+    store: &'a Store,
+    created: BTreeMap<&'a str, &'a Entity>,
+    dissolved: BTreeMap<&'a str, Option<String>>,
+    moved: BTreeMap<&'a str, &'a str>,
+    all_ids: Vec<String>,
+}
+
+impl<'a> Projection<'a> {
+    fn new(store: &'a Store, staged: &'a [Op]) -> Projection<'a> {
+        let created: BTreeMap<&str, &Entity> = staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::CreateEntity { id, entity } => Some((id.as_str(), entity)),
+                _ => None,
+            })
+            .collect();
+        let deleted: BTreeSet<&str> = staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::DeleteEntity { id, .. }
+                | Op::MergeEntities { absorb: id, .. }
+                | Op::DissolveEntity { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let parent_before = |id: &str| -> Option<String> {
+            store
+                .graph
+                .entities
+                .get(store.resolve_id(id))
+                .and_then(|e| e.parent.clone())
+                .filter(|p| !p.is_empty())
+        };
+        // A dissolved grouping's children land on its parent.
+        let dissolved: BTreeMap<&str, Option<String>> = staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::DissolveEntity { id, parent, .. } => Some((
+                    id.as_str(),
+                    parent
+                        .clone()
+                        .filter(|p| !p.is_empty())
+                        .or_else(|| parent_before(id)),
+                )),
+                _ => None,
+            })
+            .collect();
+        let moved: BTreeMap<&str, &str> = staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::UpdateEntity {
+                    id,
+                    parent: Some(p),
+                    ..
+                } => Some((id.as_str(), p.as_str())),
+                _ => None,
+            })
+            .collect();
+        let all_ids: Vec<String> = store
+            .graph
+            .entities
+            .keys()
+            .cloned()
+            .chain(created.keys().map(|k| k.to_string()))
+            .filter(|id| !deleted.contains(id.as_str()))
+            .collect();
+        Projection {
+            store,
+            created,
+            dissolved,
+            moved,
+            all_ids,
+        }
+    }
+
+    fn stored(&self, id: &str) -> Option<&'a Entity> {
+        self.store.graph.entities.get(self.store.resolve_id(id))
+    }
+
+    fn parent_before(&self, id: &str) -> Option<String> {
+        self.stored(id)
+            .and_then(|e| e.parent.clone())
+            .filter(|p| !p.is_empty())
+    }
+
+    fn scope_of(&self, id: &str) -> Option<String> {
+        self.created
+            .get(id)
+            .map(|e| e.scope.clone())
+            .or_else(|| self.stored(id).map(|e| e.scope.clone()))
+    }
+
+    fn parent_after(&self, id: &str) -> Option<String> {
+        let p = match self.moved.get(id) {
+            Some(p) => Some(p.to_string()).filter(|p| !p.is_empty()),
+            None => self
+                .created
+                .get(id)
+                .and_then(|e| e.parent.clone())
+                .or_else(|| self.parent_before(id)),
+        };
+        match p.as_deref().and_then(|p| self.dissolved.get(p)) {
+            Some(grand) => grand.clone(),
+            None => p,
+        }
+    }
+
+    // The level's member count after the changeset.
+    fn level_count(&self, level: &str) -> u64 {
+        self.all_ids
+            .iter()
+            .filter(|id| {
+                let scope = self.scope_of(id).unwrap_or_default();
+                level_key(self.parent_after(id).as_deref(), &scope) == level
+            })
+            .count() as u64
+    }
+}
+
+// One level against its standing fan-out record: the count after the changeset is at
+// or under the limit in force (hard when the goal is mandatory, soft otherwise). None
+// when no record stands on the level.
+fn fan_out_level_violation(proj: &Projection, level: &str) -> Option<Violation> {
+    let f = fan_out_crossing(proj.store, level)?;
+    let count = proj.level_count(level);
+    if count <= f.limit_in_force() {
+        return None;
+    }
+    Some(Violation::new(
+        "fan-out-over-limit",
+        format!(
+            "{}: {} children after the changeset, over {} ({}, soft {}, hard {}); group more members, or fail the goal naming why the level is flat",
+            level,
+            count,
+            f.limit_in_force(),
+            limits::CHILDREN_PER_ENTITY,
+            f.soft,
+            f.hard
+        ),
+    ))
+}
+
+// The fan-out gate for one goal at mark_goal_done: the staged gates, then the goal's
+// own level whether or not the changeset touched it, so a goal marked done without
+// work still faces its count. Mirrors
+// docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+pub fn fan_out_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Violation> {
+    if let Some(v) = fan_out_gates(store, staged).into_iter().next() {
+        return Some(v);
+    }
+    fan_out_level_violation(&Projection::new(store, staged), target)
+}
+
+// The fan-out gate over the staged changeset. Every grouping created has two or more
+// children, a definition, derived provenance naming exactly its members, and the
+// members' shared current parent as its own (a grouping never crosses levels); no
+// member changed scope; and every level the changeset touched that stands over its
+// fan-out limit is brought to the limit in force (hard when the goal is mandatory,
+// soft otherwise). A level the changeset leaves alone is a declined or failed goal's,
+// never this gate's. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+pub fn fan_out_gates(store: &Store, staged: &[Op]) -> Vec<Violation> {
+    let mut out = Vec::new();
+    let proj = Projection::new(store, staged);
+    let created = &proj.created;
+
+    // A grouping holds a level and carries no requirements of its own; a derived
+    // entity a staged requirement points at is the caps variant's sub-entity.
+    let carries_requirements = |id: &str| {
+        staged.iter().any(|o| match o {
+            Op::UpdateRequirement {
+                entities: Some(e), ..
+            } => e.iter().any(|x| x == id),
+            Op::CreateRequirement { requirement, .. } => {
+                requirement.entities.iter().any(|x| x == id)
+            }
+            _ => false,
+        })
+    };
+    let groupings: Vec<StagedGrouping> = created
+        .iter()
+        .filter_map(|(id, entity)| match &entity.provenance {
+            Some(Provenance::Derived { from, .. })
+                if entity.mentions.is_empty() && !carries_requirements(id) =>
+            {
+                let members: Vec<String> = proj
+                    .all_ids
+                    .iter()
+                    .filter(|m| m.as_str() != *id && proj.parent_after(m).as_deref() == Some(*id))
+                    .cloned()
+                    .collect();
+                if members.is_empty() {
+                    return None;
+                }
+                Some(StagedGrouping {
+                    id,
+                    entity,
+                    from,
+                    members,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    for g in &groupings {
+        touched.insert(level_key(g.entity.parent.as_deref(), &g.entity.scope));
+        if g.members.len() < 2 {
+            out.push(Violation::new(
+                "grouping-too-small",
+                format!(
+                    "{}: a grouping holds two or more children ({} staged); below two there is nothing to judge",
+                    g.id,
+                    g.members.len()
+                ),
+            ));
+        }
+        if g.entity
+            .definition
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        {
+            out.push(Violation::new(
+                "definition-required",
+                format!(
+                    "{}: a grouping carries a one-sentence definition of its responsibility",
+                    g.id
+                ),
+            ));
+        }
+        let named: BTreeSet<String> = g
+            .from
+            .iter()
+            .map(|f| store.resolve_id(f).to_string())
+            .collect();
+        let members: BTreeSet<String> = g.members.iter().cloned().collect();
+        if named != members {
+            out.push(Violation::new(
+                "provenance-mismatch",
+                format!(
+                    "{}: derived provenance names [{}] while its members are [{}]; from names exactly the members",
+                    g.id,
+                    named.iter().cloned().collect::<Vec<_>>().join(", "),
+                    members.iter().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+        let own_parent = g.entity.parent.clone().filter(|p| !p.is_empty());
+        for m in &g.members {
+            if created.contains_key(m.as_str()) {
+                continue;
+            }
+            let was = proj.parent_before(m);
+            if was != own_parent {
+                out.push(Violation::new(
+                    "cross-level",
+                    format!(
+                        "{}: a grouping never crosses levels; {} sits under {} while the grouping takes {}",
+                        g.id,
+                        m,
+                        was.as_deref().unwrap_or("the scope root"),
+                        own_parent.as_deref().unwrap_or("the scope root")
+                    ),
+                ));
+            }
+            if proj.scope_of(m).as_deref() != Some(g.entity.scope.as_str()) {
+                out.push(Violation::new(
+                    "scope-mismatch",
+                    format!(
+                        "{}: a grouping takes its members' scope; {} is in {}",
+                        g.id,
+                        m,
+                        proj.scope_of(m).unwrap_or_default()
+                    ),
+                ));
+            }
+        }
+    }
+    for (id, p) in &proj.moved {
+        if let Some(before) = level_of(store, id) {
+            touched.insert(before);
+        }
+        touched.insert(level_key(Some(p), &proj.scope_of(id).unwrap_or_default()));
+    }
+    for (id, grand) in &proj.dissolved {
+        touched.insert(level_key(
+            grand.as_deref(),
+            &proj.scope_of(id).unwrap_or_default(),
+        ));
+    }
+    for level in touched {
+        out.extend(fan_out_level_violation(&proj, &level));
+    }
+    out
+}
+
 impl GoalKind for AbstractEntity {
     fn kind(&self) -> &'static str {
         "abstract-entity"
@@ -3554,112 +4161,169 @@ impl GoalKind for AbstractEntity {
     fn unit(&self) -> &'static str {
         "entity"
     }
+    // The caps variant on an entity's requirement and state counts, the fan-out
+    // variant on a level's child count (a node, or `scope:<scope>` for the top level);
+    // records for both on one node fold into one goal. Mirrors
+    // docs/compiler/goals/abstract-entity.md#created-when and #the-fan-out-variant.
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
-        let mut by_entity: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
+        let mut by_target: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
         for rec in records_of(store, &[store::CHANGE_THRESHOLD_CROSSED]) {
-            if rec.detail["goal"] == "abstract-entity"
-                && store.graph.entities.contains_key(&rec.subject)
-            {
-                by_entity.entry(rec.subject.clone()).or_default().push(rec);
+            let mine = rec.detail["goal"] == "abstract-entity"
+                || rec.detail["limit"] == limits::CHILDREN_PER_ENTITY;
+            let subject_exists = store.graph.entities.contains_key(&rec.subject)
+                || scope_target(&rec.subject).is_some();
+            if mine && subject_exists {
+                by_target.entry(rec.subject.clone()).or_default().push(rec);
             }
         }
         let mut out = Vec::new();
-        for (id, recs) in by_entity {
-            let e = &store.graph.entities[&id];
+        for (id, recs) in by_target {
             let crossed = crossings_for(&recs);
             let mandatory = crossed.iter().any(|c| c.count > c.hard);
             let cause = earliest_cause(&recs);
+            let (fan, caps): (Vec<&Crossed>, Vec<&Crossed>) = crossed
+                .iter()
+                .partition(|c| c.limit == limits::CHILDREN_PER_ENTITY);
+            let caps: Vec<Crossed> = caps
+                .into_iter()
+                .map(|c| Crossed {
+                    limit: c.limit.clone(),
+                    count: c.count,
+                    soft: c.soft,
+                    hard: c.hard,
+                })
+                .collect();
             let mut hints = vec![format!("load {}", id)];
-            for c in &crossed {
-                hints.push(format!(
-                    "{} > {} ({}, soft {}, hard {})",
-                    c.count, c.soft, c.limit, c.soft, c.hard
-                ));
-                if c.limit == "states-per-state-machine" {
-                    hints.push(format!("load sm:{}", crate::derive::entity_slug(&id)));
+            let mut change = match fan.first() {
+                Some(c) => {
+                    let f = FanOut {
+                        count: c.count,
+                        soft: c.soft,
+                        hard: c.hard,
+                    };
+                    let cands = coupling_candidates(store, &id, f.soft);
+                    hints.extend(fan_out_hints(store, &id, &f, &cands));
+                    json!({
+                        "fan_out": f.count,
+                        "limit": {"soft": f.soft, "hard": f.hard},
+                        "candidates": cands.iter().map(|c| c.ids.clone()).collect::<Vec<_>>(),
+                    })
+                }
+                None => Value::Null,
+            };
+            if !caps.is_empty() {
+                let caps_change = threshold_change(&caps);
+                match change.as_object_mut() {
+                    Some(o) => {
+                        o.insert("limits".into(), caps_change["limits"].clone());
+                    }
+                    None => change = caps_change,
                 }
             }
-            for (tok, n, section) in cohesion_groups(store, &id) {
-                hints.push(format!("group {} ({} requirements, {})", tok, n, section));
-            }
-            for (cid, _) in store
-                .graph
-                .entities
-                .iter()
-                .filter(|(_, c)| c.parent.as_deref() == Some(id.as_str()))
-            {
-                hints.push(format!(
-                    "child {} ({} requirements)",
-                    cid,
-                    store.requirements_referencing(cid).len()
-                ));
-            }
-            if let Some(m) = e.mentions.first() {
-                let full = format!("{}#{}", m.doc, m.section);
-                let too_large = store.graph.diagnostics.values().any(|d| {
-                    d.lifecycle == "open"
-                        && d.rule == "section-too-large"
-                        && d.subjects.iter().any(|s| *s == full)
-                });
-                hints.push(format!(
-                    "load {}{}",
-                    full,
-                    if too_large {
-                        " (section-too-large filed)"
-                    } else {
-                        ""
+            if let Some(e) = store.graph.entities.get(&id).filter(|_| !caps.is_empty()) {
+                for c in &caps {
+                    hints.push(format!(
+                        "{} > {} ({}, soft {}, hard {})",
+                        c.count, c.soft, c.limit, c.soft, c.hard
+                    ));
+                    if c.limit == "states-per-state-machine" {
+                        hints.push(format!("load sm:{}", crate::derive::entity_slug(&id)));
                     }
-                ));
+                }
+                for (tok, n, section) in cohesion_groups(store, &id) {
+                    hints.push(format!("group {} ({} requirements, {})", tok, n, section));
+                }
+                for cid in level_members(store, &id) {
+                    hints.push(format!(
+                        "child {} ({} requirements)",
+                        cid,
+                        store.requirements_referencing(&cid).len()
+                    ));
+                }
+                if let Some(m) = e.mentions.first() {
+                    let full = format!("{}#{}", m.doc, m.section);
+                    let too_large = store.graph.diagnostics.values().any(|d| {
+                        d.lifecycle == "open"
+                            && d.rule == "section-too-large"
+                            && d.subjects.iter().any(|s| *s == full)
+                    });
+                    hints.push(format!(
+                        "load {}{}",
+                        full,
+                        if too_large {
+                            " (section-too-large filed)"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                let composed = store
+                    .graph
+                    .relationships
+                    .values()
+                    .flat_map(|r| r.contributions.iter())
+                    .any(|c| c.r#type == "composition" && c.a == id);
+                if e.parent.is_none() && !composed {
+                    hints.push(
+                        "root: no parent, no composition stated; a decision prompt is owed".into(),
+                    );
+                }
             }
-            let composed = store
-                .graph
-                .relationships
-                .values()
-                .flat_map(|r| r.contributions.iter())
-                .any(|c| c.r#type == "composition" && c.a == id);
-            if e.parent.is_none() && !composed {
-                hints.push(
-                    "root: no parent, no composition stated; a decision prompt is owed".into(),
-                );
-            }
-            hints
-                .push("skill abstraction; upsert_entity, update_requirement, update_entity".into());
-            out.push(build_goal(
-                self,
-                &id,
-                mandatory,
-                threshold_change(&crossed),
-                cause,
-                hints,
-            ));
+            let tools = match (fan.is_empty(), caps.is_empty()) {
+                (false, true) => "skill abstraction; group_entities, update_entity, dissolve_entity",
+                (false, false) => "skill abstraction; group_entities, update_entity, dissolve_entity; upsert_entity, update_requirement",
+                _ => "skill abstraction; upsert_entity, update_requirement, update_entity",
+            };
+            hints.push(tools.into());
+            out.push(build_goal(self, &id, mandatory, change, cause, hints));
         }
         out
     }
     fn ready(&self, goal: &Goal, board: &Board) -> Ready {
         gc_ready(goal, board)
     }
+    // The node (or `scope:<scope>`, the top level as stubs) full and its children as
+    // stubs. The caps variant adds the defining section; the fan-out variant the
+    // level's views and the existing groupings' children. Mirrors
+    // docs/compiler/goals/abstract-entity.md#what-the-model-sees and #the-fan-out-prompt.
     fn pack(&self, store: &Store, batch: &[Goal]) -> String {
         let mut lines = Vec::new();
         for g in batch {
+            let fan_out = g.change.get("fan_out").is_some();
+            let caps = !fan_out || g.change.get("limits").is_some();
             lines.push(format!("- {} full", g.target));
-            for (cid, _) in store
-                .graph
-                .entities
-                .iter()
-                .filter(|(_, c)| c.parent.as_deref() == Some(g.target.as_str()))
-            {
+            let members = level_members(store, &g.target);
+            for cid in &members {
                 lines.push(format!("- {} stub", cid));
             }
-            if let Some(m) = store
-                .graph
-                .entities
-                .get(&g.target)
-                .and_then(|e| e.mentions.first())
-            {
-                lines.push(format!("- {}#{} full", m.doc, m.section));
+            if caps {
+                if let Some(m) = store
+                    .graph
+                    .entities
+                    .get(&g.target)
+                    .and_then(|e| e.mentions.first())
+                {
+                    lines.push(format!("- {}#{} full", m.doc, m.section));
+                }
+            }
+            if fan_out {
+                for m in &members {
+                    for cid in level_members(store, m) {
+                        lines.push(format!("- {} stub", cid));
+                    }
+                }
             }
             for (vid, v) in &store.graph.views {
-                if v.members.contains(&g.target) {
+                let level_view = v
+                    .query
+                    .as_ref()
+                    .and_then(|q| q.parent.as_deref())
+                    .is_some_and(|p| p == g.target)
+                    || scope_target(&g.target).is_some_and(|s| {
+                        vid == &format!("view:component/scope-{}", s)
+                            || vid == &format!("view:class/scope-{}", s)
+                    });
+                if v.members.contains(&g.target) || level_view {
                     lines.push(format!("- {} stub", vid));
                 }
             }
@@ -3672,13 +4336,15 @@ impl GoalKind for AbstractEntity {
             "update_entity",
             "upsert_requirement",
             "update_requirement",
+            "group_entities",
+            "dissolve_entity",
             "upsert_view",
             "update_view",
             "report_diagnostic",
         ]
     }
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {
-        let mut out = Vec::new();
+        let mut out = fan_out_gates(store, staged);
         let staged_parents: BTreeSet<String> = staged
             .iter()
             .filter_map(|o| match o {
@@ -3863,5 +4529,469 @@ mod tests {
         assert!(!scores
             .iter()
             .any(|l| l.a == "ent:backend" && l.b == "ent:lonely"));
+    }
+
+    // ---- the fan-out variant ----
+
+    fn gen_settings() -> GenSettings {
+        GenSettings {
+            deliverable: std::path::PathBuf::from("/nonexistent"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        }
+    }
+
+    fn child(name: &str, parent: Option<&str>, doc: &str) -> Entity {
+        Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            stereotype: Some("component".into()),
+            mentions: vec![SourceRef {
+                doc: doc.into(),
+                section: "/x".into(),
+                quote: name.into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn link(s: &mut Store, n: usize, a: &str, b: &str) {
+        s.graph.requirements.insert(
+            format!("req:x-{}", n),
+            Requirement {
+                statement: format!("{} calls {}.", a, b),
+                entities: vec![a.into(), b.into()],
+                source: Some(SourceRef {
+                    doc: "api.md".into(),
+                    section: "/x".into(),
+                    quote: "calls".into(),
+                }),
+                ..Default::default()
+            },
+        );
+    }
+
+    // One record per subject and limit, as the limit counts write them at commit.
+    fn threshold_record(s: &mut Store, subject: &str, limit: &str, count: u64) {
+        let (soft, hard) = limits::threshold(limit, None).unwrap();
+        s.status.changes.retain(|c| {
+            !(c.kind == store::CHANGE_THRESHOLD_CROSSED
+                && c.subject == subject
+                && c.detail["limit"] == limit)
+        });
+        let n = s.status.changes.len();
+        s.status.changes.push(
+            ChangeRecord::new(7, n, 0, store::CHANGE_THRESHOLD_CROSSED, subject, "limits")
+                .with_detail(json!({
+                    "limit": limit, "count": count, "soft": soft, "hard": hard,
+                    "level": if count > hard { "hard" } else { "soft" },
+                    "goal": "abstract-entity",
+                })),
+        );
+    }
+
+    fn fan_out_record(s: &mut Store, subject: &str, count: u64) {
+        threshold_record(s, subject, limits::CHILDREN_PER_ENTITY, count);
+    }
+
+    // A backend with twelve children in two coupled groups plus stragglers, and a
+    // public scope root with ten parentless entities.
+    fn levels_store() -> Store {
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:backend".into(), child("Backend", None, "arch.md"));
+        for (i, n) in ["cart", "pricing", "checkout", "discount"]
+            .iter()
+            .enumerate()
+        {
+            s.graph.entities.insert(
+                format!("ent:{}", n),
+                child(
+                    n,
+                    Some("ent:backend"),
+                    if i % 2 == 0 { "orders.md" } else { "api.md" },
+                ),
+            );
+        }
+        for n in ["shipment", "carrier", "tracking"] {
+            s.graph.entities.insert(
+                format!("ent:{}", n),
+                child(n, Some("ent:backend"), "shipping.md"),
+            );
+        }
+        for n in ["audit", "cache", "queue", "search", "mailer"] {
+            s.graph.entities.insert(
+                format!("ent:{}", n),
+                child(n, Some("ent:backend"), "infra.md"),
+            );
+        }
+        // A leaf under cart: its requirement lifts to cart.
+        s.graph.entities.insert(
+            "ent:cart-item".into(),
+            child("cart item", Some("ent:cart"), "orders.md"),
+        );
+        let mut n = 0;
+        let mut l = |s: &mut Store, a: &str, b: &str| {
+            n += 1;
+            link(s, n, a, b);
+        };
+        l(&mut s, "ent:cart", "ent:pricing");
+        l(&mut s, "ent:cart", "ent:pricing");
+        l(&mut s, "ent:pricing", "ent:discount");
+        l(&mut s, "ent:cart-item", "ent:checkout");
+        l(&mut s, "ent:checkout", "ent:discount");
+        l(&mut s, "ent:shipment", "ent:carrier");
+        l(&mut s, "ent:carrier", "ent:tracking");
+        l(&mut s, "ent:shipment", "ent:tracking");
+        l(&mut s, "ent:queue", "ent:mailer");
+        s.graph.relationships.insert(
+            "rel:ent:cart~ent:pricing".into(),
+            Relationship {
+                members: vec!["ent:cart".into(), "ent:pricing".into()],
+                contributions: Vec::new(),
+            },
+        );
+        // Ten parentless entities beside the backend at the scope root.
+        for i in 0..9 {
+            s.graph.entities.insert(
+                format!("ent:top-{}", i),
+                child(&format!("top {}", i), None, "arch.md"),
+            );
+        }
+        fan_out_record(&mut s, "ent:backend", 12);
+        fan_out_record(&mut s, "scope:public", 10);
+        s
+    }
+
+    fn grouping(id: &str, parent: Option<&str>, from: &[&str]) -> Op {
+        Op::CreateEntity {
+            id: id.into(),
+            entity: Entity {
+                name: id.trim_start_matches("ent:").into(),
+                definition: Some("Holds the ordering area of the backend.".into()),
+                parent: parent.map(String::from),
+                provenance: Some(Provenance::Derived {
+                    from: from.iter().map(|f| f.to_string()).collect(),
+                    reasoning: "the documents treat these as one area".into(),
+                }),
+                ..Default::default()
+            },
+        }
+    }
+
+    fn reparent(id: &str, parent: &str) -> Op {
+        Op::UpdateEntity {
+            id: id.into(),
+            name: None,
+            definition: None,
+            add_aliases: Vec::new(),
+            add_mention: None,
+            stereotype: None,
+            parent: Some(parent.into()),
+            set_attributes: None,
+            add_attributes: Vec::new(),
+            provenance: None,
+        }
+    }
+
+    fn rules(v: &[Violation]) -> Vec<&str> {
+        v.iter().map(|x| x.rule.as_str()).collect()
+    }
+
+    #[test]
+    fn fan_out_derivation_at_a_node_and_at_the_scope_root() {
+        let s = levels_store();
+        let goals = AbstractEntity.derive_goals(&s, &gen_settings());
+        let ids: Vec<&str> = goals.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "g:abstract-entity:ent:backend",
+                "g:abstract-entity:scope:public"
+            ]
+        );
+        let node = &goals[0];
+        assert!(!node.mandatory);
+        assert_eq!(node.change["fan_out"], 12);
+        assert_eq!(node.change["limit"], json!({"soft": 9, "hard": 15}));
+        assert!(node.change.get("limits").is_none());
+        let cands = node.change["candidates"].as_array().unwrap();
+        assert_eq!(
+            cands[0],
+            json!(["ent:cart", "ent:checkout", "ent:discount", "ent:pricing"])
+        );
+        assert_eq!(
+            cands[1],
+            json!(["ent:carrier", "ent:shipment", "ent:tracking"])
+        );
+        assert_eq!(cands[2], json!(["ent:mailer", "ent:queue"]));
+        assert!(node.hints.contains(&"load ent:backend".to_string()));
+        assert!(node
+            .hints
+            .contains(&"fan-out 12 > 9 (children-per-entity, soft 9, hard 15)".to_string()));
+        assert!(node.hints.contains(
+            &"candidate [ent:cart, ent:checkout, ent:discount, ent:pricing] (weight 6)".to_string()
+        ));
+        assert!(node
+            .hints
+            .contains(&"member ent:cart «component» (orders.md)".to_string()));
+        assert!(node
+            .hints
+            .contains(&"grouping ent:cart (1 children)".to_string()));
+        assert!(!node.hints.iter().any(|h| h.starts_with("child ")));
+        assert_eq!(
+            node.hints.last().map(String::as_str),
+            Some("skill abstraction; group_entities, update_entity, dissolve_entity")
+        );
+        let root = &goals[1];
+        assert_eq!(root.target, "scope:public");
+        assert_eq!(root.change["fan_out"], 10);
+        assert_eq!(root.change["candidates"].as_array().unwrap().len(), 0);
+        assert!(root.hints.contains(&"load scope:public".to_string()));
+        assert!(root
+            .hints
+            .contains(&"member ent:backend «component» (arch.md)".to_string()));
+        assert!(root
+            .hints
+            .contains(&"grouping ent:backend (12 children)".to_string()));
+        let pack = AbstractEntity.pack(&s, &goals);
+        assert!(pack.contains("- scope:public full\n"));
+        assert!(pack.contains("- ent:backend full\n"));
+        assert!(pack.contains("- ent:top-0 stub\n"));
+        assert!(pack.contains("- ent:cart-item stub\n"));
+        assert!(!pack.contains("arch.md#/x full"));
+
+        // Over hard the goal is mandatory; a caps record on the same node folds in.
+        let mut s = levels_store();
+        fan_out_record(&mut s, "ent:backend", 16);
+        threshold_record(&mut s, "ent:cart", "requirements-per-entity", 54);
+        fan_out_record(&mut s, "ent:cart", 10);
+        let goals = AbstractEntity.derive_goals(&s, &gen_settings());
+        let backend = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        assert!(backend.mandatory);
+        let cart = goals.iter().find(|g| g.target == "ent:cart").unwrap();
+        assert_eq!(cart.change["fan_out"], 10);
+        assert_eq!(cart.change["limits"][0]["limit"], "requirements-per-entity");
+        assert!(cart
+            .hints
+            .contains(&"54 > 50 (requirements-per-entity, soft 50, hard 80)".to_string()));
+        assert!(cart
+            .hints
+            .contains(&"child ent:cart-item (1 requirements)".to_string()));
+        assert!(AbstractEntity
+            .pack(&s, &goals)
+            .contains("- orders.md#/x full\n"));
+    }
+
+    #[test]
+    fn coupling_hints_deterministic_and_bounded() {
+        let s = levels_store();
+        let a = coupling_candidates(&s, "ent:backend", 9);
+        let b = coupling_candidates(&s, "ent:backend", 9);
+        assert_eq!(a, b);
+        assert_eq!(a[0].weight, 6);
+        assert_eq!(a[1].weight, 3);
+        assert_eq!(a[2].weight, 1);
+        // The stragglers nothing touches are never merged at zero weight, and a
+        // singleton is no candidate.
+        assert_eq!(a.len(), 3);
+        assert!(a.iter().all(|c| c.ids.len() >= 2 && c.rest == 0));
+        // Descendants lift: the cart item's requirement counted for cart.
+        let w = coupling_weights(&s, &level_members(&s, "ent:backend"));
+        assert_eq!(w[&("ent:cart".to_string(), "ent:pricing".to_string())], 3);
+        assert_eq!(w[&("ent:cart".to_string(), "ent:checkout".to_string())], 1);
+        // Bounded: a level of thirty peers in one chain yields at most the soft
+        // threshold of clusters and twelve ids per cluster with the rest counted.
+        let mut s = Store::default();
+        for i in 0..30 {
+            s.graph.entities.insert(
+                format!("ent:n{:02}", i),
+                child(&format!("n {}", i), Some("ent:hub"), "hub.md"),
+            );
+        }
+        s.graph
+            .entities
+            .insert("ent:hub".into(), child("Hub", None, "hub.md"));
+        for i in 0..29 {
+            link(
+                &mut s,
+                i,
+                &format!("ent:n{:02}", i),
+                &format!("ent:n{:02}", i + 1),
+            );
+        }
+        let c = coupling_candidates(&s, "ent:hub", 9);
+        assert!(c.len() <= 9);
+        assert!(c.iter().all(|x| x.ids.len() <= FAN_OUT_CANDIDATE_IDS));
+        let total: usize = c.iter().map(|x| x.ids.len() + x.rest).sum();
+        assert_eq!(total, 30);
+        assert!(c[0].rest > 0);
+        assert_eq!(c, coupling_candidates(&s, "ent:hub", 9));
+        // Ties break by id: two equal-weight pairs merge the one whose ids sort first.
+        let mut s = Store::default();
+        for n in ["a", "b", "c", "d"] {
+            s.graph
+                .entities
+                .insert(format!("ent:{}", n), child(n, Some("ent:hub"), "hub.md"));
+        }
+        s.graph
+            .entities
+            .insert("ent:hub".into(), child("Hub", None, "hub.md"));
+        link(&mut s, 1, "ent:c", "ent:d");
+        link(&mut s, 2, "ent:a", "ent:b");
+        let c = coupling_candidates(&s, "ent:hub", 1);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].ids, vec!["ent:a", "ent:b"]);
+    }
+
+    #[test]
+    fn fan_out_gate_accepts_a_valid_grouping() {
+        let s = levels_store();
+        let members = ["ent:cart", "ent:pricing", "ent:checkout", "ent:discount"];
+        let mut staged = vec![grouping("ent:orders", Some("ent:backend"), &members)];
+        staged.extend(members.iter().map(|m| reparent(m, "ent:orders")));
+        // Twelve minus four plus one: nine, at the soft threshold.
+        assert_eq!(fan_out_gates(&s, &staged), Vec::new());
+        assert_eq!(AbstractEntity.gates(&s, &staged), Vec::new());
+        // A top-level grouping at the scope root: ten minus two plus one.
+        let staged = vec![
+            grouping("ent:tops", None, &["ent:top-0", "ent:top-1"]),
+            reparent("ent:top-0", "ent:tops"),
+            reparent("ent:top-1", "ent:tops"),
+        ];
+        assert_eq!(fan_out_gates(&s, &staged), Vec::new());
+        // A caps split with requirements re-pointed is not a grouping: one child
+        // under it and a statement moved passes the fan-out gate untouched.
+        let mut s = s;
+        s.status.changes.clear();
+        let staged = vec![
+            grouping(
+                "ent:cart-pricing",
+                Some("ent:cart"),
+                &["ent:cart", "req:x-1"],
+            ),
+            Op::UpdateRequirement {
+                id: "req:x-1".into(),
+                statement: None,
+                entities: Some(vec!["ent:cart-pricing".into(), "ent:pricing".into()]),
+                edges: None,
+                transition: None,
+                facets: None,
+                source: None,
+                provenance: None,
+            },
+        ];
+        assert_eq!(fan_out_gates(&s, &staged), Vec::new());
+    }
+
+    #[test]
+    fn fan_out_gate_rejects_a_one_member_grouping() {
+        let s = levels_store();
+        let staged = vec![
+            grouping("ent:orders", Some("ent:backend"), &["ent:cart"]),
+            reparent("ent:cart", "ent:orders"),
+        ];
+        let v = fan_out_gates(&s, &staged);
+        assert!(rules(&v).contains(&"grouping-too-small"), "{:?}", v);
+        assert!(v[0].message.contains("ent:orders"));
+        // The level stays over the limit too: twelve minus one plus one.
+        assert!(rules(&v).contains(&"fan-out-over-limit"), "{:?}", v);
+        assert_eq!(
+            rules(&AbstractEntity.gates(&s, &staged))[0],
+            "grouping-too-small"
+        );
+        // Provenance naming other than the members, and a missing definition.
+        let mut staged = vec![grouping(
+            "ent:orders",
+            Some("ent:backend"),
+            &["ent:cart", "ent:pricing", "ent:backend"],
+        )];
+        staged.extend(
+            ["ent:cart", "ent:pricing", "ent:checkout", "ent:discount"]
+                .iter()
+                .map(|m| reparent(m, "ent:orders")),
+        );
+        if let Op::CreateEntity { entity, .. } = &mut staged[0] {
+            entity.definition = None;
+        }
+        let v = fan_out_gates(&s, &staged);
+        assert!(rules(&v).contains(&"provenance-mismatch"), "{:?}", v);
+        assert!(rules(&v).contains(&"definition-required"), "{:?}", v);
+        // Grouping only two of twelve leaves the level over soft.
+        let staged = vec![
+            grouping(
+                "ent:mail",
+                Some("ent:backend"),
+                &["ent:queue", "ent:mailer"],
+            ),
+            reparent("ent:queue", "ent:mail"),
+            reparent("ent:mailer", "ent:mail"),
+        ];
+        let v = fan_out_gates(&s, &staged);
+        assert_eq!(rules(&v), vec!["fan-out-over-limit"]);
+        assert!(v[0]
+            .message
+            .starts_with("ent:backend: 11 children after the changeset, over 9"));
+        // Over hard the limit in force is hard: sixteen to fifteen passes.
+        let mut s = levels_store();
+        fan_out_record(&mut s, "ent:backend", 16);
+        assert_eq!(fan_out_gates(&s, &staged), Vec::new());
+    }
+
+    #[test]
+    fn fan_out_gate_rejects_a_cross_level_grouping() {
+        let s = levels_store();
+        // A member from the scope root beside members of the backend's level.
+        let members = ["ent:cart", "ent:pricing", "ent:top-0"];
+        let mut staged = vec![grouping("ent:orders", Some("ent:backend"), &members)];
+        staged.extend(members.iter().map(|m| reparent(m, "ent:orders")));
+        let v = fan_out_gates(&s, &staged);
+        assert_eq!(rules(&v)[0], "cross-level", "{:?}", v);
+        assert_eq!(rules(&v).iter().filter(|r| **r == "cross-level").count(), 1);
+        assert!(v[0]
+            .message
+            .contains("ent:top-0 sits under the scope root while the grouping takes ent:backend"));
+        // The grouping's own parent is not the members' parent either.
+        let members = ["ent:cart", "ent:pricing"];
+        let mut staged = vec![grouping("ent:orders", None, &members)];
+        staged.extend(members.iter().map(|m| reparent(m, "ent:orders")));
+        let v = fan_out_gates(&s, &staged);
+        assert_eq!(&rules(&v)[..2], &["cross-level", "cross-level"], "{:?}", v);
+        // A member of another scope.
+        let mut s = levels_store();
+        s.graph.entities.get_mut("ent:pricing").unwrap().scope = "internal".into();
+        let members = ["ent:cart", "ent:pricing"];
+        let mut staged = vec![grouping("ent:orders", Some("ent:backend"), &members)];
+        staged.extend(members.iter().map(|m| reparent(m, "ent:orders")));
+        let v = fan_out_gates(&s, &staged);
+        assert!(rules(&v).contains(&"scope-mismatch"), "{:?}", v);
+        // A dissolve lands the children back on the level: the count check sees them.
+        let mut s = levels_store();
+        s.graph.entities.insert(
+            "ent:mail".into(),
+            Entity {
+                name: "mail".into(),
+                parent: Some("ent:backend".into()),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["ent:queue".into(), "ent:mailer".into()],
+                    reasoning: "one area".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        for m in ["ent:queue", "ent:mailer"] {
+            s.graph.entities.get_mut(m).unwrap().parent = Some("ent:mail".into());
+        }
+        fan_out_record(&mut s, "ent:backend", 11);
+        let staged = vec![Op::DissolveEntity {
+            id: "ent:mail".into(),
+            reason: "one member left".into(),
+            parent: None,
+            children: Vec::new(),
+        }];
+        let v = fan_out_gates(&s, &staged);
+        assert_eq!(rules(&v), vec!["fan-out-over-limit"], "{:?}", v);
+        assert!(v[0].message.starts_with("ent:backend: 12 children"));
     }
 }

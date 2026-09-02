@@ -1134,6 +1134,7 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
                 .join(", ")
         }
     );
+    println!("{}", shape_line(&store));
     // The last build's cost, with the biggest goal kind's share beside the totals.
     let c = &s.costs;
     if c.sessions > 0 || c.tokens > 0 {
@@ -1197,6 +1198,39 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
         }
     }
     0
+}
+
+// The shape line: the entity count per depth of the containment tree (the parentless
+// entities at depth 1), then the fan-out histogram, how many levels hold how many
+// direct children, banded against the `children-per-entity` registry values: at or
+// under soft, over soft and at or under hard, over hard. An empty tree prints `0`.
+// Mirrors docs/frontends/cli.md#jazyk-status.
+pub fn shape_line(store: &Store) -> String {
+    let shape = reconcile::shape(store);
+    let depths = if shape.per_depth.is_empty() {
+        "0".to_string()
+    } else {
+        shape
+            .per_depth
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    };
+    let (soft, hard) = crate::limits::limit(crate::limits::CHILDREN_PER_ENTITY)
+        .map(|l| (l.soft, l.hard))
+        .unwrap_or((0, 0));
+    format!(
+        "shape: {} nodes per depth; fan-out 2-{}: {}, {}-{}: {}, over {}: {}",
+        depths,
+        soft,
+        shape.bands[0],
+        soft + 1,
+        hard,
+        shape.bands[1],
+        hard,
+        shape.bands[2]
+    )
 }
 
 // The next session's prompt, exactly as the model would receive it. With a goal or a
@@ -1960,6 +1994,67 @@ mod tests {
         // An unknown root is an error, not an empty tree.
         assert!(ripple_text_for(&store, Some("ent:ghost"), false).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The shape line: nodes per depth, then the fan-out histogram in the bands the
+    // registry values set. Mirrors docs/frontends/cli.md#jazyk-status.
+    #[test]
+    fn the_shape_line_renders_depths_and_the_fan_out_histogram() {
+        use crate::limits::{CHILDREN_PER_ENTITY_HARD, CHILDREN_PER_ENTITY_SOFT};
+        use crate::model::Entity;
+        let (soft, hard) = (
+            CHILDREN_PER_ENTITY_SOFT as usize,
+            CHILDREN_PER_ENTITY_HARD as usize,
+        );
+        let empty = Store::default();
+        assert_eq!(
+            shape_line(&empty),
+            format!(
+                "shape: 0 nodes per depth; fan-out 2-{}: 0, {}-{}: 0, over {}: 0",
+                soft,
+                soft + 1,
+                hard,
+                hard
+            )
+        );
+
+        // Three roots: one holds two children, one soft plus one, one hard plus one.
+        let mut s = Store::default();
+        let mut add = |id: &str, parent: Option<&str>| {
+            s.graph.entities.insert(
+                id.to_string(),
+                Entity {
+                    name: id.to_string(),
+                    parent: parent.map(String::from),
+                    ..Default::default()
+                },
+            );
+        };
+        for root in ["ent:a", "ent:b", "ent:c"] {
+            add(root, None);
+        }
+        for (root, n) in [("ent:a", 2), ("ent:b", soft + 1), ("ent:c", hard + 1)] {
+            for i in 0..n {
+                add(&format!("{}-{}", root, i), Some(root));
+            }
+        }
+        assert_eq!(
+            shape_line(&s),
+            format!(
+                "shape: 3 / {} nodes per depth; fan-out 2-{}: 2, {}-{}: 1, over {}: 1",
+                2 + soft + 1 + hard + 1,
+                soft,
+                soft + 1,
+                hard,
+                hard
+            )
+        );
+        if (soft, hard) == (9, 15) {
+            assert_eq!(
+                shape_line(&s),
+                "shape: 3 / 28 nodes per depth; fan-out 2-9: 2, 10-15: 1, over 15: 1"
+            );
+        }
     }
 
     #[test]

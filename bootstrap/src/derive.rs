@@ -5,7 +5,9 @@
 use crate::limits;
 use crate::md;
 use crate::model::*;
-use crate::store::{RecordBatch, Store, CHANGE_QUERY_MATCH, CHANGE_THRESHOLD_CROSSED};
+use crate::store::{
+    scope_root_target, RecordBatch, Store, CHANGE_QUERY_MATCH, CHANGE_THRESHOLD_CROSSED,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 // Everything derived, in dependency order: relationships feed the object and component
@@ -790,6 +792,12 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
             }
         }
     }
+    let mut roots: BTreeMap<&str, u64> = BTreeMap::new();
+    for e in store.graph.entities.values() {
+        if e.parent.is_none() {
+            *roots.entry(e.scope.as_str()).or_insert(0) += 1;
+        }
+    }
     for (id, e) in &store.graph.entities {
         check(
             id,
@@ -799,9 +807,21 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
         );
         check(
             id,
-            "children-per-entity",
+            limits::CHILDREN_PER_ENTITY,
             children.get(id.as_str()).copied().unwrap_or(0),
             &e.limits,
+        );
+    }
+    // The scope root counts its parentless entities under the same row, its record on
+    // `scope:<scope>`; a root has no node to carry a bump.
+    // Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    let no_bumps = BTreeMap::new();
+    for (scope, count) in roots {
+        check(
+            &scope_root_target(scope),
+            limits::CHILDREN_PER_ENTITY,
+            count,
+            &no_bumps,
         );
     }
     for m in store.graph.state_machines.values() {
@@ -1421,8 +1441,9 @@ pub(crate) mod tests {
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
         assert!(threshold_crossings(&s).is_empty());
-        // Eleven children cross children-per-entity at ten.
-        for i in 0..11 {
+        // One child over soft crosses children-per-entity on the node.
+        let (soft, hard) = limits::threshold("children-per-entity", None).unwrap();
+        for i in 0..=soft {
             s.graph.entities.insert(
                 format!("ent:part-{}", i),
                 Entity {
@@ -1438,7 +1459,7 @@ pub(crate) mod tests {
         assert_eq!(crossings[0].limit, "children-per-entity");
         assert_eq!(
             (crossings[0].count, crossings[0].soft, crossings[0].hard),
-            (11, 10, 20)
+            (soft + 1, soft, hard)
         );
         let mut batch = RecordBatch::new(2);
         record_threshold_crossings(&mut s, &mut batch);
@@ -1450,7 +1471,33 @@ pub(crate) mod tests {
             .get_mut("ent:order")
             .unwrap()
             .limits
-            .insert("children-per-entity".into(), LimitBump { value: 15 });
+            .insert("children-per-entity".into(), LimitBump { value: soft + 5 });
         assert!(threshold_crossings(&s).is_empty());
+        // The scope root counts its parentless entities under the same row, on
+        // `scope:<scope>`, past hard as a hard crossing.
+        let parentless = s
+            .graph
+            .entities
+            .values()
+            .filter(|e| e.parent.is_none())
+            .count() as u64;
+        for i in parentless..=hard {
+            s.graph.entities.insert(
+                format!("ent:top-{}", i),
+                Entity {
+                    name: format!("Top {}", i),
+                    ..Default::default()
+                },
+            );
+        }
+        let crossings = threshold_crossings(&s);
+        assert_eq!(crossings.len(), 1);
+        assert_eq!(crossings[0].subject, "scope:public");
+        assert_eq!(crossings[0].limit, "children-per-entity");
+        assert_eq!(crossings[0].count, hard + 1);
+        let mut batch = RecordBatch::new(3);
+        record_threshold_crossings(&mut s, &mut batch);
+        assert_eq!(batch.records()[0].subject, "scope:public");
+        assert_eq!(batch.records()[0].detail["level"], "hard");
     }
 }

@@ -53,6 +53,43 @@ pub struct Cone {
     pub docs: BTreeSet<String>,
 }
 
+// The scope root target form: `scope:<scope>` names the top level of a scope, its
+// parentless entities. Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+pub const SCOPE_TARGET_PREFIX: &str = crate::store::SCOPE_ROOT_PREFIX;
+
+// The scope a `scope:<scope>` target names; None for every other target.
+pub fn scope_target(target: &str) -> Option<&str> {
+    target
+        .strip_prefix(SCOPE_TARGET_PREFIX)
+        .filter(|s| !s.is_empty() && !s.contains(':') && !s.contains('#'))
+}
+
+// The top level of a scope: its parentless entities, by id.
+pub fn scope_root(store: &Store, scope: &str) -> Vec<String> {
+    store
+        .graph
+        .entities
+        .iter()
+        .filter(|(_, e)| e.parent.is_none() && e.scope == scope)
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+// A target's level: the direct children of a node, or the scope root for the
+// `scope:<scope>` form. Mirrors docs/compiler/concepts/levels.md#levels.
+pub fn level_members(store: &Store, target: &str) -> Vec<String> {
+    if let Some(scope) = scope_target(target) {
+        return scope_root(store, scope);
+    }
+    store
+        .graph
+        .entities
+        .iter()
+        .filter(|(_, e)| e.parent.as_deref() == Some(target))
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
 impl Cone {
     pub fn holds_target(&self, target: &str) -> bool {
         if let Some((a, b)) = goals::pair_members(target) {
@@ -218,17 +255,24 @@ fn referrers(store: &Store, id: &str) -> Vec<String> {
 
 pub fn cone(store: &Store, target: &str) -> Cone {
     let mut nodes: BTreeSet<String> = BTreeSet::new();
-    let seeds: Vec<String> = match goals::pair_members(target) {
-        Some((a, b)) => vec![a.to_string(), b.to_string()],
-        None => vec![target.to_string()],
+    // The scope root's cone is the downward walk from every parentless entity of the
+    // scope: the whole scope, so the top level is regrouped only once everything in
+    // it has settled. A parentless entity has nothing above it to walk up to.
+    let scope = scope_target(target);
+    let seeds: Vec<String> = match (scope, goals::pair_members(target)) {
+        (Some(s), _) => scope_root(store, s),
+        (None, Some((a, b))) => vec![a.to_string(), b.to_string()],
+        (None, None) => vec![target.to_string()],
     };
     for seed in &seeds {
         nodes.insert(seed.clone());
-        let mut frontier = vec![seed.clone()];
-        while let Some(id) = frontier.pop() {
-            for r in referents(store, &id) {
-                if nodes.insert(r.clone()) {
-                    frontier.push(r);
+        if scope.is_none() {
+            let mut frontier = vec![seed.clone()];
+            while let Some(id) = frontier.pop() {
+                for r in referents(store, &id) {
+                    if nodes.insert(r.clone()) {
+                        frontier.push(r);
+                    }
                 }
             }
         }
@@ -277,6 +321,10 @@ pub fn cone(store: &Store, target: &str) -> Cone {
 fn target_exists(store: &Store, target: &str) -> bool {
     if let Some((a, b)) = goals::pair_members(target) {
         return target_exists(store, a) && target_exists(store, b);
+    }
+    // A scope root exists while the scope holds a parentless entity.
+    if let Some(scope) = scope_target(target) {
+        return !scope_root(store, scope).is_empty();
     }
     if let Some((doc, sec)) = split_section_ref(target) {
         return store
@@ -364,7 +412,13 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
             }
         }
         "review-entity" => 1_500 + 140 * store.requirements_referencing(&g.target).len(),
-        "abstract-entity" => 1_500 + 160 * store.requirements_referencing(&g.target).len(),
+        // The caps variant loads the node's requirements; the fan-out variant loads
+        // the level as stubs (docs/compiler/goals/abstract-entity.md#fan-out-hints).
+        "abstract-entity" => {
+            1_500
+                + 160 * store.requirements_referencing(&g.target).len()
+                + 120 * level_members(store, &g.target).len()
+        }
         "curate-view" | "split-view" | "retrace" => {
             let members = store
                 .graph
@@ -1377,7 +1431,18 @@ fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
             }
         }
         "review-entity" | "abstract-entity" | "conform-instance" => {
-            let mut ents = vec![g.target.clone()];
+            // Level locality: an abstraction joins through the level's members,
+            // the node's direct children or the scope's parentless entities
+            // (docs/compiler/reconciler.md#batching). The scope root is no entity
+            // and never a key of its own.
+            let mut ents: Vec<String> = if scope_target(&g.target).is_some() {
+                Vec::new()
+            } else {
+                vec![g.target.clone()]
+            };
+            if g.kind == "abstract-entity" {
+                ents.extend(level_members(store, &g.target));
+            }
             if g.kind == "conform-instance" {
                 if let Some(t) = g.change["type"].as_str() {
                     ents.push(t.to_string());
@@ -2060,6 +2125,134 @@ pub(crate) mod tests {
             "the system's cone holds its descendants"
         );
         assert!(top.nodes.contains("req:shop-1"));
+    }
+
+    // The cone of `scope:<scope>` is the downward walk from every parentless entity of
+    // the scope: the whole scope, and nothing of another scope.
+    // Mirrors docs/compiler/reconciler.md#cones.
+    #[test]
+    fn the_cone_of_a_scope_target_is_the_whole_scope() {
+        let mut s = crate::derive::tests::showcase_store();
+        s.graph.entities.insert(
+            "ent:ledger".into(),
+            Entity {
+                name: "Ledger".into(),
+                scope: "finance".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(scope_target("scope:public"), Some("public"));
+        assert_eq!(scope_target("ent:shop"), None);
+        assert_eq!(scope_target("scope:"), None);
+        let root = scope_root(&s, "public");
+        assert!(root.contains(&"ent:shop".to_string()), "{:?}", root);
+        assert!(root.contains(&"ent:customer".to_string()));
+        assert!(
+            !root.contains(&"ent:order".to_string()),
+            "a child is no root"
+        );
+        assert!(!root.contains(&"ent:ledger".to_string()), "another scope");
+        assert_eq!(level_members(&s, "scope:public"), root);
+        assert_eq!(
+            level_members(&s, "ent:shop"),
+            vec![
+                "ent:inventory-service".to_string(),
+                "ent:order-service".into()
+            ]
+        );
+        let c = cone(&s, "scope:public");
+        for id in [
+            "ent:shop",
+            "ent:order-service",
+            "ent:order",
+            "ent:customer",
+            "req:shop-1",
+        ] {
+            assert!(
+                c.nodes.contains(id),
+                "{} in the scope's cone: {:?}",
+                id,
+                c.nodes
+            );
+        }
+        assert!(c.sections.contains("shop.md#/shop"));
+        assert!(c.docs.contains("shop.md"));
+        assert!(!c.nodes.contains("ent:ledger"), "another scope stays out");
+        assert!(c.holds_target("req:shop-6"));
+        assert!(c.holds_target("shop.md#/shop/orders"));
+        assert!(cone(&s, "scope:finance").nodes.contains("ent:ledger"));
+        assert!(cone(&s, "scope:nope").nodes.is_empty());
+    }
+
+    // A fan-out goal on the scope root is GC work: it waits while a compile goal is
+    // open anywhere in the scope, and its locality is the level's members.
+    // Mirrors docs/compiler/reconciler.md#fan-out and #gc-gating.
+    #[test]
+    fn a_fan_out_goal_on_the_root_waits_for_the_compile_goal_in_its_scope() {
+        let mut s = settled_store();
+        let goal = Goal {
+            id: "g:abstract-entity:scope:public".into(),
+            kind: "abstract-entity".into(),
+            class: "gc".into(),
+            mandatory: false,
+            target: "scope:public".into(),
+            unit: "entity".into(),
+            change: json!({"fan_out": 4, "limit": {"soft": 9, "hard": 15}, "candidates": []}),
+            cause: None,
+            state: GoalState::Open,
+            hints: vec!["load scope:public".into()],
+        };
+        s.status.parked.push(goal.clone());
+        record(
+            &mut s,
+            10,
+            store::CHANGE_SECTION_DIRTY,
+            "shop.md#/shop/orders",
+            "section",
+            json!({"added": 1}),
+        );
+        let b = derive(&s);
+        let g = b
+            .goal(&goal.id)
+            .expect("the parked root goal survives derivation");
+        assert_eq!(g.state, GoalState::Parked);
+        let blockers = b.cone_blockers(&goal.id);
+        assert!(
+            blockers.contains(&"g:reconcile-section:shop.md#/shop/orders".to_string()),
+            "{:?}",
+            blockers
+        );
+        assert!(!b.is_ready(&goal.id), "{:?}", b.readiness.get(&goal.id));
+        // The level's members join the locality; the root itself is no key.
+        let keys = locality_keys(&s, g);
+        assert!(keys.contains(&"ent ent:shop".to_string()), "{:?}", keys);
+        assert!(keys.contains(&"ent ent:customer".to_string()));
+        assert!(!keys.iter().any(|k| k.contains("scope:")), "{:?}", keys);
+        assert!(estimate(&s, g) > 1_500);
+        // Cover the section again: the scope quiets and the root goal is ready.
+        s.docs.get_mut("shop.md").unwrap().coverage.insert(
+            "/shop/orders".into(),
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: Some("g11".into()),
+            },
+        );
+        let b = derive(&s);
+        assert!(b.cone_blockers(&goal.id).is_empty());
+        assert!(b.is_ready(&goal.id), "{:?}", b.readiness.get(&goal.id));
+        assert_eq!(b.batches.len(), 1);
+        assert_eq!(b.batches[0].class, Class::Gc);
+        assert_eq!(b.batches[0].goals, vec![goal.id.clone()]);
+        // A scope with no entities is no target: the parked entry drops.
+        let mut empty = settled_store();
+        let mut stray = goal.clone();
+        stray.id = "g:abstract-entity:scope:nope".into();
+        stray.target = "scope:nope".into();
+        empty.status.parked.push(stray.clone());
+        let b = derive(&empty);
+        assert!(b.goal(&stray.id).is_none());
+        assert!(b.dropped_parked.contains(&stray.id));
     }
 
     #[test]

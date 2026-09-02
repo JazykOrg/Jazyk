@@ -313,6 +313,9 @@ impl LoadedSet {
 
     fn neighbor_ids(&self, store: &Store, id: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
+        if let Some(scope) = crate::board::scope_target(id) {
+            return crate::board::scope_root(store, scope);
+        }
         if let Some(e) = store.graph.entities.get(id) {
             if let Some(p) = &e.parent {
                 out.push(p.clone());
@@ -341,6 +344,15 @@ impl LoadedSet {
 
     // The list an axis names, one rendered line per item.
     fn axis_items(&self, store: &Store, target: &str, axis: &str) -> Result<Vec<String>, String> {
+        if let Some(scope) = crate::board::scope_target(target) {
+            return Ok(match axis {
+                "children" => crate::board::scope_root(store, scope)
+                    .iter()
+                    .filter_map(|id| self.stub_line(store, id))
+                    .collect(),
+                _ => return Err(format!("axis `{}` does not apply to a scope root", axis)),
+            });
+        }
         if let Some((doc, sec)) = split_section_ref(target) {
             return Ok(match axis {
                 "children" => store
@@ -485,6 +497,16 @@ impl LoadedSet {
     // One line per policy: name, one definition line, the stereotype, its own edge
     // count. Mirrors docs/compiler/context.md#policy.
     pub fn stub_line(&self, store: &Store, id: &str) -> Option<String> {
+        if let Some(scope) = crate::board::scope_target(id) {
+            let n = crate::board::scope_root(store, scope).len();
+            if n == 0 {
+                return None;
+            }
+            return Some(format!(
+                "- {} (top level of scope {}, {} entities) [h:{}:children]",
+                id, scope, n, id
+            ));
+        }
         if let Some(e) = store.graph.entities.get(id) {
             let edges = store
                 .graph
@@ -554,7 +576,13 @@ impl LoadedSet {
         budget: usize,
     ) -> Result<(String, LoadedItem), String> {
         let mut b = Builder::new(budget);
-        let (what, summary) = if let Some(e) = store.graph.entities.get(id) {
+        let (what, summary) = if let Some(scope) = crate::board::scope_target(id) {
+            let n = self.render_scope_root(store, scope, &mut b)?;
+            (
+                "full".to_string(),
+                format!("top level: {} entities as stubs", n),
+            )
+        } else if let Some(e) = store.graph.entities.get(id) {
             self.render_entity(store, id, e, &mut b);
             let reqs = store.requirements_referencing(id).len();
             let parent = e
@@ -624,7 +652,7 @@ impl LoadedSet {
             ("section body".to_string(), "document root".to_string())
         } else {
             return Err(format!(
-                "unknown target `{}`; use a node id (ent:..., req:..., view:..., diag:...) or a section reference (doc.md#/ref)",
+                "unknown target `{}`; use a node id (ent:..., req:..., view:..., diag:...), a section reference (doc.md#/ref), or scope:<scope> for a scope's top level",
                 id
             ));
         };
@@ -640,6 +668,45 @@ impl LoadedSet {
                 handles: pack.handles,
             },
         ))
+    }
+
+    // The top level of a scope: its parentless entities as stubs, then the level's
+    // views. Returns the level's size. Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    fn render_scope_root(
+        &self,
+        store: &Store,
+        scope: &str,
+        b: &mut Builder,
+    ) -> Result<usize, String> {
+        let target = format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, scope);
+        let members = crate::board::scope_root(store, scope);
+        if members.is_empty() {
+            return Err(format!(
+                "unknown scope `{}`; scope:<scope> names the parentless entities of a scope",
+                scope
+            ));
+        }
+        b.push(&format!(
+            "## {} (top level of scope {})  full",
+            target, scope
+        ));
+        b.push(&format!("members ({}):", members.len()));
+        let lines: Vec<String> = members
+            .iter()
+            .filter_map(|id| self.stub_line(store, id))
+            .collect();
+        b.push_items(&target, "children", &lines);
+        let views: Vec<String> = store
+            .graph
+            .views
+            .keys()
+            .filter(|vid| vid.ends_with(&format!("/scope-{}", scope)))
+            .cloned()
+            .collect();
+        if !views.is_empty() {
+            b.push(&format!("views: {}", views.join(", ")));
+        }
+        Ok(members.len())
     }
 
     fn render_entity(&self, store: &Store, id: &str, e: &crate::model::Entity, b: &mut Builder) {
@@ -1411,6 +1478,93 @@ mod tests {
         assert!(set.open_handles().is_empty(), "handles close with the item");
         let err = set.expand(&s, &h).unwrap_err();
         assert!(err.contains("unknown or closed handle"), "{}", err);
+    }
+
+    // `scope:<scope>` loads the scope's parentless entities as stubs, its children
+    // handle expands to the same, and an unknown scope errors.
+    // Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    #[test]
+    fn loading_a_scope_root_renders_its_top_level_as_stubs() {
+        let mut s = fixture();
+        s.graph.entities.insert(
+            "ent:line".into(),
+            Entity {
+                name: "Line".into(),
+                parent: Some("ent:shopping-cart".into()),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:ledger".into(),
+            Entity {
+                name: "Ledger".into(),
+                scope: "finance".into(),
+                ..Default::default()
+            },
+        );
+        let mut set = LoadedSet::new(20_000);
+        let text = set.load(&s, "scope:public", 1).unwrap();
+        assert!(
+            text.starts_with("## scope:public (top level of scope public)  full"),
+            "{}",
+            text
+        );
+        assert!(text.contains("members (2):"), "{}", text);
+        assert!(
+            text.contains("- ent:shopping-cart (Shopping Cart)"),
+            "{}",
+            text
+        );
+        assert!(text.contains("- ent:customer (Customer)"), "{}", text);
+        assert!(
+            !text.contains("ent:line"),
+            "a child is not top level: {}",
+            text
+        );
+        assert!(
+            !text.contains("ent:ledger"),
+            "another scope stays out: {}",
+            text
+        );
+        assert!(set.contains("scope:public"));
+        let status = set.render_status("", 0, &BTreeSet::new());
+        assert!(
+            status.contains("- scope:public   top level: 2 entities as stubs"),
+            "{}",
+            status
+        );
+        assert!(set
+            .stub_line(&s, "scope:finance")
+            .unwrap()
+            .contains("1 entities"));
+        assert!(set.stub_line(&s, "scope:nope").is_none());
+        let err = set.load(&s, "scope:nope", 1).unwrap_err();
+        assert!(err.contains("unknown scope"), "{}", err);
+        // A tight budget cuts the members into a children handle that expands.
+        for i in 0..8 {
+            s.graph.entities.insert(
+                format!("ent:top-{}", i),
+                Entity {
+                    name: format!("Top {}", i),
+                    definition: Some(
+                        "a parentless entity with a definition long enough to cost budget".into(),
+                    ),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut tight = LoadedSet::new(400);
+        let text = tight.load(&s, "scope:public", 1).unwrap();
+        assert!(text.contains("[h:scope:public:children"), "{}", text);
+        let h = tight
+            .open_handles()
+            .iter()
+            .find(|h| h.contains("children"))
+            .unwrap()
+            .clone();
+        let more = tight.expand(&s, &h).unwrap();
+        assert!(more.contains("ent:top-"), "{}", more);
+        assert!(tight.expand(&s, "h:scope:public:members").is_err());
     }
 
     #[test]

@@ -858,6 +858,9 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             }
         }
     }
+    // Level shape: every level has its view, no level is over the hard fan-out, no
+    // derived grouping is under-membered.
+    f.extend(level_shape_checks(store));
     // Conformance, the mechanical part: an instance's attribute names against its type.
     for (inst, ty) in crate::derive::instance_types(store) {
         let Some(e) = store.graph.entities.get(&inst) else {
@@ -1102,6 +1105,232 @@ fn machine_checks(m: &StateMachine) -> Vec<Finding> {
     f
 }
 
+// ---- levels: the level-shape check and the shape of the tree ----
+
+// The limit row that bounds a level. Mirrors docs/compiler/graph.md#limits.
+const CHILDREN_LIMIT: &str = crate::limits::CHILDREN_PER_ENTITY;
+
+// Every level of the store: the target (a node id, or `scope:<scope>` for the root
+// form) with its direct children, id-ordered. A node with no child is not a level and
+// is not listed; a scope root always is. Mirrors docs/compiler/concepts/levels.md#levels.
+pub fn levels(store: &Store) -> Vec<(String, Vec<String>)> {
+    let mut by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut scopes: BTreeSet<&str> = BTreeSet::new();
+    for (id, e) in &store.graph.entities {
+        scopes.insert(&e.scope);
+        let key = match &e.parent {
+            Some(p) => p.clone(),
+            None => crate::store::scope_root_target(&e.scope),
+        };
+        by_parent.entry(key).or_default().push(id.clone());
+    }
+    let mut out: Vec<(String, Vec<String>)> = scopes
+        .into_iter()
+        .map(|s| {
+            let t = crate::store::scope_root_target(s);
+            let children = by_parent.remove(&t).unwrap_or_default();
+            (t, children)
+        })
+        .collect();
+    out.extend(
+        by_parent
+            .into_iter()
+            .filter(|(p, _)| store.graph.entities.contains_key(p)),
+    );
+    out
+}
+
+// The slug segment of a level view id: the node's slug, `scope-<scope>` for the root.
+fn level_slug(target: &str) -> String {
+    match crate::board::scope_target(target) {
+        Some(scope) => format!("scope-{}", md::slug(scope)),
+        None => crate::derive::entity_slug(target).to_string(),
+    }
+}
+
+// The structural level view of a target, under either kind the kind rule can pick
+// (`component` when the level carries a structural stereotype, `class` otherwise).
+// Mirrors docs/compiler/model/view.md#level-views.
+pub fn level_view_of(store: &Store, target: &str) -> Option<String> {
+    let slug = level_slug(target);
+    ["component", "class"]
+        .iter()
+        .map(|k| format!("view:{}/{}", k, slug))
+        .find(|id| store.graph.views.contains_key(id))
+}
+
+// The (soft, hard) fan-out thresholds in force on a target: the node's own bump is its
+// soft value; the scope root has no bump. Mirrors docs/compiler/graph.md#per-node-bumps.
+pub fn fan_out_thresholds(store: &Store, target: &str) -> (u64, u64) {
+    let bump = store
+        .graph
+        .entities
+        .get(target)
+        .and_then(|e| e.limits.get(CHILDREN_LIMIT))
+        .map(|b| b.value);
+    crate::limits::threshold(CHILDREN_LIMIT, bump).unwrap_or((u64::MAX, u64::MAX))
+}
+
+// A derived grouping: derived provenance, no mentions, and no requirement of its own
+// (a sub-entity the caps variant minted holds statements; a grouping holds a level).
+// Mirrors docs/compiler/concepts/levels.md#groupings.
+pub fn is_derived_grouping(store: &Store, id: &str) -> bool {
+    store.graph.entities.get(id).is_some_and(|e| {
+        matches!(e.provenance, Some(Provenance::Derived { .. }))
+            && e.mentions.is_empty()
+            && store.requirements_referencing(id).is_empty()
+    })
+}
+
+// The level-shape check: a level of two or more without its structural view, a level
+// over the hard fan-out threshold, a derived grouping with fewer than two children.
+// Mirrors docs/compiler/compilation.md#checks.
+fn level_shape_checks(store: &Store) -> Vec<Finding> {
+    let mut f = Vec::new();
+    for (target, children) in levels(store) {
+        if children.len() >= 2 && level_view_of(store, &target).is_none() {
+            f.push(finding(
+                "level-shape",
+                &target,
+                "warning",
+                format!(
+                    "{} holds {} direct children but has no structural level view (view:component/{} or view:class/{})",
+                    target,
+                    children.len(),
+                    level_slug(&target),
+                    level_slug(&target)
+                ),
+            ));
+        }
+        let (_, hard) = fan_out_thresholds(store, &target);
+        if children.len() as u64 > hard {
+            f.push(finding(
+                "level-shape",
+                &target,
+                "warning",
+                format!(
+                    "{} holds {} direct children, over the hard {} threshold of {}; the mandatory abstract-entity goal regroups the level",
+                    target,
+                    children.len(),
+                    CHILDREN_LIMIT,
+                    hard
+                ),
+            ));
+        }
+        if children.len() < 2 && is_derived_grouping(store, &target) {
+            f.push(finding(
+                "level-shape",
+                &target,
+                "warning",
+                format!(
+                    "{} is a derived grouping with {} child(ren); the sweep dissolves a grouping under two",
+                    target,
+                    children.len()
+                ),
+            ));
+        }
+    }
+    // A grouping with no child at all is not a level and never reaches the loop above.
+    for id in store.graph.entities.keys() {
+        let childless = !store
+            .graph
+            .entities
+            .values()
+            .any(|e| e.parent.as_deref() == Some(id));
+        if childless && is_derived_grouping(store, id) {
+            f.push(finding(
+                "level-shape",
+                id,
+                "warning",
+                format!(
+                    "{} is a derived grouping with 0 child(ren); the sweep dissolves a grouping under two",
+                    id
+                ),
+            ));
+        }
+    }
+    f
+}
+
+// The shape of the containment tree: entities per depth (the parentless entities at
+// depth 1, their children at depth 2, and so on) and the fan-out histogram, how many
+// levels (the scope roots included) hold how many direct children, banded against the
+// `children-per-entity` registry values: at or under soft, over soft and at or under
+// hard, over hard. Mirrors docs/compiler/compilation.md#convergence.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shape {
+    pub per_depth: Vec<usize>,
+    pub bands: [usize; 3],
+}
+
+pub fn shape(store: &Store) -> Shape {
+    let mut per_depth: Vec<usize> = Vec::new();
+    for id in store.graph.entities.keys() {
+        let mut depth = 1usize;
+        let mut cur = id.as_str();
+        while let Some(p) = store
+            .graph
+            .entities
+            .get(cur)
+            .and_then(|e| e.parent.as_deref())
+        {
+            depth += 1;
+            cur = p;
+            if depth > 64 {
+                break;
+            }
+        }
+        if per_depth.len() < depth {
+            per_depth.resize(depth, 0);
+        }
+        per_depth[depth - 1] += 1;
+    }
+    let (soft, hard) = crate::limits::limit(CHILDREN_LIMIT)
+        .map(|l| (l.soft, l.hard))
+        .unwrap_or((u64::MAX, u64::MAX));
+    let mut bands = [0usize; 3];
+    for (_, children) in levels(store) {
+        let n = children.len() as u64;
+        if n < 2 {
+            continue;
+        }
+        let band = if n <= soft {
+            0
+        } else if n <= hard {
+            1
+        } else {
+            2
+        };
+        bands[band] += 1;
+    }
+    Shape { per_depth, bands }
+}
+
+// ---- flip detection ----
+
+// One journaled mutation as (op name in snake case, body). The journal writes ops
+// tagged (`{op: update_entity, ...}`); an externally tagged form (`{UpdateEntity: {...}}`)
+// reads the same, so a replay never depends on which shape an entry took.
+fn journal_op(m: &serde_json::Value) -> Option<(String, &serde_json::Value)> {
+    let o = m.as_object()?;
+    if let Some(op) = o.get("op").and_then(|v| v.as_str()) {
+        return Some((op.to_string(), m));
+    }
+    let (op, body) = o.iter().next()?;
+    let mut snake = String::new();
+    for (i, c) in op.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                snake.push('_');
+            }
+            snake.push(c.to_ascii_lowercase());
+        } else {
+            snake.push(c);
+        }
+    }
+    Some((snake, body))
+}
+
 // Cross-class flip detection over the journal: a natural key a GC commit and a compile
 // commit hand back and forth. Two flips park the pair and file one
 // `unstable-derivation` diagnostic carrying both justifications.
@@ -1153,31 +1382,31 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
             .map(|r| r.justification.clone())
             .unwrap_or_default();
         for m in &entry.mutations {
-            let Some(o) = m.as_object() else { continue };
-            for (op, body) in o {
-                let key = match op.as_str() {
-                    "CreateEntity" => {
-                        let id = body["id"].as_str().unwrap_or("").to_string();
-                        let name = body["entity"]["name"].as_str().unwrap_or("");
-                        let scope = body["entity"]["scope"].as_str().unwrap_or("public");
-                        let key = key_of_entity(name, scope);
-                        id_key.insert(id, key.clone());
-                        Some(key)
-                    }
-                    "DeleteEntity" | "RetractDecree" => {
-                        id_key.get(body["id"].as_str().unwrap_or("")).cloned()
-                    }
-                    "MergeEntities" => id_key.get(body["absorb"].as_str().unwrap_or("")).cloned(),
-                    _ => None,
-                };
-                if let Some(key) = key {
-                    history.entry(key).or_default().push(Event {
-                        generation: entry.generation,
-                        class,
-                        goal: goal.clone(),
-                        justification: justification.clone(),
-                    });
+            let Some((op, body)) = journal_op(m) else {
+                continue;
+            };
+            let key = match op.as_str() {
+                "create_entity" => {
+                    let id = body["id"].as_str().unwrap_or("").to_string();
+                    let name = body["entity"]["name"].as_str().unwrap_or("");
+                    let scope = body["entity"]["scope"].as_str().unwrap_or("public");
+                    let key = key_of_entity(name, scope);
+                    id_key.insert(id, key.clone());
+                    Some(key)
                 }
+                "delete_entity" | "retract_decree" => {
+                    id_key.get(body["id"].as_str().unwrap_or("")).cloned()
+                }
+                "merge_entities" => id_key.get(body["absorb"].as_str().unwrap_or("")).cloned(),
+                _ => None,
+            };
+            if let Some(key) = key {
+                history.entry(key).or_default().push(Event {
+                    generation: entry.generation,
+                    class,
+                    goal: goal.clone(),
+                    justification: justification.clone(),
+                });
             }
         }
     }
@@ -1306,6 +1535,322 @@ pub fn flip_detection(store: &Store) -> (Vec<Finding>, Vec<Goal>) {
                 )],
             });
         }
+    }
+    let (reparent_findings, reparent_parked) = reparent_flips(store, &entries);
+    findings.extend(reparent_findings);
+    parked.extend(reparent_parked);
+    (findings, parked)
+}
+
+// The reparent flip: a child that moves between the same two parents across
+// generations. The store's replay of the journal (`journaled_parent_moves`: an
+// `update_entity` or `retract_decree` carrying `parent` and the prior parent, each
+// child of a `dissolve_entity`, a tool's or the sweep's) becomes a per-child list of
+// moves keyed on natural keys, so a grouping dissolved and re-minted under a new id
+// counts as the same parent and a parentless side is the scope root. A move back over
+// an earlier move parks the goal behind the second move and files one
+// unstable-derivation diagnostic on the child with both justifications and a prompt:
+// the first parent, the second, or a freeform ruling. A `reparent-flip` change record
+// the store wrote on a child names the pair when the replay alone cannot. Mirrors
+// docs/compiler/reconciler.md#flip-detection.
+fn reparent_flips(store: &Store, entries: &[JournalEntry]) -> (Vec<Finding>, Vec<Goal>) {
+    struct Move {
+        generation: u64,
+        // The parent the move landed on; the prior parent rides in `from_key` only.
+        to: Option<String>,
+        from_key: String,
+        to_key: String,
+        goal: Option<String>,
+        justification: String,
+    }
+    let key_of_entity =
+        |name: &str, scope: &str| format!("{}|{}", crate::store::normalize_statement(name), scope);
+    // Natural keys: the live entities, then the journal's creates for the dead ones.
+    let mut id_key: BTreeMap<String, String> = store
+        .graph
+        .entities
+        .iter()
+        .map(|(id, e)| (id.clone(), key_of_entity(&e.name, &e.scope)))
+        .collect();
+    for entry in entries {
+        for m in &entry.mutations {
+            let Some((op, body)) = journal_op(m) else {
+                continue;
+            };
+            if op != "create_entity" {
+                continue;
+            }
+            let Some(id) = body["id"].as_str() else {
+                continue;
+            };
+            let name = body["entity"]["name"].as_str().unwrap_or("");
+            let scope = body["entity"]["scope"].as_str().unwrap_or("public");
+            id_key
+                .entry(id.to_string())
+                .or_insert_with(|| key_of_entity(name, scope));
+        }
+    }
+    let scope_of = |child: &str| -> String {
+        store
+            .graph
+            .entities
+            .get(child)
+            .map(|e| e.scope.clone())
+            .or_else(|| {
+                id_key
+                    .get(child)
+                    .and_then(|k| k.split('|').nth(1))
+                    .map(String::from)
+            })
+            .unwrap_or_else(|| Entity::default().scope)
+    };
+    let mut history: BTreeMap<String, Vec<Move>> = BTreeMap::new();
+    for mv in store.journaled_parent_moves() {
+        let scope = scope_of(&mv.child);
+        let parent_key = |p: Option<&str>| -> String {
+            match p {
+                None => crate::store::scope_root_target(&scope),
+                Some(p) => id_key.get(p).cloned().unwrap_or_else(|| p.to_string()),
+            }
+        };
+        let from_key = parent_key(mv.from.as_deref());
+        let to_key = parent_key(mv.to.as_deref());
+        if from_key == to_key {
+            continue;
+        }
+        // The goal behind the move: the session's batch goal on the child or one of
+        // its parents, else the batch's first; a store-level entry (the sweep, a
+        // decree) has none, and its note stands in for a justification.
+        let entry = entries.iter().find(|e| e.generation == mv.generation);
+        let goal = entry.filter(|e| e.kind == "session").and_then(|e| {
+            let near = |g: &&String| {
+                goals::parse_goal_id(g).is_some_and(|(_, t)| {
+                    t == mv.child
+                        || mv.from.as_deref() == Some(t)
+                        || mv.to.as_deref() == Some(t)
+                        || t == from_key
+                        || t == to_key
+                })
+            };
+            e.batch
+                .iter()
+                .find(near)
+                .or_else(|| e.batch.first())
+                .cloned()
+        });
+        let justification = entry
+            .and_then(|e| {
+                goal.as_deref()
+                    .and_then(|g| e.resolved_goals.iter().find(|r| r.goal == g))
+                    .map(|r| r.justification.clone())
+                    .filter(|j| !j.trim().is_empty())
+                    .or_else(|| e.note.clone())
+                    .or_else(|| Some(format!("{} entry, no justification recorded", e.kind)))
+            })
+            .unwrap_or_else(|| "no journal entry for the move".to_string());
+        let child_key = id_key
+            .get(&mv.child)
+            .cloned()
+            .unwrap_or_else(|| mv.child.clone());
+        history.entry(child_key).or_default().push(Move {
+            generation: mv.generation,
+            from_key,
+            to_key,
+            to: mv.to.clone(),
+            goal,
+            justification,
+        });
+    }
+    // The store's own record names a child whose journaled moves the replay may not
+    // see whole; it adds the child to the candidates with its pair of parents.
+    let recorded: BTreeMap<String, (String, String)> = store
+        .status
+        .changes
+        .iter()
+        .filter(|c| c.kind == crate::store::CHANGE_REPARENT_FLIP)
+        .filter_map(|c| {
+            let between = c.detail["between"].as_array()?;
+            let a = between
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let b = between
+                .get(1)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((store.resolve_id(&c.subject).to_string(), (a, b)))
+        })
+        .collect();
+    let mut findings = Vec::new();
+    let mut parked = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let current_id = |key: &str| -> Option<String> {
+        id_key
+            .iter()
+            .filter(|(id, k)| k.as_str() == key && store.graph.entities.contains_key(*id))
+            .map(|(id, _)| id.clone())
+            .next()
+    };
+    let label = |id: Option<&str>| -> String {
+        match id {
+            None => "the scope root".to_string(),
+            Some(p) => store
+                .graph
+                .entities
+                .get(store.resolve_id(p))
+                .map(|e| format!("`{}`", e.name))
+                .unwrap_or_else(|| format!("`{}`", p)),
+        }
+    };
+    let mut candidates: Vec<(String, Option<(usize, usize)>)> = Vec::new();
+    for (key, moves) in &history {
+        let Some(subject) = current_id(key) else {
+            continue;
+        };
+        let mut pair = None;
+        for j in (1..moves.len()).rev() {
+            if let Some(i) = (0..j).rev().find(|&i| {
+                moves[i].from_key == moves[j].to_key && moves[i].to_key == moves[j].from_key
+            }) {
+                pair = Some((i, j));
+                break;
+            }
+        }
+        if pair.is_some() || recorded.contains_key(&subject) {
+            candidates.push((subject, pair));
+        }
+    }
+    for (subject, pair) in candidates {
+        if !seen.insert(subject.clone()) {
+            continue;
+        }
+        let key = id_key.get(&subject).cloned().unwrap_or_default();
+        let moves = history.get(&key).map(|m| m.as_slice()).unwrap_or(&[]);
+        let (first, second) = match pair {
+            Some((i, j)) => (Some(&moves[i]), Some(&moves[j])),
+            None => (None, moves.last()),
+        };
+        let last_generation = second.map(|m| m.generation).unwrap_or(0);
+        // A ruling already given, or a filing newer than the last move, ends it.
+        let settled = store.graph.diagnostics.values().any(|d| {
+            d.rule == "unstable-derivation"
+                && d.subjects.iter().any(|s| *s == subject)
+                && (d.answer.is_some()
+                    || d.updated
+                        .as_deref()
+                        .and_then(|b| b.strip_prefix('g'))
+                        .and_then(|n| n.parse::<u64>().ok())
+                        .is_some_and(|n| n >= last_generation && d.lifecycle != "open"))
+        });
+        if settled {
+            continue;
+        }
+        // The two parents: where the first move put the child, and where the second
+        // moved it back; the record's pair when the replay has no matched moves.
+        let (parent_a, parent_b): (Option<String>, Option<String>) = match (first, second) {
+            (Some(a), Some(b)) => (a.to.clone(), b.to.clone()),
+            _ => {
+                let (a, b) = recorded.get(&subject).cloned().unwrap_or_default();
+                let opt = |s: String| (!s.is_empty()).then_some(s);
+                (opt(a), opt(b))
+            }
+        };
+        let name = store
+            .graph
+            .entities
+            .get(&subject)
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| subject.clone());
+        let describe = |m: Option<&Move>, parent: Option<&str>| -> String {
+            match m {
+                Some(m) => format!(
+                    "{} (g{}: {}) put it under {}",
+                    m.goal.as_deref().unwrap_or("the store"),
+                    m.generation,
+                    m.justification,
+                    label(parent)
+                ),
+                None => format!("an earlier generation put it under {}", label(parent)),
+            }
+        };
+        let prompt = DiagnosticPrompt {
+            question: format!(
+                "`{}` moves back and forth between {} and {}. Which parent holds?",
+                name,
+                label(parent_a.as_deref()),
+                label(parent_b.as_deref())
+            ),
+            options: vec![
+                PromptOption {
+                    label: format!("Keep it under {}", label(parent_a.as_deref())),
+                    edit: None,
+                    answer: Some(format!(
+                        "Keep {} under {}; the move back is wrong.",
+                        subject,
+                        parent_a.as_deref().unwrap_or("the scope root")
+                    )),
+                },
+                PromptOption {
+                    label: format!("Keep it under {}", label(parent_b.as_deref())),
+                    edit: None,
+                    answer: Some(format!(
+                        "Keep {} under {}; the first move is wrong.",
+                        subject,
+                        parent_b.as_deref().unwrap_or("the scope root")
+                    )),
+                },
+            ],
+            freeform: true,
+        };
+        findings.push((
+            "unstable-derivation".to_string(),
+            vec![subject.clone()],
+            "warning".to_string(),
+            format!(
+                "`{}` was reparented back and forth: {}; {}; the second move is parked until a ruling",
+                name,
+                describe(first, parent_a.as_deref()),
+                describe(second, parent_b.as_deref())
+            ),
+            Some(prompt),
+        ));
+        let Some(second) = second else { continue };
+        let Some(goal) = second.goal.as_deref() else {
+            continue;
+        };
+        let Some((kind, target)) = goals::parse_goal_id(goal) else {
+            continue;
+        };
+        let class = goals::kind(kind)
+            .map(|k| k.class())
+            .unwrap_or(goals::Class::Compile);
+        parked.push(Goal {
+            id: goal.to_string(),
+            kind: kind.to_string(),
+            class: class.name().to_string(),
+            mandatory: class == goals::Class::Compile,
+            target: target.to_string(),
+            unit: goals::kind(kind)
+                .map(|k| k.unit())
+                .unwrap_or("node")
+                .to_string(),
+            change: json!({
+                "reparent": subject,
+                "between": [parent_a, parent_b],
+            }),
+            cause: Some(Cause {
+                generation: second.generation,
+                mutation: 0,
+                via: "flip-detection".into(),
+            }),
+            state: GoalState::Parked,
+            hints: vec![format!(
+                "parked by flip detection; answer the unstable-derivation prompt on {}",
+                subject
+            )],
+        });
     }
     (findings, parked)
 }
@@ -2862,6 +3407,318 @@ mod tests {
                 .collect()
         );
         assert!(parked.iter().all(|g| g.state == GoalState::Parked));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // A two-level tree with every level view in place: two «system» roots (the scope
+    // root's level view is the component form) and a backend holding two children.
+    fn level_store() -> Store {
+        let mut s = Store::default();
+        let ent = |name: &str, parent: Option<&str>, stereotype: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            stereotype: stereotype.map(String::from),
+            mentions: vec![SourceRef {
+                doc: "arch.md".into(),
+                section: "/arch".into(),
+                quote: name.into(),
+            }],
+            ..Default::default()
+        };
+        s.graph
+            .entities
+            .insert("ent:frontend".into(), ent("Frontend", None, Some("system")));
+        s.graph
+            .entities
+            .insert("ent:backend".into(), ent("Backend", None, Some("system")));
+        s.graph.entities.insert(
+            "ent:server".into(),
+            ent("Server", Some("ent:backend"), None),
+        );
+        s.graph.entities.insert(
+            "ent:database".into(),
+            ent("Database", Some("ent:backend"), None),
+        );
+        let view = |kind: &str, title: &str, members: &[&str]| View {
+            kind: kind.into(),
+            title: title.into(),
+            members: members.iter().map(|m| m.to_string()).collect(),
+            default: true,
+            ..Default::default()
+        };
+        s.graph.views.insert(
+            "view:component/scope-public".into(),
+            view("component", "Public", &["ent:frontend", "ent:backend"]),
+        );
+        s.graph.views.insert(
+            "view:class/backend".into(),
+            view("class", "Backend", &["ent:server", "ent:database"]),
+        );
+        s
+    }
+
+    fn level_shape(s: &Store) -> Vec<Finding> {
+        rules_for(&checks(s, &Project::default()), "level-shape")
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    // Mirrors docs/compiler/compilation.md#checks: a well-shaped store is silent.
+    #[test]
+    fn level_shape_is_silent_on_a_well_shaped_store() {
+        let s = level_store();
+        let hits = level_shape(&s);
+        assert!(hits.is_empty(), "{:?}", hits);
+        assert_eq!(
+            levels(&s),
+            vec![
+                (
+                    "scope:public".to_string(),
+                    vec!["ent:backend".to_string(), "ent:frontend".to_string()]
+                ),
+                (
+                    "ent:backend".to_string(),
+                    vec!["ent:database".to_string(), "ent:server".to_string()]
+                ),
+            ]
+        );
+        assert_eq!(
+            level_view_of(&s, "scope:public").as_deref(),
+            Some("view:component/scope-public")
+        );
+        assert_eq!(
+            level_view_of(&s, "ent:backend").as_deref(),
+            Some("view:class/backend")
+        );
+        assert_eq!(level_view_of(&s, "ent:server"), None);
+    }
+
+    // A level of two or more without its structural view fires, on a node and on the
+    // scope root alike; a one-child node is not a level and needs no view.
+    #[test]
+    fn level_shape_fires_for_a_missing_level_view() {
+        let mut s = level_store();
+        s.graph.views.remove("view:class/backend");
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:backend"]);
+        assert!(
+            hits[0].3.contains("no structural level view"),
+            "{}",
+            hits[0].3
+        );
+        assert!(hits[0].3.contains("view:class/backend"), "{}", hits[0].3);
+
+        s.graph.views.remove("view:component/scope-public");
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 2, "{:?}", hits);
+        assert!(hits.iter().any(|h| h.1 == ["scope:public"]), "{:?}", hits);
+
+        // Down to one child, the backend is no level: nothing to show.
+        s.graph.entities.remove("ent:database");
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["scope:public"]);
+    }
+
+    // A level over the hard fan-out fires until the mandatory goal regroups it; the
+    // node's own bump moves the threshold. Mirrors docs/compiler/graph.md#per-node-bumps.
+    #[test]
+    fn level_shape_fires_over_the_hard_fan_out() {
+        use crate::limits::{CHILDREN_PER_ENTITY, CHILDREN_PER_ENTITY_HARD};
+        let mut s = level_store();
+        let n = CHILDREN_PER_ENTITY_HARD as usize + 1;
+        for i in 0..n {
+            s.graph.entities.insert(
+                format!("ent:module-{}", i),
+                Entity {
+                    name: format!("Module {}", i),
+                    parent: Some("ent:server".into()),
+                    mentions: vec![SourceRef {
+                        doc: "arch.md".into(),
+                        section: "/arch".into(),
+                        quote: format!("Module {}", i),
+                    }],
+                    ..Default::default()
+                },
+            );
+        }
+        s.graph.views.insert(
+            "view:class/server".into(),
+            View {
+                kind: "class".into(),
+                title: "Server".into(),
+                members: (0..n).map(|i| format!("ent:module-{}", i)).collect(),
+                default: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            fan_out_thresholds(&s, "ent:server"),
+            (
+                crate::limits::CHILDREN_PER_ENTITY_SOFT,
+                CHILDREN_PER_ENTITY_HARD
+            )
+        );
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:server"]);
+        assert!(
+            hits[0]
+                .3
+                .contains(&format!("over the hard {} threshold", CHILDREN_PER_ENTITY)),
+            "{}",
+            hits[0].3
+        );
+        // The shape counts it in the over-hard band.
+        let shape = shape(&s);
+        assert_eq!(shape.per_depth, vec![2, 2, n]);
+        assert_eq!(shape.bands, [2, 0, 1]);
+
+        // A bump on the node lifts hard by the registry's distance: silent again.
+        s.graph
+            .entities
+            .get_mut("ent:server")
+            .unwrap()
+            .limits
+            .insert(
+                CHILDREN_PER_ENTITY.to_string(),
+                LimitBump {
+                    value: CHILDREN_PER_ENTITY_HARD,
+                },
+            );
+        assert!(fan_out_thresholds(&s, "ent:server").1 >= n as u64);
+        assert!(level_shape(&s).is_empty());
+    }
+
+    // A derived grouping under two children fires (the sweep's dissolve did not
+    // settle the store); a stated entity holding one child is a grouping in role only
+    // and never fires. Mirrors docs/compiler/concepts/levels.md#groupings.
+    #[test]
+    fn level_shape_fires_for_an_under_membered_grouping() {
+        let mut s = level_store();
+        let grouping = |name: &str, from: &[&str]| Entity {
+            name: name.into(),
+            parent: Some("ent:backend".into()),
+            definition: Some(format!("{} holds the persistence layer.", name)),
+            provenance: Some(Provenance::Derived {
+                from: from.iter().map(|f| f.to_string()).collect(),
+                reasoning: "the members share one responsibility".into(),
+            }),
+            ..Default::default()
+        };
+        s.graph
+            .entities
+            .insert("ent:storage".into(), grouping("Storage", &["ent:database"]));
+        s.graph.entities.get_mut("ent:database").unwrap().parent = Some("ent:storage".into());
+        s.graph.views.get_mut("view:class/backend").unwrap().members =
+            vec!["ent:server".into(), "ent:storage".into()];
+        assert!(is_derived_grouping(&s, "ent:storage"));
+        assert!(!is_derived_grouping(&s, "ent:backend"));
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:storage"]);
+        assert!(hits[0].3.contains("1 child(ren)"), "{}", hits[0].3);
+
+        // A childless grouping fires too; a stated one-child entity does not.
+        s.graph
+            .entities
+            .insert("ent:empty".into(), grouping("Empty", &[]));
+        let hits = level_shape(&s);
+        assert_eq!(hits.len(), 2, "{:?}", hits);
+        assert!(hits.iter().any(|h| h.1 == ["ent:empty"]), "{:?}", hits);
+        assert!(hits.iter().all(|h| h.1 != ["ent:server"]), "{:?}", hits);
+
+        // With a second member the grouping is a level again, and its view answers.
+        s.graph.entities.remove("ent:empty");
+        s.graph.entities.get_mut("ent:server").unwrap().parent = Some("ent:storage".into());
+        s.graph.entities.get_mut("ent:storage").unwrap().parent = None;
+        s.graph.views.insert(
+            "view:class/storage".into(),
+            View {
+                kind: "class".into(),
+                title: "Storage".into(),
+                members: vec!["ent:database".into(), "ent:server".into()],
+                default: true,
+                ..Default::default()
+            },
+        );
+        s.graph.views.remove("view:class/backend");
+        let hits = level_shape(&s);
+        assert!(hits.is_empty(), "{:?}", hits);
+    }
+
+    // A child grouped under a new parent by one session and moved back by the next is
+    // a reparent flip: the second move parks, one unstable-derivation diagnostic
+    // carries both justifications and asks which parent holds.
+    // Mirrors docs/compiler/reconciler.md#flip-detection.
+    #[test]
+    fn reparent_flip_parks_the_second_move() {
+        let dir = journal_dir();
+        let mut s = level_store();
+        s.out = dir.clone();
+        write_entry(
+            &dir,
+            5,
+            &["g:abstract-entity:ent:backend"],
+            vec![
+                json!({"op": "create_entity", "id": "ent:storage",
+                       "entity": {"name": "Storage", "scope": "public", "parent": "ent:backend"}}),
+                json!({"op": "update_entity", "id": "ent:database",
+                       "parent": "ent:storage", "prior": {"parent": "ent:backend"}}),
+            ],
+            "the database is the storage layer",
+        );
+        let (f, parked) = flip_detection(&s);
+        assert!(f.is_empty(), "one move is not a flip: {:?}", f);
+        assert!(parked.is_empty());
+        write_entry(
+            &dir,
+            6,
+            &["g:review-entity:ent:storage"],
+            vec![json!({"op": "update_entity", "id": "ent:database",
+                        "parent": "ent:backend", "prior": {"parent": "ent:storage"}})],
+            "the database belongs to the backend directly",
+        );
+        let (f, parked) = flip_detection(&s);
+        assert_eq!(f.len(), 1, "{:?}", f);
+        let (rule, subject, _, msg, prompt) = &f[0];
+        assert_eq!(rule, "unstable-derivation");
+        assert_eq!(*subject, ["ent:database"]);
+        assert!(
+            msg.contains("the database is the storage layer")
+                && msg.contains("the database belongs to the backend directly"),
+            "{}",
+            msg
+        );
+        let p = prompt.as_ref().unwrap();
+        assert_eq!(p.options.len(), 2);
+        assert!(p.freeform);
+        assert!(p.question.contains("`Backend`"), "{}", p.question);
+        assert_eq!(parked.len(), 1);
+        assert_eq!(parked[0].id, "g:review-entity:ent:storage");
+        assert_eq!(parked[0].state, GoalState::Parked);
+        assert_eq!(parked[0].change["reparent"], "ent:database");
+
+        // A later regroup under a re-minted id is the same flip on the same natural
+        // key; the newest move is the one parked.
+        write_entry(
+            &dir,
+            7,
+            &["g:abstract-entity:ent:backend"],
+            vec![
+                json!({"op": "create_entity", "id": "ent:storage-2",
+                       "entity": {"name": "Storage", "scope": "public", "parent": "ent:backend"}}),
+                json!({"op": "update_entity", "id": "ent:database",
+                       "parent": "ent:storage-2", "prior": {"parent": "ent:backend"}}),
+            ],
+            "regrouped",
+        );
+        let (f, parked) = flip_detection(&s);
+        assert_eq!(f.len(), 1, "{:?}", f);
+        assert!(f[0].3.contains("regrouped"), "{}", f[0].3);
+        assert_eq!(parked[0].id, "g:abstract-entity:ent:backend");
         std::fs::remove_dir_all(&dir).ok();
     }
 

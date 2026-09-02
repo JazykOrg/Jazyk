@@ -11,6 +11,13 @@ pub struct Limit {
     pub goal: &'static str,
 }
 
+// One node's direct children, its level; the scope root counts its parentless entities
+// under the same row. Crossing derives the fan-out variant of `abstract-entity`.
+// Mirrors docs/compiler/concepts/levels.md#levels.
+pub const CHILDREN_PER_ENTITY: &str = "children-per-entity";
+pub const CHILDREN_PER_ENTITY_SOFT: u64 = 9;
+pub const CHILDREN_PER_ENTITY_HARD: u64 = 15;
+
 pub const LIMITS: [Limit; 8] = [
     Limit {
         name: "requirements-per-entity",
@@ -19,9 +26,9 @@ pub const LIMITS: [Limit; 8] = [
         goal: "abstract-entity",
     },
     Limit {
-        name: "children-per-entity",
-        soft: 10,
-        hard: 20,
+        name: CHILDREN_PER_ENTITY,
+        soft: CHILDREN_PER_ENTITY_SOFT,
+        hard: CHILDREN_PER_ENTITY_HARD,
         goal: "abstract-entity",
     },
     Limit {
@@ -81,7 +88,7 @@ pub fn threshold(name: &str, node_bump: Option<u64>) -> Option<(u64, u64)> {
 // The limits that apply to an entity, and the ones that apply to a view.
 pub const ENTITY_LIMITS: [&str; 3] = [
     "requirements-per-entity",
-    "children-per-entity",
+    CHILDREN_PER_ENTITY,
     "states-per-state-machine",
 ];
 pub const VIEW_LIMITS: [&str; 5] = [
@@ -142,6 +149,12 @@ mod tests {
             threshold("requirements-per-entity", Some(70)),
             Some((70, 100))
         );
+        assert_eq!(
+            threshold(CHILDREN_PER_ENTITY, None),
+            Some((CHILDREN_PER_ENTITY_SOFT, CHILDREN_PER_ENTITY_HARD))
+        );
+        assert_eq!(threshold(CHILDREN_PER_ENTITY, None), Some((9, 15)));
+        assert_eq!(threshold(CHILDREN_PER_ENTITY, Some(12)), Some((12, 18)));
         assert_eq!(ENTITY_LIMITS.len() + VIEW_LIMITS.len(), LIMITS.len());
         for l in &LIMITS {
             assert!(ENTITY_LIMITS.contains(&l.name) || VIEW_LIMITS.contains(&l.name));

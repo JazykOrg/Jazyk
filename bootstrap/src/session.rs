@@ -1083,8 +1083,13 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
     (loaded, skills)
 }
 
+// A pack line's loadable target: a node, a document, a section, or `scope:<scope>`,
+// the top level of a scope (docs/compiler/concepts/levels.md#the-scope-root).
 fn resolves(store: &Store, target: &str) -> bool {
     let id = store.resolve_id(target);
+    if let Some(scope) = crate::board::scope_target(id) {
+        return !crate::board::scope_root(store, scope).is_empty();
+    }
     store.graph.entities.contains_key(id)
         || store.graph.requirements.contains_key(id)
         || store.graph.views.contains_key(id)
@@ -1210,6 +1215,52 @@ mod tests {
             "{} > {}",
             loaded.used(),
             loaded.high_water
+        );
+    }
+
+    // A pack line naming `scope:<scope>` resolves and loads the scope's top level as
+    // stubs, full because it is the goal's own target.
+    // Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    #[test]
+    fn initial_loaded_packs_a_scope_root() {
+        let s = fixture();
+        assert!(resolves(&s, "scope:public"));
+        assert!(!resolves(&s, "scope:nope"));
+        let g = Goal {
+            id: "g:abstract-entity:scope:public".into(),
+            kind: "abstract-entity".into(),
+            class: "gc".into(),
+            mandatory: false,
+            target: "scope:public".into(),
+            unit: "entity".into(),
+            change: serde_json::json!({"fan_out": 1, "limit": {"soft": 9, "hard": 15}, "candidates": []}),
+            cause: None,
+            state: GoalState::Open,
+            hints: vec!["load scope:public".into(), "skill abstraction".into()],
+        };
+        let (loaded, _) = initial_loaded(&s, std::slice::from_ref(&g));
+        assert!(
+            loaded.contains("scope:public"),
+            "{:?}",
+            loaded.render_condensed(0)
+        );
+        let status = loaded.render_condensed(0);
+        assert!(
+            status.contains("top level: 1 entities as stubs"),
+            "{}",
+            status
+        );
+        // The prompt's loaded block names the root's line, pinned as the goal's target.
+        let prompt = preview(&s, std::slice::from_ref(&g));
+        assert!(
+            prompt.contains("- scope:public   top level: 1 entities as stubs"),
+            "{}",
+            prompt
+        );
+        assert!(
+            !prompt.contains("Consider unloading: scope:public"),
+            "{}",
+            prompt
         );
     }
 

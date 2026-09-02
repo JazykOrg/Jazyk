@@ -121,7 +121,9 @@ The kinds, with what each reads from the graph:
   class view. Grouping follows containment (`parent`) or, for a view with a `scope`
   query, the scope.
 - `component`: the member entities by stereotype: «actor» as `actor`, «interface» as
-  `interface`, everything else as `component`. A `realization` toward an interface draws
+  `interface`, everything else as `component`. A stereotype other than the keyword it
+  became still renders on the element (`component "Ledger" as ledger <<backend>>`),
+  so the top diagram keeps saying what each box is. A `realization` toward an interface draws
   the lollipop; a `dependency` from a component toward an interface draws the socket; a
   dependency from an actor draws a dashed arrow. The default is the
   [level view](#level-views) of a node whose level carries a structural stereotype,

@@ -705,7 +705,7 @@ fn run_case_turn(
     // A snippet runs a goal the board derived, change and hints intact; a case
     // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
     derived: Option<&crate::model::Goal>,
-) -> (Vec<crate::store::Op>, u32, Option<TurnFail>) {
+) -> (Vec<crate::store::Op>, u32, Option<TurnFail>, crate::store::Commit) {
     use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
@@ -824,7 +824,8 @@ fn run_case_turn(
         )
         .ok();
     }
-    (std::mem::take(&mut s.staged), rounds.get(), failed)
+    let commit = s.commit(rounds.get(), 0);
+    (std::mem::take(&mut s.staged), rounds.get(), failed, commit)
 }
 
 pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
@@ -946,7 +947,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     std::fs::create_dir_all(&trace_dir).ok();
     let transcript = trace_dir.join(format!("snippet-{}.json", crate::md::slug(goal_id)));
     println!("snippet: {} in {}", goal_id, tmp.display());
-    let (ops, rounds, failed) = run_case_turn(
+    let (ops, rounds, failed, commit) = run_case_turn(
         llm,
         store.clone(),
         &item,
@@ -974,8 +975,10 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
                     v["id"].as_str().or(v["keep"].as_str()).unwrap_or("")
                 );
             }
-            if !ops.is_empty() {
-                store.apply(ops, &item.commit(rounds, 0));
+            // A resolution with nothing staged still commits, as the build loop
+            // does: the journal entry is what closes the goal.
+            if !ops.is_empty() || !commit.resolved.is_empty() {
+                store.apply(ops, &commit);
             }
             let after = crate::board::Board::derive(&store, &proj, &control);
             let resolved = !after.open(goal_id);
@@ -1153,7 +1156,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                 }
                 (1u32, 0usize)
             } else {
-                let (staged_ops, rounds_n, failed) = run_case_turn(
+                let (staged_ops, rounds_n, failed, _) = run_case_turn(
                     llm,
                     store.clone(),
                     &item,

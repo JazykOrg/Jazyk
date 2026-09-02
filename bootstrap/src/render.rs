@@ -746,9 +746,14 @@ fn group_end(svg: &str, start: usize) -> Option<usize> {
 fn declare(scene: &Scene, st: &Structure, keyword: &str, id: &str, stereotype: bool) -> String {
     let e = scene.entity(id);
     let mut line = format!("{} {} as {}", keyword, quoted(&e.name), alias_of(id));
+    // The stereotype rides on the element unless it is the keyword it became (a
+    // «component» drawn as `component` says nothing twice). Mirrors
+    // docs/compiler/diagrams.md#the-emitters.
     if stereotype {
         if let Some(s) = e.stereotype.as_deref() {
-            line.push_str(&format!(" <<{}>>", oneline(s)));
+            if !s.eq_ignore_ascii_case(keyword) {
+                line.push_str(&format!(" <<{}>>", oneline(s)));
+            }
         }
     }
     line.push_str(&link_suffix(scene, st, id));
@@ -954,7 +959,7 @@ fn emit_component(scene: &Scene) -> String {
         } else {
             "component"
         };
-        out.push(declare(scene, &f.st, keyword, id, false));
+        out.push(declare(scene, &f.st, keyword, id, true));
     }
     for a in &f.st.arrows {
         let to_interface = scene.labeled(&a.b, "interface");
@@ -1950,7 +1955,7 @@ mod tests {
         );
         // The showcase block, plus the customer's association with the shopping cart
         // lifted to the order service that hides it.
-        let expected = "@startuml\nactor Customer\ncomponent \"Order Service\" as OS\ncomponent \"Inventory Service\" as IS\ninterface \"checkout API\" as C\ninterface \"stock API\" as S\nCustomer ..> C\nOS -- C\nCustomer -- OS\nIS -- S\nOS --( S : use\n@enduml\n";
+        let expected = "@startuml\nactor Customer\ncomponent \"Order Service\" as OS <<service>>\ncomponent \"Inventory Service\" as IS <<service>>\ninterface \"checkout API\" as C\ninterface \"stock API\" as S\nCustomer ..> C\nOS -- C\nCustomer -- OS\nIS -- S\nOS --( S : use\n@enduml\n";
         let mut mine = canon(&puml);
         let mut want = canon(expected);
         mine.sort();
@@ -1984,8 +1989,8 @@ mod tests {
             canon(&puml),
             vec![
                 "@startuml",
-                "component Inventory Service",
-                "component Order Service",
+                "component Inventory Service <<service>>",
+                "component Order Service <<service>>",
                 "actor Customer",
                 "Customer -- Order Service : 2 edges",
                 "Order Service ..> Inventory Service",
@@ -1996,13 +2001,13 @@ mod tests {
         );
         assert!(
             puml.contains(
-                "component \"Order Service\" as order_service [[../component/order-service.svg]]\n"
+                "component \"Order Service\" as order_service <<service>> [[../component/order-service.svg]]\n"
             ),
             "{}",
             puml
         );
         assert!(
-            puml.contains("component \"Inventory Service\" as inventory_service\n"),
+            puml.contains("component \"Inventory Service\" as inventory_service <<service>>\n"),
             "{}",
             puml
         );

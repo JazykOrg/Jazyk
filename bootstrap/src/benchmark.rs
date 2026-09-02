@@ -857,7 +857,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 // real project at a real moment. The board derives in the sandbox, the goal runs with
 // its derived change and hints, the commit lands in the sandbox, and the project is
 // never touched. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
-pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str) -> i32 {
+pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -> i32 {
     use crate::model::GoalState;
     let tmp = std::env::temp_dir().join(format!(
         "jazyk-snippet-{}-{}",
@@ -921,8 +921,18 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str) -> i32 {
         return 2;
     };
     if let Some(crate::goals::Ready::Blocked(reason)) = board.readiness.get(goal_id) {
-        eprintln!("jazyk: `{}` is not ready: {}", goal_id, reason);
-        return 2;
+        // Readiness is scheduling, not a precondition of the session
+        // (docs/benchmark/benchmark.md): a forced snippet runs the blocked goal
+        // and says what it skipped past.
+        if force {
+            println!("forced: `{}` is not ready ({}); running it anyway", goal_id, reason);
+        } else {
+            eprintln!(
+                "jazyk: `{}` is not ready: {} (--force runs it anyway)",
+                goal_id, reason
+            );
+            return 2;
+        }
     }
     let before: std::collections::BTreeSet<String> = board
         .goals

@@ -368,6 +368,9 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              Grade the configured model: every benchmark case runs under both codecs\n\
              (native tool calls and the text codec) in a sandbox store, scored by\n\
              deterministic checks. Results land in <out>/benchmark/results.yaml.\n\n\
+             options:\n  \
+             --project <dir> --goal <id>   run one goal's session from a copy of a real project\n  \
+             --force                       run the goal even when the board holds it blocked\n\
              {}",
             COMMON_LLM
         ),
@@ -625,7 +628,7 @@ fn main() {
                     .unwrap_or_else(|| {
                         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
                     });
-                benchmark::run_goal(&llm, &root, goal)
+                benchmark::run_goal(&llm, &root, goal, opts.force)
             } else {
                 benchmark::run_filtered(&llm, &out, &positional)
             }

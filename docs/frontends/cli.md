@@ -509,7 +509,8 @@ land in `<out>/benchmark/results.yaml`, per-case transcripts under
 [a subset](../benchmark/benchmark.md#running-a-subset) for iterating on one failure.
 `jazyk benchmark --project <dir> --goal <goal-id>` runs one goal's session from a
 copy of a real project, prints the outcome and the transcript path, and touches
-nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project)).
+nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
+`--force` runs the goal even when the board holds it blocked.
 
 ## Common options
 

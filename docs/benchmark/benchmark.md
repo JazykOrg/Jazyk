@@ -73,7 +73,10 @@ the sandbox path, and the transcript path under the sandbox's `benchmark/trace/`
 
 A goal that is not open is an error listing the open goals; a goal that is not ready
 is an error naming what blocks it (the compile goals still open in its cone, a
-release, a human). Snapshot a project at any moment (copy its directory), then run
+release, a human). `--force` runs a blocked goal anyway, printing what it skipped
+past: readiness is scheduling, not a precondition of the session, and a GC goal
+whose cone holds thirty review goals is worth iterating on before those close (the
+snippet records that the run was forced). Snapshot a project at any moment (copy its directory), then run
 the snippet as often as the prompt or the harness changes: one interaction, a few
 minutes, inspected in the transcript, until it satisfies. A snippet never lands in
 the history and is never a capability grade.

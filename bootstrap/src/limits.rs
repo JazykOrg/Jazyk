@@ -107,6 +107,9 @@ pub const LOADED_HIGH_WATER: f64 = 0.9;
 // The build cap: BUILD_SESSION_FACTOR times the derived goals, plus the floor.
 pub const BUILD_SESSION_FACTOR: usize = 3;
 pub const BUILD_SESSION_FLOOR: usize = 8;
+// Consecutive zero-token session failures that stop a build early: an endpoint
+// answering only errors must not grind the session cap into futile attempts.
+pub const ENDPOINT_BREAKER: usize = 5;
 
 // Document quality thresholds.
 pub const MAX_SECTION_CHARS: usize = 6_000;

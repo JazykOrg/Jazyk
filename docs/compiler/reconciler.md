@@ -493,7 +493,10 @@ in `jazyk.toml`; the registry is built into the binary, and bumps are per node.
 The other escalations are states, not thresholds: a mandatory goal a session fails
 blocks convergence ([parked and failed](#parked-and-failed)); a goal that waits on a
 human is `blocked` and counted; a build that exhausts its cap parks what is open and
-files `incomplete-build`.
+files `incomplete-build`. A dead endpoint trips a breaker before the cap: five
+consecutive failed sessions that spent no tokens park what is open the same way, the
+last error named in the reason, because an endpoint answering only errors (a rate
+limit, an outage) must not grind the session cap into hundreds of futile attempts.
 
 ## Parked and failed
 

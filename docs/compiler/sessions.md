@@ -386,7 +386,10 @@ Budgets are registry constants built into the binary, not settings
 - Per build: 3 × the derived goals plus 8 sessions, so a stuck build stops instead of
   looping. When the cap is tight, compile outranks GC: the scheduler stops opening GC
   bursts before it stops compile batches. Exhaustion parks every open goal
-  ([convergence](./compilation.md#convergence)).
+  ([convergence](./compilation.md#convergence)). Five consecutive failed sessions
+  that spent no tokens stop the build early the same way: an endpoint answering only
+  errors parks the rest instead of grinding the cap
+  ([escalation](./reconciler.md#escalation)).
 
 An agent whose session ends with mutations staged and no `done` is treated as having
 called it: the serving runs the same commit gates, a clean batch commits, and the goals

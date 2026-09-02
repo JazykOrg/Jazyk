@@ -1439,6 +1439,10 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
     let mut parked: Vec<Goal> = Vec::new();
     let mut parked_ids: BTreeSet<String> = BTreeSet::new();
     let mut known: BTreeSet<String> = board.open_goals().iter().map(|g| g.id.clone()).collect();
+    // The dead-endpoint breaker: consecutive failed sessions that spent no tokens.
+    // Mirrors docs/compiler/reconciler.md#escalation.
+    let mut dead_endpoint = 0usize;
+    let mut endpoint_error = String::new();
 
     loop {
         // The batches the serving can run: none of their goals parked this build.
@@ -1470,7 +1474,10 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
             })
         };
         let Some(batch) = next else { break };
-        if trace.is_cancelled() || sessions as usize >= cap {
+        if trace.is_cancelled()
+            || sessions as usize >= cap
+            || dead_endpoint >= crate::limits::ENDPOINT_BREAKER
+        {
             // Exhaustion parks every open goal the loop could still run.
             for g in board.open_goals() {
                 if !parked_ids.contains(&g.id) {
@@ -1484,6 +1491,11 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
                         justification: None,
                         reason: Some(if trace.is_cancelled() {
                             "the build was cancelled".into()
+                        } else if dead_endpoint >= crate::limits::ENDPOINT_BREAKER {
+                            format!(
+                                "the endpoint answers only errors ({}); the build stopped early",
+                                endpoint_error
+                            )
                         } else {
                             format!("the build cap of {} sessions ran out", cap)
                         }),
@@ -1540,6 +1552,17 @@ pub fn compile(proj: &Project, llm: &Llm, out: &Path, trace: &Trace) -> BuildRep
         let report = runner.run_item(&run, trace);
         applied += report.applied;
         costs.charge(&batch_kind.0, &batch_kind.1, report.tokens);
+        // Count consecutive failures that spent nothing: an endpoint answering
+        // only errors, not sessions worth retrying. Any success or any spend
+        // resets the streak. Mirrors docs/compiler/reconciler.md#escalation.
+        if report.tokens == 0 && report.failed.is_some() {
+            dead_endpoint += 1;
+            if let Some(e) = report.failed.as_ref() {
+                endpoint_error = e.clone();
+            }
+        } else {
+            dead_endpoint = 0;
+        }
         if let Some(e) = report.failed {
             trace.event(TraceEvent::SessionFailed {
                 label: batch.id.clone(),

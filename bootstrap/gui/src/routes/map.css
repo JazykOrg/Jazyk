@@ -73,10 +73,91 @@
   min-width: 140px;
 }
 
+/* The breadcrumb over the diagram panel while a level view is overlaid: the chain
+   from the scope root down to the level's node, then the level's diagrams and the
+   links down (docs/frontends/gui.md#graph). */
+.map-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.map-crumb {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.map-crumb:hover {
+  text-decoration: underline;
+}
+
+.map-crumb.current {
+  color: var(--ink);
+  font-weight: 600;
+  cursor: default;
+}
+
+.map-crumb-sep {
+  color: var(--muted);
+}
+
+.map-crumbs .map-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+
+.map-crumbs .map-group-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.map-level-chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.map-level-chip:hover,
+.map-level-chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .map-body {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+
+/* Picture mode: the rendered svg of the overlaid view in the diagram panel, its
+   drill-down anchors opening the level below. */
+.wb-map-toolbar .ide-mini.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.map-picture {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  min-width: 0;
+}
+
+.map-picture .view-svg svg {
+  max-width: none;
 }
 
 .map-canvas {

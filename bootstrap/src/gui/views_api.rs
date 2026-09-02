@@ -1,10 +1,11 @@
-// The view endpoints: the catalog with limits state, and one view resolved for
-// drawing (members in order, lifted arrows with the concrete edges beneath them,
-// flow steps, the derived machine, and the rendered puml and svg).
+// The view endpoints: the catalog with limits state, one view resolved for drawing
+// (members in order, lifted arrows with the concrete edges beneath them, flow steps,
+// the derived machine, the children one level down, and the rendered puml and svg),
+// and the containment tree with each node's level view ids.
 // Mirrors docs/frontends/gui.md#api and docs/compiler/model/view.md#membership.
 use super::state::SharedState;
 use crate::model::{rel_rank, View, INSTANTIATION};
-use crate::store::Store;
+use crate::store::{scope_root_target, Store};
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -331,10 +332,21 @@ pub fn view_value(store: &Store, id: &str) -> Option<Value> {
         "arrows": view_arrows(store, &shown),
         "steps": steps,
         "machines": machines,
+        "children": children_value(store, &id),
         "puml": puml,
         "svg": svg,
         "renderError": render_error,
     }))
+}
+
+// The level views reachable from a view's members: `{member, view}` for every drawn
+// entity with a level view of its own, the same list `get_view` answers.
+// Mirrors docs/compiler/concepts/levels.md#drill-down.
+fn children_value(store: &Store, view_id: &str) -> Vec<Value> {
+    crate::derive::children_of_view(store, view_id)
+        .into_iter()
+        .map(|(member, view)| json!({ "member": member, "view": view }))
+        .collect()
 }
 
 pub async fn view(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
@@ -342,5 +354,189 @@ pub async fn view(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -
     match view_value(&store, &id) {
         Some(v) => Json(v).into_response(),
         None => super::api::err(StatusCode::NOT_FOUND, format!("no view {}", id)),
+    }
+}
+
+// The direct children of a level target, the level view's member order first (the
+// children lead its members, in document order), the rest by id.
+fn ordered_children(store: &Store, target: &str, ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = crate::derive::level_view_members(store, target)
+        .into_iter()
+        .filter(|m| ids.contains(m))
+        .collect();
+    for id in ids {
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+// The containment tree the `parent` field makes: one root per scope (the scope root,
+// addressed `scope:<scope>`), each node with its child count, its structural level
+// view, the flow views derived for its level, and its grouping mark. Computed at read
+// time from the shards, never stored. Mirrors docs/frontends/gui.md#graph.
+pub fn tree_value(store: &Store) -> Value {
+    // The flow views by the level they derive for.
+    let mut flows: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, v) in &store.graph.views {
+        if crate::goals::is_flow_kind(&v.kind) {
+            if let Some(level) = crate::derive::flow_view_level(store, id) {
+                flows.entry(level).or_default().push(id.clone());
+            }
+        }
+    }
+    // Children by parent; a parent that resolves to no entity leaves its children at
+    // the scope root, so nothing disappears from the tree.
+    let mut by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut scopes: BTreeSet<String> = BTreeSet::new();
+    for (id, e) in &store.graph.entities {
+        scopes.insert(e.scope.clone());
+        let parent = e
+            .parent
+            .as_deref()
+            .map(|p| store.resolve_id(p).to_string())
+            .filter(|p| store.graph.entities.contains_key(p));
+        let key = parent.unwrap_or_else(|| scope_root_target(&e.scope));
+        by_parent.entry(key).or_default().push(id.clone());
+    }
+    fn node(
+        store: &Store,
+        by_parent: &BTreeMap<String, Vec<String>>,
+        flows: &BTreeMap<String, Vec<String>>,
+        id: &str,
+        depth: usize,
+    ) -> Value {
+        let e = &store.graph.entities[id];
+        let ids = by_parent.get(id).cloned().unwrap_or_default();
+        // A containment cycle stops here rather than recursing forever.
+        let children: Vec<Value> = if depth > 64 {
+            Vec::new()
+        } else {
+            ordered_children(store, id, &ids)
+                .iter()
+                .map(|c| node(store, by_parent, flows, c, depth + 1))
+                .collect()
+        };
+        json!({
+            "id": id,
+            "name": e.name,
+            "stereotype": e.stereotype,
+            "grouping": store.is_grouping(id),
+            "count": ids.len(),
+            "levelView": crate::derive::level_view_id(store, id),
+            "views": flows.get(id).cloned().unwrap_or_default(),
+            "children": children,
+        })
+    }
+    let roots: Vec<Value> = scopes
+        .iter()
+        .map(|scope| {
+            let target = scope_root_target(scope);
+            let ids = by_parent.get(&target).cloned().unwrap_or_default();
+            let children: Vec<Value> = ordered_children(store, &target, &ids)
+                .iter()
+                .map(|c| node(store, &by_parent, &flows, c, 0))
+                .collect();
+            json!({
+                "scope": scope,
+                "target": target,
+                "count": ids.len(),
+                "levelView": crate::derive::level_view_id(store, &target),
+                "views": flows.get(&target).cloned().unwrap_or_default(),
+                "children": children,
+            })
+        })
+        .collect();
+    json!({ "generation": store.status.generation, "roots": roots })
+}
+
+pub async fn tree(State(st): State<SharedState>) -> Json<Value> {
+    let store = super::api::load_store(&st).await;
+    Json(tree_value(&store))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::RecordBatch;
+
+    // The showcase graph with its derived data in place: the shop level view over the
+    // two services, the order service's level view over its four children.
+    fn store() -> Store {
+        let mut s = crate::derive::tests::showcase_store();
+        crate::derive::recompute(&mut s, "g1", &mut RecordBatch::new(1));
+        s
+    }
+
+    // A view answers with the level views reachable from its members: the order
+    // service has a level of its own, the inventory service (one child) does not.
+    #[test]
+    fn view_value_carries_children_with_level_views() {
+        let s = store();
+        let v = view_value(&s, "view:component/shop").expect("the shop level view");
+        let children = v["children"].as_array().expect("a children list");
+        let pairs: Vec<(&str, &str)> = children
+            .iter()
+            .map(|c| (c["member"].as_str().unwrap(), c["view"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("ent:order-service", "view:component/order-service")]
+        );
+        let members: Vec<&str> = v["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert!(members.contains(&"ent:inventory-service"));
+    }
+
+    // The tree: one root per scope addressed as `scope:<scope>` with the root's level
+    // view, nodes nested by `parent` with their counts and level view ids, and a leaf
+    // with no level view.
+    #[test]
+    fn tree_value_nests_scopes_nodes_and_level_view_ids() {
+        let s = store();
+        let t = tree_value(&s);
+        let roots = t["roots"].as_array().expect("roots");
+        let public = roots
+            .iter()
+            .find(|r| r["scope"] == "public")
+            .expect("the public scope root");
+        assert_eq!(public["target"], "scope:public");
+        assert_eq!(public["levelView"], "view:component/public");
+        assert_eq!(
+            public["count"].as_u64().unwrap() as usize,
+            public["children"].as_array().unwrap().len()
+        );
+        let shop = public["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == "ent:shop")
+            .expect("the shop under the root");
+        assert_eq!(shop["count"], 2);
+        assert_eq!(shop["levelView"], "view:component/shop");
+        assert_eq!(shop["grouping"], false);
+        let kids = shop["children"].as_array().unwrap();
+        let order = kids
+            .iter()
+            .find(|n| n["id"] == "ent:order-service")
+            .expect("the order service under the shop");
+        assert_eq!(order["levelView"], "view:component/order-service");
+        assert_eq!(order["count"], 4);
+        let inventory = kids
+            .iter()
+            .find(|n| n["id"] == "ent:inventory-service")
+            .expect("the inventory service under the shop");
+        assert_eq!(inventory["count"], 1);
+        assert!(inventory["levelView"].is_null());
+        let stock = &inventory["children"][0];
+        assert_eq!(stock["id"], "ent:stock-api");
+        assert_eq!(stock["count"], 0);
+        assert!(stock["children"].as_array().unwrap().is_empty());
+        assert!(stock["views"].as_array().unwrap().is_empty());
     }
 }

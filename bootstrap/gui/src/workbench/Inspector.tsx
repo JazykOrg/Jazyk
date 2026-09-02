@@ -11,6 +11,7 @@ import { useDocDelivLinks } from '../lib/links'
 import { delivHref } from '../lib/nav'
 import { useResolveId } from '../components/NodeLink'
 import NodeLink from '../components/NodeLink'
+import DiagramSvg from '../components/DiagramSvg'
 import SectionLink from '../components/SectionLink'
 import { VerifyChip } from '../components/Chip'
 import {
@@ -183,6 +184,19 @@ function ViewDetailPane({ id }: { id: string }) {
           {m.node === 'requirement' && <span className="muted"> {m.statement}</span>}
         </p>
       ))}
+      {(v.children ?? []).length > 0 && (
+        <>
+          <h2>levels below</h2>
+          {v.children.map((c) => (
+            <p key={c.member} style={{ margin: '2px 0' }}>
+              <NodeLink id={c.member} />{' '}
+              <Link className="mono" to={`/graph?view=${encodeURIComponent(c.view)}&node=${encodeURIComponent(c.view)}`} title="overlay the level below">
+                {c.view} ↓
+              </Link>
+            </p>
+          ))}
+        </>
+      )}
       {(v.excluded ?? []).length > 0 && (
         <>
           <h2>excluded</h2>
@@ -225,7 +239,7 @@ function ViewDetailPane({ id }: { id: string }) {
       {v.svg && (
         <details>
           <summary>diagram</summary>
-          <div className="view-svg" dangerouslySetInnerHTML={{ __html: v.svg }} />
+          <DiagramSvg svg={v.svg} />
         </details>
       )}
       {v.renderError && <p className="muted">renderer: {v.renderError}</p>}

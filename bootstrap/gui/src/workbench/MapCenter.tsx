@@ -3,14 +3,19 @@
 // entities and documents; focusing a node pulls in every adjacent node of every
 // type, chips notwithstanding. Selection opens the inspector, never a new page.
 // ?view= overlays one view's membership: structural kinds draw as the map, flow
-// kinds as ordered steps with lanes, a state view as the derived machine.
+// kinds as ordered steps with lanes, a state view as the derived machine. A level
+// view carries a breadcrumb over the panel and links down: double-tapping a member
+// with a level of its own, picking it from the view's children, or clicking its
+// anchor in the picture overlays the level below (docs/frontends/gui.md#graph).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import cytoscape from 'cytoscape'
 import fcose from 'cytoscape-fcose'
-import { useDeliverable, useDocs, useGraph, useView } from '../lib/queries'
+import { useDeliverable, useDocs, useGraph, useTree, useView } from '../lib/queries'
 import type { Entity, Graph, ViewDetail } from '../lib/api'
+import { levelChain } from '../lib/levels'
 import NodeLink from '../components/NodeLink'
+import DiagramSvg from '../components/DiagramSvg'
 import '../routes/map.css'
 
 cytoscape.use(fcose)
@@ -355,6 +360,8 @@ export default function MapCenter() {
     files: false,
   })
   const [focusHops, setFocusHops] = useState<FocusHops>('off')
+  // Picture mode: the rendered svg of the overlaid view instead of the canvas.
+  const [picture, setPicture] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const focusParam = params.get('focus')
@@ -362,6 +369,28 @@ export default function MapCenter() {
   const viewParam = params.get('view') ?? ''
   const viewQ = useView(viewParam)
   const overlay = viewParam !== '' ? viewQ.data : undefined
+  const { data: tree } = useTree()
+  // The breadcrumb: the chain from the scope root down to the overlaid level.
+  const chain = useMemo(() => levelChain(tree, viewParam), [tree, viewParam])
+
+  // Overlay another view, keeping the position addressable (?view=) and in history,
+  // so drilling down and back works like any navigation.
+  const openView = (id: string) => {
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      next.set('view', id)
+      next.set('node', id)
+      next.delete('focus')
+      return next
+    })
+  }
+  const openViewRef = useRef(openView)
+  openViewRef.current = openView
+  // The links down of the overlaid view: member id to its level view.
+  const drillRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    drillRef.current = new Map((overlay?.children ?? []).map((c) => [c.member, c.view]))
+  }, [overlay])
 
   // Selection goes to the inspector: node param, and focus follows for the map.
   const select = (id: string | null) => {
@@ -637,6 +666,12 @@ export default function MapCenter() {
     })
     cy.on('dbltap', 'node', (e) => {
       const n = e.target as cytoscape.NodeSingular
+      // A member drawn with a level of its own is the link down.
+      const below = drillRef.current.get(n.id())
+      if (below) {
+        openViewRef.current(below)
+        return
+      }
       selectRef.current(n.id())
       setFocusHops('1')
       cy.center(n)
@@ -761,6 +796,11 @@ export default function MapCenter() {
         ? 'state'
         : 'flow'
       : null
+  const showPicture = picture && !!overlay?.svg
+  const memberName = (id: string) =>
+    overlay?.members.find((m) => m.id === id)?.name ?? graph?.entities[id]?.name ?? id
+  const viewTitle = (id: string) => graph?.views[id]?.title ?? id
+  const level = chain ? chain.crumbs[chain.crumbs.length - 1] : null
 
   return (
     <div className="map-root">
@@ -772,6 +812,15 @@ export default function MapCenter() {
               ✕
             </button>
           </span>
+        )}
+        {overlay?.svg && (
+          <button
+            className={`ide-mini${picture ? ' active' : ''}`}
+            onClick={() => setPicture(!picture)}
+            title={picture ? 'draw the view on the canvas' : 'show the rendered picture; its links open the level below'}
+          >
+            {picture ? 'canvas' : 'picture'}
+          </button>
         )}
         <input
           type="search"
@@ -826,10 +875,76 @@ export default function MapCenter() {
           </span>
         )}
       </div>
+      {overlay && (chain || overlay.children.length > 0) && (
+        <div className="map-crumbs">
+          {chain &&
+            chain.crumbs.map((c, i) => {
+              const last = i === chain.crumbs.length - 1
+              const current = last && !chain.flow
+              return (
+                <span key={c.target} style={{ display: 'contents' }}>
+                  {i > 0 && <span className="map-crumb-sep">›</span>}
+                  {current || !c.levelView ? (
+                    <span className={`map-crumb${current ? ' current' : ''}`} title={c.target}>
+                      {c.label}
+                    </span>
+                  ) : (
+                    <a className="map-crumb" title={`overlay ${c.levelView}`} onClick={() => openView(c.levelView!)}>
+                      {c.label}
+                    </a>
+                  )}
+                </span>
+              )
+            })}
+          {chain?.flow && (
+            <>
+              <span className="map-crumb-sep">›</span>
+              <span className="map-crumb current" title={chain.flow}>
+                {viewTitle(chain.flow)}
+              </span>
+            </>
+          )}
+          {level && level.levelView && level.views.length > 0 && (
+            <span className="map-group">
+              <span className="map-group-label">diagrams</span>
+              {[level.levelView, ...level.views].map((id) => (
+                <a
+                  key={id}
+                  className={`map-level-chip${id === viewParam ? ' active' : ''}`}
+                  title={id}
+                  onClick={() => openView(id)}
+                >
+                  {id === level.levelView ? 'structure' : viewTitle(id)}
+                </a>
+              ))}
+            </span>
+          )}
+          {overlay.children.length > 0 && (
+            <span className="map-group">
+              <span className="map-group-label">below</span>
+              {overlay.children.map((c) => (
+                <a
+                  key={c.member}
+                  className="map-level-chip"
+                  title={`overlay ${c.view}`}
+                  onClick={() => openView(c.view)}
+                >
+                  {memberName(c.member)} ↓
+                </a>
+              ))}
+            </span>
+          )}
+        </div>
+      )}
       <div className="map-body">
-        {panelOverlay === 'flow' && overlay && <FlowOverlay v={overlay} />}
-        {panelOverlay === 'state' && overlay && <StateOverlay v={overlay} />}
-        <div className="map-canvas" style={panelOverlay ? { display: 'none' } : undefined}>
+        {showPicture && overlay?.svg && (
+          <div className="map-picture">
+            <DiagramSvg svg={overlay.svg} />
+          </div>
+        )}
+        {!showPicture && panelOverlay === 'flow' && overlay && <FlowOverlay v={overlay} />}
+        {!showPicture && panelOverlay === 'state' && overlay && <StateOverlay v={overlay} />}
+        <div className="map-canvas" style={panelOverlay || showPicture ? { display: 'none' } : undefined}>
           <div className="map-cy" ref={boxRef} />
           {error ? (
             <p className="error-inline map-empty">{String(error)}</p>

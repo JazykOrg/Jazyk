@@ -340,6 +340,13 @@ export interface ViewStep {
   transition?: Transition
 }
 
+// One link down: a drawn member and the level view of its own children
+// (docs/compiler/concepts/levels.md#drill-down).
+export interface ViewChild {
+  member: string
+  view: string
+}
+
 export interface ViewDetail {
   id: string
   kind: string
@@ -354,9 +361,38 @@ export interface ViewDetail {
   arrows: ViewArrow[]
   steps: ViewStep[]
   machines: { id: string; machine: StateMachine }[]
+  children: ViewChild[]
   puml?: string | null
   svg?: string | null
   renderError?: string | null
+}
+
+// The containment tree (GET /api/tree): one root per scope, nodes nested by
+// `parent`, each with its child count, its structural level view, and the flow views
+// derived for its level (docs/frontends/gui.md#graph).
+export interface TreeNode {
+  id: string
+  name: string
+  stereotype?: string | null
+  grouping: boolean
+  count: number
+  levelView: string | null
+  views: string[]
+  children: TreeNode[]
+}
+
+export interface TreeRoot {
+  scope: string
+  target: string
+  count: number
+  levelView: string | null
+  views: string[]
+  children: TreeNode[]
+}
+
+export interface TreeData {
+  generation: number
+  roots: TreeRoot[]
 }
 
 export interface Diagnostic {

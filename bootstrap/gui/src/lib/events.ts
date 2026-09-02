@@ -76,7 +76,7 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
   switch (ev.type) {
     case 'store.generation': {
       app.setLastCommit(ev.generation as number)
-      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'preview', 'explain'])
+      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain'])
         qc.invalidateQueries({ queryKey: [key] })
       qc.invalidateQueries({ queryKey: ['node'] })
       break
@@ -138,7 +138,7 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
       app.turnsSettle()
       app.clearGoalNotes()
       app.setJobState(ev.jobId as number, ev.state as string, ev.result as Job['result'])
-      for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable', 'benchmarks', 'board', 'views'])
+      for (const key of ['jobs', 'pending', 'matrix', 'status', 'deliverable', 'benchmarks', 'board', 'views', 'tree'])
         qc.invalidateQueries({ queryKey: [key] })
       break
     // The chat pane (docs/frontends/gui.md#chat).

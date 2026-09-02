@@ -238,6 +238,129 @@
   font-size: 11px;
 }
 
+/* The containment tree (graph mode): one row per node, indented by depth, the
+   level view ids beneath a node with a level. */
+.wb-tree {
+  padding-bottom: 8px;
+}
+
+.wb-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  padding-right: 10px;
+  border-left: 3px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.wb-tree-row:hover {
+  background: var(--bg);
+}
+
+.wb-tree-row.active {
+  border-left-color: var(--accent);
+}
+
+.wb-tree-row.active .wb-tree-name {
+  color: var(--accent);
+}
+
+/* The node whose level is overlaid on the map. */
+.wb-tree-row.level {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.wb-tree-row.root .wb-tree-name {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.wb-tree-caret {
+  flex-shrink: 0;
+  width: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.wb-tree-caret:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.wb-tree-name {
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-tree-name:hover {
+  color: var(--accent);
+}
+
+.wb-tree-row .sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.wb-tree-proposal {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--warn);
+  cursor: pointer;
+}
+
+.wb-tree-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding-bottom: 3px;
+  padding-right: 10px;
+}
+
+.wb-tree-view {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wb-tree-view:hover,
+.wb-tree-view.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* A rendered view picture: scrolls in its box, the drill-down anchors clickable. */
+.view-svg {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.view-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.view-svg a {
+  cursor: pointer;
+}
+
 /* Activity panel */
 .wb-activity {
   border-top: 1px solid var(--line);

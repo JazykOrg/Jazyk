@@ -15,6 +15,7 @@ import {
   type PreviewData,
   type Project,
   type Status,
+  type TreeData,
   type VerifyRow,
   type ViewDetail,
   type ViewInfo,
@@ -46,6 +47,10 @@ export const useView = (id: string) =>
     enabled: id !== '',
     ...opts,
   })
+
+// The containment tree with each node's level view ids (docs/frontends/gui.md#graph).
+export const useTree = () =>
+  useQuery({ queryKey: ['tree'], queryFn: () => get<TreeData>('/api/tree'), ...opts })
 
 // The next session's prompt; target '' previews the first ready batch.
 export const usePreview = (target: string, enabled = true) =>

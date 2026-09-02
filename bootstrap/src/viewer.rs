@@ -49,6 +49,145 @@ fn search_attr(parts: &[&str]) -> String {
     esc(&parts.join(" ").to_lowercase())
 }
 
+// The containment tree the `parent` field makes, one root per scope printed as
+// `scope:<scope>`, every node indented per depth. A node with a level prints its child
+// count and its level view ids (the structural view, then the flow views lifted into
+// the level), each linked to its view card; a leaf prints its name alone. Reading down
+// the tree is reading down the levels. Mirrors docs/frontends/viewer.md#what-it-shows.
+fn tree(store: &Store) -> String {
+    use std::collections::{BTreeMap, BTreeSet};
+    let g = &store.graph;
+
+    // Children per target: an entity whose parent is not a live entity hangs off its
+    // scope root, so nothing on disk goes unprinted.
+    let mut by_parent: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut scopes: BTreeSet<String> = BTreeSet::new();
+    for (id, e) in &g.entities {
+        scopes.insert(e.scope.clone());
+        let key = e
+            .parent
+            .as_deref()
+            .map(|p| store.resolve_id(p))
+            .filter(|p| g.entities.contains_key(*p))
+            .map(str::to_string)
+            .unwrap_or_else(|| crate::store::scope_root_target(&e.scope));
+        by_parent.entry(key).or_default().push(id.clone());
+    }
+    // Children in the order the level view lists them (document order); the level
+    // members start with the children, so their index orders the list.
+    for (target, children) in by_parent.iter_mut() {
+        let members = crate::derive::level_view_members(store, target);
+        children.sort_by_key(|c| {
+            (
+                members.iter().position(|m| m == c).unwrap_or(usize::MAX),
+                c.clone(),
+            )
+        });
+    }
+    // The flow views of each level, by the level they were derived for.
+    let mut flows: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (vid, v) in &g.views {
+        if !crate::derive::FLOW_KINDS.contains(&v.kind.as_str()) {
+            continue;
+        }
+        if let Some(level) = crate::derive::flow_view_level(store, vid) {
+            flows.entry(level).or_default().push(vid.clone());
+        }
+    }
+
+    fn line(
+        store: &Store,
+        target: &str,
+        name: &str,
+        depth: usize,
+        by_parent: &BTreeMap<String, Vec<String>>,
+        flows: &BTreeMap<String, Vec<String>>,
+        seen: &mut BTreeSet<String>,
+        out: &mut String,
+    ) {
+        if !seen.insert(target.to_string()) {
+            return;
+        }
+        // The scope root prints its address; an entity prints its name linked to its
+        // card.
+        let label = match crate::board::scope_target(target) {
+            Some(_) => format!("<span class=\"root\">{}</span>", esc(target)),
+            None => format!(
+                "<a class=\"n\" href=\"#n-{}\">{}</a>",
+                esc(target),
+                esc(name)
+            ),
+        };
+        let children = by_parent.get(target).map(Vec::as_slice).unwrap_or(&[]);
+        // The structural view as stored: the derived id, or the same level under the
+        // other structural kind when a store from before a stereotype change still
+        // holds it (the next commit rewrites it). A level view no shard holds prints
+        // its id without a link.
+        let structural = crate::derive::level_view_id(store, target).map(|id| {
+            let sibling = match id.split_once('/') {
+                Some(("view:class", slug)) => format!("view:component/{}", slug),
+                Some(("view:component", slug)) => format!("view:class/{}", slug),
+                _ => id.clone(),
+            };
+            if store.graph.views.contains_key(&id) {
+                (id, true)
+            } else if store.graph.views.contains_key(&sibling) {
+                (sibling, true)
+            } else {
+                (id, false)
+            }
+        });
+        let mut views: Vec<(String, bool)> = structural.clone().into_iter().collect();
+        views.extend(
+            flows
+                .get(target)
+                .into_iter()
+                .flatten()
+                .map(|v| (v.clone(), true)),
+        );
+        let count = match structural {
+            Some(_) => format!(" <span class=\"k\">{} children</span>", children.len()),
+            None => String::new(),
+        };
+        let ids: Vec<String> = views
+            .iter()
+            .map(|(v, stored)| {
+                if *stored {
+                    link(v)
+                } else {
+                    format!("<span class=\"id\">{}</span>", esc(v))
+                }
+            })
+            .collect();
+        let mut s: Vec<&str> = vec![target, name];
+        s.extend(views.iter().map(|(v, _)| v.as_str()));
+        let _ = write!(
+            out,
+            "<div class=\"tn\" data-s=\"{}\" style=\"padding-left:{}px\">{}{}{}{}</div>\n",
+            search_attr(&s),
+            depth * 20,
+            label,
+            count,
+            if ids.is_empty() { "" } else { " " },
+            ids.join(" ")
+        );
+        for c in children {
+            let name = &store.graph.entities[c].name;
+            line(store, c, name, depth + 1, by_parent, flows, seen, out);
+        }
+    }
+
+    let mut out = String::new();
+    let mut seen = BTreeSet::new();
+    for scope in &scopes {
+        let target = crate::store::scope_root_target(scope);
+        line(
+            store, &target, &target, 0, &by_parent, &flows, &mut seen, &mut out,
+        );
+    }
+    out
+}
+
 const STYLE: &str = "
 :root { --ink:#1d2523; --muted:#5b6763; --line:#dde3e0; --accent:#0e7a6d;
   --err:#c24333; --warn:#a8731c; --info:#2a6fa8; --none:#7a827f; }
@@ -88,6 +227,14 @@ th { text-align: left; font-family: ui-monospace, Menlo, monospace; font-size: 1
 td { border-bottom: 1px solid var(--line); padding: 6px 10px; }
 td.num { text-align: right; font-variant-numeric: tabular-nums;
   font-family: ui-monospace, Menlo, monospace; }
+.tree { background: #fff; border: 1px solid var(--line); border-radius: 5px;
+  padding: 10px 14px; margin: 8px 0; font-family: ui-monospace, Menlo, monospace;
+  font-size: 12.5px; overflow-x: auto; }
+.tn { white-space: nowrap; line-height: 1.7; }
+.tn .root { color: var(--muted); }
+.tn .n { color: var(--ink); text-decoration: none; }
+.tn .n:hover, .tn .n:focus-visible { text-decoration: underline; }
+.tn .id { margin-left: 6px; }
 :target { outline: 2px solid var(--accent); outline-offset: 2px; }
 ";
 
@@ -173,6 +320,14 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
         }
     }
     h.push_str("<input id=\"q\" type=\"search\" placeholder=\"Filter by id, name, or text\" aria-label=\"Filter\">\n");
+
+    // The tree: the drill-down, one root per scope, level view ids beside each node.
+    h.push_str("<h2>Tree</h2>\n");
+    if g.entities.is_empty() {
+        h.push_str("<p class=\"k\">none</p>\n");
+    } else {
+        let _ = write!(h, "<div class=\"tree\">\n{}</div>\n", tree(store));
+    }
 
     // Entities.
     h.push_str("<h2>Entities</h2>\n");
@@ -644,5 +799,248 @@ mod tests {
         assert!(html.contains("<table>"));
         assert!(!html.contains("<script>alert"));
         std::fs::remove_dir_all(&out).ok();
+    }
+
+    fn gs() -> GenSettings {
+        GenSettings {
+            deliverable: std::path::PathBuf::from("/nonexistent"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        }
+    }
+
+    fn entity(name: &str, stereotype: Option<&str>, parent: Option<&str>) -> Entity {
+        Entity {
+            name: name.into(),
+            stereotype: stereotype.map(str::to_string),
+            parent: parent.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn behavior(entities: &[&str]) -> Requirement {
+        Requirement {
+            statement: "The User asks the API.".into(),
+            entities: entities.iter().map(|e| e.to_string()).collect(),
+            facets: vec![Facet {
+                facet: "behavior".into(),
+                reasoning: "a flow".into(),
+                measure: None,
+            }],
+            source: Some(SourceRef {
+                doc: "shop.md".into(),
+                section: "/shop".into(),
+                quote: "asks".into(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    // The tree lines of a rendering, in order, tags stripped, whitespace collapsed.
+    fn tree_lines(html: &str) -> Vec<(usize, String)> {
+        html.lines()
+            .filter(|l| l.starts_with("<div class=\"tn\""))
+            .map(|l| {
+                let depth = l
+                    .split("padding-left:")
+                    .nth(1)
+                    .and_then(|s| s.split("px").next())
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0)
+                    / 20;
+                let mut text = String::new();
+                let mut in_tag = false;
+                for c in l.chars() {
+                    match c {
+                        '<' => in_tag = true,
+                        '>' => in_tag = false,
+                        _ if !in_tag => text.push(c),
+                        _ => {}
+                    }
+                }
+                (depth, text.split_whitespace().collect::<Vec<_>>().join(" "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tree_prints_root_node_and_leaf_with_level_view_ids() {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:backend".into(),
+            entity("Backend", Some("system"), None),
+        );
+        s.graph
+            .entities
+            .insert("ent:user".into(), entity("User", Some("actor"), None));
+        s.graph.entities.insert(
+            "ent:api".into(),
+            entity("API Server", None, Some("ent:backend")),
+        );
+        s.graph.entities.insert(
+            "ent:db".into(),
+            entity("Database", None, Some("ent:backend")),
+        );
+        s.graph
+            .requirements
+            .insert("req:shop-1".into(), behavior(&["ent:user", "ent:api"]));
+        s.graph
+            .requirements
+            .insert("req:shop-2".into(), behavior(&["ent:user", "ent:api"]));
+        // The stored views a commit would derive: the root's structural view, the
+        // backend's, and the root's flow cluster (User in shop.md).
+        for (id, kind) in [
+            ("view:component/public", "component"),
+            ("view:component/backend", "component"),
+            ("view:usecase/user-shop", "use-case"),
+        ] {
+            s.graph.views.insert(
+                id.into(),
+                View {
+                    kind: kind.into(),
+                    title: id.into(),
+                    default: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let html = render(&s, &gs());
+        let lines = tree_lines(&html);
+        assert_eq!(lines.len(), 5, "{:?}", lines);
+
+        // The root first, at depth zero, with its own level view ids: the structural
+        // view, then the flow view lifted into the level.
+        assert_eq!(lines[0].0, 0);
+        assert_eq!(
+            lines[0].1,
+            "scope:public 2 children view:component/public view:usecase/user-shop"
+        );
+        // A node with children: its count and its structural view, one level in.
+        let backend = lines
+            .iter()
+            .find(|(_, t)| t.starts_with("Backend"))
+            .expect("backend line");
+        assert_eq!(backend.0, 1);
+        assert_eq!(backend.1, "Backend 2 children view:component/backend");
+        // Its children print one level deeper, as leaves, names alone.
+        let api = lines
+            .iter()
+            .find(|(_, t)| t == "API Server")
+            .expect("api line");
+        let db = lines
+            .iter()
+            .find(|(_, t)| t == "Database")
+            .expect("db line");
+        assert_eq!((api.0, db.0), (2, 2));
+        // A parentless leaf prints plainly at depth one.
+        let user = lines.iter().find(|(_, t)| t == "User").expect("user line");
+        assert_eq!(user.0, 1);
+        // Children immediately follow their parent, and the root lists its children in
+        // document order: User, named in shop.md, before the unmentioned Backend.
+        let idx = |t: &str| lines.iter().position(|(_, x)| x.starts_with(t)).unwrap();
+        let b = idx("Backend");
+        assert_eq!(
+            [idx("API Server"), idx("Database")].iter().min().copied(),
+            Some(b + 1)
+        );
+        assert_eq!(
+            [idx("API Server"), idx("Database")].iter().max().copied(),
+            Some(b + 2)
+        );
+        assert!(idx("User") < b, "{:?}", lines);
+
+        // Ids link to cards: the node to its entity card, each view to its view card.
+        assert!(
+            html.contains("href=\"#n-ent:backend\">Backend</a>"),
+            "{}",
+            html
+        );
+        assert!(html.contains("href=\"#n-view:component/backend\">view:component/backend</a>"));
+        assert!(html.contains("href=\"#n-view:usecase/user-shop\">view:usecase/user-shop</a>"));
+        // Each line filters by its id, name, and view ids.
+        assert!(html.contains("data-s=\"ent:api api server\""), "{}", html);
+        assert!(html.contains(
+            "data-s=\"scope:public scope:public view:component/public view:usecase/user-shop\""
+        ));
+    }
+
+    #[test]
+    fn tree_hangs_a_child_of_a_missing_parent_off_the_root_and_survives_a_cycle() {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:orphan".into(),
+            entity("Orphan", None, Some("ent:gone")),
+        );
+        s.graph
+            .entities
+            .insert("ent:a".into(), entity("A", None, Some("ent:b")));
+        s.graph
+            .entities
+            .insert("ent:b".into(), entity("B", None, Some("ent:a")));
+        let html = render(&s, &gs());
+        let lines = tree_lines(&html);
+        // The orphan prints under the root; the cycle never reaches the root, and the
+        // walk terminates without printing either member twice.
+        assert_eq!(lines[0].1, "scope:public");
+        assert!(
+            lines.iter().any(|(d, t)| *d == 1 && t == "Orphan"),
+            "{:?}",
+            lines
+        );
+        assert!(lines.iter().filter(|(_, t)| t == "A").count() <= 1);
+    }
+
+    #[test]
+    fn tree_links_the_stored_sibling_kind_and_never_dangles() {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:backend".into(),
+            entity("Backend", Some("system"), None),
+        );
+        s.graph
+            .entities
+            .insert("ent:user".into(), entity("User", None, None));
+        s.graph.entities.insert(
+            "ent:api".into(),
+            entity("API Server", None, Some("ent:backend")),
+        );
+        s.graph.entities.insert(
+            "ent:db".into(),
+            entity("Database", None, Some("ent:backend")),
+        );
+        // The root derives component (Backend is a «system») but the store still holds
+        // the class view of an earlier commit; the backend level holds nothing yet.
+        s.graph.views.insert(
+            "view:class/public".into(),
+            View {
+                kind: "class".into(),
+                title: "Public".into(),
+                default: true,
+                ..Default::default()
+            },
+        );
+        let html = render(&s, &gs());
+        let lines = tree_lines(&html);
+        assert_eq!(lines[0].1, "scope:public 2 children view:class/public");
+        assert!(html.contains("href=\"#n-view:class/public\">view:class/public</a>"));
+        assert!(!html.contains("href=\"#n-view:component/public\""));
+        // The backend's derived id prints as text, not a link, until a commit stores it.
+        assert!(
+            html.contains("<span class=\"id\">view:component/backend</span>"),
+            "{}",
+            html
+        );
+        assert!(!html.contains("href=\"#n-view:component/backend\""));
+    }
+
+    #[test]
+    fn tree_prints_none_for_an_empty_store() {
+        let html = render(&Store::default(), &gs());
+        assert!(
+            html.contains("<h2>Tree</h2>\n<p class=\"k\">none</p>"),
+            "{}",
+            html
+        );
+        assert!(tree_lines(&html).is_empty());
     }
 }

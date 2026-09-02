@@ -52,6 +52,7 @@ pub fn router(st: SharedState) -> Router {
         .route("/ripple", get(board_api::ripple))
         .route("/views", get(views_api::views))
         .route("/views/{id}", get(views_api::view))
+        .route("/tree", get(views_api::tree))
         .route("/facts/{id}/edit", post(facts::edit_fact))
         .route("/entities/{id}", get(api::entity))
         .route("/requirements/{id}", get(api::requirement))

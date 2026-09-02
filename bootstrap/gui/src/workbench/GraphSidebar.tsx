@@ -1,15 +1,194 @@
 // The graph sidebar: one text filter plus facet lists over the live shards
-// (docs/frontends/gui.md#graph). A row opens the node in the inspector and
-// focuses it on the map; a view row overlays the view.
-import { useMemo } from 'react'
+// (docs/frontends/gui.md#graph). The entity list is the containment tree the
+// `parent` field makes, one root per scope, each node with its child count and its
+// level view ids. A row opens the node in the inspector and focuses it on the map;
+// a view row, or a level view id on a tree node, overlays the view.
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { useCoverage, useGraph, useMatrix, useViews } from '../lib/queries'
+import { useCoverage, useGraph, useMatrix, useTree, useViews } from '../lib/queries'
+import type { Graph, TreeData, TreeNode, TreeRoot } from '../lib/api'
+import { ancestorsOf, levelChain } from '../lib/levels'
 import { verifyClass } from '../components/Chip'
 import { reverseIndex } from '../components/Cards'
 
 const LISTS = ['entities', 'requirements', 'views', 'diagnostics', 'coverage'] as const
 type ListKind = (typeof LISTS)[number]
 const WINDOW = 200
+
+// The nodes a filter keeps: a node matches on its id, name, definition, or aliases,
+// and a node with a matching descendant stays to hold the path down to it.
+function filterTree(tree: TreeData, graph: Graph, q: string): Set<string> {
+  const keep = new Set<string>()
+  const walk = (n: TreeNode): boolean => {
+    const e = graph.entities[n.id]
+    const self = `${n.id} ${n.name} ${e?.definition ?? ''} ${(e?.aliases ?? []).join(' ')}`
+      .toLowerCase()
+      .includes(q)
+    let any = self
+    for (const c of n.children) if (walk(c)) any = true
+    if (any) keep.add(n.id)
+    return any
+  }
+  for (const r of tree.roots) {
+    let any = false
+    for (const c of r.children) if (walk(c)) any = true
+    if (any) keep.add(r.target)
+  }
+  return keep
+}
+
+// The open ratification proposal on a grouping, when one stands: the
+// `ratification-pending` diagnostic naming it as a subject.
+function proposalIndex(graph: Graph): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const [did, d] of Object.entries(graph.diagnostics)) {
+    if (d.rule !== 'ratification-pending' || d.lifecycle === 'resolved') continue
+    for (const s of d.subjects ?? []) if (!m.has(s)) m.set(s, did)
+  }
+  return m
+}
+
+interface TreeProps {
+  tree: TreeData
+  graph: Graph
+  q: string
+  node: string | null
+  view: string | null
+  revIdx: Map<string, string[]>
+  openAndFocus: (id: string) => void
+  overlayView: (id: string) => void
+}
+
+// The containment tree (docs/frontends/gui.md#graph): collapsible, the inspected
+// node highlighted, the node whose level is overlaid marked, level view ids as
+// chips that overlay the view, groupings marked with their proposal one click away.
+function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, overlayView }: TreeProps) {
+  const [sp, setSp] = useSearchParams()
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [seeded, setSeeded] = useState(false)
+  const keep = useMemo(() => (q ? filterTree(tree, graph, q) : null), [tree, graph, q])
+  const proposals = useMemo(() => proposalIndex(graph), [graph])
+  const chain = useMemo(() => (view ? levelChain(tree, view) : null), [tree, view])
+  const levelNode = chain ? chain.crumbs[chain.crumbs.length - 1].target : null
+
+  // The scope roots open on first render; the ancestors of the inspected node and
+  // of the overlaid level open as they change, so the current position is in view.
+  useEffect(() => {
+    if (seeded) return
+    setExpanded(new Set(tree.roots.map((r) => r.target)))
+    setSeeded(true)
+  }, [tree, seeded])
+  useEffect(() => {
+    const want = [...(node ? ancestorsOf(tree, node) : []), ...(chain ? chain.crumbs.map((c) => c.target) : [])]
+    if (want.length === 0) return
+    setExpanded((prev) => {
+      if (want.every((t) => prev.has(t))) return prev
+      const next = new Set(prev)
+      for (const t of want) next.add(t)
+      return next
+    })
+  }, [tree, node, chain])
+
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const openDiagnostic = (id: string) => {
+    const next = new URLSearchParams(sp)
+    next.set('node', id)
+    setSp(next)
+  }
+
+  const viewChips = (levelView: string | null, views: string[], depth: number) =>
+    levelView ? (
+      <div className="wb-tree-views" style={{ paddingLeft: 26 + depth * 14 }}>
+        {[levelView, ...views].map((id) => (
+          <a
+            key={id}
+            className={`wb-tree-view${view === id ? ' active' : ''}`}
+            title={`overlay ${id}`}
+            onClick={() => overlayView(id)}
+          >
+            {id.replace(/^view:/, '')}
+          </a>
+        ))}
+      </div>
+    ) : null
+
+  const rows = (n: TreeNode, depth: number): React.ReactNode => {
+    if (keep && !keep.has(n.id)) return null
+    const open = keep ? true : expanded.has(n.id)
+    const proposal = n.grouping ? proposals.get(n.id) : undefined
+    return (
+      <div key={n.id}>
+        <div
+          className={`wb-tree-row${node === n.id ? ' active' : ''}${levelNode === n.id ? ' level' : ''}`}
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
+          <button
+            className="wb-tree-caret"
+            onClick={() => toggle(n.id)}
+            disabled={n.children.length === 0}
+            title={n.children.length === 0 ? 'a leaf' : open ? 'collapse' : 'expand'}
+          >
+            {n.children.length === 0 ? '·' : open ? '▾' : '▸'}
+          </button>
+          <a className="wb-tree-name" onClick={() => openAndFocus(n.id)} title={n.id}>
+            {n.name}
+            {n.stereotype ? <span className="muted"> «{n.stereotype}»</span> : null}
+          </a>
+          {n.grouping && (
+            <span className="chip sev-none" title="a grouping: derived provenance, no document states it">
+              grouping
+            </span>
+          )}
+          {proposal && (
+            <a className="wb-tree-proposal" title="the ratification proposal" onClick={() => openDiagnostic(proposal)}>
+              ratify
+            </a>
+          )}
+          <span className="sub">
+            {n.count > 0 ? `${n.count} children · ` : ''}
+            {(revIdx.get(n.id) ?? []).length} req
+          </span>
+        </div>
+        {viewChips(n.levelView, n.views, depth)}
+        {open && n.children.map((c) => rows(c, depth + 1))}
+      </div>
+    )
+  }
+
+  const root = (r: TreeRoot) => {
+    if (keep && !keep.has(r.target)) return null
+    const open = keep ? true : expanded.has(r.target)
+    return (
+      <div key={r.target}>
+        <div className={`wb-tree-row root${levelNode === r.target ? ' level' : ''}`} style={{ paddingLeft: 8 }}>
+          <button className="wb-tree-caret" onClick={() => toggle(r.target)} title={open ? 'collapse' : 'expand'}>
+            {open ? '▾' : '▸'}
+          </button>
+          <a
+            className="wb-tree-name mono"
+            title={r.levelView ? `overlay ${r.levelView}` : 'the scope root'}
+            onClick={() => r.levelView && overlayView(r.levelView)}
+          >
+            {r.target}
+          </a>
+          <span className="sub">{r.count} at the root</span>
+        </div>
+        {viewChips(r.levelView, r.views, 0)}
+        {open && r.children.map((c) => rows(c, 1))}
+      </div>
+    )
+  }
+
+  if (tree.roots.length === 0) return <p className="muted wb-side-pad">no entities yet</p>
+  if (keep && keep.size === 0) return <p className="muted wb-side-pad">nothing matches the filter</p>
+  return <div className="wb-tree">{tree.roots.map(root)}</div>
+}
 
 export default function GraphSidebar() {
   const [sp, setSp] = useSearchParams()
@@ -18,8 +197,10 @@ export default function GraphSidebar() {
     : 'entities'
   const q = (sp.get('q') ?? '').toLowerCase()
   const node = sp.get('node')
+  const view = sp.get('view')
 
   const graph = useGraph()
+  const tree = useTree()
   const matrix = useMatrix()
   const coverage = useCoverage()
   const views = useViews()
@@ -94,29 +275,24 @@ export default function GraphSidebar() {
       {graph.error && <p className="error-inline wb-side-pad">{graph.error.message}</p>}
       {!g && !graph.error && <p className="muted wb-side-pad">loading…</p>}
 
-      {g && list === 'entities' &&
-        windowed(
-          Object.entries(g.entities)
-            .filter(
-              ([id, e]) =>
-                !q ||
-                `${id} ${e.name} ${e.definition ?? ''} ${(e.aliases ?? []).join(' ')}`
-                  .toLowerCase()
-                  .includes(q),
-            )
-            .sort(([a], [b]) => a.localeCompare(b)),
-          ([id, e]) => (
-            <a
-              key={id}
-              className={`wb-list-row mono${node === id ? ' active' : ''}`}
-              onClick={() => openAndFocus(id)}
-            >
-              {e.name}
-              {e.stereotype ? ` «${e.stereotype}»` : ''}{' '}
-              <span className="sub">{id} · {(revIdx.get(id) ?? []).length} req</span>
-            </a>
-          ),
-        )}
+      {g && list === 'entities' && (
+        <>
+          {tree.error && <p className="error-inline wb-side-pad">{tree.error.message}</p>}
+          {!tree.data && !tree.error && <p className="muted wb-side-pad">building the tree…</p>}
+          {tree.data && (
+            <ContainmentTree
+              tree={tree.data}
+              graph={g}
+              q={q}
+              node={node}
+              view={view}
+              revIdx={revIdx}
+              openAndFocus={openAndFocus}
+              overlayView={overlayView}
+            />
+          )}
+        </>
+      )}
 
       {g && list === 'requirements' &&
         windowed(

@@ -4,9 +4,21 @@ Status: in progress on the `levels` branch (branched from `uml`). Landed: stage 
 (docs), stage 2 (harness), stage 3 (tools, level views, lifted flows, drill-down
 links), stage 4 (docsgen, GUI, viewer), stage 5 (the abstraction skill and the
 fan-out contract, rewritten with the docs stage and embedded by the release build),
-and stage 6 (`example-saas` with ten traps). Running: stage 7, validation
-(`example-saas` on the local model, then `f2` and `example-org` regressions on the
-levels binary, then the dogfood; grading cycles follow). Written for a fresh session
+and stage 6 (`example-saas` with ten traps). Running: stage 7, validation, by the
+owner's short-loop method (2026-09-02): never converge a whole corpus and grade hours
+later; snapshot a real project at one moment and run one goal's session from it
+with `jazyk benchmark --project <dir> --goal <id> [--force]`, read the transcript,
+fix the docs and the harness, rerun, then move to the next interaction in the chain.
+Done so far on a three-document mini project (twelve root entities): the root
+fan-out resolves in seven rounds to the groupings the documents name (Orders,
+Shipping, Platform) and rejects the coupling candidate that mixed two areas; the
+review of a fresh grouping judges right in four rounds. The loops fixed: the snippet
+toolset for GC goals, skill auto-load inside a batch, a move alone reopening every
+child's review, the root view flipping to class under groupings of components, bare
+document reads, stereotypes on component members, resolutions with nothing staged.
+Next in the chain: the second-level fan-out, `example-saas` traps one interaction
+at a time, then `f2` and `example-org` regressions and the dogfood, all as
+snippets. Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

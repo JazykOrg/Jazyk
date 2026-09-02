@@ -1060,8 +1060,21 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
             if loaded.contains(target) {
                 continue;
             }
-            if full && !loaded.over_high_water(0) {
+            // A goal's own target is primary, and so is each side of a pair
+            // target: a judgment cannot run on stubs of its own subjects.
+            let primary = batch
+                .iter()
+                .any(|g| g.target == target || g.target.split('~').any(|part| part == target));
+            if full && (primary || !loaded.over_high_water(0)) {
                 let _ = loaded.load(store, target, 1);
+                // The mark is a ceiling, not a suggestion: a supporting item that
+                // lands the set past it downgrades to a stub, and the model loads
+                // it back deliberately when it earns the budget. A goal's own
+                // target stays full: the goal cannot be worked without its subject.
+                if !primary && loaded.used() > loaded.high_water {
+                    loaded.unload(target);
+                    loaded.load_stub(store, target);
+                }
             } else {
                 loaded.load_stub(store, target);
             }
@@ -1183,6 +1196,21 @@ mod tests {
             state: GoalState::Open,
             hints: vec!["load shop.md#/shop/cart".into(), "skill extraction".into()],
         }
+    }
+
+    // The initially loaded set obeys the high-water ceiling on the normal path.
+    // Mirrors docs/compiler/context.md#policy.
+    #[test]
+    fn initial_loaded_stays_under_the_high_water_mark() {
+        let s = fixture();
+        let g = goal();
+        let (loaded, _) = initial_loaded(&s, std::slice::from_ref(&g));
+        assert!(
+            loaded.used() <= loaded.high_water,
+            "{} > {}",
+            loaded.used(),
+            loaded.high_water
+        );
     }
 
     // The prompt assembles in the fixed order, with the feedback note as the second

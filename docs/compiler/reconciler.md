@@ -417,10 +417,14 @@ a batch from goals of one class and one tier that resolve to one
   ([grouping by component](../consumers/gen.md#grouping-by-component)). A flat graph
   has no groups, and the ledger goals batch per entity.
 
-The batch fills until the budget says stop. The registry's `pack` computes the batch's
-initially loaded set from the goals' hints under the session context budget (24000
-chars, a [registry constant](./graph.md#limits)); a goal whose loads do not fit waits
-for the next batch. The round budget bounds the count too: at least 8 of the session's
+The batch fills until the budget says stop. The skills of the batch's goal kinds render
+into the same session context budget (24000 chars, a
+[registry constant](./graph.md#limits)), so the registry's `pack` computes the batch's
+initially loaded set from the goals' hints under what the skill payloads leave; a goal
+whose loads do not fit waits for the next batch. The initial set never passes the
+high-water mark: a goal's own target always loads full, and a supporting item that
+would land the set past the mark enters as a stub instead
+([policy](./context.md#policy)). The round budget bounds the count too: at least 8 of the session's
 24 rounds per section in the batch, so a reconcile batch holds at most three sections.
 A batch is one to a handful of goals; the count is a consequence of budget and locality,
 never a fixed number. Parked goals are batched first.

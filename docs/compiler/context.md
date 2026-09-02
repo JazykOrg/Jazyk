@@ -101,6 +101,10 @@ The policy is deterministic and budget-driven. Loading `A` brings:
   view.
 - Neighbors' neighbors as counts only (`5 edges loadable`).
 
+The initially loaded set obeys the same ceiling as every later `load`: a goal's own
+target loads full, and a supporting item that would land the set past the high-water
+mark enters as a stub ([batching](./reconciler.md#batching)).
+
 The walk is breadth-first per axis in a fixed order (`parents`, `mentions`,
 `requirements`, `related`, `members`), each frontier in document order (document link
 level, then path, then section order) with ties broken by id. Size accounting runs

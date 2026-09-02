@@ -346,7 +346,23 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
                 .unwrap_or(0);
             800 + 700 * proposals
         }
-        "rejudge-pair" => 1_400,
+        "rejudge-pair" => {
+            // Both sides load full plus their neighbor stubs: the cost follows
+            // the statements, never a flat guess (a 13-pair batch of long
+            // statements does not fit where 13 flat guesses said it would).
+            let side = |id: &str| {
+                store
+                    .graph
+                    .requirements
+                    .get(store.resolve_id(id))
+                    .map(|r| 260 + r.statement.len() + 90 * r.entities.len())
+                    .unwrap_or(400)
+            };
+            match g.target.split_once('~') {
+                Some((a, b)) => 700 + side(a) + side(b),
+                None => 1_400,
+            }
+        }
         "review-entity" => 1_500 + 140 * store.requirements_referencing(&g.target).len(),
         "abstract-entity" => 1_500 + 160 * store.requirements_referencing(&g.target).len(),
         "curate-view" | "split-view" | "retrace" => {
@@ -852,6 +868,30 @@ impl Board {
                     };
                     (parked, order, id.clone())
                 });
+                // The skills of the batch's goal kinds render into the same
+                // context budget as the loaded set (sessions.md#budgets): the
+                // estimates fill what the skill payloads leave.
+                let mut skill_names: Vec<&str> = Vec::new();
+                for id in &ids {
+                    let g = self.goal(id).unwrap();
+                    for s in goals::skills_for(&g.kind, store, &g.target) {
+                        if !skill_names.contains(&s) {
+                            skill_names.push(s);
+                        }
+                    }
+                }
+                let skills_size: usize = skill_names
+                    .iter()
+                    .filter_map(|n| {
+                        crate::session::SKILLS
+                            .iter()
+                            .find(|(k, _)| k == n)
+                            .map(|(_, p)| p.len())
+                    })
+                    .sum();
+                let batch_budget = limits::CONTEXT_BUDGET
+                    .saturating_sub(skills_size)
+                    .max(6_000);
                 let mut current: Vec<String> = Vec::new();
                 let mut size = 0usize;
                 let mut sections = 0usize;
@@ -878,8 +918,7 @@ impl Board {
                     let max_sections =
                         (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
                     let over = !current.is_empty()
-                        && (size + cost > limits::CONTEXT_BUDGET
-                            || (is_section && sections >= max_sections));
+                        && (size + cost > batch_budget || (is_section && sections >= max_sections));
                     if over {
                         flush(&mut current, &mut batches);
                         size = 0;
@@ -1708,6 +1747,50 @@ pub(crate) mod tests {
         }
         s.status.changes.clear();
         s
+    }
+
+    // The pair estimate follows the statements it will load, never a flat guess.
+    #[test]
+    fn rejudge_pair_estimate_follows_the_statements() {
+        let mut s = Store::default();
+        let mut req = |id: &str, statement: &str, n: usize| {
+            s.graph.requirements.insert(
+                id.into(),
+                crate::model::Requirement {
+                    statement: statement.into(),
+                    entities: (0..n).map(|i| format!("ent:e{}", i)).collect(),
+                    ..Default::default()
+                },
+            );
+        };
+        req("req:a", "Short.", 1);
+        req("req:b", "Also short.", 1);
+        req(
+            "req:c",
+            &"A long statement about approvals and thresholds. ".repeat(8),
+            4,
+        );
+        req(
+            "req:d",
+            &"Another long statement naming several entities and bands. ".repeat(8),
+            4,
+        );
+        let g = |target: &str| Goal {
+            id: format!("g:rejudge-pair:{}", target),
+            kind: "rejudge-pair".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: target.into(),
+            unit: "pair".into(),
+            change: serde_json::json!({}),
+            cause: None,
+            state: GoalState::Open,
+            hints: Vec::new(),
+        };
+        let short = estimate(&s, &g("req:a~req:b"));
+        let long = estimate(&s, &g("req:c~req:d"));
+        assert!(long > short, "{} vs {}", long, short);
+        assert!(long > 1_400, "{}", long);
     }
 
     #[test]

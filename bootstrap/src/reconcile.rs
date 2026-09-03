@@ -4296,21 +4296,20 @@ mod tests {
             goal.change["limit"],
             json!({"soft": CHILDREN_PER_ENTITY_SOFT, "hard": CHILDREN_PER_ENTITY_HARD})
         );
+        // A candidate never grows past half the soft threshold, so the pricing
+        // entity stays out of the ordering candidate; the session adds it back,
+        // a candidate adjusted with a reason.
         let cands = goal.change["candidates"].clone();
         assert_eq!(
             cands,
             json!([
-                [
-                    "ent:cart",
-                    "ent:checkout",
-                    "ent:discount",
-                    "ent:invoice",
-                    "ent:pricing"
-                ],
                 ["ent:carrier", "ent:label", "ent:shipment", "ent:tracking"],
+                ["ent:cart", "ent:checkout", "ent:discount", "ent:invoice"],
                 ["ent:cache", "ent:mailer", "ent:queue"],
             ])
         );
+        let mut cands = cands;
+        cands[1].as_array_mut().unwrap().push(json!("ent:pricing"));
 
         // Step 4: a session scoped to the goal groups each candidate, marks the goal
         // done, and passes the batch gates.
@@ -4322,16 +4321,16 @@ mod tests {
         );
         let groupings: [(&str, &str, &str, &str); 3] = [
             (
-                "ent:ordering",
-                "Ordering",
-                "Prices, confirms, and invoices what the cart holds.",
-                "orders.md states every member and treats them as one area",
-            ),
-            (
                 "ent:fulfillment",
                 "Fulfillment",
                 "Carries a shipment to the customer and tracks it.",
                 "shipping.md states every member and treats them as one area",
+            ),
+            (
+                "ent:ordering",
+                "Ordering",
+                "Prices, confirms, and invoices what the cart holds.",
+                "orders.md states every member and treats them as one area",
             ),
             (
                 "ent:platform",

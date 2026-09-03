@@ -313,7 +313,12 @@ works over the target's direct children:
   the pair of clusters with the highest total weight between them (the sum of `weight`
   over their member pairs); stop when the cluster count is at or under the soft
   threshold and every cluster has at least two members or is a singleton no other
-  cluster touches (zero weight to every other cluster).
+  cluster touches (zero weight to every other cluster). A merge never produces a
+  cluster larger than half the soft threshold (four at soft 9): a candidate is a
+  cohesive subset the model can name, and two candidates the documents treat as one
+  area merge in the session, so a level whose weights would fuse everything yields
+  several candidates, never one tautological whole; a singleton no merge can take
+  stays out of the output.
 - Ties break by id: among merges of equal weight, the pair whose ids sort first.
 - Output: each cluster as an ordered id list with its internal weight, largest first,
   capped at the soft threshold of clusters and at 12 ids per cluster (the rest

@@ -3728,9 +3728,16 @@ pub fn coupling_candidates(store: &Store, target: &str, soft: u64) -> Vec<Candid
         if settled {
             break;
         }
+        // A candidate is a cohesive subset the model can name: a merge never grows
+        // a cluster past half the soft threshold, so a fully connected level yields
+        // several candidates, never one tautological whole.
+        let cap = (soft / 2).max(2) as usize;
         let mut best: Option<(u64, usize, usize)> = None;
         for i in 0..clusters.len() {
             for j in i + 1..clusters.len() {
+                if clusters[i].len() + clusters[j].len() > cap {
+                    continue;
+                }
                 let w = between(&clusters[i], &clusters[j]);
                 if best.is_none_or(|(bw, _, _)| w > bw) {
                     best = Some((w, i, j));
@@ -4882,9 +4889,12 @@ mod tests {
         let c = coupling_candidates(&s, "ent:hub", 9);
         assert!(c.len() <= 9);
         assert!(c.iter().all(|x| x.ids.len() <= FAN_OUT_CANDIDATE_IDS));
+        // A candidate must itself fit under the limit: no cluster past the soft
+        // threshold, so the chain yields several candidates, never one whole.
+        assert!(c.iter().all(|x| x.ids.len() + x.rest <= 4), "{:?}", c);
+        assert!(c.len() >= 4, "{:?}", c);
         let total: usize = c.iter().map(|x| x.ids.len() + x.rest).sum();
-        assert_eq!(total, 30);
-        assert!(c[0].rest > 0);
+        assert!(total >= 28 && total <= 30, "{}", total);
         assert_eq!(c, coupling_candidates(&s, "ent:hub", 9));
         // Ties break by id: two equal-weight pairs merge the one whose ids sort first.
         let mut s = Store::default();

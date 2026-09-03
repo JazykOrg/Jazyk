@@ -8,6 +8,7 @@ import CommandPalette from './components/CommandPalette'
 import ConnectionGuard from './components/ConnectionGuard'
 import { useApp } from './lib/store'
 import { useInspector } from './lib/nav'
+import { ExploreHistory } from './lib/explore'
 import Explorer from './workbench/Explorer'
 import GraphSidebar from './workbench/GraphSidebar'
 import BoardSidebar from './workbench/BoardSidebar'
@@ -188,6 +189,7 @@ export default function App() {
       <CommandPalette />
       <CommitNote />
       <ConnectionGuard />
+      <ExploreHistory />
     </>
   )
 }

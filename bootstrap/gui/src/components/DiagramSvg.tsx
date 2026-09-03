@@ -19,6 +19,7 @@ export default function DiagramSvg({ svg, className }: { svg: string; className?
     next.set('view', id)
     next.set('node', id)
     next.delete('focus')
+    next.delete('detail')
     navigate(`/graph?${next.toString()}`)
   }
   return <div className={className ?? 'view-svg'} onClick={onClick} dangerouslySetInnerHTML={{ __html: svg }} />

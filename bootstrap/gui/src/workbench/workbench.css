@@ -346,6 +346,105 @@
   border-color: var(--accent);
 }
 
+/* The explorer's card in the inspector (docs/frontends/gui.md#explore): one row per
+   direction of the walk, every item a chip that moves the explorer. The chips share
+   the level chips' shape so the card and the diagram panel read as one surface. */
+.xp-card {
+  padding: 8px 12px;
+}
+
+.xp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xp-head h3 {
+  font-family: var(--sans);
+  font-size: 14px;
+}
+
+.xp-nav {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.xp-nav .ide-mini {
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.xp-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 5px 0;
+  font-size: 12px;
+}
+
+.xp-label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.xp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+}
+
+.xp-chip:hover,
+.xp-chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.xp-chip.disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.xp-chip.disabled:hover {
+  border-color: var(--line);
+}
+
+.xp-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.xp-here {
+  font-weight: 600;
+}
+
+.xp-rels {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+}
+
 /* A rendered view picture: scrolls in its box, the drill-down anchors clickable. */
 .view-svg {
   overflow: auto;

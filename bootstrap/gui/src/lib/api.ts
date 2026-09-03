@@ -316,6 +316,9 @@ export interface ViewMember {
   stereotype?: string
   parent?: string
   hidden?: boolean
+  // Set on an entity the detail expansion drew: the level it came in at
+  // (docs/frontends/gui.md#explore).
+  detail?: number
   statement?: string
   entities?: string[]
   transition?: Transition
@@ -362,9 +365,82 @@ export interface ViewDetail {
   steps: ViewStep[]
   machines: { id: string; machine: StateMachine }[]
   children: ViewChild[]
+  // The levels of detail applied beneath the members, and whether one more would
+  // draw anything (docs/frontends/gui.md#explore).
+  detail: number
+  deeper: boolean
   puml?: string | null
   svg?: string | null
   renderError?: string | null
+}
+
+// ---- the walk (GET /api/entities/{id}/card, GET /api/views/{id}/page): the shared
+// card model, one level in every direction (docs/consumers/docsgen.md#entity-cards,
+// docs/frontends/gui.md#explore) ----
+
+export interface CardCrumb {
+  id: string
+  name: string
+}
+
+export interface CardKin {
+  id: string
+  name: string
+  childCount: number
+}
+
+export interface CardRelation {
+  other: string
+  type: string
+  // `a` when the entity acts on the other, `b` when it is acted on, `both` either way.
+  direction: 'a' | 'b' | 'both'
+  count: number
+}
+
+export interface EntityCardData {
+  id: string
+  name: string
+  stereotype: string | null
+  definition: string
+  provenance: 'quote' | 'derived' | 'decree'
+  // From the scope root down to the entity itself, last.
+  breadcrumb: CardCrumb[]
+  // The structural level view of the parent's level: where the entity is used.
+  context: string | null
+  // The entity's own level view, null on a leaf.
+  inside: string | null
+  insideFlows: string[]
+  relationships: CardRelation[]
+  // The flow views at the parent's level the entity is drawn in.
+  flows: string[]
+  siblings: CardKin[]
+  children: CardKin[]
+  requirementCount: number
+  proposal: string | null
+}
+
+export interface PageDrawn {
+  id: string
+  name: string
+  stereotype: string | null
+  levelView: string | null
+}
+
+export interface PageStep {
+  requirement: string
+  statement: string
+  from: string
+  to: string
+}
+
+export interface ViewPageData {
+  id: string
+  kind: string
+  title: string
+  level: { target: string; breadcrumb: CardCrumb[] } | null
+  drawn: PageDrawn[]
+  steps: PageStep[]
+  around: { sameLevel: string[]; above: string | null; below: string[] }
 }
 
 // The containment tree (GET /api/tree): one root per scope, nodes nested by

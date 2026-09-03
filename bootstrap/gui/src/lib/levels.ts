@@ -56,6 +56,28 @@ export function levelChain(tree: TreeData | undefined, viewId: string): LevelCha
   return null
 }
 
+// The structural level view an entity is drawn in: its parent's level view, or the
+// scope root's for a parentless entity. Null when the tree does not hold the entity
+// or its level has no view (docs/consumers/docsgen.md#entity-cards, `In context`).
+export function contextViewOf(tree: TreeData | undefined, id: string): string | null {
+  if (!tree || !id) return null
+  const walk = (n: TreeNode, parentView: string | null): string | null | undefined => {
+    if (n.id === id) return parentView
+    for (const c of n.children) {
+      const hit = walk(c, n.levelView)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  for (const r of tree.roots) {
+    for (const c of r.children) {
+      const hit = walk(c, r.levelView)
+      if (hit !== undefined) return hit
+    }
+  }
+  return null
+}
+
 // The targets from the scope root down to an entity, the entity last; empty when the
 // tree does not hold it.
 export function ancestorsOf(tree: TreeData | undefined, id: string): string[] {

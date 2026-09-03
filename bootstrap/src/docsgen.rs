@@ -608,6 +608,55 @@ fn flow_line(store: &Store, view_id: &str, from: &str) -> String {
     )
 }
 
+// One line per flow cluster: the title, the use-case and sequence pages as links,
+// and the step count. A cluster is one line, never one per kind.
+// Mirrors docs/consumers/docsgen.md#entity-cards.
+fn cluster_lines(store: &Store, view_ids: &[String], from: &str) -> Vec<String> {
+    let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
+    for vid in view_ids {
+        let slug = vid.rsplit('/').next().unwrap_or(vid).to_string();
+        match clusters.iter_mut().find(|(s, _)| *s == slug) {
+            Some((_, ids)) => ids.push(vid.clone()),
+            None => clusters.push((slug, vec![vid.clone()])),
+        }
+    }
+    clusters
+        .into_iter()
+        .map(|(_, mut ids)| {
+            // The use case first, then the sequence, then any other kind.
+            let rank = |v: &String| match v.strip_prefix("view:").and_then(|r| r.split('/').next()) {
+                Some("usecase") => 0,
+                Some("sequence") => 1,
+                _ => 2,
+            };
+            ids.sort_by_key(rank);
+            let title = ids
+                .iter()
+                .find_map(|v| store.graph.views.get(v).map(|x| x.title.clone()))
+                .unwrap_or_default();
+            let kinds: Vec<String> = ids
+                .iter()
+                .map(|v| {
+                    let kind = v
+                        .strip_prefix("view:")
+                        .and_then(|r| r.split('/').next())
+                        .unwrap_or("view");
+                    let label = match kind {
+                        "usecase" => "use case".to_string(),
+                        k => k.replace('-', " "),
+                    };
+                    match view_page_path(v) {
+                        Some(path) => format!("[{}]({})", label, rel(from, &path)),
+                        None => format!("`{}`", v),
+                    }
+                })
+                .collect();
+            let steps = ids.iter().map(|v| step_count(store, v)).max().unwrap_or(0);
+            format!("{} · {} ({} steps)", title, kinds.join(" · "), steps)
+        })
+        .collect()
+}
+
 // "[Name](<card>)" with the child count when the kin has a level.
 fn kin_line(store: &Store, k: &crate::card::Kin, from: &str) -> String {
     let mut line = card_link(store, &k.id, from);
@@ -655,8 +704,8 @@ fn card_text(store: &Store, c: &Card) -> String {
             s.push_str(&embed(store, vid, v, from));
             if !c.inside_flows.is_empty() {
                 s.push_str("Flows of this level:\n\n");
-                for f in &c.inside_flows {
-                    s.push_str(&format!("- {}\n", flow_line(store, f, from)));
+                for line in cluster_lines(store, &c.inside_flows, from) {
+                    s.push_str(&format!("- {}\n", line));
                 }
                 s.push('\n');
             }
@@ -694,8 +743,8 @@ fn card_text(store: &Store, c: &Card) -> String {
     if c.flows.is_empty() {
         s.push_str("none\n\n");
     } else {
-        for f in &c.flows {
-            s.push_str(&format!("- {}\n", flow_line(store, f, from)));
+        for line in cluster_lines(store, &c.flows, from) {
+            s.push_str(&format!("- {}\n", line));
         }
         s.push('\n');
     }
@@ -2000,7 +2049,7 @@ mod tests {
             card
         );
         assert!(
-            card.contains("(../diagrams/usecase/shop-customer-shop.md) `view:usecase/shop-customer-shop`"),
+            card.contains("[use case](../diagrams/usecase/shop-customer-shop.md) · [sequence](../diagrams/sequence/shop-customer-shop.md)"),
             "{}",
             card
         );

@@ -192,7 +192,8 @@ The card, in order:
   view's [diagram page](#diagram-pages). The entity is one of the boxes; this is where
   it is used.
 - `Inside`: when the entity has a level of its own, its level view embedded the same
-  way, and the flow views of that level as links to their diagram pages. A leaf says
+  way, and the flows of that level, one line per flow cluster: the cluster's title,
+  its `use-case` and `sequence` pages as links, and the step count. A leaf says
   `a leaf` and nothing more. This is the link down.
 - `Relationships`: one line per other entity: the relationship type as the
   [relationship](../compiler/model/relationship.md) summarizes it, the direction, the
@@ -201,8 +202,9 @@ The card, in order:
   lists the relationships its subtree carries, each other end lifted to the member
   of the parent's level it sits under, so a grouping is never `none` while its box
   has arrows. This is the link sideways along the edges.
-- `Flows`: the flow views at the parent's level in which the entity is a drawn
-  participant, each a link to its diagram page with its step count.
+- `Flows`: the flow clusters at the parent's level in which the entity is a drawn
+  participant, one line per cluster: the title, the `use-case` and `sequence` pages
+  as links, and the step count. A cluster is one line, never one per kind.
 - `Siblings`: the other children of the same parent, each a link to its card, with a
   child count where one has a level. This is the link sideways along the level.
 - `Children`: the direct children, each a link, with child counts. Absent on a leaf.

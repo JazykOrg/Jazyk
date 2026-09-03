@@ -90,6 +90,7 @@ fn top_usage() -> String {
         "  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n",
     );
     s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,decompile,benchmark,chat,graph\n  jazyk monitor [--json] [--once]  print ready and blocked goals as the state changes; --once exits at the first\n  jazyk release [compile|generate]  approve gated goals in manual mode without running anything\n");
+    s.push_str("  jazyk answer <diag|goal>       answer a prompted diagnostic (--option N | --text \"...\"; none lists the options)\n");
     s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
     s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
     s.push_str("  jazyk benchmark [case...]      grade the configured agent and model\n");
@@ -225,6 +226,18 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              --json   one JSON object per notice instead of text\n  \
              --once   block until a goal is claimable, print that notice, exit 0\n\
              {}",
+            COMMON_OUT
+        ),
+        "answer" => format!(
+            "usage: jazyk answer <diagnostic|goal> [--option N | --text \"...\"]\n\n\
+             Answer one prompted diagnostic from the terminal: a diagnostic id, a\n\
+             ratify goal (resolved to its proposal), or an answer goal. Without a\n\
+             reply, print the question and its options numbered from 0 and exit 1.\n\
+             An edit option (a ratification proposal's accept) applies as a dual\n\
+             write and resolves the diagnostic; the retract option is deterministic\n\
+             too; any other reply records handling and runs its answer session here.\n\n\
+             {}\n\n\
+             exit: 0 when the answer landed, 1 when nothing was written (the reason prints)",
             COMMON_OUT
         ),
         "release" => format!(
@@ -460,6 +473,14 @@ fn main() {
                 i += 1;
                 opts.sessions = args.get(i).and_then(|s| s.parse().ok());
             }
+            "--option" => {
+                i += 1;
+                opts.option = args.get(i).and_then(|s| s.parse().ok());
+            }
+            "--text" => {
+                i += 1;
+                opts.text = args.get(i).cloned();
+            }
             "--build-token" => {
                 i += 1;
                 opts.build_token = args.get(i).cloned();
@@ -580,6 +601,7 @@ fn main() {
         },
         "monitor" => cli::run_monitor(&positional, &opts),
         "release" => cli::run_release(&positional, &opts),
+        "answer" => cli::run_answer(&positional, &opts),
         "gen" => cli::run_gen(&opts, &positional),
         "test" => cli::run_test(&opts, &positional),
         "decompile" => cli::run_decompile(&opts, &positional),

@@ -305,6 +305,9 @@ pub struct Commit {
     pub resolved: Vec<Resolved>,
     pub rounds: u32,
     pub tokens: u64,
+    // A changeset that lands whole or not at all: one skipped op rolls the graph
+    // back and nothing is journaled (a retract, docs/compiler/goals/ratify.md#retract).
+    pub all_or_nothing: bool,
 }
 
 impl Commit {
@@ -324,6 +327,7 @@ impl Commit {
             resolved: Vec::new(),
             rounds,
             tokens,
+            all_or_nothing: false,
         }
     }
 }
@@ -2126,6 +2130,10 @@ impl Store {
         let mut moves: Vec<(String, Option<String>, Option<String>, usize)> = Vec::new();
         let mut dirt = Dirt::default();
         let mut batch = RecordBatch::new(generation);
+        // The state an all-or-nothing changeset rolls back to when an op is skipped.
+        let snapshot = commit
+            .all_or_nothing
+            .then(|| (self.graph.clone(), self.status.clone(), self.docs.clone()));
 
         let resolve = |remap: &BTreeMap<String, String>, store: &Store, id: &str| -> String {
             let id = remap.get(id).cloned().unwrap_or_else(|| id.to_string());
@@ -3338,27 +3346,71 @@ impl Store {
                             e.updated = Some(build.clone());
                             dirt.entity(&rid, m, "fields");
                         } else {
+                            // A created entity goes. Quoted requirements that named
+                            // it re-point to its parent (refused when it has none),
+                            // and a grouping dissolves: its children reparent to
+                            // its parent, journaled as the dissolve_entity mutation
+                            // so the moves replay. Mirrors
+                            // docs/compiler/goals/ratify.md#retract.
+                            let parent = self.graph.entities[&rid]
+                                .parent
+                                .clone()
+                                .map(|p| self.resolve_id(&p).to_string())
+                                .filter(|p| self.graph.entities.contains_key(p));
                             let refs = self.requirements_referencing(&rid);
                             if !refs.is_empty() {
-                                skipped.push(format!(
-                                    "retract_decree {}: still referenced by {}",
-                                    rid,
-                                    refs.join(", ")
-                                ));
-                                continue;
+                                let Some(p) = &parent else {
+                                    skipped.push(format!(
+                                        "retract_decree {}: no parent to take its requirements; still referenced by {}",
+                                        rid,
+                                        refs.join(", ")
+                                    ));
+                                    continue;
+                                };
+                                for r in &refs {
+                                    let mut ents: Vec<String> = self.graph.requirements[r]
+                                        .entities
+                                        .iter()
+                                        .filter(|e| self.resolve_id(e) != rid)
+                                        .cloned()
+                                        .collect();
+                                    if !ents.iter().any(|e| self.resolve_id(e) == p.as_str()) {
+                                        ents.push(p.clone());
+                                    }
+                                    let req = self.graph.requirements.get_mut(r).unwrap();
+                                    req.entities = ents;
+                                    req.updated = Some(build.clone());
+                                    dirt.revised(r, m, "entities");
+                                }
+                                dirt.entity(p, m, "requirements");
                             }
                             let children = self.children_of(&rid);
-                            if !children.is_empty() {
-                                skipped.push(format!(
-                                    "retract_decree {}: still a parent of {}",
-                                    rid,
-                                    children.join(", ")
+                            if children.is_empty() {
+                                self.graph.entities.remove(&rid);
+                                self.graph.redirects.insert(rid.clone(), String::new());
+                                dirt.deleted(&rid, m);
+                            } else {
+                                let (parent, children) = self.dissolve(&rid, &build);
+                                for c in &children {
+                                    moves.push((c.clone(), Some(rid.clone()), parent.clone(), m));
+                                }
+                                if let Some(p) = &parent {
+                                    dirt.entity(p, m, "parent");
+                                }
+                                dirt.deleted(&rid, m);
+                                self.status
+                                    .clear_changes(&[CHANGE_PROVENANCE_PENDING], &rid);
+                                applied.push(Op::DissolveEntity {
+                                    id: rid.clone(),
+                                    reason: reason.clone(),
+                                    parent,
+                                    children,
+                                });
+                                applied.extend(self.resolve_ratification_diags(
+                                    &rid, &build, &reason,
                                 ));
                                 continue;
                             }
-                            self.graph.entities.remove(&rid);
-                            self.graph.redirects.insert(rid.clone(), String::new());
-                            dirt.deleted(&rid, m);
                         }
                     } else if let Some(v) = self.graph.views.get(&rid) {
                         if v.default || !pending(&v.provenance) {
@@ -3683,6 +3735,24 @@ impl Store {
                     }
                     _ => skipped.push(format!("set_coverage: unknown section {}#{}", doc, section)),
                 },
+            }
+        }
+
+        // An all-or-nothing changeset with a skipped op lands nothing: the graph
+        // returns to the snapshot and the refusals are the whole report.
+        if let Some((graph, status, docs)) = snapshot {
+            if !skipped.is_empty() {
+                self.graph = graph;
+                self.status = status;
+                self.docs = docs;
+                return CommitReport {
+                    applied: 0,
+                    skipped,
+                    generation: self.status.generation,
+                    changes: Vec::new(),
+                    touched_entities: BTreeSet::new(),
+                    changed_requirements: BTreeSet::new(),
+                };
             }
         }
 
@@ -6589,6 +6659,165 @@ mod tests {
             .diagnostics
             .get(&proposal_id)
             .is_none_or(|d| d.lifecycle == "resolved"));
+    }
+
+    // Retracting a derived grouping dissolves it: the children return to its parent,
+    // a quoted requirement that named it re-points there, the pending record clears,
+    // and the ratify entry journals the dissolve_entity mutation so the moves replay.
+    // Mirrors docs/compiler/goals/ratify.md#retract.
+    #[test]
+    fn retracting_a_derived_grouping_dissolves_it_onto_its_parent() {
+        let mut s = Store {
+            out: own_dir("retract-grouping"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nThe cart holds items.\n");
+        let under = |name: &str, parent: &str, provenance: Option<Provenance>| Entity {
+            parent: Some(parent.into()),
+            provenance,
+            ..entity(name)
+        };
+        let r = s.apply(
+            vec![
+                create("ent:checkout", "Checkout"),
+                Op::CreateEntity {
+                    id: "ent:selection".into(),
+                    entity: under(
+                        "Selection",
+                        "ent:checkout",
+                        Some(derived(&["ent:cart", "ent:wishlist"])),
+                    ),
+                },
+                Op::CreateEntity {
+                    id: "ent:cart".into(),
+                    entity: under("Cart", "ent:selection", None),
+                },
+                Op::CreateEntity {
+                    id: "ent:wishlist".into(),
+                    entity: under("Wishlist", "ent:selection", None),
+                },
+                Op::CreateRequirement {
+                    id: "prov:q".into(),
+                    requirement: Requirement {
+                        statement: "The cart holds items.".into(),
+                        entities: vec!["ent:cart".into(), "ent:selection".into()],
+                        source: Some(mention("t.md", "/t", "The cart holds items.")),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
+        let rid = s
+            .graph
+            .requirements
+            .iter()
+            .find(|(_, q)| q.statement == "The cart holds items.")
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        let r = s.apply(
+            vec![Op::RetractDecree {
+                id: "ent:selection".into(),
+                reason: "retracted".into(),
+            }],
+            &Commit::store("ratify"),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        assert!(!s.graph.entities.contains_key("ent:selection"));
+        assert_eq!(s.graph.redirects["ent:selection"], "ent:checkout");
+        for c in ["ent:cart", "ent:wishlist"] {
+            assert_eq!(s.graph.entities[c].parent.as_deref(), Some("ent:checkout"));
+        }
+        let q = &s.graph.requirements[&rid];
+        assert!(!q.entities.iter().any(|e| e == "ent:selection"));
+        assert!(q.entities.iter().any(|e| e == "ent:checkout"));
+        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", r.generation)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "ratify");
+        assert!(entry.mutations.iter().any(|m| m["op"] == "dissolve_entity"));
+        let moves = s.journaled_parent_moves();
+        assert!(moves.iter().any(|mv| mv.child == "ent:wishlist"
+            && mv.from.as_deref() == Some("ent:selection")
+            && mv.to.as_deref() == Some("ent:checkout")));
+        // A parentless entity keeps its quoted requirements: the refusal names them.
+        let r = s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:top".into(),
+                    entity: Entity {
+                        provenance: Some(derived(&["ent:checkout"])),
+                        ..entity("Top")
+                    },
+                },
+                Op::CreateRequirement {
+                    id: "prov:t".into(),
+                    requirement: Requirement {
+                        statement: "The top holds the checkout.".into(),
+                        entities: vec!["ent:top".into()],
+                        provenance: Some(derived(&["ent:top"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        let r = s.apply(
+            vec![Op::RetractDecree {
+                id: "ent:top".into(),
+                reason: "retracted".into(),
+            }],
+            &Commit::store("ratify"),
+        );
+        assert!(r.skipped[0].contains("no parent to take its requirements"));
+        assert!(s.graph.entities.contains_key("ent:top"));
+        // All or nothing: the refused retract takes the answer beside it down with
+        // it, nothing lands, no generation is minted, and the diagnostic can still
+        // be answered.
+        let before = s.status.generation;
+        let proposal = s
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| d.rule == "ratification-pending" && d.subjects == vec!["ent:top"])
+            .map(|(id, _)| id.clone())
+            .expect("the decree filed its proposal");
+        let r = s.apply(
+            vec![
+                Op::RetractDecree {
+                    id: "ent:top".into(),
+                    reason: "retracted".into(),
+                },
+                Op::AnswerDiagnostic {
+                    id: proposal.clone(),
+                    answer: crate::model::DiagnosticAnswer {
+                        choice: Some(1),
+                        text: "retract".into(),
+                        status: "applied".into(),
+                    },
+                },
+            ],
+            &Commit {
+                all_or_nothing: true,
+                ..Commit::store("ratify")
+            },
+        );
+        assert_eq!(r.applied, 0);
+        assert!(r.skipped[0].contains("no parent to take its requirements"));
+        assert_eq!(s.status.generation, before);
+        assert!(s.graph.diagnostics[&proposal].answer.is_none());
+        assert!(!s
+            .out
+            .join("journal")
+            .join(format!("g{}.yaml", before + 1))
+            .exists());
     }
 
     // A save that dirtied sections is a generation of its own with its records.

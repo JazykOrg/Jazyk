@@ -3429,6 +3429,18 @@ impl GoalKind for SplitView {
         out
     }
     fn ready(&self, goal: &Goal, board: &Board) -> Ready {
+        // A level's picture yields to the level's fan-out: grouping is the structural
+        // answer, splitting the picture the last resort. Mirrors
+        // docs/compiler/goals/split-view.md and docs/compiler/reconciler.md#gc-gating.
+        if let Some(level) = board.view_level(&goal.target) {
+            let fan_out = format!("g:abstract-entity:{}", level);
+            if board.open(&fan_out) {
+                return Ready::Blocked(format!(
+                    "fan-out first: {} groups this level, and the flow lifts to the groupings",
+                    fan_out
+                ));
+            }
+        }
         gc_ready(goal, board)
     }
     fn pack(&self, store: &Store, batch: &[Goal]) -> String {

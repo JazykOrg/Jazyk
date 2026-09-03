@@ -113,8 +113,9 @@ draft.
 ### Accept
 
 Choosing the `edit` (an [LSP code action](../../frontends/lsp.md#capabilities), the
-[GUI questions panel](../../frontends/gui.md#questions), or
-[`answer_diagnostic`](../../frontends/acp.md#questions-in-chat) in chat) is a dual
+[GUI questions panel](../../frontends/gui.md#questions),
+[`answer_diagnostic`](../../frontends/acp.md#questions-in-chat) in chat, or
+[`jazyk answer`](../../frontends/cli.md#jazyk-answer) in the terminal) is a dual
 write, journaled as `ratify` ([journal](../graph.md#journal)):
 
 - The sentence lands in the document, edited by the human when they changed it.
@@ -140,10 +141,19 @@ decree this undoes the human's edit; for a derived fact it undoes the session's
 invention. No model runs. Quoted requirements that referenced a retracted entity are re-pointed to
 its `parent` in the same changeset, so no quoted fact is orphaned and the parent's
 `review-entity` goal judges the result; an entity with no parent cannot be retracted
-while quoted requirements reference it, and the refusal names them. The deletion's
+while quoted requirements reference it, and the refusal names them. A retracted
+entity that holds children (a [grouping](../concepts/levels.md#groupings)) dissolves
+exactly as `dissolve_entity` would ([write tools](../tools.md#write-tools)): its
+children reparent to its parent (parentless when the grouping was top-level), the
+entity tombstones with a redirect to that parent, and the `ratify` entry journals
+the dissolution as a `dissolve_entity` mutation with the children moved, so the
+reparent flip replays from the journal. The deletion's
 cone opens the usual goals: `retrace` on the views and instances that referenced the
-fact, `review-entity` on the entities whose facts moved. The next build re-derives
-whatever the documents still support.
+fact, `review-entity` on the entities whose facts moved and on the parent that
+regained the children. The next build re-derives
+whatever the documents still support. A retract the store refuses lands nothing: the
+changeset is all or nothing, no answer is recorded on the proposal, and the refusal
+is the reply, so the proposal stays answerable once the reason is gone.
 
 ### Write the sentence by hand
 
@@ -177,6 +187,6 @@ The proposal is a convenience, never the only door.
 ## Tools
 
 No session tools. The human's tools: the `edit` and `answer` options of the proposal
-through the LSP, the GUI, or chat's `answer_diagnostic`; `edit_fact` and
+through the LSP, the GUI, chat's `answer_diagnostic`, or `jazyk answer`; `edit_fact` and
 `retract_requirement` in chat ([chat tools](../tools.md#chat-tools)); the GUI
 inspector's decree edits. Every path lands the same `ratify` journal entry.

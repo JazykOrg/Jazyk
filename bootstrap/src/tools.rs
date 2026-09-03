@@ -1285,6 +1285,7 @@ impl ToolSession {
             resolved,
             rounds,
             tokens,
+            all_or_nothing: false,
         }
     }
 

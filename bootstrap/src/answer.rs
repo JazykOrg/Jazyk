@@ -179,7 +179,13 @@ pub fn answer(
                 status: "applied".to_string(),
             },
         });
-        let report = s.apply(ops, &Commit::store("ratify"));
+        // All or nothing: a refused retract records no answer, so the proposal stays
+        // answerable. Mirrors docs/compiler/goals/ratify.md#retract.
+        let commit = Commit {
+            all_or_nothing: true,
+            ..Commit::store("ratify")
+        };
+        let report = s.apply(ops, &commit);
         if !report.skipped.is_empty() {
             return Err(report.skipped.join("; "));
         }
@@ -426,28 +432,36 @@ pub fn questions_summary(out: &Path) -> Option<String> {
 // every frontend shows the same progress from the store.
 pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
     std::thread::spawn(move || {
-        let outcome = handle(&project, &out, &id);
-        let status = match &outcome {
-            Ok(()) => "handled",
-            Err(e) => {
-                eprintln!("jazyk: answer session for {} failed: {}", id, e);
-                "failed"
-            }
-        };
-        let mut s = Store::load(&out);
-        let rid = s.resolve_id(&id).to_string();
-        if let Some(a) = s.graph.diagnostics.get(&rid).and_then(|d| d.answer.clone()) {
-            let mut a = a;
-            a.status = status.to_string();
-            let _ = s.apply(
-                vec![Op::AnswerDiagnostic {
-                    id: rid.clone(),
-                    answer: a,
-                }],
-                &Commit::store("answer"),
-            );
-        }
+        let _ = run_handler(&project, &out, &id);
     });
+}
+
+// Run the answer session for a `handling` answer and record its outcome on the
+// answer (`handled`, or `failed` with the error). The terminal runs it in the
+// foreground (docs/frontends/cli.md#jazyk-answer); the other frontends spawn it.
+pub fn run_handler(project: &Project, out: &Path, id: &str) -> Result<(), String> {
+    let outcome = handle(project, out, id);
+    let status = match &outcome {
+        Ok(()) => "handled",
+        Err(e) => {
+            eprintln!("jazyk: answer session for {} failed: {}", id, e);
+            "failed"
+        }
+    };
+    let mut s = Store::load(out);
+    let rid = s.resolve_id(id).to_string();
+    if let Some(a) = s.graph.diagnostics.get(&rid).and_then(|d| d.answer.clone()) {
+        let mut a = a;
+        a.status = status.to_string();
+        let _ = s.apply(
+            vec![Op::AnswerDiagnostic {
+                id: rid.clone(),
+                answer: a,
+            }],
+            &Commit::store("answer"),
+        );
+    }
+    outcome
 }
 
 fn handle(project: &Project, out: &Path, id: &str) -> Result<(), String> {

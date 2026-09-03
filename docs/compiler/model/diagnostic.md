@@ -90,7 +90,8 @@ set displays.
 
 Answering is a human act, through any frontend ([LSP code actions](../../frontends/lsp.md#capabilities),
 [chat sessions](../../frontends/acp.md#questions-in-chat), the
-[GUI](../../frontends/gui.md#questions)). The response lands on the node:
+[GUI](../../frontends/gui.md#questions), the terminal's
+[`jazyk answer`](../../frontends/cli.md#jazyk-answer)). The response lands on the node:
 
 ```yaml
 answer:
@@ -117,7 +118,8 @@ answer:
   answer session. The answer session resolves the diagnostic (or updates its prompt and
   leaves it open); `status` moves to `handled`, or `failed` with the error. The retract
   option of a ratification proposal is the exception: it is deterministic, and no model
-  runs.
+  runs; a retract the store refuses records no answer
+  ([retract](../goals/ratify.md#retract)).
 - An `answer` is a human record, like `triage`: the compiler never overwrites it, and
   a re-detected condition on a node that carries one is not re-asked. A rejected
   suggestion stays rejected across rebuilds.

@@ -49,6 +49,10 @@ pub struct Options {
     pub goal: Option<String>,
     // `jazyk compile --sessions N`: at most N sessions this run.
     pub sessions: Option<usize>,
+    // `jazyk answer <id> --option N | --text "..."`: the reply to a prompt
+    // (docs/frontends/cli.md#jazyk-answer).
+    pub option: Option<usize>,
+    pub text: Option<String>,
 }
 
 impl Default for Options {
@@ -87,6 +91,8 @@ impl Default for Options {
             project: None,
             goal: None,
             sessions: None,
+            option: None,
+            text: None,
         }
     }
 }
@@ -720,6 +726,94 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
         board.ready_of(&["generate"]),
     );
     0
+}
+
+// Answer one prompted diagnostic from the terminal: print the prompt with its options
+// numbered, or hand the reply to the one answer engine every frontend calls. A
+// `handling` reply runs its answer session in the foreground.
+// Mirrors docs/frontends/cli.md#jazyk-answer.
+pub fn run_answer(args: &[String], opts: &Options) -> i32 {
+    let Some(target) = args.first() else {
+        eprintln!("jazyk: answer takes a diagnostic id, a ratify goal, or an answer goal");
+        return 2;
+    };
+    let (proj, _llm, out) = resolve(&[], opts);
+    let did = if let Some(rest) = target.strip_prefix("g:answer:") {
+        rest.to_string()
+    } else if target.starts_with("g:ratify:") {
+        let board = crate::board::Board::compute(&proj, &out);
+        match board
+            .goal(target)
+            .and_then(|g| g.change["proposal"].as_str().map(String::from))
+        {
+            Some(p) => p,
+            None => {
+                eprintln!("jazyk: `{}` names no ratify goal with a proposal", target);
+                return 1;
+            }
+        }
+    } else {
+        target.clone()
+    };
+    let store = crate::store::Store::load(&out);
+    let rid = store.resolve_id(&did).to_string();
+    let Some(d) = store.graph.diagnostics.get(&rid) else {
+        eprintln!("jazyk: unknown diagnostic `{}`", did);
+        return 1;
+    };
+    let reply = match (opts.option, opts.text.as_ref()) {
+        (Some(i), _) => crate::answer::Reply::Choice(i),
+        (None, Some(t)) => crate::answer::Reply::Text(t.clone()),
+        (None, None) => {
+            println!("{}  {} on {}", rid, d.rule, d.subjects.join(", "));
+            match &d.prompt {
+                Some(p) => {
+                    println!("  {}", p.question);
+                    for (i, o) in p.options.iter().enumerate() {
+                        match &o.edit {
+                            Some(e) => println!(
+                                "  {}  {} (edit {}#{}: {})",
+                                i, o.label, e.doc, e.section, e.new_text
+                            ),
+                            None => println!("  {}  {} (answer)", i, o.label),
+                        }
+                    }
+                    if p.freeform {
+                        println!("  freeform accepted: --text \"...\"");
+                    }
+                }
+                None => println!("  no prompt: nothing to choose"),
+            }
+            if let Some(a) = &d.answer {
+                println!("  answered: {} ({})", a.text, a.status);
+            }
+            return 1;
+        }
+    };
+    drop(store);
+    match crate::answer::answer(&proj, &out, &rid, reply, None) {
+        Ok(v) if v["status"] == "handling" => {
+            println!("jazyk: recorded; an answer session acts on it");
+            match crate::answer::run_handler(&proj, &out, &rid) {
+                Ok(()) => {
+                    println!("jazyk: handled");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("jazyk: answer session failed: {}", e);
+                    1
+                }
+            }
+        }
+        Ok(v) => {
+            println!("jazyk: applied: {}", v["note"].as_str().unwrap_or_default());
+            0
+        }
+        Err(e) => {
+            eprintln!("jazyk: {}", e);
+            1
+        }
+    }
 }
 
 // The external agent's trigger: watch the same surfaces `watch` does, perform nothing,
@@ -1870,7 +1964,7 @@ mod tests {
         assert!(!usage.contains('\u{2014}'), "em dash in the top usage");
         for cmd in [
             "compile", "check", "watch", "status", "preview", "explain", "ripple", "context",
-            "monitor", "release", "gen", "test", "mcp", "docsgen",
+            "monitor", "release", "answer", "gen", "test", "mcp", "docsgen",
         ] {
             let u = crate::cmd_usage(cmd).expect(cmd);
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);

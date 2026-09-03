@@ -690,9 +690,12 @@ impl Lsp {
             };
             let vmap = crate::verify::status_map(&self.store, &self.gen);
             let refs = self.store.requirements_referencing(&id);
+            // Only requirements the ledger holds a row for count: a project that
+            // never generated shows no verification line at all.
             let statuses: Vec<&str> = refs
                 .iter()
                 .filter_map(|r| vmap.get(r).and_then(|v| v["status"].as_str()))
+                .filter(|s| *s != "missing")
                 .collect();
             if !statuses.is_empty() {
                 let ok = statuses.iter().filter(|s| **s == "verified").count();

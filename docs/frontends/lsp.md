@@ -51,9 +51,10 @@ hands the reply to an [answer session](./acp.md#answer-sessions).
   The image is the build output the last commit rendered; the hover never renders a
   view itself. When the `.svg` is missing (the renderer failed on its `.puml`), the
   caption stands alone, linked to the view's diagram page and marked `not rendered`;
-  nothing is invented. When the ledger exists ([the ledger](../consumers/gen.md#the-ledger)),
-  the hover appends a verification summary for the entity (verified over total, failing
-  and stale counts). The links are plain `file://` URIs so any client navigates; the VS
+  nothing is invented. When the ledger holds a row for one of the entity's requirements
+  ([the ledger](../consumers/gen.md#the-ledger)), the hover appends a verification
+  summary over those rows (verified over total, failing and stale counts); a project
+  that never generated shows no such line. The links are plain `file://` URIs so any client navigates; the VS
   Code extension opens the walk's pages (cards, diagram pages, level pages) in the
   markdown preview beside the document, and leaves the requirements document link as a
   file link so it lands on the heading's line.

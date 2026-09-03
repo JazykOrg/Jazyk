@@ -5,9 +5,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { post, put, tokenParam, type DelivFileInfo, type DocInfo } from '../lib/api'
-import { useDeliverable, useDocs, useMatrix } from '../lib/queries'
+import { post, put, tokenParam, type DelivFileInfo, type DocInfo, type OutFileInfo } from '../lib/api'
+import { useDeliverable, useDocs, useMatrix, useOutList } from '../lib/queries'
 import { useDocDelivLinks } from '../lib/links'
+import { outHref } from '../lib/nav'
 import { useApp, type TurnProgress } from '../lib/store'
 import '../ide/ide.css'
 import '../routes/routes.css'
@@ -268,6 +269,31 @@ function DelivLevel({
   )
 }
 
+// The generated pages under <out>/docsgen/: the requirements documents at the top,
+// the cards, the level pages, and the diagram pages in their directories. A row
+// opens the page on its preview (docs/frontends/gui.md#files).
+function OutLevel({ node, depth, current }: { node: Tree<OutFileInfo>; depth: number; current: string }) {
+  return (
+    <>
+      {node.files.map((f) => (
+        <div key={f.path} className={`deliv-row${f.path === current ? ' active' : ''}`} style={{ paddingLeft: depth * 12 }}>
+          <Link to={outHref(f.path)} className="deliv-file">
+            <span className="deliv-name">{f.path.split('/').pop()}</span>
+          </Link>
+        </div>
+      ))}
+      {Object.entries(node.dirs).map(([name, child]) => (
+        <div key={name}>
+          <div className="deliv-dir mono" style={{ paddingLeft: 12 + depth * 12 }}>
+            {name}/
+          </div>
+          <OutLevel node={child} depth={depth + 1} current={current} />
+        </div>
+      ))}
+    </>
+  )
+}
+
 const EMPTY_SET = new Set<string>()
 
 export default function Explorer() {
@@ -276,6 +302,7 @@ export default function Explorer() {
   const qc = useQueryClient()
   const docsQ = useDocs()
   const delivQ = useDeliverable()
+  const outQ = useOutList('docsgen')
   const matrix = useMatrix()
   const links = useDocDelivLinks()
   const editorDirty = useApp((a) => a.editorDirty)
@@ -305,6 +332,9 @@ export default function Explorer() {
     : ''
   const delivPath = loc.pathname.startsWith('/files/deliverable/')
     ? decodeURIComponent(loc.pathname.slice('/files/deliverable/'.length))
+    : ''
+  const outPath = loc.pathname.startsWith('/files/out/')
+    ? decodeURIComponent(loc.pathname.slice('/files/out/'.length))
     : ''
 
   // The linkage tint: whichever side is open lights the other side up.
@@ -411,6 +441,9 @@ export default function Explorer() {
     [...f.owners.requirements, ...f.owners.tests].some((r) => rows[r]?.status.startsWith('stale'))
 
   const files = delivQ.data?.files ?? []
+  // The docsgen pages, markdown only: the tree keys them by their path under the
+  // out directory so the rows route straight to /files/out/<path>.
+  const pages = (outQ.data?.files ?? []).filter((f) => f.path.endsWith('.md'))
 
   return (
     <>
@@ -470,6 +503,20 @@ export default function Explorer() {
             related={relatedFiles}
             staleFor={staleFor}
           />
+        )}
+      </div>
+
+      <div className="wb-explorer-section">
+        <div className="wb-explorer-label">generated</div>
+        {outQ.isError && <p className="muted ide-pad">could not list the generated pages</p>}
+        {outQ.data && pages.length === 0 && (
+          <p className="muted" style={{ padding: '0 12px', fontSize: 12 }}>
+            no pages yet: a build writes them
+          </p>
+        )}
+        {pages.length > 0 && (
+          // The tree is rooted at docsgen/ itself so the top-level pages sit at depth one.
+          <OutLevel node={buildTree(pages).dirs['docsgen'] ?? { dirs: {}, files: [] }} depth={1} current={outPath} />
         )}
       </div>
     </>

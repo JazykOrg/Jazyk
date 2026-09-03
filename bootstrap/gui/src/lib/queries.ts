@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   get,
   getOr404,
+  getText,
   type BenchmarkModels,
   type BenchmarkTable,
   type BoardData,
@@ -13,6 +14,7 @@ import {
   type FeedbackEntry,
   type Graph,
   type JournalEntry,
+  type OutFileInfo,
   type PreviewData,
   type Project,
   type Status,
@@ -166,6 +168,24 @@ export const useNode = (id: string) =>
 
 export const useDeliverable = () =>
   useQuery({ queryKey: ['deliverable'], queryFn: () => get<Deliverable>('/api/deliverable'), ...opts })
+
+// The files under one directory of the out directory, recursively
+// (docs/frontends/gui.md#api, the out directory). Refetched when a build commits.
+export const useOutList = (dir: string) =>
+  useQuery({
+    queryKey: ['out', 'list', dir],
+    queryFn: () => get<{ files: OutFileInfo[] }>(`/api/out/list?path=${encodeURIComponent(dir)}`),
+    ...opts,
+  })
+
+// One text file under the out directory.
+export const useOutText = (path: string) =>
+  useQuery({
+    queryKey: ['out', 'file', path],
+    queryFn: () => getText(`/api/out/file?path=${encodeURIComponent(path)}`),
+    enabled: path !== '',
+    staleTime: 5_000,
+  })
 
 // The last reconciled text; null when the document never reconciled.
 export const useDocBaseline = (path: string) =>

@@ -16,6 +16,7 @@ import Board from './routes/Board'
 import WorkSidebar from './workbench/WorkSidebar'
 import DocEditor from './workbench/DocEditor'
 import DelivFile from './workbench/DelivFile'
+import OutFile from './workbench/OutFile'
 import MapCenter from './workbench/MapCenter'
 import Inspector from './workbench/Inspector'
 import Activity from './workbench/Activity'
@@ -157,6 +158,7 @@ export default function App() {
                 <Route path="/files" element={<Scroll><FilesHome /></Scroll>} />
                 <Route path="/files/docs/*" element={<DocEditor />} />
                 <Route path="/files/deliverable/*" element={<DelivFile />} />
+                <Route path="/files/out/*" element={<OutFile />} />
                 <Route path="/graph" element={<MapCenter />} />
                 <Route path="/board" element={<Scroll><Board /></Scroll>} />
                 <Route path="/work" element={<Scroll><Work /></Scroll>} />

@@ -1,0 +1,184 @@
+/* The markdown preview (docs/frontends/gui.md#markdown-preview): a rendered page in
+   the app palette. Headings, lists, code, tables, quotes, and inline images. */
+.md-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 24px 40vh;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.md-preview > :first-child {
+  margin-top: 0;
+}
+
+.md-preview h1 {
+  font-size: 22px;
+  margin: 18px 0 8px;
+}
+
+.md-preview h2 {
+  font-size: 16px;
+  margin: 22px 0 8px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 4px;
+}
+
+.md-preview h3 {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 650;
+  margin: 16px 0 6px;
+}
+
+.md-preview h4,
+.md-preview h5,
+.md-preview h6 {
+  font-size: 13px;
+  margin: 12px 0 4px;
+}
+
+.md-preview p {
+  margin: 6px 0;
+}
+
+.md-preview ul,
+.md-preview ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.md-preview li {
+  margin: 2px 0;
+}
+
+.md-preview li > p {
+  margin: 2px 0;
+}
+
+.md-preview a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md-preview a:hover {
+  text-decoration: underline;
+}
+
+/* A link the GUI serves no page for (docs/frontends/gui.md#markdown-preview). */
+.md-preview .md-dead {
+  color: var(--muted);
+  border-bottom: 1px dotted var(--line);
+}
+
+.md-preview code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--muted) 13%, transparent);
+  border-radius: 3px;
+  padding: 0.5px 3px;
+}
+
+.md-preview pre {
+  background: color-mix(in srgb, var(--muted) 8%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.md-preview pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.md-preview blockquote {
+  margin: 8px 0;
+  padding: 2px 12px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.md-preview blockquote > p {
+  margin: 4px 0;
+}
+
+.md-preview table {
+  width: auto;
+  max-width: 100%;
+  margin: 8px 0;
+  display: block;
+  overflow-x: auto;
+}
+
+.md-preview hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}
+
+/* Renderings embed at their own size, capped to the pane; the dark theme dims the
+   white canvas of an .svg rather than inverting it. */
+.md-preview img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.md-preview .md-noimg {
+  display: inline-block;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 3px;
+  padding: 2px 8px;
+  margin: 6px 0;
+}
+
+.md-preview input[type='checkbox'] {
+  margin-right: 6px;
+}
+
+/* The editor split: text on the left, the live preview on the right
+   (docs/frontends/gui.md#editor). */
+.ide-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ide-split > .ide-editor-host {
+  flex: 1;
+  min-width: 0;
+}
+
+.ide-split > .md-preview {
+  flex: 1;
+  border-left: 1px solid var(--line);
+}
+
+/* A rendering opened by itself (docs/frontends/gui.md#markdown-preview). */
+.out-image {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 24px;
+  background: var(--panel);
+}
+
+.out-image img {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+}

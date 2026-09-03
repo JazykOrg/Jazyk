@@ -492,7 +492,8 @@ Links and images resolve against the open file's path, so the pages walk the way
   (a card's siblings, its diagram pages, its requirements document). A relative link
   to a document under the docs glob opens the editor on it, and one to a deliverable
   file opens the deliverable viewer. A `#fragment` scrolls the preview to the heading
-  with that GitHub slug. A link with a scheme (`https:`, `mailto:`) opens in a new
+  with that slug, under the compiler's own heading slug rule, the one docsgen writes
+  its fragments with. A link with a scheme (`https:`, `mailto:`) opens in a new
   tab. A relative link that lands nowhere the GUI serves renders as plain text.
 - A relative image under the out directory (`../../diagrams/class/checkout.svg` from a
   card) renders inline through `GET /api/out/file`, so the diagrams docsgen embeds

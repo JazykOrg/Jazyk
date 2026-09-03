@@ -16,9 +16,16 @@ review of a fresh grouping judges right in four rounds. The loops fixed: the sni
 toolset for GC goals, skill auto-load inside a batch, a move alone reopening every
 child's review, the root view flipping to class under groupings of components, bare
 document reads, stereotypes on component members, resolutions with nothing staged.
-Next in the chain: the second-level fan-out, `example-saas` traps one interaction
-at a time, then `f2` and `example-org` regressions and the dogfood, all as
-snippets. Written for a fresh session
+The chain then ran through a namesake collision (a front door naming Checkout beside
+a stated Checkout process: the node is the area, its document's entities move under
+it, stated once) and the node-form fan-out (eleven leaves under Checkout from one
+flat document: Pricing and Funds groupings in six rounds once the doctrine said a flat
+glossary is the common case and the candidates came in halves). Fixed along the way:
+parked entries never cleared on resolution, reachability blind to containment, the
+tautological whole-level candidate. Next in the chain: the view GC kinds the chain
+opened (`split-view`, `curate-view`), the review of a grouping's ratification,
+`example-saas` traps one interaction at a time, then `f2` and `example-org`
+regressions and the dogfood, all as snippets. Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

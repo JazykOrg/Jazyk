@@ -1803,9 +1803,31 @@ mod tests {
             "req:c-3".into(),
             req("The Checkout charges a Gift Card.", "ent:checkout", "ent:gift-card"),
         );
+        // Internal to the funds: the funds level's flow, never a self-message above.
+        s.graph.requirements.insert(
+            "req:c-4".into(),
+            req(
+                "A Gift Card earns a Loyalty Point.",
+                "ent:gift-card",
+                "ent:loyalty-point",
+            ),
+        );
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
         let id = "view:sequence/checkout-funds-checkout";
+        assert!(
+            !s.graph.views[id].members.iter().any(|m| m == "req:c-4"),
+            "{:?}",
+            s.graph.views[id].members
+        );
+        assert!(
+            s.graph.views["view:sequence/funds-gift-card-checkout"]
+                .members
+                .iter()
+                .any(|m| m == "req:c-4"),
+            "{:?}",
+            s.graph.views.keys().collect::<Vec<_>>()
+        );
         let view = s.graph.views.get(id).unwrap_or_else(|| {
             panic!("views: {:?}", s.graph.views.keys().collect::<Vec<_>>())
         });

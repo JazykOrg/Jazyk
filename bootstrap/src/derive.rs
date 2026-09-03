@@ -728,6 +728,26 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
         {
             continue;
         }
+        // A flow whose every entity lifts to one child with a level of its own is
+        // that child's, never a self-message here; a self-message on a leaf stays.
+        let lifts: Vec<Option<String>> = r
+            .entities
+            .iter()
+            .map(|e| lift_into(store, members, e))
+            .collect();
+        let lifted: BTreeSet<String> = lifts.iter().flatten().cloned().collect();
+        if lifted.len() == 1 && lifts.iter().all(Option::is_some) {
+            let only = lifted.iter().next().unwrap();
+            if level.children.contains(only)
+                && store
+                    .graph
+                    .entities
+                    .values()
+                    .any(|e| e.parent.as_deref() == Some(only.as_str()))
+            {
+                continue;
+            }
+        }
         let Some(actor) = lifted_actor(store, r, members) else {
             continue;
         };
@@ -2178,13 +2198,14 @@ pub(crate) mod tests {
         let cart = &s.graph.views["view:usecase/order-service-shopping-cart-shop"];
         assert_eq!(cart.members, vec!["req:shop-13", "req:shop-14"]);
         assert_eq!(cart.title, "Shopping Cart: Shop");
-        // At the shop level both entities lift to the order service, so the cluster
-        // keys on it; at the root it keys on the shop.
-        assert!(s
+        // At the shop level both entities lift to the order service, and at the
+        // root to the shop: a flow internal to one child with a level of its own is
+        // that child's, never a self-message above.
+        assert!(!s
             .graph
             .views
             .contains_key("view:usecase/shop-order-service-shop"));
-        assert!(s.graph.views.contains_key("view:usecase/shop-shop"));
+        assert!(!s.graph.views.contains_key("view:usecase/shop-shop"));
         assert_eq!(
             lift_into(&s, &["ent:shop".to_string()], "ent:order-item").as_deref(),
             Some("ent:shop")

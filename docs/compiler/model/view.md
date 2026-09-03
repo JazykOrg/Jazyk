@@ -194,7 +194,10 @@ Flow views derive per level too, from the requirements lifted to it:
   the level, drops the requirement from a level none of its entities reach, and dedupes
   the participants. Reaching means lifting to a child: an outside member (an
   interactor) is only ever the other end of a flow, so a requirement touching the
-  interactor and nothing under the node belongs to the level above, not to this one. This is the renderer's lifting applied at derivation. See
+  interactor and nothing under the node belongs to the level above, not to this one.
+  A requirement whose every entity lifts to one and the same child with a level of its
+  own is internal to that child and belongs to the child's level, never drawn here as
+  a self-message; a self-message on a leaf stays. This is the renderer's lifting applied at derivation. See
   [lifting and collapse](../diagrams.md#lifting-and-collapse).
 - The requirements reaching a level cluster by the lifted actor (or the lifted first
   entity) and document. A cluster of two or more derives a `use-case` view and a

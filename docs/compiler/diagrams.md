@@ -263,6 +263,11 @@ Flow views derive per level, and lifting is applied at derivation, not at render
   child of the level (an outside member is only ever the other end of a flow), maps
   each requirement's entities to their nearest ancestor in the level, drops a
   requirement from a level none of its entities reach, and dedupes the participants.
+  A requirement whose every entity lifts to one and the same child that has a level of
+  its own is internal to that child: it belongs to the child's level and is never
+  drawn here as a self-message (the top level's sequence shows Checkout talking to
+  Orders, not twelve messages from Checkout to itself). A self-message on a leaf
+  stays: lifting to a leaf is identity.
 - The lifted requirements cluster by the lifted actor (or the lifted first entity when
   no actor is among them) and document. A cluster of two or more derives a `use-case`
   view and a `sequence` view whose participants are the lifted members, ids

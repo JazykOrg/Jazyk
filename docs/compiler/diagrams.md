@@ -260,9 +260,9 @@ one structural level view, recomputed on every commit like every default
 Flow views derive per level, and lifting is applied at derivation, not at render time:
 
 - The harness takes the behavior-facet requirements whose entities lift to at least one
-  member of the level, maps each requirement's entities to their nearest ancestor in the
-  level, drops a requirement from a level none of its entities reach, and dedupes the
-  participants.
+  child of the level (an outside member is only ever the other end of a flow), maps
+  each requirement's entities to their nearest ancestor in the level, drops a
+  requirement from a level none of its entities reach, and dedupes the participants.
 - The lifted requirements cluster by the lifted actor (or the lifted first entity when
   no actor is among them) and document. A cluster of two or more derives a `use-case`
   view and a `sequence` view whose participants are the lifted members, ids

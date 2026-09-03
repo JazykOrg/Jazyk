@@ -719,6 +719,15 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
         if !flows {
             continue;
         }
+        // Reaching means lifting to a child: an interactor is only ever the other
+        // end of a flow, never what makes a flow the level's own.
+        if !r
+            .entities
+            .iter()
+            .any(|e| lift_into(store, &level.children, e).is_some())
+        {
+            continue;
+        }
         let Some(actor) = lifted_actor(store, r, members) else {
             continue;
         };
@@ -2122,11 +2131,12 @@ pub(crate) mod tests {
         let seq = &s.graph.views["view:sequence/shop-customer-shop"];
         assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
         assert_eq!(seq.title, "Customer: Shop");
-        // The order service's level: the same four requirements reach it (the stock
-        // API step through the customer, who is an interactor).
+        // The order service's level: three of the four reach it through its
+        // children; the stock API step is the service itself (the frame) acting on
+        // an outside interface, a flow of the shop level, so it stays out here.
         assert_eq!(
             s.graph.views["view:usecase/order-service-customer-shop"].members,
-            vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
+            vec!["req:shop-1", "req:shop-7", "req:shop-8"]
         );
         // The root form keeps today's ids, and each flow view knows its level.
         assert!(s.graph.views.contains_key("view:usecase/customer-shop"));

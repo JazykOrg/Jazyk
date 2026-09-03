@@ -215,8 +215,9 @@ fn embed_at(store: &Store, view_id: &str, view: &View, depth: usize) -> String {
 // as the containment tree is. Mirrors docs/consumers/docsgen.md#level-pages.
 
 // The file of a level's page, relative to `<out>/docsgen/`: `levels/<node-slug>.md`
-// for a node, `levels/scope-<scope>.md` for the scope root.
-fn level_page(target: &str) -> String {
+// for a node, `levels/scope-<scope>.md` for the scope root. Shared with the LSP
+// hover, so its level link names the same file docsgen writes.
+pub fn level_page(target: &str) -> String {
     match crate::board::scope_target(target) {
         Some(scope) => format!("levels/scope-{}.md", crate::md::slug(scope)),
         None => format!("levels/{}.md", entity_slug(target)),

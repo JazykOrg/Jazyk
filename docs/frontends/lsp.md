@@ -30,27 +30,38 @@ hands the reply to an [answer session](./acp.md#answer-sessions).
   ([output layout](../compiler/diagrams.md#output-layout)), captioned with the view id;
   under it, when the entity has a level of its own, the link to its inside view's
   [diagram page](../consumers/docsgen.md#diagram-pages) with the child count, never a
-  second image; then one line of links: the card, the requirements document, the
-  level page of the parent's level. A derived entity's line names the pending proposal.
-  Editors render markdown images in hovers. E.g.:
+  second image; then one line of links: the card, the requirements document with its
+  requirement count, the level page of the parent's level (present when the parent has
+  a level, the same condition as the image). A derived or decreed entity's last line
+  says so and names the pending proposal. Blocks are separated by blank lines, so every
+  markdown renderer keeps them apart. Editors render markdown images in hovers. E.g.:
 
   ```markdown
-  **Funds** · Funds gathers the balances and methods a customer spends at Checkout.
+  **Funds** «component» · Funds gathers the balances and methods a customer spends at Checkout.
+
   Sits in: Public › Checkout › **Funds**
+
   ![view:class/checkout](file:///home/ana/shop/jazyk-out/diagrams/class/checkout.svg)
+
   Inside: [view:class/funds](file:///home/ana/shop/jazyk-out/docsgen/diagrams/class/funds.md) (3 children)
+
   [card](file:///.../docsgen/entities/funds.md) · [requirements (0)](file:///.../docsgen/funds.md) · [level: Checkout](file:///.../docsgen/levels/checkout.md)
   ```
 
   The image is the build output the last commit rendered; the hover never renders a
-  view itself. When the ledger exists ([the ledger](../consumers/gen.md#the-ledger)), the
-  hover appends a verification summary for the entity (verified over total, failing and
-  stale counts).
+  view itself. When the `.svg` is missing (the renderer failed on its `.puml`), the
+  caption stands alone, linked to the view's diagram page and marked `not rendered`;
+  nothing is invented. When the ledger exists ([the ledger](../consumers/gen.md#the-ledger)),
+  the hover appends a verification summary for the entity (verified over total, failing
+  and stale counts). The links are plain `file://` URIs so any client navigates; the VS
+  Code extension opens the walk's pages (cards, diagram pages, level pages) in the
+  markdown preview beside the document, and leaves the requirements document link as a
+  file link so it lands on the heading's line.
 - Go to type definition on an entity: the entity's card at
-  `<out>/docsgen/entities/<slug>.md`. Definition stays the defining mention in the
-  prose; the type definition is the walk. From the card the reader clicks through
-  levels and diagrams in the editor's markdown preview, every link relative under the
-  out directory.
+  `<out>/docsgen/entities/<slug>.md`, at line 0. Definition stays the defining mention
+  in the prose; the type definition is the walk. From the card the reader clicks
+  through levels and diagrams in the editor's markdown preview, every link relative
+  under the out directory.
 - Hover inside a requirement's located quote: the requirement card, three parts, each part
   linked. The hover range is the located quote, so the whole statement highlights.
   - The requirement: the id, the `statement`, its facets, its edges and transition when

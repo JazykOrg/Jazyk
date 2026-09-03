@@ -2,7 +2,6 @@
 // graph store and maps nodes to editor positions. It never compiles; rebuilds run
 // through `jazyk compile` or `jazyk watch`, and the store's generation counter tells
 // this server when to reload and republish.
-use crate::context::LoadedSet;
 use crate::jsonrpc::{read_message, write_message};
 use crate::md;
 use crate::model::{Diagnostic, Entity, VIEW_KINDS};
@@ -126,6 +125,10 @@ impl Lsp {
                 let r = self.on_references(&params);
                 reply(out, id, r);
             }
+            "textDocument/typeDefinition" => {
+                let r = self.on_type_definition(&params);
+                reply(out, id, r);
+            }
             "textDocument/hover" => {
                 let r = self.on_hover(&params);
                 reply(out, id, r);
@@ -164,6 +167,7 @@ impl Lsp {
             "capabilities": {
                 "textDocumentSync": 1, // full
                 "definitionProvider": true,
+                "typeDefinitionProvider": true,
                 "referencesProvider": true,
                 "hoverProvider": true,
                 "completionProvider": { "triggerCharacters": ["`", "["] },
@@ -449,85 +453,142 @@ impl Lsp {
         p.exists().then_some(p)
     }
 
-    // The most relevant view of an entity, chosen deterministically: a view whose
-    // slug is the entity's own (state, then component, then object), else the
-    // smallest view listing the entity as a member, ties broken by the kind catalog
-    // order, then by id. None when nothing qualifies: nothing is invented.
-    // Mirrors docs/frontends/lsp.md#capabilities.
-    fn most_relevant_view(&self, id: &str) -> Option<(String, String, String)> {
-        let slug = id.strip_prefix("ent:").unwrap_or(id);
-        let g = &self.store.graph;
-        let own = [
-            (
-                "state",
-                g.state_machines.values().any(|m| m.subject == id)
-                    || g.views.contains_key(&format!("view:state/{}", slug)),
-            ),
-            (
-                "component",
-                g.views.contains_key(&format!("view:component/{}", slug)),
-            ),
-            (
-                "object",
-                g.views.contains_key(&format!("view:object/{}", slug)),
-            ),
-        ];
-        for (kind, holds) in own {
-            if !holds {
-                continue;
-            }
-            let vid = format!("view:{}/{}", kind, slug);
-            if self.view_svg_path(&vid).is_some() {
-                let title = g
-                    .views
-                    .get(&vid)
-                    .map(|v| v.title.clone())
-                    .or_else(|| g.entities.get(id).map(|e| e.name.clone()))
-                    .unwrap_or_else(|| slug.to_string());
-                return Some((vid, kind.to_string(), title));
-            }
-        }
-        let mut best: Option<(usize, usize, String)> = None;
-        for (vid, v) in &g.views {
-            if !v.members.iter().any(|m| self.store.resolve_id(m) == id) {
-                continue;
-            }
-            if self.view_svg_path(vid).is_none() {
-                continue;
-            }
-            let pos = VIEW_KINDS
-                .iter()
-                .position(|k| *k == v.kind)
-                .unwrap_or(usize::MAX);
-            let key = (v.members.len(), pos, vid.clone());
-            if best.as_ref().map(|b| key < *b).unwrap_or(true) {
-                best = Some(key);
-            }
-        }
-        let (_, _, vid) = best?;
-        let v = &g.views[&vid];
-        Some((vid.clone(), v.kind.clone(), v.title.clone()))
+    // ---- the walk ----
+    // The pages docsgen writes under <out>/docsgen/, by the same slugs it uses, so a
+    // hover link and a type definition land on the file the last commit rendered.
+    // Mirrors docs/consumers/docsgen.md#entity-cards and #diagram-pages.
+
+    // An entity's card: `docsgen/entities/<slug>.md`.
+    fn card_path(&self, id: &str) -> PathBuf {
+        self.out
+            .join("docsgen")
+            .join("entities")
+            .join(format!("{}.md", crate::derive::entity_slug(id)))
     }
 
-    // The image of a rendered view as a markdown image line, plus the entity's page
-    // link when the page exists. Empty when neither exists.
-    fn entity_hover_head(&self, id: &str) -> String {
-        let mut head = String::new();
-        if let Some((vid, kind, title)) = self.most_relevant_view(id) {
-            if let Some(svg) = self.view_svg_path(&vid) {
-                head.push_str(&format!("![{} ({})]({})\n", title, kind, path_to_uri(&svg)));
+    // An entity's requirements document: `docsgen/<slug>.md`.
+    fn requirements_doc_path(&self, id: &str) -> PathBuf {
+        self.out
+            .join("docsgen")
+            .join(format!("{}.md", crate::derive::entity_slug(id)))
+    }
+
+    // A view's diagram page: `docsgen/diagrams/<kind>/<slug>.md`.
+    fn diagram_page_path(&self, view_id: &str) -> Option<PathBuf> {
+        let rel = view_id.strip_prefix("view:")?;
+        let (kind, slug) = rel.split_once('/')?;
+        Some(
+            self.out
+                .join("docsgen")
+                .join("diagrams")
+                .join(kind)
+                .join(format!("{}.md", slug)),
+        )
+    }
+
+    // A level's page: `docsgen/levels/<slug>.md`, or `levels/scope-<scope>.md` for a
+    // scope root.
+    fn level_page_path(&self, target: &str) -> PathBuf {
+        self.out
+            .join("docsgen")
+            .join(crate::docsgen::level_page(target))
+    }
+
+    // The entity's card in short, read from the shared model (card.rs) so the hover
+    // shows what docsgen and the GUI show. In order: the header, `Sits in`, the
+    // in-context image (the parent level's structural view), the `Inside` link with
+    // the child count (never a second image), one line of links to the long reads,
+    // and a derived entity's pending proposal. Blocks are separated by blank lines,
+    // so every markdown renderer keeps them apart. None for an unknown id.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn entity_card_short(&self, id: &str) -> Option<String> {
+        let walk = crate::card::Walk::new(&self.store);
+        let card = crate::card::entity_card(&self.store, &walk, id)?;
+        let mut s = format!("**{}**", card.name);
+        if let Some(st) = &card.stereotype {
+            s.push_str(&format!(" «{}»", st));
+        }
+        if !card.definition.is_empty() {
+            s.push_str(&format!(" · {}", card.definition));
+        }
+        // Sits in: the breadcrumb as text, the entity itself last and bold.
+        let n = card.breadcrumb.len();
+        let crumbs: Vec<String> = card
+            .breadcrumb
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if i + 1 == n {
+                    format!("**{}**", c.name)
+                } else {
+                    c.name.clone()
+                }
+            })
+            .collect();
+        s.push_str(&format!("\n\nSits in: {}", crumbs.join(" › ")));
+        // In context: the build output the last commit rendered, captioned with the
+        // view id. A missing rendering leaves the caption alone, linked to the
+        // view's page; the hover never renders a view itself.
+        if let Some(ctx) = &card.context {
+            match self.view_svg_path(ctx) {
+                Some(svg) => s.push_str(&format!("\n\n![{}]({})", ctx, path_to_uri(&svg))),
+                None => {
+                    let page = self
+                        .diagram_page_path(ctx)
+                        .map(|p| path_to_uri(&p))
+                        .unwrap_or_default();
+                    s.push_str(&format!(
+                        "\n\nIn context: [{}]({}) (not rendered)",
+                        ctx, page
+                    ));
+                }
             }
         }
-        let slug = id.strip_prefix("ent:").unwrap_or(id);
-        let page = self.out.join("docsgen").join(format!("{}.md", slug));
-        if page.exists() {
-            head.push_str(&format!(
-                "[{}: requirements document]({})\n",
-                id,
-                path_to_uri(&page)
+        // Inside: the entity's own level, as a link to its diagram page.
+        if let Some(inside) = &card.inside {
+            let page = self
+                .diagram_page_path(inside)
+                .map(|p| path_to_uri(&p))
+                .unwrap_or_default();
+            let k = card.children.len();
+            s.push_str(&format!(
+                "\n\nInside: [{}]({}) ({} {})",
+                inside,
+                page,
+                k,
+                if k == 1 { "child" } else { "children" }
             ));
         }
-        head
+        // The long reads: the card, the requirements document, the level page of the
+        // parent's level (only when the parent has one, as its context view says).
+        let mut links = vec![
+            format!("[card]({})", path_to_uri(&self.card_path(&card.id))),
+            format!(
+                "[requirements ({})]({})",
+                card.requirement_count,
+                path_to_uri(&self.requirements_doc_path(&card.id))
+            ),
+        ];
+        if card.context.is_some() && n >= 2 {
+            let parent = &card.breadcrumb[n - 2];
+            links.push(format!(
+                "[level: {}]({})",
+                parent.name,
+                path_to_uri(&self.level_page_path(&parent.id))
+            ));
+        }
+        s.push_str(&format!("\n\n{}", links.join(" · ")));
+        // A derived or decreed entity says so and names its pending proposal.
+        if card.provenance != "quote" {
+            match &card.proposal {
+                Some(did) => s.push_str(&format!(
+                    "\n\n{} · proposal pending: `{}`",
+                    card.provenance, did
+                )),
+                None => s.push_str(&format!("\n\n{} · no proposal pending", card.provenance)),
+            }
+        }
+        Some(s)
     }
 
     // The image of the smallest flow view listing a requirement as a member, so the
@@ -600,19 +661,32 @@ impl Lsp {
         json!(locs)
     }
 
-    // Hover renders the entity as `load` renders it at depth 1, so the hover matches
-    // what a session and the MCP server see, with a verification summary from the
-    // ledger. Hovering inside a requirement's located quote shows that requirement's
-    // own status. Mirrors docs/frontends/lsp.md#capabilities.
+    // Go to type definition: the entity's card at line 0. Definition stays the
+    // defining mention in the prose; the type definition is the walk.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_type_definition(&self, params: &Value) -> Value {
+        let Some((doc, line, ch)) = self.pos(params) else {
+            return Value::Null;
+        };
+        let Some((id, _)) = self.entity_at(&doc, line, ch) else {
+            return Value::Null;
+        };
+        json!({
+            "uri": path_to_uri(&self.card_path(&id)),
+            "range": self.range((0, 0, 0, 0))
+        })
+    }
+
+    // Hover on an entity renders its card in short, with a verification summary from
+    // the ledger. Hovering inside a requirement's located quote shows that
+    // requirement's own card. Mirrors docs/frontends/lsp.md#capabilities.
     fn on_hover(&self, params: &Value) -> Value {
         let Some((doc, line, ch)) = self.pos(params) else {
             return Value::Null;
         };
         if let Some((id, _)) = self.entity_at(&doc, line, ch) {
-            let mut set = LoadedSet::new(4000);
-            let mut value = match set.load(&self.store, &id, 1) {
-                Ok(text) => text,
-                Err(_) => return Value::Null,
+            let Some(mut value) = self.entity_card_short(&id) else {
+                return Value::Null;
             };
             let vmap = crate::verify::status_map(&self.store, &self.gen);
             let refs = self.store.requirements_referencing(&id);
@@ -631,11 +705,6 @@ impl Lsp {
                     bad,
                     stale
                 ));
-            }
-            // Above the text: the most relevant view's rendering and the page link.
-            let head = self.entity_hover_head(&id);
-            if !head.is_empty() {
-                value = format!("{}\n{}", head, value);
             }
             return json!({ "contents": { "kind": "markdown", "value": value } });
         }
@@ -1629,75 +1698,245 @@ mod tests {
         std::fs::write(dir.join(format!("{}.svg", slug)), "<svg/>").unwrap();
     }
 
-    // The most-relevant-view rule: the entity's own state view first, else the
-    // smallest view listing it as a member, ties by catalog order then id, and a
-    // view without a rendered .svg never wins. Mirrors docs/frontends/lsp.md#capabilities.
+    // The showcase graph with its derived data, its out directory under `tmp`.
+    fn shop_at(out: &std::path::Path) -> Store {
+        let mut s = crate::derive::tests::showcase_store();
+        s.out = out.to_path_buf();
+        s.graph
+            .entities
+            .get_mut("ent:order-service")
+            .unwrap()
+            .definition = Some("Takes and fulfils orders.".into());
+        let mut batch = crate::store::RecordBatch::new(1);
+        crate::derive::recompute(&mut s, "g1", &mut batch);
+        s
+    }
+
+    // Hover on an entity with a level: the header, `Sits in`, the in-context image
+    // of the parent's level view captioned with its id, the `Inside` link with the
+    // child count (never a second image), and the line of links to the card, the
+    // requirements document, and the parent's level page.
+    // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
-    fn most_relevant_view_prefers_own_state_then_smallest_with_catalog_ties() {
-        use crate::model::{Entity, StateMachine, View};
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-view-{}", std::process::id()));
+    fn entity_hover_renders_the_card_in_short_with_its_level() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", std::process::id()));
         std::fs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         std::fs::create_dir_all(&out).unwrap();
-        write_svg(&out, "state", "order");
-        write_svg(&out, "class", "tie");
-        write_svg(&out, "object", "tie");
-        write_svg(&out, "class", "big");
+        write_svg(&out, "component", "shop");
+        write_svg(&out, "component", "order-service");
+        let lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
+        let card = lsp.entity_card_short("ent:order-service").unwrap();
+        let o = path_to_uri(&out);
+        let blocks: Vec<&str> = card.split("\n\n").collect();
+        assert_eq!(
+            blocks,
+            vec![
+                "**Order Service** «service» · Takes and fulfils orders.".to_string(),
+                "Sits in: Public › Shop › **Order Service**".to_string(),
+                format!("![view:component/shop]({}/diagrams/component/shop.svg)", o),
+                format!(
+                    "Inside: [view:component/order-service]({}/docsgen/diagrams/component/order-service.md) (4 children)",
+                    o
+                ),
+                format!(
+                    "[card]({o}/docsgen/entities/order-service.md) · [requirements (2)]({o}/docsgen/order-service.md) · [level: Shop]({o}/docsgen/levels/shop.md)",
+                    o = o
+                ),
+            ]
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+        );
+        // The inside view is rendered too, and still only the context is an image.
+        assert_eq!(card.matches("![").count(), 1);
+        // A parentless entity sits in the scope root: its level page is the scope's.
+        let root = lsp.entity_card_short("ent:shop").unwrap();
+        assert!(root.contains("Sits in: Public › **Shop**"), "{}", root);
+        assert!(
+            root.contains(&format!("[level: Public]({}/docsgen/levels/scope-public.md)", o)),
+            "{}",
+            root
+        );
+        assert!(lsp.entity_card_short("ent:nobody").is_none());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
-        let mut store = Store {
-            out: out.clone(),
-            ..Default::default()
-        };
-        for (id, name) in [("ent:order", "Order"), ("ent:cart", "Cart")] {
-            store.graph.entities.insert(
+    // A leaf: no `Inside` line, its context is its parent's level, and when that
+    // rendering is missing the caption stands alone linked to the diagram page.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        write_svg(&out, "component", "order-service");
+        let lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
+        let o = path_to_uri(&out);
+        let card = lsp.entity_card_short("ent:order-item").unwrap();
+        assert!(card.starts_with("**Order Item**\n\n"), "{}", card);
+        assert!(
+            card.contains("Sits in: Public › Shop › Order Service › **Order Item**"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains(&format!(
+                "![view:component/order-service]({}/diagrams/component/order-service.svg)",
+                o
+            )),
+            "{}",
+            card
+        );
+        assert!(!card.contains("Inside:"), "{}", card);
+        assert!(
+            card.contains(&format!(
+                "[level: Order Service]({}/docsgen/levels/order-service.md)",
+                o
+            )),
+            "{}",
+            card
+        );
+        std::fs::remove_file(out.join("diagrams/component/order-service.svg")).unwrap();
+        let card = lsp.entity_card_short("ent:order-item").unwrap();
+        assert!(!card.contains("!["), "{}", card);
+        assert!(
+            card.contains(&format!(
+                "In context: [view:component/order-service]({}/docsgen/diagrams/component/order-service.md) (not rendered)",
+                o
+            )),
+            "{}",
+            card
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // A derived grouping says so and names its pending ratification proposal.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn entity_hover_on_a_derived_grouping_names_its_proposal() {
+        use crate::model::{Diagnostic, Entity, Provenance};
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let mut s = crate::derive::tests::showcase_store();
+        s.out = out.clone();
+        s.graph.entities.insert(
+            "ent:promotions".into(),
+            Entity {
+                name: "Promotions".into(),
+                parent: Some("ent:shop".into()),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["ent:promo".into(), "ent:coupon".into()],
+                    reasoning: "both discount an order".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        for (id, name) in [("ent:promo", "Promo"), ("ent:coupon", "Coupon")] {
+            s.graph.entities.insert(
                 id.into(),
                 Entity {
                     name: name.into(),
+                    parent: Some("ent:promotions".into()),
                     ..Default::default()
                 },
             );
         }
-        store.graph.state_machines.insert(
-            "sm:order".into(),
-            StateMachine {
-                subject: "ent:order".into(),
-                states: vec!["placed".into(), "paid".into()],
-                initial: Some("placed".into()),
-                transitions: vec![],
+        s.graph.diagnostics.insert(
+            "diag:ratification-pending-1".into(),
+            Diagnostic {
+                rule: "ratification-pending".into(),
+                severity: "info".into(),
+                subjects: vec!["ent:promotions".into()],
+                message: "Promotions groups Promo and Coupon".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
             },
         );
-        let view = |kind: &str, title: &str, members: &[&str]| View {
-            kind: kind.into(),
-            title: title.into(),
-            members: members.iter().map(|m| m.to_string()).collect(),
-            ..Default::default()
-        };
-        store
-            .graph
-            .views
-            .insert("view:class/tie".into(), view("class", "Tie", &["ent:cart"]));
-        store.graph.views.insert(
-            "view:object/tie".into(),
-            view("object", "Tie", &["ent:cart"]),
+        let mut batch = crate::store::RecordBatch::new(1);
+        crate::derive::recompute(&mut s, "g1", &mut batch);
+        let lsp = lsp_at(tmp.clone(), out.clone(), s);
+        let card = lsp.entity_card_short("ent:promotions").unwrap();
+        assert!(
+            card.ends_with("derived · proposal pending: `diag:ratification-pending-1`"),
+            "{}",
+            card
         );
-        store.graph.views.insert(
-            "view:class/big".into(),
-            view("class", "Big", &["ent:cart", "ent:order", "ent:x"]),
-        );
-        let lsp = lsp_at(tmp.clone(), out.clone(), store);
+        assert!(card.contains("(2 children)"), "{}", card);
+        // A quoted entity carries no such line.
+        let plain = lsp.entity_card_short("ent:order").unwrap();
+        assert!(!plain.contains("proposal"), "{}", plain);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 
-        // The entity's own state view wins outright.
-        let (vid, kind, _) = lsp.most_relevant_view("ent:order").unwrap();
-        assert_eq!(vid, "view:state/order");
-        assert_eq!(kind, "state");
-        // Smallest member view wins; the one-member tie breaks by catalog order
-        // (class before object).
-        let (vid, _, _) = lsp.most_relevant_view("ent:cart").unwrap();
-        assert_eq!(vid, "view:class/tie");
-        // Without its rendering the class view never wins; the object view does.
-        std::fs::remove_file(out.join("diagrams/class/tie.svg")).unwrap();
-        let (vid, _, _) = lsp.most_relevant_view("ent:cart").unwrap();
-        assert_eq!(vid, "view:object/tie");
+    // Over the wire: the capability is advertised, hover carries the short card, and
+    // type definition lands on the entity's card at line 0 while definition stays the
+    // defining mention. Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn type_definition_opens_the_card() {
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        let out = tmp.join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let mut lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(json!({"id": 1, "method": "initialize", "params": {}}), &mut wire);
+        let init = String::from_utf8_lossy(&wire).to_string();
+        assert!(init.contains("\"typeDefinitionProvider\":true"), "{}", init);
+
+        let uri = path_to_uri(&tmp.join("shop.md"));
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri,
+                "text": "The Order Service takes orders.\n"}}}),
+            &mut wire,
+        );
+        let at = json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 6}});
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 2, "method": "textDocument/typeDefinition", "params": at}),
+            &mut wire,
+        );
+        let td = String::from_utf8_lossy(&wire).to_string();
+        assert!(
+            td.contains(&format!(
+                "\"uri\":\"{}/docsgen/entities/order-service.md\"",
+                path_to_uri(&out)
+            )),
+            "{}",
+            td
+        );
+        assert!(td.contains("\"start\":{\"line\":0,\"character\":0}"), "{}", td);
+
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 3, "method": "textDocument/hover", "params": at}),
+            &mut wire,
+        );
+        let hover = String::from_utf8_lossy(&wire).to_string();
+        assert!(hover.contains("Sits in: Public › Shop › **Order Service**"), "{}", hover);
+        assert!(hover.contains("docsgen/entities/order-service.md"), "{}", hover);
+
+        // Nothing under the cursor: no type definition.
+        let mut wire: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 4, "method": "textDocument/typeDefinition", "params": {
+                "textDocument": {"uri": uri}, "position": {"line": 0, "character": 25}}}),
+            &mut wire,
+        );
+        assert!(
+            String::from_utf8_lossy(&wire).contains("\"result\":null"),
+            "{}",
+            String::from_utf8_lossy(&wire)
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 

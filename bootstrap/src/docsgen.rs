@@ -1546,6 +1546,36 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
     if !store.graph.entities.is_empty() {
         let mut idx = String::new();
         idx.push_str("# Index\n\n");
+        // The walk first: per scope, the level page of the root and its members as
+        // cards. Mirrors docs/consumers/docsgen.md#relationships-view.
+        let mut scopes: Vec<String> = store.graph.entities.values().map(|e| e.scope.clone()).collect();
+        scopes.sort();
+        scopes.dedup();
+        for scope in &scopes {
+            let target = format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, scope);
+            let members: Vec<String> = crate::goals::level_members(store, &target)
+                .iter()
+                .map(|m| {
+                    let n = crate::goals::level_members(store, m).len();
+                    let link = format!(
+                        "[{}]({})",
+                        store.graph.entities[m].name,
+                        rel(DOCS_DIR, &card_path(m))
+                    );
+                    if n > 0 {
+                        format!("{} ({} children)", link, n)
+                    } else {
+                        link
+                    }
+                })
+                .collect();
+            idx.push_str(&format!(
+                "Start here: the top level of `{}`, [level page](./{}), then {}\n\n",
+                scope,
+                level_page(&target),
+                if members.is_empty() { "nothing yet".to_string() } else { members.join(", ") }
+            ));
+        }
         for (id, ent) in &store.graph.entities {
             idx.push_str(&format!("- [{}](./{}.md) `{}`\n", ent.name, slug(id), id));
         }

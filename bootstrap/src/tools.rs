@@ -3824,16 +3824,28 @@ impl ToolSession {
                     // same level) carries the area's word without being the area:
                     // the members never nest under it. Mirrors
                     // docs/compiler/concepts/levels.md#naming.
-                    let peer = !members.contains(&eid) && self.parent_of(&eid) == parent;
-                    let message = if peer {
+                    let sibling = !members.contains(&eid) && self.parent_of(&eid) == parent;
+                    let holds_children = self
+                        .snapshot
+                        .graph
+                        .entities
+                        .keys()
+                        .chain(self.staged_entities.keys())
+                        .any(|c| c != &eid && self.parent_of(c).as_deref() == Some(eid.as_str()));
+                    let message = if sibling && !holds_children {
                         format!(
                             "`{}` looks like a name variant of `{}` ({}), a peer of the members at this level; a peer that carries the area's word is not the area and never becomes the members' parent: name the grouping from the heading or document that lists the members (or qualify the name), and let {} join the grouping of its own heading",
                             name_arg, eid, ename, eid
                         )
+                    } else if sibling {
+                        format!(
+                            "`{}` looks like a name variant of existing `{}` ({}), a sibling at this level that already holds children; a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
+                            name_arg, eid, ename, eid
+                        )
                     } else {
                         format!(
-                            "`{}` looks like a name variant of existing `{}` ({}); a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
-                            name_arg, eid, ename, eid
+                            "`{}` looks like a name variant of existing `{}` ({}), which sits at another level of the tree and names that level's concept; a move under it would cross levels, so qualify the grouping's name (the heading or document that lists the members, plus what they are) instead",
+                            name_arg, eid, ename
                         )
                     };
                     return Err(ToolError::new("near-duplicate", message));
@@ -7725,6 +7737,19 @@ mod tests {
             "{}",
             err.message
         );
+        // A sibling that already holds children is the area: reuse it.
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Messaging Hub", "definition": "Moves messages.", "members": ["ent:c1", "ent:storage-layer"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(
+            err.message.contains("ent:messaging") && err.message.contains("already holds children"),
+            "{}",
+            err.message
+        );
         let err = t
             .dispatch(
                 "group_entities",
@@ -7733,6 +7758,24 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "near-duplicate");
         assert!(err.message.contains("already exists"), "{}", err.message);
+        // A lookalike at another level names that level's concept: qualify the name.
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:storage-layer", "parent": "ent:messaging"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Storage", "definition": "Keeps the data.", "members": ["ent:c1", "ent:messaging"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(
+            err.message.contains("another level") && err.message.contains("qualify"),
+            "{}",
+            err.message
+        );
         // definition and reasoning are non-empty; a member must resolve.
         for (args, rule) in [
             (

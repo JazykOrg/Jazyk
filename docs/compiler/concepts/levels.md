@@ -130,7 +130,12 @@ the [abstraction skill](../skills/abstraction.md):
   the document is about, the one its root heading names (the `namesake` hint), and
   nothing else. When the `near-duplicate` gate refuses an area's name against such
   a peer, the grouping takes the heading's name or a qualified one, and the peer
-  stays a member of its own heading's grouping.
+  stays a member of its own heading's grouping. A sibling that already holds
+  children is the area and takes the members. A lookalike elsewhere in the tree
+  (a Billing Handler under Request handling while the billing classes sit under
+  the data model) names another level's concept: the grouping qualifies its name
+  (Billing classes), and never moves the members under it, since that would cross
+  levels.
 - Boundaries follow the cohesion hints, and the model may split or merge a candidate
   with a reason: a candidate that mixes two responsibilities splits; two candidates the
   documents treat as one area merge.

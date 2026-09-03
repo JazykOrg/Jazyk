@@ -214,10 +214,13 @@ variant of [`abstract-entity`](./goals/abstract-entity.md)
   `name` passes the `near-duplicate` gate against existing names, the same gate as
   `upsert_entity` ([validation gates](./graph.md#validation-gates)), so a lookalike
   of an existing area reuses that entity ([naming](./concepts/levels.md#naming));
-  when the lookalike is a peer of the members (a member of the same level), the
-  refusal says so and advises the heading's name, never nesting the members under
-  the peer; `definition` and `reasoning` are non-empty. The reply carries the new
-  `id` and `moved`, the member ids reparented under it.
+  the refusal's advice follows where the lookalike sits: a sibling of the members
+  that already holds children is the area, and the members move under it; a sibling
+  with no children is a peer that carries the area's word, never the members'
+  parent, so the grouping takes the heading's name; a lookalike elsewhere in the tree
+  names another level's concept, and the grouping qualifies its name, since a move
+  under it would cross levels; `definition` and `reasoning` are non-empty. The reply
+  carries the new `id` and `moved`, the member ids reparented under it.
 - `dissolve_entity({id, reason})`: the inverse, for a grouping with derived provenance
   and no mentions. Its children reparent to its parent (they become parentless when
   the grouping was at the scope root), and the entity tombstones with a redirect to

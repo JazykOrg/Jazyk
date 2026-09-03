@@ -1,6 +1,7 @@
 // A file under the out directory in the center pane, read-only: a generated page
-// on its markdown preview with a source toggle, a rendering as the image, anything
-// else as text (docs/frontends/gui.md#markdown-preview).
+// on its markdown preview with a source toggle, a .png as the image, a .svg inline
+// with its anchors live, anything else as text
+// (docs/frontends/gui.md#markdown-preview).
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
 import { EditorState } from '@codemirror/state'
@@ -8,11 +9,16 @@ import { EditorView, lineNumbers } from '@codemirror/view'
 import { useOutText, useProject } from '../lib/queries'
 import { outFileUrl } from '../lib/mdlinks'
 import MarkdownView from '../components/MarkdownView'
+import OutSvg from '../components/OutSvg'
 import '../ide/ide.css'
 import '../components/markdown.css'
 
 function isImage(path: string): boolean {
   return /\.(svg|png)$/i.test(path)
+}
+
+function isSvg(path: string): boolean {
+  return /\.svg$/i.test(path)
 }
 
 function isMarkdown(path: string): boolean {
@@ -79,9 +85,7 @@ export default function OutFile() {
         )}
       </div>
       {image ? (
-        <div className="out-image">
-          <img src={outFileUrl(path)} alt={path} />
-        </div>
+        <div className="out-image">{isSvg(path) ? <OutSvg rel={path} alt={path} /> : <img src={outFileUrl(path)} alt={path} />}</div>
       ) : textQ.isError ? (
         <p className="error-inline ide-pad">{textQ.error.message}</p>
       ) : textQ.data === undefined ? (

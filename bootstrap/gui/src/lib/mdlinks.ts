@@ -2,7 +2,7 @@
 // open file's path, then located in one of the trees the GUI serves (the out
 // directory, the docs glob, the deliverable) and turned into an app route or an
 // asset URL (docs/frontends/gui.md#markdown-preview).
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { tokenParam, type Project } from './api'
 import { useDocs, useProject } from './queries'
 import { delivHref, docHref, outHref } from './nav'
@@ -99,13 +99,22 @@ export interface LinkResolver {
   route(abs: string, hash?: string): string | null
   // The URL an image at the absolute path loads from, or null when it is not served.
   image(abs: string): string | null
+  // The path under the out directory an absolute path names, or null when it is
+  // not under it.
+  outRel(abs: string): string | null
+  // The absolute path of a file under the out directory; null before the project
+  // loads.
+  outAbs(rel: string): string | null
 }
+
+// One stable empty list, so the resolver keeps its identity before the docs load.
+const NO_DOCS: { path: string }[] = []
 
 export function useLinkResolver(): LinkResolver {
   const projectQ = useProject()
   const docsQ = useDocs()
   const project = projectQ.data
-  const docs = docsQ.data?.docs ?? []
+  const docs = docsQ.data?.docs ?? NO_DOCS
   const route = useCallback(
     (abs: string, hash?: string) => {
       if (!project) return null
@@ -118,13 +127,21 @@ export function useLinkResolver(): LinkResolver {
     },
     [project, docs],
   )
-  const image = useCallback(
+  const outRel = useCallback(
     (abs: string) => {
       if (!project) return null
       const at = locate(abs, project, docs)
-      return at?.tree === 'out' ? outFileUrl(at.rel) : null
+      return at?.tree === 'out' ? at.rel : null
     },
     [project, docs],
   )
-  return { route, image }
+  const image = useCallback(
+    (abs: string) => {
+      const rel = outRel(abs)
+      return rel === null ? null : outFileUrl(rel)
+    },
+    [outRel],
+  )
+  const outAbs = useCallback((rel: string) => (project ? `${project.out}/${rel}` : null), [project])
+  return useMemo(() => ({ route, image, outRel, outAbs }), [route, image, outRel, outAbs])
 }

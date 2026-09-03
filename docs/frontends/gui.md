@@ -479,8 +479,8 @@ surface holds the preview depends on the tree the file lives in:
 - A generated page under the out directory (`/files/out/<path>`, the
   [generated section](#files)) and a markdown deliverable file open on the preview in
   place of the source; a `source` toggle swaps the read-only text in. Any other file
-  under the out directory (a `.puml`, a `.yaml`) opens as read-only text, and a
-  rendering (`.svg`, `.png`) opens as the image.
+  under the out directory (a `.puml`, a `.yaml`) opens as read-only text, a `.png`
+  opens as the image, and a `.svg` opens inline with its links live (below).
 - A source document under the docs glob keeps its [editor](#editor) and shows the
   preview beside it, split, live as one types; a `preview` toggle on the editor's bar
   shows or hides it, and the choice is remembered in the browser.
@@ -500,6 +500,17 @@ Links and images resolve against the open file's path, so the pages walk the way
   show on the page. An image anywhere else is not served and shows its alt text.
   The images are the build's renderings, read as files; the map still draws the
   graph itself ([graph](#graph)).
+- A `.svg` embedded by a page, or opened by itself, renders inline as SVG, not as an
+  image, so the anchors the renderer wrote into it
+  ([drill-down](../compiler/diagrams.md#drill-down)) are live. Each anchor resolves
+  against the `.svg`'s own path under the out directory and lands where a link in the
+  page lands: clicking a box opens that entity's card in the preview, a `.puml` opens
+  as text, a collapsed node's link opens the level's `.svg`; an anchor that lands
+  nowhere the GUI serves is not a link. The pointer shows a box is a link. The text
+  is sanitized before it enters the page (`<script>` elements and `on*` attributes
+  dropped). The diagram keeps its rendered size: its `viewBox` stays, the hard
+  `width` and `height` are dropped, and one wider than the panel scrolls inside its
+  own container.
 
 The preview renders the text as it stands and never rewrites it: the editor's text
 stays plain markdown, byte for byte, and a generated page is never written through

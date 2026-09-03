@@ -136,6 +136,46 @@
   background: #fff;
 }
 
+/* A rendering inline as svg with its anchors live
+   (docs/frontends/gui.md#markdown-preview): the diagram keeps its rendered size on
+   the white canvas it was drawn for, and one wider than the panel scrolls here. */
+.md-svg {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.md-svg-loading {
+  min-height: 48px;
+}
+
+.md-svg-canvas {
+  display: block;
+  max-width: none;
+}
+
+.md-svg-canvas > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.md-svg a {
+  cursor: pointer;
+}
+
+.md-svg a:hover text {
+  text-decoration: underline;
+}
+
+.md-svg a.md-dead {
+  cursor: default;
+}
+
 .md-preview .md-noimg {
   display: inline-block;
   color: var(--muted);

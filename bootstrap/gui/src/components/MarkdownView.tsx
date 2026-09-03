@@ -3,12 +3,13 @@
 // (docs/frontends/gui.md#markdown-preview). A link to a page the GUI serves
 // navigates in place; a link with a scheme opens a new tab; a fragment scrolls
 // the preview to the heading; an image under the out directory loads through
-// GET /api/out/file.
+// GET /api/out/file, an .svg there inline with its anchors live (OutSvg).
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import Markdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { hasScheme, resolveRel, slug, splitHash, useLinkResolver } from '../lib/mdlinks'
+import OutSvg from './OutSvg'
 import './markdown.css'
 
 // The visible text of a heading, for its slug.
@@ -101,6 +102,11 @@ export default function MarkdownView({
       },
       img({ src, alt, title }) {
         const target = typeof src === 'string' ? src : ''
+        if (target !== '' && !hasScheme(target)) {
+          // A rendering under the out directory goes inline, its anchors live.
+          const rel = resolver.outRel(resolveRel(baseAbs, target))
+          if (rel !== null && /\.svg$/i.test(rel)) return <OutSvg rel={rel} alt={alt} title={title} />
+        }
         const url = target === '' ? null : hasScheme(target) ? target : resolver.image(resolveRel(baseAbs, target))
         if (url === null)
           return (

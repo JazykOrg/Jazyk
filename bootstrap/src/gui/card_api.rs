@@ -106,8 +106,8 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .find(|r| r["other"] == "ent:stock-api")
-            .expect("the dependency on the stock api");
+            .find(|r| r["other"] == "ent:inventory-service")
+            .expect("the dependency on the stock api, lifted to the inventory service");
         assert_eq!(rel["type"], "dependency");
         assert!(matches!(rel["direction"].as_str(), Some("a" | "b" | "both")));
         assert!(rel["count"].as_u64().unwrap() >= 1);

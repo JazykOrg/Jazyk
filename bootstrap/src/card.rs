@@ -236,7 +236,7 @@ pub fn entity_card(store: &Store, walk: &Walk, id: &str) -> Option<Card> {
     let mut grouped: BTreeMap<(String, String), (bool, bool, Vec<String>)> = BTreeMap::new();
     for r in store.graph.relationships.values() {
         for c in &r.contributions {
-            if c.r#type == crate::derive::INSTANTIATION {
+            if c.r#type == crate::model::INSTANTIATION {
                 continue;
             }
             let (a_mine, b_mine) = (mine(&c.a), mine(&c.b));
@@ -446,7 +446,10 @@ mod tests {
         assert!(c.children.iter().any(|k| k.id == "ent:order"), "{:?}", c.children);
         assert!(c.siblings.iter().any(|k| k.id == "ent:inventory-service"));
         assert!(
-            c.relationships.iter().any(|r| r.other == "ent:stock-api" && r.r#type == "dependency"),
+            // The stock API sits under the inventory service: lifted to it.
+            c.relationships
+                .iter()
+                .any(|r| r.other == "ent:inventory-service" && r.r#type == "dependency" && r.direction == "a"),
             "{:?}",
             c.relationships
         );

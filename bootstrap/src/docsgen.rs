@@ -1995,7 +1995,7 @@ mod tests {
             card
         );
         assert!(
-            card.contains("- dependency → [stock API](./stock-api.md) · 1 requirement"),
+            card.contains("- dependency → [Inventory Service](./inventory-service.md) · 1 requirement"),
             "{}",
             card
         );

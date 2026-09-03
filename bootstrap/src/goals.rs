@@ -3838,6 +3838,36 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
             hints.push(format!("grouping {} ({} children)", m, n));
         }
     }
+    // The namesake: a member whose name is the heading of the document that names
+    // it and other members of the level. That entity is the level's node for the
+    // document's entities. Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints.
+    for m in &members {
+        let Some(doc) = dominant_document(store, m) else {
+            continue;
+        };
+        let Some(title) = store.docs.get(&doc).and_then(|d| {
+            d.sections
+                .values()
+                .find(|s| s.kind == "root")
+                .map(|s| s.title.clone())
+        }) else {
+            continue;
+        };
+        let name = &store.graph.entities[m].name;
+        if !title.trim().eq_ignore_ascii_case(name.trim()) {
+            continue;
+        }
+        let others = members
+            .iter()
+            .filter(|o| *o != m && dominant_document(store, o).as_deref() == Some(doc.as_str()))
+            .count();
+        if others > 0 {
+            hints.push(format!(
+                "namesake {} ({} is headed {}; {} other member(s) of the level from it)",
+                m, doc, title, others
+            ));
+        }
+    }
     hints
 }
 
@@ -4662,6 +4692,34 @@ mod tests {
         fan_out_record(&mut s, "ent:backend", 12);
         fan_out_record(&mut s, "scope:public", 10);
         s
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose
+    // name is the heading of the document naming it and other members is the
+    // level's namesake node.
+    #[test]
+    fn fan_out_hints_name_the_namesake_of_a_document() {
+        let mut s = levels_store();
+        let text = "# Shipment\nA shipment moves.\n";
+        s.docs.insert(
+            "shipping.md".into(),
+            crate::model::DocRecord {
+                content_hash: crate::model::hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: Default::default(),
+            },
+        );
+        let goals = AbstractEntity.derive_goals(&s, &gen_settings());
+        let node = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        assert!(
+            node.hints.contains(
+                &"namesake ent:shipment (shipping.md is headed Shipment; 2 other member(s) of the level from it)"
+                    .to_string()
+            ),
+            "{:?}",
+            node.hints
+        );
+        assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
     }
 
     fn grouping(id: &str, parent: Option<&str>, from: &[&str]) -> Op {

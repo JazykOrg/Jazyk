@@ -439,6 +439,13 @@ The hint computer emits, per fan-out goal:
   document it is mentioned in most. Documents and headings are strong naming hints.
 - `grouping <ent> (<n> children)`: every existing grouping under the node, so a child
   that belongs in one is moved there, never regrouped beside it.
+- `namesake <ent> (<document> is headed <title>; <n> other member(s) of the level from
+  it)`: a member whose name is the heading of the document that names it and other
+  members of the level. A stated entity that carries the area's name is the level's
+  node for that document's entities: they move under it with `update_entity`
+  `parent`, and no twin grouping is minted (a name is judged like an entity name, and
+  a node is both a thing and the frame of the level below it, the way a service is a
+  component and the parent of its modules).
 - `skill abstraction`.
 - `group_entities`, `update_entity`, `dissolve_entity`: the tools that resolve the
   variant.

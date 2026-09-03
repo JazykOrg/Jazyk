@@ -2732,7 +2732,10 @@ impl ToolSession {
     fn resolve_section(&self, section: &str) -> Result<(String, String), ToolError> {
         // A bare document name (`orders.md`, `orders.md#`) is its root section.
         // Mirrors docs/compiler/tools.md#read-tools.
-        let bare = section.strip_suffix('#').unwrap_or(section);
+        let bare = section
+            .strip_suffix("#/")
+            .or_else(|| section.strip_suffix('#'))
+            .unwrap_or(section);
         if !bare.contains('#') {
             if let Some(rec) = self.snapshot.docs.get(bare) {
                 let mut roots: Vec<&String> = rec
@@ -7110,7 +7113,7 @@ mod tests {
     #[test]
     fn a_bare_document_reference_reads_its_root_section() {
         let mut t = session();
-        for r in ["shop.md", "shop.md#"] {
+        for r in ["shop.md", "shop.md#", "shop.md#/"] {
             let v = t.dispatch("read_section", &json!({"ref": r})).unwrap();
             assert_eq!(v["title"], "Shop", "{}", r);
             assert!(v["children"]

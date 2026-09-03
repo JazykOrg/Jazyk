@@ -218,10 +218,17 @@ impl LoadedSet {
     // open ones. Mirrors docs/compiler/context.md#expansion-handles.
     pub fn expand(&mut self, store: &Store, handle: &str) -> Result<String, String> {
         let (target, axis, start) = parse_handle(handle)?;
-        let known = self
-            .items
-            .iter()
-            .any(|i| i.target == target || i.handles.iter().any(|h| h.handle == handle));
+        // A stub's handle is its node id: any node a pack named as a stub is
+        // loadable, registered or not. Mirrors docs/compiler/context.md#the-loaded-set.
+        let stub_of_node = axis.is_empty()
+            && (store.graph.entities.contains_key(&target)
+                || store.graph.requirements.contains_key(&target)
+                || store.graph.views.contains_key(&target));
+        let known = stub_of_node
+            || self
+                .items
+                .iter()
+                .any(|i| i.target == target || i.handles.iter().any(|h| h.handle == handle));
         if !known {
             let open = self.open_handles();
             return Err(format!(
@@ -700,7 +707,7 @@ impl LoadedSet {
             .graph
             .views
             .keys()
-            .filter(|vid| vid.ends_with(&format!("/scope-{}", scope)))
+            .filter(|vid| vid.ends_with(&format!("/{}", scope)))
             .cloned()
             .collect();
         if !views.is_empty() {
@@ -1445,6 +1452,20 @@ mod tests {
             ("shop.md#/shop/cart".into(), "body".into(), 120)
         );
         assert!(parse_handle("x:nope").is_err());
+    }
+
+    // A stub's handle is its node id: a neighbor named as a stub expands into a full
+    // load whether or not the pack registered it. Mirrors docs/compiler/context.md#the-loaded-set.
+    #[test]
+    fn a_stub_handle_expands_any_node_the_pack_named() {
+        let s = fixture();
+        let mut set = LoadedSet::new(24_000);
+        let text = set.load(&s, "ent:shopping-cart", 1).unwrap();
+        assert!(text.contains("[h:ent:customer]"), "{}", text);
+        let expansion = set.expand(&s, "h:ent:customer").unwrap();
+        assert!(expansion.contains("## ent:customer"), "{}", expansion);
+        let err = set.expand(&s, "h:ent:nobody").unwrap_err();
+        assert!(err.contains("unknown or closed handle"), "{}", err);
     }
 
     // A load that exceeds the budget emits handles; expand pulls the frontier and the

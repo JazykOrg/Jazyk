@@ -242,7 +242,8 @@ one structural level view, recomputed on every commit like every default
 
 - Members: the node's direct children plus every outside entity with a lifted edge into
   the level, in document order. The top diagram shows User beside Frontend and Backend.
-  The node itself is not a member: it is the frame the level sits in.
+  The node itself is not a member, nor is any ancestor of it: they are the frame the
+  level sits in.
 - Kind: `component` when the node, any child, or any descendant below a child carries
   a structural stereotype (`system`, `component`, `service`, `interface`, `actor`),
   `class` otherwise: a grouping of components is a component level.

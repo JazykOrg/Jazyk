@@ -171,7 +171,10 @@ scope root included, one structural view of its level derives:
   level (an entity outside the node's subtree whose relationship, direct or lifted,
   touches a child), in document order. The top diagram shows the user beside the frontend
   and the backend. An outside entity a child realizes and an outside entity depending on
-  a child both enter this way.
+  a child both enter this way. The node and its ancestors never do: the frame is not a
+  peer, and a whole-part statement from the node to its children is containment, not
+  an interaction (were the node a member, every sibling under it would lift to it and
+  the parent level's flows would reappear one level down).
 - `default: true`; a mutation naming the view clears it as for any default. A level view
   lists its members and carries no `query`: the rule recomputes the list while `default`
   stands.

@@ -617,6 +617,16 @@ pub fn lift_into(store: &Store, members: &[String], id: &str) -> Option<String> 
 // the customer and not Ana's cart. Mirrors docs/compiler/model/view.md#level-views.
 fn level_members_of(store: &Store, level: &Level, rank: &BTreeMap<String, usize>) -> Vec<String> {
     let children = &level.children;
+    // The frame: the node and its ancestors are never peers of the level.
+    let mut frame: Vec<String> = Vec::new();
+    let mut cur = level.node.clone();
+    while let Some(id) = cur {
+        if frame.contains(&id) || frame.len() > 64 {
+            break;
+        }
+        cur = store.graph.entities.get(&id).and_then(|e| e.parent.clone());
+        frame.push(id);
+    }
     let mut outside: Vec<String> = Vec::new();
     for rel in store.graph.relationships.values() {
         for c in &rel.contributions {
@@ -627,7 +637,7 @@ fn level_members_of(store: &Store, level: &Level, rank: &BTreeMap<String, usize>
                 let y = store.resolve_id(y).to_string();
                 if lift_into(store, children, x).is_some()
                     && lift_into(store, children, &y).is_none()
-                    && level.node.as_deref() != Some(y.as_str())
+                    && !frame.contains(&y)
                     && store.graph.entities.contains_key(&y)
                     && !outside.contains(&y)
                 {
@@ -1996,6 +2006,26 @@ pub(crate) mod tests {
             level_view_id(&s, "ent:orders").as_deref(),
             Some("view:class/orders"),
             "a grouping of plain entities is a class level"
+        );
+        // A whole-part statement from the ledger to a grandchild never makes the
+        // ledger a peer of the orders level: the frame is not a member.
+        s.graph.entities.get_mut("ent:orders").unwrap().parent = Some("ent:ledger".into());
+        s.graph.entities.get_mut("ent:platform").unwrap().parent = Some("ent:ledger".into());
+        s.graph.requirements.insert(
+            "req:x-1".into(),
+            Requirement {
+                statement: "The Ledger covers the Order.".into(),
+                entities: vec!["ent:ledger".into(), "ent:order".into()],
+                edges: vec![edge("ent:ledger", "ent:order", "composition", None)],
+                ..Default::default()
+            },
+        );
+        let mut batch = RecordBatch::new(2);
+        recompute(&mut s, "g2", &mut batch);
+        assert_eq!(
+            level_view_members(&s, "ent:orders"),
+            vec!["ent:invoice", "ent:order"],
+            "an ancestor with a whole-part edge is the frame, never a peer"
         );
     }
 

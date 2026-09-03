@@ -3,6 +3,7 @@
 mod api;
 mod assets;
 mod board_api;
+mod card_api;
 mod chat;
 mod deliverable;
 mod diff;

@@ -6,9 +6,10 @@
 use super::state::SharedState;
 use crate::model::{rel_rank, View, INSTANTIATION};
 use crate::store::{scope_root_target, Store};
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -238,9 +239,28 @@ fn view_arrows(store: &Store, shown: &BTreeSet<String>) -> Vec<Value> {
     arrows
 }
 
+// The direct children of every shown entity that are not shown yet, by parent:
+// what one more level of detail draws. Mirrors docs/frontends/gui.md#explore.
+fn next_level(store: &Store, shown: &BTreeSet<String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = store
+        .graph
+        .entities
+        .iter()
+        .filter(|(id, _)| !shown.contains(*id))
+        .filter_map(|(id, e)| {
+            let parent = store.resolve_id(e.parent.as_deref()?).to_string();
+            shown.contains(&parent).then(|| (id.clone(), parent))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 // One view resolved for drawing. This is what the map draws; the rendered picture
-// rides beside it so the inspector can show the diagram.
-pub fn view_value(store: &Store, id: &str) -> Option<Value> {
+// rides beside it so the inspector can show the diagram. `detail` expands every
+// shown entity that many levels down: its children join the shown set, marked with
+// the level they came in at, and the arrows lift to the wider set the same way.
+pub fn view_value(store: &Store, id: &str, detail: usize) -> Option<Value> {
     let id = store.resolve_id(id).to_string();
     let view = store.graph.views.get(&id)?;
     let members = effective_members(store, view);
@@ -250,8 +270,8 @@ pub fn view_value(store: &Store, id: &str) -> Option<Value> {
         .filter(|m| store.graph.entities.contains_key(m))
         .collect();
     let hidden = hidden_by_collapse(store, &entity_members, &view.collapse);
-    let shown: BTreeSet<String> = entity_members.difference(&hidden).cloned().collect();
-    let member_detail: Vec<Value> = members
+    let mut shown: BTreeSet<String> = entity_members.difference(&hidden).cloned().collect();
+    let mut member_detail: Vec<Value> = members
         .iter()
         .map(|m| {
             let rid = store.resolve_id(m).to_string();
@@ -271,6 +291,26 @@ pub fn view_value(store: &Store, id: &str) -> Option<Value> {
             }
         })
         .collect();
+    // Detail: each level adds the children of what is shown, nested inside their
+    // parents; a level that adds nothing ends the expansion early.
+    let mut applied = 0;
+    for level in 1..=detail {
+        let next = next_level(store, &shown);
+        if next.is_empty() {
+            break;
+        }
+        applied = level;
+        for (cid, parent) in next {
+            let e = &store.graph.entities[&cid];
+            member_detail.push(json!({
+                "id": cid, "node": "entity", "name": e.name,
+                "stereotype": e.stereotype, "parent": parent,
+                "hidden": false, "detail": level,
+            }));
+            shown.insert(cid);
+        }
+    }
+    let deeper = !next_level(store, &shown).is_empty();
     // Flow kinds carry ordered steps with their participants.
     let steps: Vec<Value> = if crate::goals::is_flow_kind(&view.kind) {
         members
@@ -333,6 +373,8 @@ pub fn view_value(store: &Store, id: &str) -> Option<Value> {
         "steps": steps,
         "machines": machines,
         "children": children_value(store, &id),
+        "detail": applied,
+        "deeper": deeper,
         "puml": puml,
         "svg": svg,
         "renderError": render_error,
@@ -349,9 +391,19 @@ fn children_value(store: &Store, view_id: &str) -> Vec<Value> {
         .collect()
 }
 
-pub async fn view(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
+#[derive(Deserialize)]
+pub struct ViewQ {
+    // Levels of detail beneath the members (docs/frontends/gui.md#explore).
+    detail: Option<usize>,
+}
+
+pub async fn view(
+    State(st): State<SharedState>,
+    UrlPath(id): UrlPath<String>,
+    Query(q): Query<ViewQ>,
+) -> Response {
     let store = super::api::load_store(&st).await;
-    match view_value(&store, &id) {
+    match view_value(&store, &id, q.detail.unwrap_or(0)) {
         Some(v) => Json(v).into_response(),
         None => super::api::err(StatusCode::NOT_FOUND, format!("no view {}", id)),
     }
@@ -474,7 +526,9 @@ mod tests {
     #[test]
     fn view_value_carries_children_with_level_views() {
         let s = store();
-        let v = view_value(&s, "view:component/shop").expect("the shop level view");
+        let v = view_value(&s, "view:component/shop", 0).expect("the shop level view");
+        assert_eq!(v["detail"], 0);
+        assert_eq!(v["deeper"], true);
         let children = v["children"].as_array().expect("a children list");
         let pairs: Vec<(&str, &str)> = children
             .iter()
@@ -491,6 +545,53 @@ mod tests {
             .map(|m| m["id"].as_str().unwrap())
             .collect();
         assert!(members.contains(&"ent:inventory-service"));
+    }
+
+    // One level of detail draws the members' children inside them and lifts the
+    // arrows to the wider set: the dependency that lifted onto the inventory service
+    // at the level's own detail now lands on the stock api itself. The expansion
+    // stops where the tree ends, whatever detail was asked for.
+    // Mirrors docs/frontends/gui.md#explore.
+    #[test]
+    fn view_value_detail_expands_every_grouping_one_level_and_relifts() {
+        let s = store();
+        let flat = view_value(&s, "view:component/shop", 0).unwrap();
+        let lifted = flat["arrows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["a"] == "ent:order-service" && a["b"] == "ent:inventory-service")
+            .expect("the dependency lifted onto the inventory service");
+        assert_eq!(lifted["lifted"], true);
+        let one = view_value(&s, "view:component/shop", 1).unwrap();
+        assert_eq!(one["detail"], 1);
+        assert_eq!(one["deeper"], false);
+        let members = one["members"].as_array().unwrap();
+        let stock = members
+            .iter()
+            .find(|m| m["id"] == "ent:stock-api")
+            .expect("the stock api drawn one level down");
+        assert_eq!(stock["parent"], "ent:inventory-service");
+        assert_eq!(stock["detail"], 1);
+        assert_eq!(stock["hidden"], false);
+        assert!(members.iter().any(|m| m["id"] == "ent:order-item" && m["detail"] == 1));
+        let arrows = one["arrows"].as_array().unwrap();
+        let direct = arrows
+            .iter()
+            .find(|a| a["a"] == "ent:order-service" && a["b"] == "ent:stock-api")
+            .expect("the dependency drawn on the stock api");
+        assert_eq!(direct["lifted"], false);
+        assert_eq!(direct["type"], "dependency");
+        assert!(!arrows
+            .iter()
+            .any(|a| a["a"] == "ent:order-service" && a["b"] == "ent:inventory-service"));
+        assert!(arrows
+            .iter()
+            .any(|a| a["a"] == "ent:shopping-cart" && a["b"] == "ent:order-item" && a["type"] == "composition"));
+        // Asking for more than the tree holds applies what exists.
+        let deep = view_value(&s, "view:component/shop", 5).unwrap();
+        assert_eq!(deep["detail"], 1);
+        assert_eq!(deep["members"].as_array().unwrap().len(), members.len());
     }
 
     // The tree: one root per scope addressed as `scope:<scope>` with the root's level

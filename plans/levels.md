@@ -22,10 +22,16 @@ it, stated once) and the node-form fan-out (eleven leaves under Checkout from on
 flat document: Pricing and Funds groupings in six rounds once the doctrine said a flat
 glossary is the common case and the candidates came in halves). Fixed along the way:
 parked entries never cleared on resolution, reachability blind to containment, the
-tautological whole-level candidate. Next in the chain: the view GC kinds the chain
-opened (`split-view`, `curate-view`), the review of a grouping's ratification,
-`example-saas` traps one interaction at a time, then `f2` and `example-org`
-regressions and the dogfood, all as snippets. Written for a fresh session
+tautological whole-level candidate. Every snapshot commit re-derives the views, so a
+four-round review snippet doubled as a deterministic re-render: five derivation
+defects surfaced that way (an ancestor admitted as a level's peer, a level owning
+every flow that touched an interactor, sequence endpoints never lifted, internal
+flows drawn as self-messages, the first edge collapsing where another reached).
+The mini chain ends four levels deep with every fan-out under nine and the top
+sequence showing Checkout talking to Orders. Next in the chain: the view GC kinds
+(`split-view`, `curate-view`) on a state that crosses a view limit, the review of
+a grouping's ratification, `example-saas` traps one interaction at a time, then
+`f2` and `example-org` regressions and the dogfood, all as snippets. Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

@@ -1177,6 +1177,12 @@ pub enum GoalOutcome {
 }
 
 // One session's tool serving: reads answer from the snapshot, writes stage into the changeset.
+// The build's own bookkeeping rules, settled by the harness and never a session's to
+// resolve. Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+pub fn harness_owned_rule(rule: &str) -> bool {
+    rule == "incomplete-build" || rule == "ratification-pending" || rule.starts_with("unstable-")
+}
+
 pub struct ToolSession {
     pub snapshot: Store,
     pub scope: WorkScope,
@@ -3280,6 +3286,30 @@ impl ToolSession {
                 )
             }
             "search" => {
+                // Several names in one call: one result per query, in order, so
+                // search-before-create costs one round per section.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                if let Some(qs) = args.get("queries").and_then(Value::as_array) {
+                    let mut results = Vec::new();
+                    for q in qs {
+                        let Some(q) = q.as_str().map(str::trim).filter(|q| !q.is_empty()) else {
+                            return Err(ToolError::new(
+                                "bad-args",
+                                "queries takes a list of non-empty strings".to_string(),
+                            ));
+                        };
+                        let mut one = json!({"query": q});
+                        if let Some(k) = args.get("kind") {
+                            one["kind"] = k.clone();
+                        }
+                        // Straight to the handler: one queries call is one call
+                        // under the repeated-call guard, never one per name.
+                        let mut r = self.dispatch_inner("search", &one)?;
+                        r["query"] = json!(q);
+                        results.push(r);
+                    }
+                    return Ok(json!({"results": results}));
+                }
                 let query = Self::str_arg(args, "query")?;
                 let kind = Self::opt_str(args, "kind").unwrap_or_else(|| "entity".to_string());
                 if kind != "entity" && kind != "view" {
@@ -3462,6 +3492,11 @@ impl ToolSession {
                         }
                         if let Some(a) = &d.answer {
                             v["answered"] = json!(a.status);
+                        }
+                        // The build's own bookkeeping: never a session's to resolve.
+                        // Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+                        if harness_owned_rule(&d.rule) {
+                            v["owner"] = json!("harness");
                         }
                         v
                     })
@@ -4521,6 +4556,16 @@ impl ToolSession {
                         format!(
                             "{} is a ratification proposal; it resolves when its edit option is applied or the fact is retracted, never through resolve_diagnostic",
                             id
+                        ),
+                    ));
+                }
+                // The build's own bookkeeping is the harness's to settle.
+                if harness_owned_rule(&d.rule) {
+                    return Err(ToolError::new(
+                        "not-resolvable",
+                        format!(
+                            "{} ({}) is owned by the harness: the build settles it itself (a parked goal resuming, a human's ruling), never a session; leave it and judge the entity",
+                            id, d.rule
                         ),
                     ));
                 }
@@ -5880,6 +5925,26 @@ mod tests {
             "{}",
             list
         );
+        // The build's own bookkeeping reads as harness-owned and never resolves
+        // through a session. Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+        let mut parked = t.staged_diags.values().next().unwrap().clone();
+        parked.rule = "incomplete-build".into();
+        parked.message = "goal parked".into();
+        t.snapshot
+            .graph
+            .diagnostics
+            .insert("diag:incomplete-build-1".into(), parked);
+        let list = t.dispatch("diagnostics", &json!({"rule": "incomplete-build"})).unwrap();
+        let owned = &list["diagnostics"].as_array().unwrap()[0];
+        assert_eq!(owned["owner"], "harness", "{}", list);
+        let err = t
+            .dispatch(
+                "resolve_diagnostic",
+                &json!({"id": "diag:incomplete-build-1", "reason": "resumed"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "not-resolvable");
+        assert!(err.message.contains("owned by the harness"), "{}", err.message);
         let r = t
             .dispatch(
                 "resolve_diagnostic",
@@ -6344,6 +6409,21 @@ mod tests {
             r
         );
         // A hit answers under the same key, so the caller reads one shape.
+        // Several names in one call: one result per query, in order, misses included.
+        // Mirrors docs/compiler/tools.md#read-tools.
+        let many = t
+            .dispatch("search", &json!({"queries": ["Customer", "Zebra Crossing"]}))
+            .unwrap();
+        let results = many["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2, "{}", many);
+        assert_eq!(results[0]["query"], "Customer");
+        assert!(!results[0]["hits"].as_array().unwrap().is_empty(), "{}", many);
+        assert_eq!(results[1]["query"], "Zebra Crossing");
+        assert!(results[1]["hits"].as_array().is_none_or(|h| h.is_empty()), "{}", many);
+        let err = t
+            .dispatch("search", &json!({"queries": ["Customer", ""]}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-args");
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
     }

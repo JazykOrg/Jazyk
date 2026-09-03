@@ -136,6 +136,13 @@ answer:
   entry. See [journal](../graph.md#journal).
 - A judged diagnostic whose subjects are all gone from the graph is resolved by the
   checks and journaled as `settle-diagnostics`.
+- Some rules are the build's own bookkeeping, settled by the harness and never a
+  session's to judge: `incomplete-build` (cleared when the parked goal resumes),
+  `ratification-pending` (accept or retract), and `unstable-derivation` with every
+  other `unstable-` rule (a human's ruling). The `diagnostics` read marks them
+  `owner: harness`, `resolve_diagnostic` refuses them naming the owner, and the
+  review hints leave them out of the open diagnostics a review judges
+  ([review-entity](../goals/review-entity.md#hints)).
 
 ## Rules catalog
 

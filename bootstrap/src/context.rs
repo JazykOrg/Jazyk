@@ -698,11 +698,25 @@ impl LoadedSet {
             target, scope
         ));
         b.push(&format!("members ({}):", members.len()));
+        // Each member with the document it is mentioned in most, and the
+        // relationships among the members, so a fan-out over the level needs no
+        // per-member reads. Mirrors docs/compiler/context.md#rendering.
         let lines: Vec<String> = members
             .iter()
-            .filter_map(|id| self.stub_line(store, id))
+            .filter_map(|id| {
+                let line = self.stub_line(store, id)?;
+                Some(match crate::goals::dominant_document(store, id) {
+                    Some(doc) => format!("{} [doc {}]", line, doc),
+                    None => line,
+                })
+            })
             .collect();
         b.push_items(&target, "children", &lines);
+        let edges = edge_lines_among(store, &members);
+        if !edges.is_empty() {
+            b.push(&format!("relationships among members ({}):", edges.len()));
+            b.push_items(&target, "edges", &edges);
+        }
         let views: Vec<String> = store
             .graph
             .views
@@ -1206,7 +1220,13 @@ fn related_lines(store: &Store, id: &str) -> Vec<String> {
 
 // The arrows among a view's members, one line per contribution group.
 fn view_edge_lines(store: &Store, v: &crate::model::View) -> Vec<String> {
-    let members: BTreeSet<&str> = v.members.iter().map(String::as_str).collect();
+    edge_lines_among(store, &v.members)
+}
+
+// One line per relationship contribution whose both ends are among the ids: the
+// relationships a level's members have with each other.
+fn edge_lines_among(store: &Store, ids: &[String]) -> Vec<String> {
+    let members: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let mut out = Vec::new();
     for rel in store.graph.relationships.values() {
         if !rel.members.iter().all(|m| members.contains(m.as_str())) {
@@ -1504,6 +1524,50 @@ mod tests {
     // `scope:<scope>` loads the scope's parentless entities as stubs, its children
     // handle expands to the same, and an unknown scope errors.
     // Mirrors docs/compiler/concepts/levels.md#the-scope-root.
+    // Mirrors docs/compiler/context.md#the-loaded-set: the scope root pack names each
+    // member's document and the relationships among the members, so a fan-out over
+    // the level needs no per-member reads.
+    #[test]
+    fn the_scope_root_pack_carries_documents_and_relationships_among_members() {
+        let mut s = Store::default();
+        for (id, name) in [("ent:cart", "Cart"), ("ent:coupon", "Coupon")] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: name.into(),
+                    mentions: vec![crate::model::SourceRef {
+                        doc: "docs/checkout.md".into(),
+                        section: "/checkout".into(),
+                        quote: name.into(),
+                    }],
+                    ..Default::default()
+                },
+            );
+        }
+        s.graph.relationships.insert(
+            "rel:cart~coupon".into(),
+            crate::model::Relationship {
+                members: vec!["ent:cart".into(), "ent:coupon".into()],
+                contributions: vec![crate::model::Contribution {
+                    a: "ent:coupon".into(),
+                    b: "ent:cart".into(),
+                    r#type: "dependency".into(),
+                    cardinality: None,
+                    requirements: vec!["req:checkout-3".into()],
+                }],
+            },
+        );
+        let mut set = LoadedSet::new(20_000);
+        let text = set.load(&s, "scope:public", 1).unwrap();
+        assert!(text.contains("[doc docs/checkout.md]"), "{}", text);
+        assert!(
+            text.contains("relationships among members (1):")
+                && text.contains("- ent:coupon → ent:cart (dependency, 1)"),
+            "{}",
+            text
+        );
+    }
+
     #[test]
     fn loading_a_scope_root_renders_its_top_level_as_stubs() {
         let mut s = fixture();

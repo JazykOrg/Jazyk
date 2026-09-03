@@ -384,13 +384,18 @@ pub fn name_tokens(e: &Entity) -> BTreeSet<String> {
         .collect()
 }
 
+// The open judged diagnostics naming any of the ids. The build's own bookkeeping
+// (incomplete-build, ratification-pending, unstable-*) is left out: a session never
+// resolves it. Mirrors docs/compiler/goals/review-entity.md#hints.
 fn open_diags_naming<'a>(store: &'a Store, ids: &[&str]) -> Vec<(&'a String, &'a Diagnostic)> {
     store
         .graph
         .diagnostics
         .iter()
         .filter(|(_, d)| {
-            d.lifecycle == "open" && d.subjects.iter().any(|s| ids.contains(&s.as_str()))
+            d.lifecycle == "open"
+                && !crate::tools::harness_owned_rule(&d.rule)
+                && d.subjects.iter().any(|s| ids.contains(&s.as_str()))
         })
         .collect()
 }
@@ -1581,6 +1586,24 @@ impl GoalKind for ReviewEntity {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            // The level views around the entity, so a review never guesses a view
+            // id. Mirrors docs/compiler/goals/review-entity.md#hints.
+            {
+                let mut views = Vec::new();
+                if let Some(v) = crate::derive::level_view_id(store, &id) {
+                    views.push(format!("{} (this entity)", v));
+                }
+                let level_target = match &e.parent {
+                    Some(p) => store.resolve_id(p).to_string(),
+                    None => format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, e.scope),
+                };
+                if let Some(v) = crate::derive::level_view_id(store, &level_target) {
+                    views.push(format!("{} (its parent)", v));
+                }
+                if !views.is_empty() {
+                    hints.push(format!("level views: {}", views.join(", ")));
+                }
             }
             if let Some((soft, _)) = limits::threshold(
                 "requirements-per-entity",
@@ -4765,6 +4788,66 @@ mod tests {
             "{:?}",
             node.hints
         );
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#hints: a review names the level
+    // views around its entity (its own when it has children, its parent's level),
+    // and leaves the harness-owned bookkeeping out of the open diagnostics.
+    #[test]
+    fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
+        let mut s = levels_store();
+        let n = s.status.changes.len();
+        s.status.changes.push(ChangeRecord::new(
+            7,
+            n,
+            0,
+            store::CHANGE_ENTITY,
+            "ent:backend",
+            "fields",
+        ));
+        s.graph.diagnostics.insert(
+            "diag:incomplete-build-1".into(),
+            crate::model::Diagnostic {
+                rule: "incomplete-build".into(),
+                severity: "warning".into(),
+                subjects: vec!["ent:backend".into()],
+                message: "parked".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let goals = ReviewEntity.derive_goals(&s, &gen_settings());
+        let g = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        let own = crate::derive::level_view_id(&s, "ent:backend").unwrap();
+        let parent = crate::derive::level_view_id(&s, "scope:public").unwrap();
+        assert!(
+            g.hints.contains(&format!(
+                "level views: {} (this entity), {} (its parent)",
+                own, parent
+            )),
+            "{:?}",
+            g.hints
+        );
+        assert!(
+            !g.hints.iter().any(|h| h.contains("incomplete-build")),
+            "{:?}",
+            g.hints
+        );
+    }
+
+    // The agent contract asks for independent calls in one reply under the native
+    // codec. Mirrors docs/compiler/goals/prompts/agent-contract.md.
+    #[test]
+    fn the_contract_asks_for_independent_calls_in_one_reply() {
+        let contract = include_str!("../../docs/compiler/goals/prompts/agent-contract.md");
+        assert!(contract.contains("Independent calls go together in one reply"));
+        let skill = include_str!("../../docs/compiler/skills/extraction.md");
+        assert!(skill.contains("one `search` with `queries`"));
     }
 
     // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose

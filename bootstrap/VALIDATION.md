@@ -304,9 +304,106 @@ viewer), 5 (the abstraction skill and the fan-out contract), and 6 (`example-saa
 fixture written to the owner's picture with ten traps). One deterministic scenario pins
 the whole loop with no model in it (`8babb01`).
 
-Stage 7, validation, is running: `example-saas` on the local model, then `f2` and
-`example-org` regressions on the levels binary, then the dogfood, with grading cycles
-to follow. No level result is measured yet. The next update fills in, per corpus: the
-verdict and shape line, the groupings minted and their names against the fixture's
-headings, the level views derived and the drill-down chain, and the `example-saas` trap
-tally (of 10).
+Stage 7, validation, runs by the owner's short-loop method: a project is snapshotted
+at one moment, one goal's session runs from the copy (`jazyk benchmark --project
+<dir> --goal <id> --force`), the transcript is read, the docs and the harness are
+fixed, and the same snippet reruns. Model: qwen3.8:27b-mlx on Ollama, one session at a
+time. Every number below is one snippet on one snapshot, never a converged corpus
+graded hours later.
+
+### The mini chain (three documents plus a checkout glossary, twelve root entities)
+
+- The root fan-out resolves to the groupings the documents name (Orders, Shipping,
+  Platform) and rejects the coupling candidate that mixed two areas; a namesake
+  collision (a front door naming Checkout beside a stated Checkout process) resolves
+  by moving the document's entities under the stated node, stated once; the node-form
+  fan-out under Checkout mints Pricing, Funds (Payment was taken), and Selection. End
+  state four levels deep, shape 5 / 17 / 9 / 1, every fan-out under nine, the top
+  sequence drawing Checkout talking to Orders. Five derivation defects surfaced from
+  re-rendered snapshots along the way (an ancestor admitted as a level's peer, a level
+  owning every flow that touched an interactor, sequence endpoints never lifted,
+  internal flows drawn as self-messages, the first edge collapsing where another
+  reached), all fixed on the branch.
+- The forced root fan-out on the pre-namesake snapshot aborted once on the default
+  4096 completion cap (seven empty turns, each 17k characters of reasoning cut
+  mid-deliberation, the right conclusion every time) and resolved in 9 rounds with
+  `JAZYK_MAX_COMPLETION_TOKENS=16384`. A reasoning model that overruns the cap looks
+  like a silent stop to the agent loop, which nudges it seven times at three minutes
+  each; the nudge should name the cap (`acp/agent/agent_loop.rs`, open).
+
+### The owner's side of a grouping (accept and retract)
+
+Measured on the mini chain's end state (three pending proposals, `81 blocked`):
+
+- No terminal path existed. The answer engine served the LSP code action, the GUI
+  questions panel, and chat's `answer_diagnostic` (the `chat` MCP serving only; `jazyk
+  mcp graph --write` does not expose it), and `jazyk explain` and `preview` rendered
+  the proposal without naming a command. `jazyk answer <diag|goal> [--option N |
+  --text "..."]` now lists a prompt's options and applies one.
+- Accept (`--option 0` on `g:ratify:ent:funds`): the sentence lands as the last
+  paragraph of the target section, the entity's provenance flips to a mention quoting
+  it, the journal carries one `ratify` entry (`edit_doc_prose`, `ratify_provenance`,
+  `resolve_diagnostic`, `answer_diagnostic`), the change record clears, the goal is
+  gone, blocked drops by one, and one `review-entity` opens on the entity. A session
+  advanced afterwards derives no `reconcile-section` on the edited document: the
+  hashes were absorbed at accept.
+- Retract (`--option 1` on `g:ratify:ent:selection`) was unreachable: the store
+  refused any entity still a parent, which every grouping is, and the refusal landed
+  as a partial commit (the `answer_diagnostic` op applied while the retract was
+  skipped), leaving the proposal answered forever with its goal open. Fixed: a
+  retracted grouping dissolves as `dissolve_entity` would (children back under its
+  parent, a tombstone redirect, the `dissolve_entity` mutation journaled in the
+  `ratify` entry so the reparent flip replays), quoted requirements re-point to the
+  parent, and the retract changeset is all or nothing (`Commit.all_or_nothing`). After
+  the fix: the grouping is gone, both children sit under Checkout with their reviews
+  open, blocked drops by one.
+
+### A level's picture yields to its fan-out
+
+A `split-view` goal on a sequence view of eleven honest participants failed honestly
+(every split invents structure) while the level's fan-out was parked beside it. The
+goal now blocks on `fan-out first: g:abstract-entity:<level>` while the fan-out is
+open or parked (`jazyk benchmark` refuses it without `--force`), and the forced fan-out
+lifts the same flow to two participants. Open: the participant count behind the
+threshold record is taken over the members' raw entities, never lifted to the level's
+members, so the goal outlives the picture it was filed for (`derive.rs`).
+
+### example-saas, the API Server and its data model
+
+Snapshot at generation 13 (44% coverage, nineteen of the twenty-one API Server
+children stated, the mandatory fan-out open behind three hundred pair judgments),
+forced:
+
+- Loop 1: resolved in 9 rounds but wrong. The model staged Collaboration and Rendering,
+  then "Billing" over the coupling candidate that mixed the Billing Handler with the
+  billing classes; the near-duplicate gate refused the name against the handler with
+  the advice to reparent the members under it, and the model obeyed: three classes
+  under a handler, no Data model, no Request handling, the `## Data model` section
+  never read. Trap 4: fail.
+- Fixed docs first: headings first (the node's own document's headings are the
+  partition, one grouping per heading), a peer that carries the area's word is not the
+  area, the member hints carry the listing section of the node's document beside the
+  dominant document, and the gate's advice follows where the lookalike sits (a sibling
+  with children is reused, a childless sibling is a peer, another level's entity
+  qualifies the name).
+- Loop 2: resolved in 6 rounds, 22 mutations: Data model (12 classes), Request
+  handling (4 handlers), Rendering (3 renderers), each derived from exactly its
+  members with the heading in its reasoning; shape 8 / 5 / 3 / 19;
+  `component/api-server` drills into `class/data-model`, `component/request-handling`,
+  `component/rendering`; six ratification proposals. Traps 4, 7, 8: pass.
+- The data model fan-out on that state: resolved in 8 rounds: Identity (3),
+  Collaboration (6), and Billing classes (3; "Billing" was refused against the Billing
+  Handler, now at another level, and the model qualified the name as the doctrine
+  says). Shape 8 / 5 / 3 / 10 / 12, every fan-out 2 to 9, `class/data-model` drilling
+  into the three. Trap 5: pass (the good run).
+- Not measured here: traps 1, 2, 3, 6, 9, 10 depend on the ingest and the judgment
+  goals that the snapshot's remaining sessions have not run.
+
+Scorecard for the levels snippets: 5 of 5 fan-outs graded resolve to the documents'
+own names after the fixes (root, namesake, node form, API Server, data model); the
+accept and retract paths pass; the split-view yield passes; 9 harness defects found
+and fixed on the branch (the retract of a grouping, the partial commit on refusal,
+the missing terminal path, the split-view yield, the member hints without sections,
+the gate's advice on a peer and on another level, plus the earlier toolset, auto-load,
+and parked-list fixes); 2 findings open in other owners' files (the completion-cap
+nudge, the unlifted participant count).

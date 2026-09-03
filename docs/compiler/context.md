@@ -60,7 +60,10 @@ The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is
   any node id (entity, requirement, view, diagnostic), a section reference, or
   `scope:<scope>`, the top level of a scope, which loads its parentless entities as
-  stubs ([the scope root](./concepts/levels.md#the-scope-root)). `depth`
+  stubs ([the scope root](./concepts/levels.md#the-scope-root)), each with the
+  document it is mentioned in most (`[doc <path>]`) and, under them, the
+  relationships among the members one line each, so a fan-out over the level reads
+  what every member relates to without a `get_entity` per member. `depth`
   defaults to `1`: the target in full, its edges, each neighbor as a stub. `depth: 2`
   loads the neighbors in full too and their neighbors as stubs, still under the budget.
   The reply renders what was loaded and the status block.

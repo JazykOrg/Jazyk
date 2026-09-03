@@ -12,6 +12,7 @@ mod events;
 mod facts;
 mod jobs;
 mod lsp_ws;
+mod outfiles;
 mod server;
 mod state;
 mod views_api;

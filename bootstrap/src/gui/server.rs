@@ -2,7 +2,7 @@
 use super::state::SharedState;
 use super::{
     api, assets, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
-    views_api,
+    outfiles, views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -99,6 +99,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
+        .route("/out/file", get(outfiles::file))
+        .route("/out/list", get(outfiles::list))
         .route("/trace", get(jobs::list_traces))
         .route("/trace/{stem}", get(jobs::get_trace))
         .route("/trace/{stem}/{n}", get(jobs::get_trace_event))

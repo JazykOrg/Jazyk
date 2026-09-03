@@ -2440,7 +2440,7 @@ pub fn finalize(
 
     let n = crate::docsgen::write_all(s, &crate::gen::GenSettings::resolve(proj));
     if n > 0 {
-        trace.line("build", &format!("docsgen: {} requirements document(s)", n));
+        trace.line("build", &format!("docsgen: {} page(s)", n));
     }
     let rendered = crate::render::render_all(s, &s.out);
     if !rendered.rendered.is_empty() || !rendered.failed.is_empty() {

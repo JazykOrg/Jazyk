@@ -197,7 +197,10 @@ The card, in order:
 - `Relationships`: one line per other entity: the relationship type as the
   [relationship](../compiler/model/relationship.md) summarizes it, the direction, the
   other entity as a link to its card, and the number of contributing requirements.
-  This is the link sideways along the edges.
+  The lines are lifted as the in-context diagram lifts its arrows: a grouping's card
+  lists the relationships its subtree carries, each other end lifted to the member
+  of the parent's level it sits under, so a grouping is never `none` while its box
+  has arrows. This is the link sideways along the edges.
 - `Flows`: the flow views at the parent's level in which the entity is a drawn
   participant, each a link to its diagram page with its step count.
 - `Siblings`: the other children of the same parent, each a link to its card, with a

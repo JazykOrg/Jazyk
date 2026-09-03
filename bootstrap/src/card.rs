@@ -105,12 +105,31 @@ pub struct ViewPage {
 // view belongs to. A walk over a whole project builds one of these, not one per page.
 pub struct Walk {
     pub flow_levels: BTreeMap<String, String>,
+    // Every structural level view with the level target it belongs to.
+    pub level_views: BTreeMap<String, String>,
 }
 
 impl Walk {
     pub fn new(store: &Store) -> Walk {
+        let mut targets: Vec<String> = store.graph.entities.keys().cloned().collect();
+        let mut scopes: Vec<String> = store
+            .graph
+            .entities
+            .values()
+            .map(|e| scope_target(&e.scope))
+            .collect();
+        scopes.sort();
+        scopes.dedup();
+        targets.extend(scopes);
+        let mut level_views = BTreeMap::new();
+        for t in targets {
+            if let Some(v) = crate::derive::level_view_id(store, &t) {
+                level_views.insert(v, t);
+            }
+        }
         Walk {
             flow_levels: crate::derive::flow_view_levels(store),
+            level_views,
         }
     }
 }
@@ -206,46 +225,57 @@ pub fn entity_card(store: &Store, walk: &Walk, id: &str) -> Option<Card> {
         .map(|(v, _)| v.clone())
         .collect();
     flows.sort();
-    let mut relationships: Vec<Relation> = store
-        .graph
-        .relationships
-        .values()
-        .filter(|r| r.members.iter().any(|m| store.resolve_id(m) == id))
-        .filter_map(|r| {
-            let other = r
-                .members
-                .iter()
-                .map(|m| store.resolve_id(m).to_string())
-                .find(|m| *m != id)?;
-            let out = r
-                .contributions
-                .iter()
-                .any(|c| store.resolve_id(&c.a) == id);
-            let inn = r
-                .contributions
-                .iter()
-                .any(|c| store.resolve_id(&c.b) == id);
-            let direction = match (out, inn) {
+    // Lifted as the in-context diagram lifts its arrows: every relationship the
+    // subtree carries, each end lifted to the parent level's member it sits under.
+    let level_members = crate::derive::level_view_members(store, &parent);
+    let mine = |x: &str| crate::derive::lift_into(store, std::slice::from_ref(&id), x).is_some();
+    let lift = |x: &str| {
+        crate::derive::lift_into(store, &level_members, x)
+            .unwrap_or_else(|| store.resolve_id(x).to_string())
+    };
+    let mut grouped: BTreeMap<(String, String), (bool, bool, Vec<String>)> = BTreeMap::new();
+    for r in store.graph.relationships.values() {
+        for c in &r.contributions {
+            if c.r#type == crate::derive::INSTANTIATION {
+                continue;
+            }
+            let (a_mine, b_mine) = (mine(&c.a), mine(&c.b));
+            if a_mine == b_mine {
+                continue;
+            }
+            let other = lift(if a_mine { &c.b } else { &c.a });
+            if other == id {
+                continue;
+            }
+            let e = grouped
+                .entry((other, c.r#type.clone()))
+                .or_insert((false, false, Vec::new()));
+            if a_mine {
+                e.0 = true;
+            } else {
+                e.1 = true;
+            }
+            for rq in &c.requirements {
+                if !e.2.contains(rq) {
+                    e.2.push(rq.clone());
+                }
+            }
+        }
+    }
+    let relationships: Vec<Relation> = grouped
+        .into_iter()
+        .map(|((other, t), (out, inn, reqs))| Relation {
+            other,
+            r#type: t,
+            direction: match (out, inn) {
                 (true, true) => "both",
                 (true, false) => "a",
                 _ => "b",
-            };
-            let mut reqs: Vec<&String> = r
-                .contributions
-                .iter()
-                .flat_map(|c| c.requirements.iter())
-                .collect();
-            reqs.sort();
-            reqs.dedup();
-            Some(Relation {
-                other,
-                r#type: r.strongest().to_string(),
-                direction: direction.to_string(),
-                count: reqs.len(),
-            })
+            }
+            .to_string(),
+            count: reqs.len(),
         })
         .collect();
-    relationships.sort_by(|x, y| x.other.cmp(&y.other));
     let siblings: Vec<Kin> = crate::goals::level_members(store, &parent)
         .iter()
         .filter(|s| **s != id)
@@ -304,27 +334,11 @@ fn level_breadcrumb(store: &Store, target: &str) -> Vec<Crumb> {
 // The level a view belongs to: a level view's own target, a lifted flow view's
 // level, none for a curated, object, or state view.
 pub fn view_level(store: &Store, walk: &Walk, view_id: &str) -> Option<String> {
-    if let Some(t) = walk.flow_levels.get(view_id) {
-        return Some(t.clone());
-    }
-    let mut targets: Vec<String> = store
-        .graph
-        .entities
-        .keys()
+    let _ = store;
+    walk.flow_levels
+        .get(view_id)
+        .or_else(|| walk.level_views.get(view_id))
         .cloned()
-        .collect();
-    let mut scopes: Vec<String> = store
-        .graph
-        .entities
-        .values()
-        .map(|e| scope_target(&e.scope))
-        .collect();
-    scopes.sort();
-    scopes.dedup();
-    targets.extend(scopes);
-    targets
-        .into_iter()
-        .find(|t| crate::derive::level_view_id(store, t).as_deref() == Some(view_id))
 }
 
 pub fn view_page(store: &Store, walk: &Walk, view_id: &str) -> Option<ViewPage> {
@@ -438,6 +452,14 @@ mod tests {
         );
         assert!(c.flows.iter().any(|f| f == "view:usecase/shop-customer-shop"), "{:?}", c.flows);
         assert_eq!(c.provenance, "quote");
+        // A node's card lifts its subtree's relationships to the parent level: the
+        // shop, whose children carry every edge, is never `none`.
+        let shop = entity_card(&s, &walk, "ent:shop").unwrap();
+        assert!(
+            shop.relationships.iter().any(|r| r.other == "ent:customer"),
+            "{:?}",
+            shop.relationships
+        );
         // A leaf: no inside, no children, its context is its parent's level.
         let leaf = entity_card(&s, &walk, "ent:order-item").unwrap();
         assert_eq!(leaf.inside, None);

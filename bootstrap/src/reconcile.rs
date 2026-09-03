@@ -555,6 +555,18 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     }
                 }
             }
+            // Containment counts both ways: a level under a grouping is as
+            // reachable as the grouping. Mirrors docs/compiler/compilation.md#checks.
+            if let Some(p) = store.graph.entities.get(&id).and_then(|e| e.parent.clone()) {
+                if reach.insert(p.clone()) {
+                    frontier.push(p);
+                }
+            }
+            for (cid, e) in &store.graph.entities {
+                if e.parent.as_deref() == Some(id.as_str()) && reach.insert(cid.clone()) {
+                    frontier.push(cid.clone());
+                }
+            }
         }
         for id in store.graph.entities.keys() {
             if !reach.contains(id) {
@@ -2988,6 +3000,44 @@ mod tests {
         assert_eq!(p.options.len(), 2);
         assert!(p.freeform);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Mirrors docs/compiler/compilation.md#checks: containment counts in the
+    // reachability walk, so a level under a grouping is as reachable as the grouping
+    // and a grouping is reachable through a child the roots reach.
+    #[test]
+    fn reachability_walks_containment_both_ways() {
+        let mut s = Store::default();
+        seed_doc(&mut s, "root.md", "# Shop\nThe Shop sells.\n");
+        let ent = |name: &str, parent: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            ..Default::default()
+        };
+        let mut shop = ent("Shop", Some("ent:platform"));
+        shop.mentions.push(SourceRef {
+            doc: "root.md".into(),
+            section: "/shop".into(),
+            quote: "The Shop sells.".into(),
+        });
+        s.graph.entities.insert("ent:shop".into(), shop);
+        s.graph
+            .entities
+            .insert("ent:platform".into(), ent("Platform", None));
+        s.graph
+            .entities
+            .insert("ent:cache".into(), ent("Cache", Some("ent:platform")));
+        s.graph
+            .entities
+            .insert("ent:island".into(), ent("Island", None));
+        let proj = Project {
+            roots: vec!["root.md".into()],
+            ..Default::default()
+        };
+        let f = checks(&s, &proj);
+        let hits = rules_for(&f, "unreachable-entity");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:island"]);
     }
 
     #[test]

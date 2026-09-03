@@ -165,8 +165,9 @@ Every check run journals a `checks` entry under its own generation.
   still looks normative ([coverage](#coverage)).
 - `stale-provenance`: an anchor no session addressed, a quote that fails to locate.
 - `unused-entity`: an entity with no requirements. `unreachable-entity`: an entity not
-  reachable from the declared [roots](./project-settings.md#roots) over relationships
-  and shared requirements.
+  reachable from the declared [roots](./project-settings.md#roots) over relationships,
+  shared requirements, and containment (a child through its `parent` and back), so a
+  level under a grouping is as reachable as the grouping.
 - `unstable-extraction`: a natural key deleted and recreated across recent builds
   ([flip detection](./reconciler.md#flip-detection)).
 - `duplicate-requirement`, the mechanical part: near-identical statements on one

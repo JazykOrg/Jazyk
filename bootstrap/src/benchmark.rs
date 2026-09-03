@@ -885,10 +885,12 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     crate::control::release(&proj, &proj.out, Some("generate"));
     let control = crate::control::Control::load(&proj, &proj.out);
     let board = crate::board::Board::derive(&store, &proj, &control);
+    // A parked goal is the next build's work, and the snippet is that build's
+    // session. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
     let Some(goal) = board
         .goals
         .iter()
-        .find(|g| g.id == goal_id && matches!(g.state, GoalState::Open))
+        .find(|g| g.id == goal_id && matches!(g.state, GoalState::Open | GoalState::Parked))
         .cloned()
     else {
         let open: Vec<&str> = board

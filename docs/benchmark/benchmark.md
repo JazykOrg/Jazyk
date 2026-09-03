@@ -71,7 +71,8 @@ project is never touched. The run prints the goal's outcome (resolved, failed wi
 the model's reason, or aborted), the mutations staged, the goals the commit opened,
 the sandbox path, and the transcript path under the sandbox's `benchmark/trace/`.
 
-A goal that is not open is an error listing the open goals; a goal that is not ready
+A parked goal runs as an open one (parked is the next build's work, and the snippet
+is that build's session). A goal that is neither is an error listing the open goals; a goal that is not ready
 is an error naming what blocks it (the compile goals still open in its cone, a
 release, a human). `--force` runs a blocked goal anyway, printing what it skipped
 past: readiness is scheduling, not a precondition of the session, and a GC goal

@@ -395,6 +395,25 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             });
             if !has_text && has_reasoning && empty_nudges < 2 {
                 empty_nudges += 1;
+                // The stalled reply keeps its reasoning as its message text: an
+                // OpenAI-compatible endpoint drops reasoning fields from input
+                // messages, so without this the model re-thinks from nothing and
+                // stalls again. Mirrors docs/frontends/acp.md#the-embedded-agent.
+                let reasoning = ["reasoning_content", "reasoning"]
+                    .iter()
+                    .find_map(|f| msg[*f].as_str().map(|r| r.trim().to_string()))
+                    .unwrap_or_default();
+                if let Some(last) = a.history.last_mut() {
+                    let tail: String = reasoning
+                        .chars()
+                        .rev()
+                        .take(2000)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    last["content"] = json!(format!("(my reasoning, not yet acted on) {}", tail));
+                }
                 a.history.push(json!({"role": "user", "content":
                     "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."}));
                 continue;

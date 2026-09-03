@@ -96,7 +96,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   stall, not an answer: reasoning models narrate the action they intend and stop, as
   if the thinking were visible. The loop answers with a corrective nudge naming that
   ("reasoning is not shown and does not count as acting"), at most twice per prompt,
-  before the empty reply is allowed to end it. A turn the loop cannot finish (the
+  before the empty reply is allowed to end it. The stalled reply goes into the history
+  with its reasoning as its message text, because an OpenAI-compatible endpoint drops
+  reasoning fields from input messages: without that, the model re-thinks from
+  nothing each round and stalls again; with it, it reads the plan it just made and
+  acts on it. A turn the loop cannot finish (the
   endpoint erroring past its retries) answers as a `refusal` stop with the error
   emitted as a message chunk, never as a protocol error: the client side treats an
   error response to `session/prompt` as fatal to the whole connection, and one

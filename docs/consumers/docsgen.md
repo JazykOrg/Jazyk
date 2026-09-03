@@ -19,13 +19,15 @@ and the redirect names the survivor ([mutations](../compiler/graph.md#mutations)
 
 The page, in order:
 
-- The header: the name, aliases, `stereotype`, `scope`, the `definition`, the `parent`
-  and the children as links to their pages
-  ([containment](../compiler/model/entity.md#containment)), and the `attributes` (name,
-  type, value, each with its provenance). An entity whose provenance is `derived` or
-  `decree` says so here and links to its proposal. An entity with a level (two or more
-  children) links to its [level page](#level-pages); every entity links to the level
-  page of its parent, or of the scope root when it has no parent.
+- The header: the name, aliases, `stereotype`, `scope`, one link to the entity's
+  [card](#entity-cards), the `definition`, the `parent` and the children as links to
+  their pages ([containment](../compiler/model/entity.md#containment)), and the
+  `attributes` (name, type, value, each with its provenance). An entity whose
+  provenance is `derived` or `decree` says so here and links to its proposal. An
+  entity with a level (two or more children) links to its [level page](#level-pages);
+  every entity links to the level page of its parent, or of the scope root when it has
+  no parent. The requirements documents link among themselves (parent, children, ties,
+  relationships); the card is the one link out of that web.
 - `## Diagrams`: the rendered views the entity appears in
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
 - `## Requirements`: one block per requirement that names the entity, under a `###`
@@ -77,17 +79,17 @@ the `.svg`; it never requests a `.png`. E.g.:
 
 ![Commerce](../diagrams/class/commerce.svg)
 
-`view:class/commerce` (class, 12 members): [Customer](./customer.md),
-[Shopping Cart](./shopping-cart.md), [Order Item](./order-item.md), ... · [source](../diagrams/class/commerce.puml)
+`view:class/commerce` (class, 12 members): [Customer](./entities/customer.md),
+[Shopping Cart](./entities/shopping-cart.md), [Order Item](./entities/order-item.md), ... · [source](../diagrams/class/commerce.puml) · [page](./diagrams/class/commerce.md)
 
 ![Order](../diagrams/state/order.svg)
 
-`view:state/order` (state, 3 states: placed, paid, held) · [source](../diagrams/state/order.puml)
+`view:state/order` (state, 3 states: placed, paid, held) · [source](../diagrams/state/order.puml) · [page](./diagrams/state/order.md)
 
 ![Customer: Orders](../diagrams/sequence/customer-orders.svg)
 
-`view:sequence/customer-orders` (sequence, 2 steps): [Customer](./customer.md),
-[Order Service](./order-service.md), [Inventory Service](./inventory-service.md) · [source](../diagrams/sequence/customer-orders.puml)
+`view:sequence/customer-orders` (sequence, 2 steps): [Customer](./entities/customer.md),
+[Order Service](./entities/order-service.md), [Inventory Service](./entities/inventory-service.md) · [source](../diagrams/sequence/customer-orders.puml) · [page](./diagrams/sequence/customer-orders.md)
 ```
 
 The views an entity page embeds, in this order
@@ -107,12 +109,14 @@ The views an entity page embeds, in this order
   instance or a type with instances.
 - Every other curated view that lists the entity in `members` or `collapse`.
 
-Each image carries a caption line: the view id, its kind and member count, the member
-entities as links to their pages, and a link to the `.puml` source. The links are the
-cross-links between entity pages: a reader walks from one entity to its neighbors through
-the views they share. The [LSP](../frontends/lsp.md#capabilities) hover shows one view,
-the most relevant by its own deterministic rule, and links to the page, where every
-relevant view is embedded.
+Each image carries a caption line: the view id, its kind and member count, the drawn
+entities as links to their [cards](#entity-cards) (a flow view's participants as the
+diagram lifts them), a link to the `.puml` source, and a link to the view's
+[diagram page](#diagram-pages). The caption is the same on every page that embeds a
+view (a requirements document, a level page, a card, the index), and its links all
+point into the walk: a reader moves from one entity to its neighbors through the views
+they share. The [LSP](../frontends/lsp.md#capabilities) hover shows one view, the most
+relevant by its own deterministic rule, and links to the card.
 
 An over-limit view renders with auto-collapse and the renderer's note in its title
 ([over-limit views](../compiler/diagrams.md#over-limit-views)); the caption names the
@@ -140,19 +144,22 @@ pruned like an entity page.
 The page, in order:
 
 - The breadcrumb: the chain from the scope root down to the node, each ancestor a link
-  to its level page, the node itself last and unlinked. This is the link up.
+  to its level page (an ancestor with one child has no level page and links to its
+  [card](#entity-cards) instead), the node itself last and unlinked. This is the link
+  up.
 - The header: the node's name, `stereotype`, and `definition` (the scope root: the
-  scope name), with a link to the node's entity page. A node with `derived` provenance
-  (a grouping) says so and links to its ratification proposal.
+  scope name), with a link to the node's card and one to its requirements document. A
+  node with `derived` provenance (a grouping) says so and links to its ratification
+  proposal.
 - `## Diagrams`: the node's [level views](../compiler/diagrams.md#level-views)
   embedded as on entity pages: the structural level view first, then the flow views
   per level (`use-case` and `sequence`), each with the caption line described above.
-  The embedded `.svg` carries the renderer's drill-down anchors between diagrams
-  ([drill-down](../compiler/diagrams.md#drill-down)); the links between pages are the
-  members list below.
+  The embedded `.svg` carries the renderer's drill-down anchors to the cards
+  ([drill-down](../compiler/diagrams.md#drill-down)); the links between level pages
+  are the members list below.
 - `## Members`: the direct children in document order, one line each: the name as a
-  link to its entity page, its `stereotype`, its `definition`, and, when the member has
-  a level of its own, a link to its level page with its child count. This is the link
+  link to its card, its `stereotype`, its `definition`, and, when the member has a
+  level of its own, a link to its level page with its child count. This is the link
   down. An outside entity a level view includes through a lifted edge is not a member;
   it appears in the diagram and its caption only.
 
@@ -190,7 +197,10 @@ The card, in order:
 - `Relationships`: one line per other entity: the relationship type as the
   [relationship](../compiler/model/relationship.md) summarizes it, the direction, the
   other entity as a link to its card, and the number of contributing requirements.
-  This is the link sideways along the edges.
+  The lines are lifted as the in-context diagram lifts its arrows: a grouping's card
+  lists the relationships its subtree carries, each other end lifted to the member
+  of the parent's level it sits under, so a grouping is never `none` while its box
+  has arrows. This is the link sideways along the edges.
 - `Flows`: the flow views at the parent's level in which the entity is a drawn
   participant, each a link to its diagram page with its step count.
 - `Siblings`: the other children of the same parent, each a link to its card, with a

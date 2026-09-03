@@ -619,7 +619,7 @@ fn main() {
             let dr = render::render_all(&store, &out);
             let n = docsgen::write_all(&store, &gen::GenSettings::resolve(&proj));
             let mut line = format!(
-                "jazyk: docsgen: {} requirements document(s) in {}; diagrams: {} drawn, {} unchanged",
+                "jazyk: docsgen: {} page(s) in {}; diagrams: {} drawn, {} unchanged",
                 n,
                 out.join("docsgen").display(),
                 dr.rendered.len(),

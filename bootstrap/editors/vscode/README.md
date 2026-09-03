@@ -10,6 +10,23 @@ The server is read-only. It never compiles. Diagnostics refresh when `jazyk comp
 the server reloads the graph and republishes when it moves. The project root is found by
 walking up to a `jazyk.toml`.
 
+## Hover and the walk
+
+Hovering an entity name shows its card in short, read from the graph: the name with its
+stereotype and definition, where it sits (the breadcrumb), the diagram of the level it is
+used in (the `.svg` the last build rendered, captioned with the view id), an `Inside`
+link to its own level's diagram page with the child count, and one line of links: the
+card, the requirements document, the level page. A derived grouping names its pending
+proposal. Hovering inside a requirement's sentence shows the requirement card instead
+(the statement, the code, the test).
+
+The links to the walk's pages (cards under `jazyk-out/docsgen/entities/`, diagram pages
+under `docsgen/diagrams/`, level pages under `docsgen/levels/`) open in the markdown
+preview to the side, so the card's own links click through to levels and diagrams. The
+requirements document link opens the file at the requirement's heading. Go to Type
+Definition (the editor's context menu or the command palette) on an entity opens its
+card; Go to Definition still jumps to the defining sentence in the prose.
+
 ## Requirements
 
 A built `jazyk` binary. With no setting, the extension looks for

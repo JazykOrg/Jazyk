@@ -409,8 +409,6 @@ struct Arrow {
 struct Structure {
     // The drawn entities, in member order.
     shown: Vec<String>,
-    // The drawn entities hiding a subtree.
-    collapsed: BTreeSet<String>,
     arrows: Vec<Arrow>,
 }
 
@@ -428,11 +426,6 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
     let shown: Vec<String> = members
         .iter()
         .filter(|m| rep(m).as_deref() == Some(m.as_str()))
-        .cloned()
-        .collect();
-    let collapsed: BTreeSet<String> = shown
-        .iter()
-        .filter(|s| collapse.contains(*s))
         .cloned()
         .collect();
     let mut groups: BTreeMap<(String, String), Vec<&Contribution>> = BTreeMap::new();
@@ -475,11 +468,7 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
     arrows.sort_by(|x, y| {
         (pair_key(&x.a, &x.b), &x.a, &x.b).cmp(&(pair_key(&y.a, &y.b), &y.a, &y.b))
     });
-    Structure {
-        shown,
-        collapsed,
-        arrows,
-    }
+    Structure { shown, arrows }
 }
 
 // ---- over-limit views ----
@@ -594,63 +583,20 @@ fn title_line(view: &View, note: Option<&str>) -> Option<String> {
 
 // ---- drill-down links ----
 
-// The PlantUML hyperlink to a view's rendering, relative under diagrams/: from any
-// diagrams/<kind>/<slug>.svg, `../<kind>/<slug>.svg` is the sibling tree.
-// Mirrors docs/compiler/diagrams.md#output-layout.
-fn view_link(view_id: &str) -> String {
+// The PlantUML hyperlink every rendered entity carries, to its card: from any
+// diagrams/<kind>/<slug>.svg, `../../docsgen/entities/<slug>.md` is the card under
+// the same out directory. One link per node, collapsed or not; the card decides the
+// rest. A message carries none. Mirrors docs/compiler/diagrams.md#drill-down.
+pub fn card_link(id: &str) -> String {
     format!(
-        "[[../{}.svg]]",
-        view_id.strip_prefix("view:").unwrap_or(view_id)
+        "[[../../docsgen/entities/{}.md]]",
+        crate::derive::entity_slug(id)
     )
 }
 
-// The link a rendered member carries down to its level view, when its entity has one
-// and it is not the view being drawn. Mirrors docs/compiler/diagrams.md#drill-down.
-fn level_link(scene: &Scene, id: &str) -> Option<String> {
-    crate::derive::level_view_id(scene.store, id)
-        .filter(|v| v != scene.id)
-        .map(|v| view_link(&v))
-}
-
-// The view of the same kind detailing a collapsed node: the one whose query.parent is
-// the node, else the one whose members all sit below the node.
-// Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
-fn sub_view_link(scene: &Scene, node: &str) -> Option<String> {
-    let store = scene.store;
-    let candidates = || {
-        store
-            .graph
-            .views
-            .iter()
-            .filter(|(id, v)| *id != scene.id && v.kind == scene.view.kind)
-    };
-    let by_query = candidates().find(|(_, v)| {
-        v.query
-            .as_ref()
-            .and_then(|q| q.parent.as_deref())
-            .is_some_and(|p| store.resolve_id(p) == node)
-    });
-    let by_members = || {
-        candidates().find(|(_, v)| {
-            !v.members.is_empty()
-                && v.members
-                    .iter()
-                    .all(|m| is_below(store, node, store.resolve_id(m)))
-        })
-    };
-    by_query.or_else(by_members).map(|(id, _)| view_link(id))
-}
-
-// A member links to its level view whether collapsed or not; a collapsed node without
-// one links to the sub-view detailing it, and a collapsed node with both keeps the
-// curated sub-view's precedence. Mirrors docs/compiler/diagrams.md#drill-down.
-fn link_suffix(scene: &Scene, st: &Structure, node: &str) -> String {
-    let link = if st.collapsed.contains(node) {
-        sub_view_link(scene, node).or_else(|| level_link(scene, node))
-    } else {
-        level_link(scene, node)
-    };
-    link.map(|l| format!(" {}", l)).unwrap_or_default()
+// The suffix an element declaration carries: a space and the card link.
+fn link_suffix(id: &str) -> String {
+    format!(" {}", card_link(id))
 }
 
 // The links on element declarations, taken off the text: `(line without the link,
@@ -694,28 +640,57 @@ fn xml_attr(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-// Every `<g class="entity" data-qualified-name="<key>" ...>...</g>` the crate drew for a
-// linked element, wrapped in `<a href>`: the whole shape is the click target, as the
-// official renderer draws it. An element the crate did not draw under that key keeps
-// no link; nothing else in the document changes.
+// The value of an attribute in one opening tag.
+fn attr_value(tag: &str, name: &str) -> Option<String> {
+    let marker = format!(" {}=\"", name);
+    let rest = &tag[tag.find(&marker)? + marker.len()..];
+    Some(rest[..rest.find('"')?].to_string())
+}
+
+// Every group the crate drew for a linked element (`class="entity"` on a structural
+// or use case element, `participant participant-head` and `-tail` on a sequence
+// participant's two boxes), keyed by its `data-qualified-name`, wrapped in `<a href>`:
+// the whole shape is the click target, as the official renderer draws it. An element
+// the crate did not draw under that key keeps no link; nothing else in the document
+// changes.
 fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
+    if links.is_empty() {
+        return svg.to_string();
+    }
     let mut out = svg.to_string();
-    for (key, href) in links {
-        let marker = format!(
-            "<g class=\"entity\" data-qualified-name=\"{}\"",
-            xml_attr(key)
-        );
-        let mut from = 0;
-        while let Some(rel) = out[from..].find(&marker) {
-            let start = from + rel;
-            let Some(end) = group_end(&out, start) else {
-                break;
-            };
-            let anchor = format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href));
-            out.insert_str(end, "</a>");
-            out.insert_str(start, &anchor);
-            from = end + anchor.len() + "</a>".len();
+    let mut from = 0;
+    while let Some(rel) = out[from..].find("<g ") {
+        let start = from + rel;
+        from = start + "<g ".len();
+        let Some(tag_len) = out[start..].find('>') else {
+            break;
+        };
+        let tag = out[start..=start + tag_len].to_string();
+        let linked = match attr_value(&tag, "class").as_deref() {
+            Some("entity") => true,
+            Some(c) => c.starts_with("participant participant-"),
+            None => false,
+        };
+        if !linked {
+            continue;
         }
+        let Some(key) = attr_value(&tag, "data-qualified-name") else {
+            continue;
+        };
+        let Some(href) = links
+            .iter()
+            .find(|(k, _)| xml_attr(k) == key)
+            .map(|(_, h)| h)
+        else {
+            continue;
+        };
+        let Some(end) = group_end(&out, start) else {
+            break;
+        };
+        let anchor = format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href));
+        out.insert_str(end, "</a>");
+        out.insert_str(start, &anchor);
+        from = start + anchor.len() + "<g ".len();
     }
     out
 }
@@ -742,8 +717,8 @@ fn group_end(svg: &str, start: usize) -> Option<usize> {
     None
 }
 
-// `keyword "Name" as alias [<<stereotype>>] [[[link]]]`
-fn declare(scene: &Scene, st: &Structure, keyword: &str, id: &str, stereotype: bool) -> String {
+// `keyword "Name" as alias [<<stereotype>>] [[card link]]`
+fn declare(scene: &Scene, keyword: &str, id: &str, stereotype: bool) -> String {
     let e = scene.entity(id);
     let mut line = format!("{} {} as {}", keyword, quoted(&e.name), alias_of(id));
     // The stereotype rides on the element unless it is the keyword it became (a
@@ -756,7 +731,7 @@ fn declare(scene: &Scene, st: &Structure, keyword: &str, id: &str, stereotype: b
             }
         }
     }
-    line.push_str(&link_suffix(scene, st, id));
+    line.push_str(&link_suffix(id));
     line
 }
 
@@ -823,7 +798,7 @@ fn emit_class(scene: &Scene) -> String {
     let f = frame(scene);
     let mut out = Vec::new();
     for id in &f.st.shown {
-        let line = declare(scene, &f.st, "class", id, true);
+        let line = declare(scene, "class", id, true);
         let body = scene
             .entity(id)
             .attributes
@@ -850,7 +825,7 @@ fn emit_object(scene: &Scene) -> String {
             None => oneline(&e.name),
         };
         let mut line = format!("object {} as {}", quoted(&label), alias_of(id));
-        line.push_str(&link_suffix(scene, &f.st, id));
+        line.push_str(&link_suffix(id));
         let body = e
             .attributes
             .iter()
@@ -898,7 +873,7 @@ fn emit_package(scene: &Scene) -> String {
         if let Some(scope) = scene.view.query.as_ref().and_then(|q| q.scope.as_deref()) {
             out.push(format!("package {} {{", quoted(scope)));
             for s in shown {
-                out.push(format!("  {}", declare(scene, &f.st, "class", s, true)));
+                out.push(format!("  {}", declare(scene, "class", s, true)));
             }
             out.push("}".to_string());
             return document(title_line(scene.view, f.note.as_deref()), out);
@@ -910,33 +885,27 @@ fn emit_package(scene: &Scene) -> String {
         id: &str,
         children: &BTreeMap<String, Vec<String>>,
         scene: &Scene,
-        st: &Structure,
     ) {
         let pad = "  ".repeat(indent);
         let name = quoted(&scene.entity(id).name);
         match children.get(id) {
             Some(kids) if !kids.is_empty() => {
-                out.push(format!("{}package {} {{", pad, name));
+                out.push(format!("{}package {}{} {{", pad, name, link_suffix(id)));
                 for k in kids {
                     if children.get(k).is_some_and(|c| !c.is_empty()) {
-                        emit_node(out, indent + 1, k, children, scene, st);
+                        emit_node(out, indent + 1, k, children, scene);
                     } else {
-                        out.push(format!("{}  {}", pad, declare(scene, st, "class", k, true)));
+                        out.push(format!("{}  {}", pad, declare(scene, "class", k, true)));
                     }
                 }
                 out.push(format!("{}}}", pad));
             }
             // Never an empty body: the one-line form.
-            _ => out.push(format!(
-                "{}package {}{}",
-                pad,
-                name,
-                link_suffix(scene, st, id)
-            )),
+            _ => out.push(format!("{}package {}{}", pad, name, link_suffix(id))),
         }
     }
     for r in &roots {
-        emit_node(&mut out, 0, r, &children, scene, &f.st);
+        emit_node(&mut out, 0, r, &children, scene);
     }
     // Arrows between top-level packages only: everything lifts to its root.
     let root_set: BTreeSet<String> = roots.iter().cloned().collect();
@@ -959,7 +928,7 @@ fn emit_component(scene: &Scene) -> String {
         } else {
             "component"
         };
-        out.push(declare(scene, &f.st, keyword, id, true));
+        out.push(declare(scene, keyword, id, true));
     }
     for a in &f.st.arrows {
         let to_interface = scene.labeled(&a.b, "interface");
@@ -993,16 +962,27 @@ fn emit_composite(scene: &Scene) -> String {
         .partition(|o| is_below(store, &boundary, o));
     let mut out = Vec::new();
     out.push(format!(
-        "component {} as {} {{",
+        "component {} as {}{} {{",
         quoted(&scene.name(&boundary)),
-        alias_of(&boundary)
+        alias_of(&boundary),
+        link_suffix(&boundary)
     ));
     for p in &parts {
-        out.push(format!("  [{}] as {}", scene.name(p), alias_of(p)));
+        out.push(format!(
+            "  [{}] as {}{}",
+            scene.name(p),
+            alias_of(p),
+            link_suffix(p)
+        ));
     }
     out.push("}".to_string());
     for o in &outside {
-        out.push(format!("[{}] as {}", scene.name(o), alias_of(o)));
+        out.push(format!(
+            "[{}] as {}{}",
+            scene.name(o),
+            alias_of(o),
+            link_suffix(o)
+        ));
     }
     for a in &f.st.arrows {
         if a.a == boundary || a.b == boundary {
@@ -1046,15 +1026,12 @@ fn emit_deployment(scene: &Scene) -> String {
             identifier(&label.to_lowercase(), "p_")
         ));
         for id in arts {
-            out.push(format!(
-                "  {}",
-                declare(scene, &f.st, "artifact", id, false)
-            ));
+            out.push(format!("  {}", declare(scene, "artifact", id, false)));
         }
         out.push("}".to_string());
     }
     for id in &bare {
-        out.push(declare(scene, &f.st, "artifact", id, false));
+        out.push(declare(scene, "artifact", id, false));
     }
     out.extend(arrow_lines(&f.st.arrows));
     document(title_line(scene.view, f.note.as_deref()), out)
@@ -1253,16 +1230,13 @@ fn emit_use_case(scene: &Scene) -> String {
     let uc = use_case_alias(scene);
     let mut out = Vec::new();
     let actors = flow_actors(scene, &msgs);
-    // An actor holding a level of its own links down to it like any rendered member.
+    // An actor links to its card like any rendered entity.
     for a in &actors {
-        let link = level_link(scene, a)
-            .map(|l| format!(" {}", l))
-            .unwrap_or_default();
         out.push(format!(
             "actor {} as {}{}",
             quoted(&scene.name(a)),
             alias_of(a),
-            link
+            link_suffix(a)
         ));
     }
     out.push(format!("usecase {} as {}", quoted(&scene.view.title), uc));
@@ -1387,11 +1361,13 @@ fn emit_sequence(scene: &Scene) -> String {
         } else {
             "participant"
         };
+        // A participant links to its card; a message carries no link.
         out.push(format!(
-            "{} {} as {}",
+            "{} {} as {}{}",
             keyword,
             quoted(&scene.name(p)),
-            alias_of(p)
+            alias_of(p),
+            link_suffix(p)
         ));
     }
     for m in &msgs {
@@ -1417,10 +1393,11 @@ fn emit_communication(scene: &Scene) -> String {
             "rectangle"
         };
         out.push(format!(
-            "{} {} as {}",
+            "{} {} as {}{}",
             keyword,
             quoted(&scene.name(p)),
-            alias_of(p)
+            alias_of(p),
+            link_suffix(p)
         ));
     }
     for (i, m) in msgs.iter().enumerate() {
@@ -2175,15 +2152,16 @@ mod tests {
             "{}",
             puml
         );
+        // Every element links to its card, a level below it or not.
         assert!(
             puml.contains(
-                "component \"Order Service\" as order_service <<service>> [[../component/order-service.svg]]\n"
+                "component \"Order Service\" as order_service <<service>> [[../../docsgen/entities/order-service.md]]\n"
             ),
             "{}",
             puml
         );
         assert!(
-            puml.contains("component \"Inventory Service\" as inventory_service <<service>>\n"),
+            puml.contains("component \"Inventory Service\" as inventory_service <<service>> [[../../docsgen/entities/inventory-service.md]]\n"),
             "{}",
             puml
         );
@@ -2474,7 +2452,7 @@ mod tests {
         };
         let puml = emit(&s, "view:class/leaves", &collapsed);
         assert!(
-            puml.contains("class \"A\" as a [[../class/a-parts.svg]]"),
+            puml.contains("class \"A\" as a [[../../docsgen/entities/a.md]]"),
             "{}",
             puml
         );
@@ -2495,30 +2473,39 @@ mod tests {
         s
     }
 
+    // Mirrors docs/compiler/diagrams.md#drill-down: every rendered entity links to
+    // its card, a level below it or not, in its own level view too.
     #[test]
-    fn structural_emitters_link_members_with_level_views() {
+    fn structural_emitters_link_every_member_to_its_card() {
         let s = level_tree();
         let a_view = crate::derive::level_view_id(&s, "ent:a").expect("two children make a level");
         assert!(crate::derive::level_view_id(&s, "ent:b").is_none());
-        let link = view_link(&a_view);
+        assert_eq!(card_link("ent:a"), "[[../../docsgen/entities/a.md]]");
         for kind in ["class", "component"] {
             let v = view(kind, "System", &["ent:a", "ent:b"]);
             let puml = emit(&s, &format!("view:{}/system", kind), &v);
             assert!(
-                puml.contains(&format!("{} \"A\" as a {}", kind, link)),
+                puml.contains(&format!("{} \"A\" as a {}\n", kind, card_link("ent:a"))),
                 "{}",
                 puml
             );
-            assert!(puml.contains(&format!("{} \"B\" as b\n", kind)), "{}", puml);
-            assert_eq!(puml.matches("[[").count(), 1, "{}", puml);
+            assert!(
+                puml.contains(&format!("{} \"B\" as b {}\n", kind, card_link("ent:b"))),
+                "{}",
+                puml
+            );
+            assert_eq!(puml.matches("[[").count(), 2, "{}", puml);
+            assert!(!puml.contains(".svg]]"), "{}", puml);
         }
-        // A view never links to itself, and a leaf carries nothing.
         let own = view("class", "A", &["ent:a", "ent:a1", "ent:a2"]);
-        assert!(!emit(&s, &a_view, &own).contains("[["));
+        let puml = emit(&s, &a_view, &own);
+        assert!(puml.contains(&card_link("ent:a1")), "{}", puml);
+        assert_eq!(puml.matches("[[").count(), 3, "{}", puml);
     }
 
+    // A flow participant links to its card the same way; a message carries none.
     #[test]
-    fn use_case_actors_link_to_their_level() {
+    fn flow_participants_link_to_their_cards() {
         let mut s = tree_store();
         for id in ["ent:a", "ent:b"] {
             s.graph.entities.get_mut(id).unwrap().stereotype = Some("actor".into());
@@ -2526,27 +2513,59 @@ mod tests {
         add_req(&mut s, "req:t-1", "ent:a", "ent:b1", "dependency");
         add_req(&mut s, "req:t-2", "ent:b", "ent:a1", "dependency");
         recompute(&mut s, "g1", &mut RecordBatch::new(1));
-        let link = view_link(&crate::derive::level_view_id(&s, "ent:a").unwrap());
         let v = view("use-case", "Flow", &["req:t-1", "req:t-2"]);
         let puml = emit(&s, "view:usecase/flow", &v);
         assert!(
-            puml.contains(&format!("actor \"A\" as a {}\n", link)),
+            puml.contains(&format!("actor \"A\" as a {}\n", card_link("ent:a"))),
             "{}",
             puml
         );
-        assert!(puml.contains("actor \"B\" as b\n"), "{}", puml);
+        assert!(
+            puml.contains(&format!("actor \"B\" as b {}\n", card_link("ent:b"))),
+            "{}",
+            puml
+        );
         // The in-process crate would split a linked actor in two: one actor per member.
         let svg = in_process_svg(&puml).unwrap();
         assert_eq!(svg.matches("class=\"entity\"").count(), 3, "{}", svg);
-        assert!(svg.contains("xlink:href=\"../"), "{}", svg);
-        assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
+        assert!(
+            svg.contains("xlink:href=\"../../docsgen/entities/a.md\""),
+            "{}",
+            svg
+        );
+        assert_eq!(svg.matches("<a ").count(), 2, "{}", svg);
+
+        let seq = view("sequence", "Flow", &["req:t-1", "req:t-2"]);
+        let puml = emit(&s, "view:sequence/flow", &seq);
+        assert!(
+            puml.contains(&format!("actor \"A\" as a {}\n", card_link("ent:a"))),
+            "{}",
+            puml
+        );
+        assert!(
+            puml.contains(&format!(
+                "participant \"B1\" as b1 {}\n",
+                card_link("ent:b1")
+            )),
+            "{}",
+            puml
+        );
+        for line in puml.lines().filter(|l| l.contains(" -> ")) {
+            assert!(!line.contains("[["), "a message carries no link: {}", line);
+        }
+        let svg = in_process_svg(&puml).unwrap();
+        assert!(
+            svg.contains("xlink:href=\"../../docsgen/entities/b1.md\""),
+            "{}",
+            svg
+        );
+        assert!(!svg.contains("[["), "{}", svg);
     }
 
     #[test]
     fn in_process_renderings_carry_anchors_for_links() {
         let s = level_tree();
-        let a_view = crate::derive::level_view_id(&s, "ent:a").unwrap();
-        let href = format!("../{}.svg", &a_view["view:".len()..]);
+        let href = "../../docsgen/entities/a.md";
         for kind in ["class", "component"] {
             let v = view(kind, "System", &["ent:a", "ent:b"]);
             let puml = emit(&s, &format!("view:{}/system", kind), &v);
@@ -2557,8 +2576,8 @@ mod tests {
                 href
             );
             assert_eq!(svg.matches(&anchor).count(), 1, "{}", svg);
-            assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
-            assert_eq!(svg.matches("</a>").count(), 1, "{}", svg);
+            assert_eq!(svg.matches("<a ").count(), 2, "{}", svg);
+            assert_eq!(svg.matches("</a>").count(), 2, "{}", svg);
             // The label survives the link: the crate alone would draw the alias.
             assert!(svg.contains(">A</text>"), "{}", svg);
             assert!(!svg.contains(">a</text>"), "{}", svg);
@@ -2794,9 +2813,9 @@ mod tests {
         assert!(puml.starts_with("@startuml\n"));
         // Every top-level member is drawn by its element group, except the actor: the
         // in-process crate draws no actor in a component diagram (a renderer gap the
-        // official binary does not share, so the emitter keeps declaring it). The
-        // shop, which holds a level, is the one anchor; the customer beside it is a
-        // leaf and would carry none.
+        // official binary does not share, so the emitter keeps declaring it). Every
+        // element links to its card; the anchors are the three the crate drew (the
+        // shop, Ana, Ana's cart), the customer's link having nothing to anchor to.
         let members = &s.graph.views[&root].members;
         assert!(members.contains(&"ent:shop".to_string()), "{:?}", members);
         assert!(
@@ -2805,7 +2824,7 @@ mod tests {
             members
         );
         assert!(
-            puml.contains("actor \"Customer\" as customer\n"),
+            puml.contains("actor \"Customer\" as customer [[../../docsgen/entities/customer.md]]\n"),
             "{}",
             puml
         );
@@ -2816,12 +2835,13 @@ mod tests {
         assert!(svg.contains(">Shop</text>"), "{}", svg);
         assert!(
             svg.contains(
-                "<a href=\"../component/shop.svg\" xlink:href=\"../component/shop.svg\"><g class=\"entity\" data-qualified-name=\"shop\""
+                "<a href=\"../../docsgen/entities/shop.md\" xlink:href=\"../../docsgen/entities/shop.md\"><g class=\"entity\" data-qualified-name=\"shop\""
             ),
             "{}",
             svg
         );
-        assert_eq!(svg.matches("<a ").count(), 1, "{}", svg);
+        assert_eq!(svg.matches("<a ").count(), 3, "{}", svg);
+        assert!(!svg.contains("entities/customer.md"), "{}", svg);
         assert!(render_view(&s, "view:class/nope").is_err());
         assert!(render_svg("@startuml\nthis is not plantuml at all ((\n@enduml\n").is_err());
         // A defect inside the crate (it measures edge labels byte by byte, so a

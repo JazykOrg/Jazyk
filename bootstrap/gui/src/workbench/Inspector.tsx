@@ -3,7 +3,7 @@
 // selection it shows the open center item's ties. Every rendered element walks to
 // the sentence behind it: an arrow to its relationship, the relationship to its
 // requirements, each requirement to its quote.
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { get, type VerifyRow } from '../lib/api'
 import { useContextPack, useExplain, useGraph, useJournal, useMatrix, useView } from '../lib/queries'
@@ -12,6 +12,7 @@ import { delivHref } from '../lib/nav'
 import { useResolveId } from '../components/NodeLink'
 import NodeLink from '../components/NodeLink'
 import DiagramSvg from '../components/DiagramSvg'
+import ExploreCard from '../components/ExploreCard'
 import SectionLink from '../components/SectionLink'
 import { VerifyChip } from '../components/Chip'
 import {
@@ -307,6 +308,9 @@ function NodeDetail({ id }: { id: string }) {
     )
     return (
       <>
+        {/* The walk first: the card with its links; the long read follows. */}
+        <ExploreCard id={id} />
+        <div id="xp-detail" />
         <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} editable />
         {children.length > 0 && (
           <>
@@ -502,7 +506,7 @@ function DocTies({ path }: { path: string }) {
 }
 
 export default function Inspector({
-  node,
+  node: selected,
   openNode,
   close,
 }: {
@@ -511,6 +515,10 @@ export default function Inspector({
   close: () => void
 }) {
   const loc = useLocation()
+  const [sp] = useSearchParams()
+  // The explorer's position opens the inspector on its card when nothing else is
+  // selected, so a shared `?entity=` URL lands on the walk (docs/frontends/gui.md#explore).
+  const node = selected ?? sp.get('entity')
   const resolved = useResolveId(node ?? '')
   void openNode
 

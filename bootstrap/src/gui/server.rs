@@ -1,7 +1,8 @@
 // Router assembly, session-token check, bind with port fallback, graceful shutdown.
 use super::state::SharedState;
 use super::{
-    api, assets, board_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, views_api,
+    api, assets, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
+    views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -52,9 +53,11 @@ pub fn router(st: SharedState) -> Router {
         .route("/ripple", get(board_api::ripple))
         .route("/views", get(views_api::views))
         .route("/views/{id}", get(views_api::view))
+        .route("/views/{id}/page", get(card_api::view_page_handler))
         .route("/tree", get(views_api::tree))
         .route("/facts/{id}/edit", post(facts::edit_fact))
         .route("/entities/{id}", get(api::entity))
+        .route("/entities/{id}/card", get(card_api::entity_card_handler))
         .route("/requirements/{id}", get(api::requirement))
         .route("/search", get(api::search))
         .route("/context", get(api::context))

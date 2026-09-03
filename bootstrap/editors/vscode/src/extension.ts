@@ -93,6 +93,19 @@ async function startClient(): Promise<void> {
         vscode.workspace.createFileSystemWatcher('**/jazyk-out/status.yaml'),
       ],
     },
+    middleware: {
+      // The server links the walk's pages as plain file:// URIs so any client
+      // navigates; here they open in the markdown preview beside the document, where
+      // the card's relative links click through to levels and diagrams.
+      provideHover: async (document, position, token, next) => {
+        const hover = await next(document, position, token);
+        if (!hover) {
+          return hover;
+        }
+        hover.contents = hover.contents.map(previewWalkLinks);
+        return hover;
+      },
+    },
   };
 
   client = new LanguageClient('jazyk', 'Jazyk', serverOptions, clientOptions);
@@ -112,6 +125,36 @@ export async function deactivate(): Promise<void> {
     await client.stop();
     client = undefined;
   }
+}
+
+// A markdown link to a walk page under <out>/docsgen/: an entity card
+// (entities/), a diagram page (diagrams/<kind>/), or a level page (levels/). The
+// requirements document sits directly under docsgen/ and keeps its file link, which
+// lands on the heading's line. Mirrors docs/frontends/lsp.md#capabilities.
+const WALK_PAGE_LINK =
+  /\]\((file:\/\/[^)\s]*\/docsgen\/(?:entities|diagrams|levels)\/[^)\s]+\.md)\)/g;
+
+// Rewrite the walk page links of one hover block into command links that open the
+// page in the markdown preview to the side. Images and every other link stay as the
+// server sent them; the block is trusted for that one command only.
+function previewWalkLinks(
+  block: vscode.MarkdownString | vscode.MarkedString
+): vscode.MarkdownString | vscode.MarkedString {
+  if (!(block instanceof vscode.MarkdownString)) {
+    return block;
+  }
+  const value = block.value.replace(WALK_PAGE_LINK, (_match, href: string) => {
+    const args = encodeURIComponent(JSON.stringify([vscode.Uri.parse(href)]));
+    return `](command:markdown.showPreviewToSide?${args})`;
+  });
+  if (value === block.value) {
+    return block;
+  }
+  const out = new vscode.MarkdownString(value, block.supportThemeIcons);
+  out.isTrusted = { enabledCommands: ['markdown.showPreviewToSide'] };
+  out.supportHtml = block.supportHtml;
+  out.baseUri = block.baseUri;
+  return out;
 }
 
 // Resolution order: an explicit setting wins; otherwise prefer the workspace's own

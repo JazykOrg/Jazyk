@@ -78,6 +78,12 @@ export function delivHref(path: string, site?: string, line?: number): string {
   return `/files/deliverable/${path}${qs ? `?${qs}` : ''}`
 }
 
+// A file under the out directory, shown read-only in the center
+// (docs/frontends/gui.md#markdown-preview).
+export function outHref(path: string): string {
+  return `/files/out/${path}`
+}
+
 export function useOpenActivity(): (run?: string) => void {
   const navigate = useNavigate()
   const loc = useLocation()

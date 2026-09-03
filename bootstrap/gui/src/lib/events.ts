@@ -76,7 +76,8 @@ function dispatch(qc: QueryClient, ev: WireEvent) {
   switch (ev.type) {
     case 'store.generation': {
       app.setLastCommit(ev.generation as number)
-      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain'])
+      // 'out': the generated pages and renderings rewrite on every commit.
+      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out'])
         qc.invalidateQueries({ queryKey: [key] })
       qc.invalidateQueries({ queryKey: ['node'] })
       break

@@ -313,6 +313,8 @@ interface Props {
   baseline?: string | null
   diffMode?: boolean
   onDirty: (dirty: boolean) => void
+  // The whole text after every change and on every open, for the live preview.
+  onText?: (text: string) => void
   onNavigate: (path: string, line?: number) => void
   onOpenLink: (target: LinkTarget) => void
   onOpenNode?: (id: string) => void
@@ -611,6 +613,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       const text = u.state.doc.toString()
       propsRef.current.lsp.didChange(uri, text)
       propsRef.current.onDirty(text !== baselines.current.get(uri))
+      propsRef.current.onText?.(text)
       scheduleDiffMarks()
     })
 
@@ -716,6 +719,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     openedUri.current = uri
     view.setState(state)
     propsRef.current.onDirty(view.state.doc.toString() !== baselines.current.get(uri))
+    propsRef.current.onText?.(view.state.doc.toString())
     refreshOverlays(view, uri)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.root, props.path])
@@ -812,6 +816,7 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
         if (view.state.doc.toString() !== text)
           view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
         propsRef.current.onDirty(false)
+        propsRef.current.onText?.(text)
       },
       markSaved: () => {
         const view = viewRef.current

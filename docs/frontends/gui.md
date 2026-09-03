@@ -255,6 +255,23 @@ Deliverable:
   when generation never rewrote the file. Reads are confined to the baseline
   directory.
 
+The out directory:
+
+- `GET /api/out/file?path=`: one file under the out directory, as its bytes with the
+  content type its extension names (`image/svg+xml` for `.svg`, `image/png` for
+  `.png`, `text/markdown` for `.md`, `text/plain` for `.puml`, `.yaml`, `.txt`,
+  `.json`, and `.jsonl`, `application/octet-stream` otherwise). Read-only, no write
+  verb. The path is relative to the out directory and validated: no absolute path,
+  no traversal, no hidden component, no symlink escape; a path that leaves the out
+  directory is refused with `400`, a missing file is `404`. This is what the
+  [markdown preview](#markdown-preview) loads the generated pages from and what its
+  inline images point at: an image element carries no bearer header, so the `token`
+  query parameter authorizes it.
+- `GET /api/out/list?path=`: the files under one directory of the out directory,
+  recursively, each with its path (relative to the out directory) and size, hidden
+  entries skipped. The same validation as the file read. The explorer lists
+  `docsgen/` with it.
+
 Diagnostics:
 
 - `POST /api/diagnostics/{id}/triage` with `{triage}`: set the human
@@ -393,7 +410,8 @@ One workbench page. Navigation swaps panes, never the page. Six regions:
   the run controls and the live build state. Expanded it is the run history and the
   selected run's transcript. See [activity](#activity).
 
-Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`, `/graph`,
+Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`,
+`/files/out/<path>` (a file under the out directory), `/graph`,
 `/board`, `/work`, `/feedback`, and `/settings` pick the center; `?node=` holds the
 inspector selection (any node id, a relationship, a state machine, or a goal);
 `?view=` the view overlaid on the map; `?entity=` the [explorer's](#explore)
@@ -404,7 +422,7 @@ first located site, or `?line=` to reveal a line directly.
 
 ### Files
 
-One explorer over both trees, in two labeled sections:
+One explorer over the project's trees, in labeled sections:
 
 - Documents: the docs tree. Each document shows its open diagnostics as a
   severity-colored badge, its open goals as a count, and a drift dot when it is stale
@@ -414,6 +432,11 @@ One explorer over both trees, in two labeled sections:
 - Deliverable: the generated product files, each with its ownership count badge
   (the entities and requirements the ledger binds to it) and a stale dot when a
   bound requirement's verification is stale.
+- Generated: the pages [docsgen](../consumers/docsgen.md) writes under
+  `<out>/docsgen/` (the requirements documents, the entity cards, the level pages,
+  the diagram pages), listed through `GET /api/out/list`. A row opens the page
+  read-only in the center with its [markdown preview](#markdown-preview). The list
+  refreshes when a build commits, since the pages render on every commit.
 - Build progress: while a build runs, the documents it is working on say so in
   place. A document whose sections carry open `reconcile-section` goals is dimmed with
   a waiting mark; the document whose sections a session is reconciling shows a running
@@ -444,13 +467,52 @@ Opening a deliverable file shows it read-only in the center:
   changed, and a `diff` toggle that swaps the viewer for a side-by-side diff of
   baseline against current text. A file with no baseline shows no marks and no
   toggle.
+- A markdown deliverable file opens on its [markdown preview](#markdown-preview),
+  with a `source` toggle back to the viewer.
+
+### Markdown preview
+
+A markdown file opens rendered, not as its raw text: headings, lists, links, inline
+and fenced code, tables, block quotes, and images, in the app's palette. Which
+surface holds the preview depends on the tree the file lives in:
+
+- A generated page under the out directory (`/files/out/<path>`, the
+  [generated section](#files)) and a markdown deliverable file open on the preview in
+  place of the source; a `source` toggle swaps the read-only text in. Any other file
+  under the out directory (a `.puml`, a `.yaml`) opens as read-only text, and a
+  rendering (`.svg`, `.png`) opens as the image.
+- A source document under the docs glob keeps its [editor](#editor) and shows the
+  preview beside it, split, live as one types; a `preview` toggle on the editor's bar
+  shows or hides it, and the choice is remembered in the browser.
+
+Links and images resolve against the open file's path, so the pages walk the way
+[docsgen](../consumers/docsgen.md#entity-cards) writes them:
+
+- A relative link to a `.md` under the out directory opens that page in the center
+  (a card's siblings, its diagram pages, its requirements document). A relative link
+  to a document under the docs glob opens the editor on it, and one to a deliverable
+  file opens the deliverable viewer. A `#fragment` scrolls the preview to the heading
+  with that slug, under the compiler's own heading slug rule, the one docsgen writes
+  its fragments with. A link with a scheme (`https:`, `mailto:`) opens in a new
+  tab. A relative link that lands nowhere the GUI serves renders as plain text.
+- A relative image under the out directory (`../../diagrams/class/checkout.svg` from a
+  card) renders inline through `GET /api/out/file`, so the diagrams docsgen embeds
+  show on the page. An image anywhere else is not served and shows its alt text.
+  The images are the build's renderings, read as files; the map still draws the
+  graph itself ([graph](#graph)).
+
+The preview renders the text as it stands and never rewrites it: the editor's text
+stays plain markdown, byte for byte, and a generated page is never written through
+the GUI.
 
 ### Graph
 
 The `graph` rail item is the whole graph surface: the sidebar navigates it, the
-center draws it. The GUI renders its projections straight from the graph and never
+center draws it. The map renders its projections straight from the graph and never
 reads the rendered files under `<out>/diagrams/`; those are build output for the
-other surfaces ([diagrams](../compiler/diagrams.md#rendering)).
+other surfaces ([diagrams](../compiler/diagrams.md#rendering)), and the
+[markdown preview](#markdown-preview) shows them only where a generated page embeds
+one.
 
 - The sidebar: one text filter plus facet lists, the viewer's cards served live:
   entities, requirements, views, diagnostics (with triage actions), coverage.
@@ -956,6 +1018,11 @@ to definition, references, completion, document links, code lens.
   the document reads like a page and edits like text. The text itself stays plain
   markdown, byte for byte: the docs are compiler input, provenance quotes locate
   against the exact characters, and nothing is rewritten by rendering.
+- The [markdown preview](#markdown-preview) sits beside the editor when its
+  `preview` toggle is on, split with the text, and follows every keystroke. Its
+  links resolve against the document's path: another document opens in the editor,
+  a generated page under the out directory opens in the center, an image under the
+  out directory renders inline.
 - Document URIs are `file://` paths under the project root, as reported by
   `GET /api/project`.
 - When a build commits, the server republishes diagnostics for every open document on

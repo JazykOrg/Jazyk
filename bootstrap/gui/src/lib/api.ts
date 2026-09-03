@@ -67,6 +67,26 @@ export async function getOr404<T>(path: string): Promise<T | null> {
   }
 }
 
+// A read that answers with the file's text rather than JSON (the out directory's
+// files). The same token and the same 401 handling as the JSON reads.
+export async function getText(path: string): Promise<string> {
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const res = await fetch(path, { headers })
+  if (!res.ok) {
+    if (res.status === 401) useApp.getState().setAuthRequired(true)
+    let msg = `${res.status}`
+    try {
+      const j = (await res.json()) as { error?: string }
+      if (j.error) msg = j.error
+    } catch {
+      // no JSON body
+    }
+    throw Object.assign(new Error(msg), { status: res.status })
+  }
+  return res.text()
+}
+
 export const get = <T = unknown,>(path: string) => req<T>('GET', path)
 export const post = <T = unknown,>(path: string, body?: unknown) => req<T>('POST', path, body)
 export const put = <T = unknown,>(path: string, body?: unknown) => req<T>('PUT', path, body)
@@ -627,6 +647,12 @@ export interface DelivFileInfo {
 export interface Deliverable {
   root: string
   files: DelivFileInfo[]
+}
+
+// One file under the out directory, as GET /api/out/list reports it.
+export interface OutFileInfo {
+  path: string
+  size: number
 }
 
 // ---- benchmarks (docs/frontends/gui.md#benchmarks) ----

@@ -7,9 +7,8 @@ definition to the card, the VS Code extension routing the links into the preview
 and the GUI explorer (card and page endpoints, detail expansion, history behind an
 addressable URL), and the GUI markdown preview (generated pages, deliverable
 markdown, and source documents render with headings, links, and the diagrams inline,
-served read-only from the out directory; a live preview beside the editor). In
-flight: diagrams inline as live SVG in the preview, so a box click lands on its card.
-Verified over stdio: the hover and the type definition on example-ledger. Not yet
+served read-only from the out directory; a live preview beside the editor; the
+diagrams inline as live SVG, so a box click lands on its card). Verified over stdio: the hover and the type definition on example-ledger. Not yet
 exercised by a human in an editor or a browser: the definition of done below is the
 checklist for that. Read this file, then the spec
 sections named below.

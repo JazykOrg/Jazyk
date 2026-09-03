@@ -116,7 +116,10 @@ Terms the flow kinds share:
   no dependency. The initiator is `a`. The receiver is `b`, resolved through
   `realization` when `b` is an «interface»: the one entity realizing it is the receiver.
   Several realizers draw `provider-ambiguous`. A member with no edges is a self-message
-  on its first listed entity.
+  on its first listed entity. In a [level's](#level-views) flow view the ends lift to
+  the level's members, and the message follows the first edge (dependencies first)
+  whose lifted ends differ; when every edge collapses into one member, the
+  self-message stays.
 - The actors of a flow are the members' entities labeled `actor`. Where no member's entity
   carries that label, the actors are the initiators that never receive.
 

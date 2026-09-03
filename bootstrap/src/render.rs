@@ -1130,22 +1130,56 @@ fn message_of(store: &Store, rid: &str) -> Option<Message> {
 // the view's level members when the view has a level; an endpoint with none draws as
 // itself. Mirrors docs/compiler/diagrams.md#level-views.
 fn messages(scene: &Scene) -> Vec<Message> {
-    let level = crate::derive::flow_view_level(scene.store, scene.id)
-        .map(|t| crate::derive::level_view_members(scene.store, &t));
-    let lift = |id: String| -> String {
-        match level.as_deref() {
-            Some(members) => {
-                crate::derive::lift_into(scene.store, members, &id).unwrap_or(id)
-            }
-            None => id,
-        }
+    let Some(members) = crate::derive::flow_view_level(scene.store, scene.id)
+        .map(|t| crate::derive::level_view_members(scene.store, &t))
+    else {
+        return raw_messages(scene);
     };
-    raw_messages(scene)
-        .into_iter()
-        .map(|m| Message {
-            from: lift(m.from),
-            to: lift(m.to),
-            rid: m.rid,
+    let store = scene.store;
+    let lift = |id: &str| -> String {
+        crate::derive::lift_into(store, &members, id).unwrap_or_else(|| id.to_string())
+    };
+    scene
+        .requirements
+        .iter()
+        .filter_map(|rid| {
+            let r = store.graph.requirements.get(rid)?;
+            let live = |id: &str| -> Option<String> {
+                let id = store.resolve_id(id).to_string();
+                store.graph.entities.contains_key(&id).then_some(id)
+            };
+            // The candidate messages in the terms' order: dependencies first, then
+            // the other edges, then the self-message on the first entity. The
+            // first whose lifted ends differ is the level's message.
+            let mut candidates: Vec<(String, String)> = Vec::new();
+            let deps = r
+                .edges
+                .iter()
+                .filter(|e| e.rel_type.as_deref().map_or(true, |t| t == "dependency"));
+            let others = r
+                .edges
+                .iter()
+                .filter(|e| !e.rel_type.as_deref().map_or(true, |t| t == "dependency"));
+            for e in deps.chain(others) {
+                if let (Some(a), Some(b)) = (live(&e.a), live(&e.b)) {
+                    candidates.push((lift(&a), lift(&provider(store, &b))));
+                }
+            }
+            if candidates.is_empty() {
+                let first = r.entities.iter().find_map(|e| live(e))?;
+                let f = lift(&first);
+                candidates.push((f.clone(), f));
+            }
+            let (from, to) = candidates
+                .iter()
+                .find(|(a, b)| a != b)
+                .cloned()
+                .unwrap_or_else(|| candidates[0].clone());
+            Some(Message {
+                from,
+                to,
+                rid: rid.to_string(),
+            })
         })
         .collect()
 }
@@ -1812,6 +1846,17 @@ mod tests {
                 "ent:loyalty-point",
             ),
         );
+        // The first edge collapses inside the funds; the message follows the next
+        // edge, whose lifted ends differ.
+        let mut c6 = req("A Gift Card earns a Loyalty Point toward a Cart.", "ent:gift-card", "ent:loyalty-point");
+        c6.entities.push("ent:cart".into());
+        c6.edges.push(ReqEdge {
+            a: "ent:loyalty-point".into(),
+            b: "ent:cart".into(),
+            rel_type: Some("association".into()),
+            cardinality: None,
+        });
+        s.graph.requirements.insert("req:c-6".into(), c6);
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
         let id = "view:sequence/checkout-funds-checkout";
@@ -1836,6 +1881,11 @@ mod tests {
         assert!(puml.contains("participant \"Cart\""), "{}", puml);
         assert!(!puml.contains("participant \"Gift Card\""), "{}", puml);
         assert!(puml.contains("participant \"Checkout\""), "the frame draws as itself: {}", puml);
+        assert!(
+            puml.contains("funds -> cart : A Gift Card earns a Loyalty Point toward a Cart. (req:c-6)"),
+            "{}",
+            puml
+        );
         // The drill-down participants agree with the drawing.
         let drawn = crate::derive::children_of_view(&s, id);
         assert!(drawn.iter().any(|(m, _)| m == "ent:funds"), "{:?}", drawn);

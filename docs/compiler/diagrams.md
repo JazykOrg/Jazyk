@@ -211,11 +211,10 @@ without drawing every leaf:
 - Lifting stores nothing. It is render-time aggregation over `parent` chains, so it
   cannot drift. The lifted arrow's justification is the set of concrete edges beneath it:
   the GUI inspector lists them on click, each walking to its requirement and quote.
-- Views nest. A collapsed node links to the sub-view detailing it: the view of the same
-  kind whose `query.parent` is the node, or whose members are all children of the node.
-  The rendered node carries a PlantUML link to that sub-view's rendering
-  (`[[../<kind>/<slug>.svg]]`). A member whose entity has a level view carries the link
-  whether it is collapsed or not ([drill-down](#drill-down)).
+- Views nest. A collapsed node carries the same PlantUML link every rendered entity
+  carries, the link to its card (`[[../../docsgen/entities/<slug>.md]]`,
+  [drill-down](#drill-down)); the card's `Inside` section is the level the collapse
+  hid. A view carries no link to another rendering.
 
 E.g.: `ent:a` contains `ent:a1`, `ent:b` contains `ent:b1`, and a requirement declares
 `{a: ent:a1, b: ent:b1, type: dependency}`. A view showing only `a` and `b` draws one
@@ -296,16 +295,17 @@ lifts to `inventory-service`:
 
 ```
 @startuml
-actor Customer
-component "Order Service" as OS [[../component/order-service.svg]]
-component "Inventory Service" as IS
+actor Customer [[../../docsgen/entities/customer.md]]
+component "Order Service" as OS [[../../docsgen/entities/order-service.md]]
+component "Inventory Service" as IS [[../../docsgen/entities/inventory-service.md]]
 Customer ..> OS
 OS ..> IS
 @enduml
 ```
 
-`order-service` has four children, so it has a level view and its element carries the
-link. `inventory-service` has one child, so it has no level view and no link.
+Every element links to its card ([drill-down](#drill-down)). `order-service` has four
+children, so its card's `Inside` section embeds its level view; `inventory-service` has
+one child, so its card says `a leaf`.
 
 ### Drill-down
 
@@ -378,11 +378,11 @@ the goal stands. The renderer never truncates silently:
   next request.
 - The `.svg` files are what other outputs link: an entity page under `docsgen/` embeds
   `../diagrams/<kind>/<slug>.svg`.
-- Links between renderings are relative paths under `diagrams/`: a
+- Links out of a rendering are relative paths under the out directory: a
   [drill-down](#drill-down) link in `diagrams/component/shop.svg` reads
-  `../component/order-service.svg`. Nothing in a rendering names the out directory or
-  the project root, so the `diagrams/` tree can be copied or served whole and every link
-  holds.
+  `../../docsgen/entities/order-service.md`. Nothing in a rendering names the out
+  directory or the project root, so the out directory can be copied or served whole
+  and every link holds.
 - The out directory is never docs input ([never-input paths](./project-settings.md#glob)).
 
 ## The renderer

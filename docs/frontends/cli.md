@@ -438,14 +438,17 @@ decompile action are the only triggers.
 
 ### jazyk docsgen
 
-`jazyk docsgen` renders the per-entity requirements documents into `<out>/docsgen/` on
-demand, without compiling: each entity's definition, its requirements (the `statement`
-with its quote), its relationships, and the rendered images of its relevant views (the
-class neighborhood, the derived state machine, the flows it takes part in), linked
-relatively into `<out>/diagrams/` ([output layout](../compiler/diagrams.md#output-layout)).
-The [diagrams](../compiler/diagrams.md#rendering) render with it, skipped for unchanged
-`.puml` content, so every image link resolves. The same render runs after every
-committed changeset. See
+`jazyk docsgen` renders the documentation pages into `<out>/docsgen/` on demand, without
+compiling: the per-entity requirements documents (each entity's definition, its
+requirements with their quotes, its relationships, and the rendered images of its
+relevant views), the [entity cards](../consumers/docsgen.md#entity-cards) under
+`entities/`, the [level pages](../consumers/docsgen.md#level-pages) under `levels/`,
+and the [diagram pages](../consumers/docsgen.md#diagram-pages) under
+`diagrams/<kind>/`, every image linked relatively into `<out>/diagrams/`
+([output layout](../compiler/diagrams.md#output-layout)). The summary line counts every
+page written, all four kinds together. The [diagrams](../compiler/diagrams.md#rendering)
+render with it, skipped for unchanged `.puml` content, so every image link resolves.
+The same render runs after every committed changeset. See
 [documentation generation](../consumers/docsgen.md#the-requirements-document).
 
 ### jazyk viewer

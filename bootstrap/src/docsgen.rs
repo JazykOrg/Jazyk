@@ -1,7 +1,9 @@
-// Deterministic per-entity requirements documents: the reading surface between prose
-// and graph. Rendered on every commit, no LLM. Renders the diagrams first so every
-// image link resolves, embeds the views relevant to each entity, and cross-links the
-// pages through the views they share. Mirrors docs/consumers/docsgen.md.
+// Deterministic per-entity requirements documents, level pages, entity cards, and
+// diagram pages: the reading surface between prose and graph. Rendered on every
+// commit, no LLM. Renders the diagrams first so every image link resolves, embeds the
+// views relevant to each entity, and cross-links the pages through the views they
+// share. Mirrors docs/consumers/docsgen.md.
+use crate::card::{Card, Crumb, Walk};
 use crate::derive::{entity_slug, instance_types, view_edge_count};
 use crate::gen::GenSettings;
 use crate::model::{Diagnostic, Goal, Provenance, StateMachine, View};
@@ -12,42 +14,108 @@ fn slug(id: &str) -> String {
     id.strip_prefix("ent:").unwrap_or(id).to_string()
 }
 
-// The prefix from a page to `<out>/docsgen/`: `./` from an entity page, `../` from a
-// level page under `levels/`. Every link is relative, so the out directory serves
-// anywhere as-is. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
-fn up(depth: usize) -> String {
-    if depth == 0 {
+// The directories the pages live in, under `<out>`. Every link is a relative path
+// from the page's directory to the target's path under `<out>`, so the out directory
+// serves anywhere as-is. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
+const DOCS_DIR: &str = "docsgen";
+const LEVELS_DIR: &str = "docsgen/levels";
+const CARDS_DIR: &str = "docsgen/entities";
+
+fn view_pages_dir(kind: &str) -> String {
+    format!("docsgen/diagrams/{}", kind)
+}
+
+// The relative path from a page in `from_dir` to `to`, both under `<out>`: `./x.md`
+// for a sibling, `../` per directory left otherwise.
+fn rel(from_dir: &str, to: &str) -> String {
+    let from: Vec<&str> = from_dir.split('/').filter(|s| !s.is_empty()).collect();
+    let target: Vec<&str> = to.split('/').collect();
+    let common = from
+        .iter()
+        .zip(target.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let ups = from.len() - common;
+    let mut s = if ups == 0 {
         "./".to_string()
     } else {
-        "../".repeat(depth)
-    }
+        "../".repeat(ups)
+    };
+    s.push_str(&target[common..].join("/"));
+    s
 }
 
-// "[Name](./slug.md)" for a live entity, the bare id otherwise.
+// The paths under `<out>` of the pages about an entity or a view.
+fn doc_path(id: &str) -> String {
+    format!("{}/{}.md", DOCS_DIR, slug(id))
+}
+
+fn card_path(id: &str) -> String {
+    format!("{}/{}.md", CARDS_DIR, slug(id))
+}
+
+// `(kind, slug)` of a view id: `view:usecase/checkout` → `("usecase", "checkout")`.
+fn view_parts(view_id: &str) -> Option<(&str, &str)> {
+    view_id.strip_prefix("view:")?.split_once('/')
+}
+
+fn view_page_path(view_id: &str) -> Option<String> {
+    let (kind, s) = view_parts(view_id)?;
+    Some(format!("{}/{}.md", view_pages_dir(kind), s))
+}
+
+// "[Name](<requirements document>)" for a live entity, the bare id otherwise.
 fn page_link(store: &Store, id: &str) -> String {
-    page_link_at(store, id, 0)
+    doc_link(store, id, DOCS_DIR)
 }
 
-fn page_link_at(store: &Store, id: &str, depth: usize) -> String {
+fn doc_link(store: &Store, id: &str, from: &str) -> String {
     let resolved = store.resolve_id(id);
     match store.graph.entities.get(resolved) {
-        Some(e) => format!("[{}]({}{}.md)", e.name, up(depth), slug(resolved)),
+        Some(e) => format!("[{}]({})", e.name, rel(from, &doc_path(resolved))),
         None => format!("`{}`", id),
     }
 }
 
-// The relative paths an entity page links: `../diagrams/<kind>/<slug>.svg` and `.puml`.
-fn diagram_rel(view_id: &str) -> Option<(String, String)> {
-    diagram_rel_at(view_id, 0)
+// "[Name](<card>)" for a live entity, the bare id otherwise. Every link to an entity
+// from a card, a diagram page, a level page's members, or a caption is this one.
+// Mirrors docs/consumers/docsgen.md#entity-cards.
+fn card_link(store: &Store, id: &str, from: &str) -> String {
+    let resolved = store.resolve_id(id);
+    match store.graph.entities.get(resolved) {
+        Some(e) => format!("[{}]({})", e.name, rel(from, &card_path(resolved))),
+        None => format!("`{}`", id),
+    }
 }
 
-fn diagram_rel_at(view_id: &str, depth: usize) -> Option<(String, String)> {
-    let rel = view_id.strip_prefix("view:")?;
-    let (kind, s) = rel.split_once('/')?;
-    let base = format!("{}diagrams", "../".repeat(depth + 1));
+// "[title](<diagram page>)" for a stored view, "[id](<diagram page>)" for one the
+// store does not hold yet, the bare id when the id has no kind.
+fn view_page_link(store: &Store, view_id: &str, from: &str) -> String {
+    match view_page_path(view_id) {
+        Some(p) => {
+            let text = store
+                .graph
+                .views
+                .get(view_id)
+                .map(|v| v.title.clone())
+                .unwrap_or_else(|| view_id.to_string());
+            format!("[{}]({})", text, rel(from, &p))
+        }
+        None => format!("`{}`", view_id),
+    }
+}
+
+// The relative paths a page links for a view's files: the `.svg` and the `.puml`
+// under `<out>/diagrams/<kind>/`.
+fn diagram_rel(view_id: &str) -> Option<(String, String)> {
+    diagram_files(view_id, DOCS_DIR)
+}
+
+fn diagram_files(view_id: &str, from: &str) -> Option<(String, String)> {
+    let (kind, s) = view_parts(view_id)?;
     Some((
-        format!("{}/{}/{}.svg", base, kind, s),
-        format!("{}/{}/{}.puml", base, kind, s),
+        rel(from, &format!("diagrams/{}/{}.svg", kind, s)),
+        rel(from, &format!("diagrams/{}/{}.puml", kind, s)),
     ))
 }
 
@@ -143,13 +211,31 @@ fn participants(store: &Store, view: &View) -> Vec<String> {
     out
 }
 
+// The entities a view draws, as the caption lists them: the members of a structural
+// or object view, the participants of a flow view lifted as the diagram draws them
+// (the card model's reading, `drawn_entities_of`), the unlifted entities of a flow
+// view the store does not hold (a synthesized one).
+fn drawn(store: &Store, view_id: &str, view: &View) -> Vec<String> {
+    if store.graph.views.contains_key(view_id) {
+        return crate::derive::drawn_entities_of(store, view_id);
+    }
+    if FLOW_KINDS.contains(&view.kind.as_str()) {
+        return participants(store, view);
+    }
+    view.members
+        .iter()
+        .map(|m| store.resolve_id(m).to_string())
+        .filter(|m| store.graph.entities.contains_key(m))
+        .collect()
+}
+
 // The caption line under an embedded rendering: the view id, its kind and count, the
-// member entities as links to their pages, and the `.puml` source. The links are the
-// cross-links between entity pages. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
-// `depth` is the page's directory depth under `docsgen/` (0 for entity pages, 1 for level
-// pages), so the relative links resolve from wherever the page sits.
-fn caption_at(store: &Store, view_id: &str, view: &View, depth: usize) -> String {
-    let (_, puml) = diagram_rel_at(view_id, depth).unwrap_or_default();
+// drawn entities as links to their cards, and the `.puml` source. The same line on
+// every page that embeds the view; `from` is the page's directory under `<out>`, so
+// the relative links resolve from wherever the page sits.
+// Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
+fn caption(store: &Store, view_id: &str, view: &View, from: &str) -> String {
+    let (_, puml) = diagram_files(view_id, from).unwrap_or_default();
     let mut line = format!("`{}` (", view_id);
     let mut listed: Vec<String> = Vec::new();
     if view.kind == "state" {
@@ -163,22 +249,17 @@ fn caption_at(store: &Store, view_id: &str, view: &View, depth: usize) -> String
         }
     } else if FLOW_KINDS.contains(&view.kind.as_str()) {
         line.push_str(&format!("{}, {} steps", view.kind, view.members.len()));
-        listed = participants(store, view);
+        listed = drawn(store, view_id, view);
     } else {
         line.push_str(&format!("{}, {} members", view.kind, view.members.len()));
-        listed = view
-            .members
-            .iter()
-            .map(|m| store.resolve_id(m).to_string())
-            .filter(|m| store.graph.entities.contains_key(m))
-            .collect();
+        listed = drawn(store, view_id, view);
     }
     line.push(')');
     if !listed.is_empty() {
         let mut links: Vec<String> = listed
             .iter()
             .take(8)
-            .map(|m| page_link_at(store, m, depth))
+            .map(|m| card_link(store, m, from))
             .collect();
         if listed.len() > 8 {
             links.push("...".to_string());
@@ -192,21 +273,26 @@ fn caption_at(store: &Store, view_id: &str, view: &View, depth: usize) -> String
     line
 }
 
-// One embedded rendering: the image when its `.svg` exists, the caption either way.
-// A view whose render failed keeps its caption and `.puml` link; nothing is invented.
-fn embed(store: &Store, view_id: &str, view: &View) -> String {
-    embed_at(store, view_id, view, 0)
+// The image line of a rendering when its `.svg` exists; a view whose render failed
+// keeps its caption and `.puml` link and no image; nothing is invented.
+fn image(store: &Store, view_id: &str, view: &View, from: &str) -> String {
+    match diagram_files(view_id, from) {
+        Some((svg, _)) if svg_exists(store, view_id) => {
+            format!("![{}]({})\n\n", view.title, svg)
+        }
+        _ => String::new(),
+    }
 }
 
-fn embed_at(store: &Store, view_id: &str, view: &View, depth: usize) -> String {
-    let Some((svg, _)) = diagram_rel_at(view_id, depth) else {
+// One embedded rendering on a page in `from`: the image, then the caption with the
+// link to the view's diagram page.
+fn embed(store: &Store, view_id: &str, view: &View, from: &str) -> String {
+    if view_parts(view_id).is_none() {
         return String::new();
-    };
-    let mut s = String::new();
-    if svg_exists(store, view_id) {
-        s.push_str(&format!("![{}]({})\n\n", view.title, svg));
     }
-    s.push_str(&caption_at(store, view_id, view, depth));
+    let mut s = image(store, view_id, view, from);
+    s.push_str(&caption(store, view_id, view, from));
+    s.push_str(&format!(" · [page]({})", rel(from, &view_page_path(view_id).unwrap_or_default())));
     s.push_str("\n\n");
     s
 }
@@ -267,26 +353,20 @@ fn level_name(store: &Store, target: &str) -> String {
     }
 }
 
-// The href of a target's level page from a page `depth` directories under `docsgen/`:
-// `./levels/<file>` from an entity page or the index, the sibling `./<file>` from
-// another level page (depth one is `levels/` itself).
-fn level_href(target: &str, depth: usize) -> String {
-    let page = level_page(target);
-    if depth == 1 {
-        format!("./{}", page.trim_start_matches("levels/"))
-    } else {
-        format!("{}{}", up(depth), page)
-    }
+// The href of a target's level page from a page in `from`: `./levels/<file>` from a
+// requirements document or the index, the sibling `./<file>` from another level page.
+fn level_href(target: &str, from: &str) -> String {
+    rel(from, &format!("{}/{}", DOCS_DIR, level_page(target)))
 }
 
-// "[Name](<page>)" for a target's level page, from a page `depth` directories under
-// `docsgen/`. None when the target holds no level.
-fn level_link_at(store: &Store, target: &str, depth: usize) -> Option<String> {
+// "[Name](<page>)" for a target's level page, from a page in `from`. None when the
+// target holds no level.
+fn level_link(store: &Store, target: &str, from: &str) -> Option<String> {
     crate::derive::level_view_id(store, target)?;
     Some(format!(
         "[{}]({})",
         level_name(store, target),
-        level_href(target, depth)
+        level_href(target, from)
     ))
 }
 
@@ -322,7 +402,7 @@ fn containment_chain(store: &Store, target: &str) -> Vec<String> {
 }
 
 // The breadcrumb: every ancestor linked to its level page (an ancestor holding one
-// child has no level page and links to its entity page instead, so the chain stays
+// child has no level page and links to its card instead, so the chain stays
 // walkable), the node itself last and unlinked. This is the link up.
 fn breadcrumb(store: &Store, target: &str) -> String {
     let chain = containment_chain(store, target);
@@ -332,7 +412,7 @@ fn breadcrumb(store: &Store, target: &str) -> String {
             if t == target {
                 return level_name(store, t);
             }
-            level_link_at(store, t, 1).unwrap_or_else(|| page_link_at(store, t, 1))
+            level_link(store, t, LEVELS_DIR).unwrap_or_else(|| card_link(store, t, LEVELS_DIR))
         })
         .collect();
     parts.join(" › ")
@@ -395,17 +475,21 @@ fn level_page_text(store: &Store, target: &str) -> String {
             if let Some(st) = &ent.stereotype {
                 s.push_str(&format!(" · «{}»", st));
             }
-            s.push_str(&format!(" · [entity page](../{}.md)\n\n", slug(target)));
+            s.push_str(&format!(
+                " · [card]({}) · [entity page]({})\n\n",
+                rel(LEVELS_DIR, &card_path(target)),
+                rel(LEVELS_DIR, &doc_path(target))
+            ));
             if let Some(d) = &ent.definition {
                 s.push_str(d);
                 s.push_str("\n\n");
             }
             if let Some(p) = &ent.provenance {
                 s.push_str(&format!(
-                    "This entity is {} ({}); see its [proposals](../{}.md#proposals).\n\n",
+                    "This entity is {} ({}); see its [proposals]({}#proposals).\n\n",
                     p.kind(),
                     prov_short(p),
-                    slug(target)
+                    rel(LEVELS_DIR, &doc_path(target))
                 ));
             }
         }
@@ -415,20 +499,20 @@ fn level_page_text(store: &Store, target: &str) -> String {
     if !views.is_empty() {
         s.push_str("## Diagrams\n\n");
         for (vid, v) in &views {
-            s.push_str(&embed_at(store, vid, v, 1));
+            s.push_str(&embed(store, vid, v, LEVELS_DIR));
         }
     }
 
-    // The members: the direct children in document order, each linked to its entity
-    // page and, when it holds a level, to its level page with its child count. This
-    // is the link down. An outside entity a lifted edge brings into the level view
-    // is not a member.
+    // The members: the direct children in document order, each linked to its card
+    // and, when it holds a level, to its level page with its child count. This is
+    // the link down. An outside entity a lifted edge brings into the level view is
+    // not a member.
     s.push_str("## Members\n\n");
     for c in level_children(store, target) {
         let Some(e) = store.graph.entities.get(&c) else {
             continue;
         };
-        let mut line = format!("- {}", page_link_at(store, &c, 1));
+        let mut line = format!("- {}", card_link(store, &c, LEVELS_DIR));
         if let Some(st) = &e.stereotype {
             line.push_str(&format!(" · «{}»", st));
         }
@@ -439,7 +523,7 @@ fn level_page_text(store: &Store, target: &str) -> String {
             let n = crate::board::level_members(store, &c).len();
             line.push_str(&format!(
                 " · [level]({}) ({} children)",
-                level_href(&c, 1),
+                level_href(&c, LEVELS_DIR),
                 n
             ));
         }
@@ -474,6 +558,427 @@ fn write_level_pages(store: &Store, dir: &std::path::Path) -> usize {
     let mut written = 0;
     for t in &targets {
         std::fs::write(dir.join(level_page(t)), level_page_text(store, t)).ok();
+        written += 1;
+    }
+    written
+}
+
+// Entity cards and diagram pages: the two nodes of the walk, one small page each,
+// rendered from the shared model in card.rs. Mirrors docs/consumers/docsgen.md#entity-cards
+// and docs/consumers/docsgen.md#diagram-pages.
+
+// One crumb as a link from a page in `from`: the scope root to its level page, an
+// entity to its card. The last crumb of a chain stays unlinked when `link_last` is
+// false.
+fn crumb_links(store: &Store, crumbs: &[Crumb], from: &str, link_last: bool) -> String {
+    let n = crumbs.len();
+    crumbs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if i + 1 == n && !link_last {
+                return c.name.clone();
+            }
+            match crate::board::scope_target(&c.id) {
+                Some(_) => format!("[{}]({})", c.name, level_href(&c.id, from)),
+                None => card_link(store, &c.id, from),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" › ")
+}
+
+// The step count of a flow view: its member requirements.
+fn step_count(store: &Store, view_id: &str) -> usize {
+    store
+        .graph
+        .views
+        .get(view_id)
+        .map(|v| v.members.len())
+        .unwrap_or(0)
+}
+
+// "[title](<diagram page>) `view id` (n steps)".
+fn flow_line(store: &Store, view_id: &str, from: &str) -> String {
+    format!(
+        "{} `{}` ({} steps)",
+        view_page_link(store, view_id, from),
+        view_id,
+        step_count(store, view_id)
+    )
+}
+
+// "[Name](<card>)" with the child count when the kin has a level.
+fn kin_line(store: &Store, k: &crate::card::Kin, from: &str) -> String {
+    let mut line = card_link(store, &k.id, from);
+    if k.child_count >= 2 {
+        line.push_str(&format!(" ({} children)", k.child_count));
+    }
+    line
+}
+
+// One card. Mirrors docs/consumers/docsgen.md#entity-cards: the header, then one
+// level in every direction (up, into context, down, sideways), then the long reads.
+fn card_text(store: &Store, c: &Card) -> String {
+    let from = CARDS_DIR;
+    let mut s = format!("# {}\n\n", c.name);
+    let mut head = format!("`{}`", c.id);
+    if let Some(st) = &c.stereotype {
+        head.push_str(&format!(" · «{}»", st));
+    }
+    if !c.definition.is_empty() {
+        head.push_str(&format!(" · {}", c.definition));
+    }
+    s.push_str(&head);
+    s.push_str("\n\n");
+    if c.provenance != "quote" {
+        s.push_str(&format!(
+            "This entity is {}; see its [proposal]({}#proposals).\n\n",
+            c.provenance,
+            rel(from, &doc_path(&c.id))
+        ));
+    }
+
+    s.push_str("## Sits in\n\n");
+    s.push_str(&crumb_links(store, &c.breadcrumb, from, false));
+    s.push_str("\n\n");
+
+    s.push_str("## In context\n\n");
+    match c.context.as_deref().and_then(|v| store.graph.views.get(v).map(|x| (v, x))) {
+        Some((vid, v)) => s.push_str(&embed(store, vid, v, from)),
+        None => s.push_str("no level view: the level above holds this entity alone\n\n"),
+    }
+
+    s.push_str("## Inside\n\n");
+    match c.inside.as_deref().and_then(|v| store.graph.views.get(v).map(|x| (v, x))) {
+        Some((vid, v)) => {
+            s.push_str(&embed(store, vid, v, from));
+            if !c.inside_flows.is_empty() {
+                s.push_str("Flows of this level:\n\n");
+                for f in &c.inside_flows {
+                    s.push_str(&format!("- {}\n", flow_line(store, f, from)));
+                }
+                s.push('\n');
+            }
+        }
+        None => s.push_str("a leaf\n\n"),
+    }
+
+    s.push_str("## Relationships\n\n");
+    if c.relationships.is_empty() {
+        s.push_str("none\n\n");
+    } else {
+        for r in &c.relationships {
+            let arrow = match r.direction.as_str() {
+                "a" => "→",
+                "b" => "←",
+                _ => "↔",
+            };
+            let n = if r.count == 1 {
+                "1 requirement".to_string()
+            } else {
+                format!("{} requirements", r.count)
+            };
+            s.push_str(&format!(
+                "- {} {} {} · {}\n",
+                r.r#type,
+                arrow,
+                card_link(store, &r.other, from),
+                n
+            ));
+        }
+        s.push('\n');
+    }
+
+    s.push_str("## Flows\n\n");
+    if c.flows.is_empty() {
+        s.push_str("none\n\n");
+    } else {
+        for f in &c.flows {
+            s.push_str(&format!("- {}\n", flow_line(store, f, from)));
+        }
+        s.push('\n');
+    }
+
+    s.push_str("## Siblings\n\n");
+    if c.siblings.is_empty() {
+        s.push_str("none\n\n");
+    } else {
+        for k in &c.siblings {
+            s.push_str(&format!("- {}\n", kin_line(store, k, from)));
+        }
+        s.push('\n');
+    }
+
+    if !c.children.is_empty() {
+        s.push_str("## Children\n\n");
+        for k in &c.children {
+            s.push_str(&format!("- {}\n", kin_line(store, k, from)));
+        }
+        s.push('\n');
+    }
+
+    s.push_str("## More\n\n");
+    let n = if c.requirement_count == 1 {
+        "1 requirement".to_string()
+    } else {
+        format!("{} requirements", c.requirement_count)
+    };
+    s.push_str(&format!(
+        "- [Requirements document]({}) ({})\n",
+        rel(from, &doc_path(&c.id)),
+        n
+    ));
+    // The parent's level: the crumb before the entity itself.
+    if let Some(parent) = c.breadcrumb.iter().rev().nth(1) {
+        if let Some(link) = level_link(store, &parent.id, from) {
+            s.push_str(&format!("- Level page of {}\n", link));
+        }
+    }
+    if c.inside.is_some() {
+        if let Some(link) = level_link(store, &c.id, from) {
+            s.push_str(&format!("- Own level page: {}\n", link));
+        }
+    }
+    if let Some(p) = &c.proposal {
+        s.push_str(&format!(
+            "- [Proposal]({}#proposals) `{}`\n",
+            rel(from, &doc_path(&c.id)),
+            p
+        ));
+    }
+    s.push('\n');
+    s
+}
+
+// Writes one card per entity and prunes the card of an entity that is gone. Returns
+// the cards written.
+fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
+    let cards_dir = dir.join("entities");
+    let live: BTreeSet<String> = store
+        .graph
+        .entities
+        .keys()
+        .map(|id| format!("{}.md", slug(id)))
+        .collect();
+    if let Ok(rd) = std::fs::read_dir(&cards_dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && !live.contains(&name) {
+                std::fs::remove_file(e.path()).ok();
+            }
+        }
+    }
+    if store.graph.entities.is_empty() {
+        return 0;
+    }
+    std::fs::create_dir_all(&cards_dir).ok();
+    let mut written = 0;
+    for id in store.graph.entities.keys() {
+        let Some(c) = crate::card::entity_card(store, walk, id) else {
+            continue;
+        };
+        std::fs::write(cards_dir.join(format!("{}.md", slug(id))), card_text(store, &c)).ok();
+        written += 1;
+    }
+    written
+}
+
+// The GitHub anchor of the heading "### `req:x`" in a requirements document: the
+// backticks and the colon drop, the rest lowercases.
+fn heading_anchor(rid: &str) -> String {
+    rid.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect::<String>()
+        .to_lowercase()
+}
+
+// "[`req:x`](<document>#anchor)": the requirement's block in the document of the
+// first entity it names, the bare id when it names none.
+fn requirement_link(store: &Store, rid: &str, from: &str) -> String {
+    let doc = store
+        .graph
+        .requirements
+        .get(rid)
+        .and_then(|r| r.entities.iter().map(|e| store.resolve_id(e).to_string()).find(|e| store.graph.entities.contains_key(e)));
+    match doc {
+        Some(e) => format!(
+            "[`{}`]({}#{})",
+            rid,
+            rel(from, &doc_path(&e)),
+            heading_anchor(rid)
+        ),
+        None => format!("`{}`", rid),
+    }
+}
+
+// What a view with no level belongs to: its machine's subject, its instances' type,
+// or nothing (a curated view).
+fn belongs_to(store: &Store, view: &View, from: &str) -> String {
+    match view.kind.as_str() {
+        "state" => match view.members.first() {
+            Some(subject) => format!(
+                "the state machine of {}",
+                card_link(store, subject, from)
+            ),
+            None => "a state view with no subject".to_string(),
+        },
+        "object" => {
+            let types = instance_types(store);
+            match view
+                .members
+                .iter()
+                .find_map(|m| types.get(store.resolve_id(m)))
+            {
+                Some(t) => format!("the object view of {}", card_link(store, t, from)),
+                None => "an object view with no type".to_string(),
+            }
+        }
+        _ => "a curated view; it belongs to no level".to_string(),
+    }
+}
+
+// One diagram page. Mirrors docs/consumers/docsgen.md#diagram-pages: the title, the
+// level, the image, the legend, the steps, and the views around.
+fn view_page_text(store: &Store, p: &crate::card::ViewPage) -> String {
+    let Some((kind, _)) = view_parts(&p.id) else {
+        return String::new();
+    };
+    let from = view_pages_dir(kind);
+    let from = from.as_str();
+    let view = &store.graph.views[&p.id];
+    let count = if FLOW_KINDS.contains(&p.kind.as_str()) {
+        format!("{} steps", view.members.len())
+    } else {
+        format!("{} members", view.members.len())
+    };
+    let mut s = format!("# {}\n\n`{}` · {} · {}\n\n", p.title, p.id, p.kind, count);
+
+    s.push_str("## Level\n\n");
+    match &p.level {
+        Some(l) => {
+            let mut line = crumb_links(store, &l.breadcrumb, from, true);
+            if let Some(link) = level_link(store, &l.target, from) {
+                // A node's chain ends in its card; the level page follows. The scope
+                // root's chain is its level page already.
+                if crate::board::scope_target(&l.target).is_none() {
+                    line.push_str(&format!(" · level page: {}", link));
+                }
+            }
+            s.push_str(&line);
+        }
+        None => s.push_str(&belongs_to(store, view, from)),
+    }
+    s.push_str("\n\n");
+
+    s.push_str(&image(store, &p.id, view, from));
+    s.push_str(&caption(store, &p.id, view, from));
+    s.push_str("\n\n");
+
+    s.push_str("## Drawn\n\n");
+    if p.drawn.is_empty() {
+        s.push_str("nothing\n\n");
+    } else {
+        for d in &p.drawn {
+            let mut line = format!("- {}", card_link(store, &d.id, from));
+            if let Some(st) = &d.stereotype {
+                line.push_str(&format!(" · «{}»", st));
+            }
+            if let Some(lv) = &d.level_view {
+                line.push_str(&format!(
+                    " · [level below]({})",
+                    rel(from, &view_page_path(lv).unwrap_or_default())
+                ));
+            }
+            s.push_str(&line);
+            s.push('\n');
+        }
+        s.push('\n');
+    }
+
+    if FLOW_KINDS.contains(&p.kind.as_str()) {
+        s.push_str("## Steps\n\n");
+        if p.steps.is_empty() {
+            s.push_str("none\n\n");
+        } else {
+            for st in &p.steps {
+                s.push_str(&format!(
+                    "- {} {} · {} → {}\n",
+                    requirement_link(store, &st.requirement, from),
+                    st.statement,
+                    card_link(store, &st.from, from),
+                    card_link(store, &st.to, from)
+                ));
+            }
+            s.push('\n');
+        }
+    }
+
+    s.push_str("## Around\n\n");
+    let list = |ids: &[String]| -> String {
+        ids.iter()
+            .map(|v| format!("{} `{}`", view_page_link(store, v, from), v))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut any = false;
+    if !p.around.same_level.is_empty() {
+        s.push_str(&format!("- Same level: {}\n", list(&p.around.same_level)));
+        any = true;
+    }
+    if let Some(a) = &p.around.above {
+        s.push_str(&format!("- Above: {}\n", list(std::slice::from_ref(a))));
+        any = true;
+    }
+    if !p.around.below.is_empty() {
+        s.push_str(&format!("- Below: {}\n", list(&p.around.below)));
+        any = true;
+    }
+    if !any {
+        s.push_str("none\n");
+    }
+    s.push('\n');
+    s
+}
+
+// Writes one page per stored view under `diagrams/<kind>/` and prunes the page of a
+// view that is gone. Returns the pages written.
+fn write_view_pages(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
+    let pages_dir = dir.join("diagrams");
+    let live: BTreeSet<String> = store
+        .graph
+        .views
+        .keys()
+        .filter_map(|v| view_page_path(v))
+        .map(|p| p.trim_start_matches("docsgen/diagrams/").to_string())
+        .collect();
+    if let Ok(kinds) = std::fs::read_dir(&pages_dir) {
+        for k in kinds.flatten() {
+            let kind = k.file_name().to_string_lossy().to_string();
+            let Ok(rd) = std::fs::read_dir(k.path()) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.ends_with(".md") && !live.contains(&format!("{}/{}", kind, name)) {
+                    std::fs::remove_file(e.path()).ok();
+                }
+            }
+        }
+    }
+    let mut written = 0;
+    for vid in store.graph.views.keys() {
+        let Some(path) = view_page_path(vid) else {
+            continue;
+        };
+        let Some(p) = crate::card::view_page(store, walk, vid) else {
+            continue;
+        };
+        let file = store.out.join(&path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(file, view_page_text(store, &p)).ok();
         written += 1;
     }
     written
@@ -715,6 +1220,8 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         if !ent.aliases.is_empty() {
             s.push_str(&format!(" · also known as: {}", ent.aliases.join(", ")));
         }
+        // The one link out of the documents' web: the card, where the walk starts.
+        s.push_str(&format!(" · [card]({})", rel(DOCS_DIR, &card_path(id))));
         s.push_str("\n\n");
         if let Some(d) = &ent.definition {
             s.push_str(d);
@@ -776,7 +1283,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         if !views.is_empty() {
             s.push_str("## Diagrams\n\n");
             for (vid, v) in &views {
-                s.push_str(&embed(store, vid, v));
+                s.push_str(&embed(store, vid, v, DOCS_DIR));
             }
         }
 
@@ -977,7 +1484,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
 
     // The level pages: one per node with a level view and one per scope root with
     // one, nested as the containment tree is. Mirrors docs/consumers/docsgen.md#level-pages.
-    write_level_pages(store, &dir);
+    written += write_level_pages(store, &dir);
+    // The walk: one card per entity, one page per view, from the shared model.
+    // Mirrors docs/consumers/docsgen.md#entity-cards.
+    let walk = Walk::new(store);
+    written += write_cards(store, &walk, &dir);
+    written += write_view_pages(store, &walk, &dir);
 
     // The index: every entity linked, the default class and component views rendered
     // from the graph, every view listed, and the pending proposals grouped by target
@@ -1016,10 +1528,10 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         if !class_views.is_empty() || !component_views.is_empty() {
             idx.push_str("\n## Diagrams\n\n");
             for (vid, v) in class_views.iter().chain(component_views.iter()) {
-                let mut block = embed(store, vid, v);
+                let mut block = embed(store, vid, v, DOCS_DIR);
                 if let Some(scope) = root_levels.get(vid.as_str()) {
                     let target = crate::store::scope_root_target(scope);
-                    if let Some(link) = level_link_at(store, &target, 0) {
+                    if let Some(link) = level_link(store, &target, DOCS_DIR) {
                         let trimmed = block.trim_end().len();
                         block.truncate(trimmed);
                         block.push_str(&format!(" · level page: {}\n\n", link));
@@ -1037,7 +1549,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 continue;
             }
             let target = crate::store::scope_root_target(scope);
-            if let Some(link) = level_link_at(store, &target, 0) {
+            if let Some(link) = level_link(store, &target, DOCS_DIR) {
                 idx.push_str(&format!("Level page of scope `{}`: {}\n\n", scope, link));
             }
         }
@@ -1173,8 +1685,14 @@ mod tests {
         // A stale file for an entity that no longer exists must be pruned.
         std::fs::create_dir_all(out.join("docsgen")).ok();
         std::fs::write(out.join("docsgen/ghost.md"), "old").ok();
+        // A stale card and a stale diagram page are pruned with it.
+        std::fs::create_dir_all(out.join("docsgen/entities")).ok();
+        std::fs::write(out.join("docsgen/entities/ghost.md"), "old").ok();
+        std::fs::create_dir_all(out.join("docsgen/diagrams/class")).ok();
+        std::fs::write(out.join("docsgen/diagrams/class/ghost.md"), "old").ok();
+        // The document and the card: two pages.
         let n = write_all(&s, &gs(&out));
-        assert_eq!(n, 1);
+        assert_eq!(n, 2);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));
         assert!(doc.contains("req:shop-1"));
@@ -1183,7 +1701,18 @@ mod tests {
             "quote is whitespace-normalized: {}",
             doc
         );
+        assert!(doc.contains("[card](./entities/cart.md)"), "{}", doc);
         assert!(!out.join("docsgen/ghost.md").exists());
+        assert!(!out.join("docsgen/entities/ghost.md").exists());
+        assert!(!out.join("docsgen/diagrams/class/ghost.md").exists());
+        let card = std::fs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+        assert!(card.contains("# Cart\n\n`ent:cart` · holds items\n"), "{}", card);
+        assert!(card.contains("## Inside\n\na leaf\n"), "{}", card);
+        assert!(
+            card.contains("- [Requirements document](../cart.md) (1 requirement)"),
+            "{}",
+            card
+        );
     }
 
     // The showcase graph: an entity page embeds the scope class view, the containing
@@ -1230,9 +1759,26 @@ mod tests {
         let state_pos = page.find("../diagrams/state/order.svg").unwrap();
         let flow_pos = page.find("../diagrams/usecase/customer-shop.svg").unwrap();
         assert!(level_pos < state_pos && state_pos < flow_pos);
-        // The state caption lists the states; the level caption cross-links members.
+        // The state caption lists the states; the level caption links the drawn
+        // members to their cards and the view to its diagram page.
         assert!(page.contains("3 states: placed, paid, held"), "{}", page);
-        assert!(page.contains("(./checkout-api.md)"), "{}", page);
+        assert!(page.contains("(./entities/checkout-api.md)"), "{}", page);
+        assert!(!page.contains("](./checkout-api.md)"), "{}", page);
+        assert!(
+            page.contains(&format!(
+                "[page](./diagrams/{}.md)",
+                &level["view:".len()..]
+            )),
+            "{}",
+            page
+        );
+        // The header links the card; the containment line keeps linking documents.
+        assert!(page.contains("[card](./entities/order.md)"), "{}", page);
+        assert!(
+            page.contains("Parent: [Order Service](./order-service.md)"),
+            "{}",
+            page
+        );
         assert!(
             page.contains(&format!(
                 "[source](../diagrams/{}.puml)",
@@ -1302,7 +1848,7 @@ mod tests {
         );
         assert!(page.contains("# Order Service\n"), "{}", page);
         assert!(
-            page.contains("[entity page](../order-service.md)"),
+            page.contains("[card](../entities/order-service.md) · [entity page](../order-service.md)"),
             "{}",
             page
         );
@@ -1319,7 +1865,7 @@ mod tests {
             page
         );
         assert!(
-            page.contains("## Members\n\n- [checkout API](../checkout-api.md) · «interface»"),
+            page.contains("## Members\n\n- [checkout API](../entities/checkout-api.md) · «interface»"),
             "{}",
             page
         );
@@ -1339,16 +1885,16 @@ mod tests {
             shop
         );
         assert!(
-            shop.contains("- [Order Service](../order-service.md) · «service» · [level](./order-service.md) (4 children)"),
+            shop.contains("- [Order Service](../entities/order-service.md) · «service» · [level](./order-service.md) (4 children)"),
             "{}",
             shop
         );
         assert!(
-            shop.contains("- [Inventory Service](../inventory-service.md) · «service»\n"),
+            shop.contains("- [Inventory Service](../entities/inventory-service.md) · «service»\n"),
             "{}",
             shop
         );
-        assert!(!shop.contains("- [Customer](../customer.md)"), "{}", shop);
+        assert!(!shop.contains("- [Customer](../entities/customer.md)"), "{}", shop);
         assert!(
             shop.contains("](../../diagrams/component/shop.svg)"),
             "{}",
@@ -1369,7 +1915,7 @@ mod tests {
             root
         );
         assert!(
-            root.contains("- [Shop](../shop.md) · «system» · [level](./shop.md) (2 children)"),
+            root.contains("- [Shop](../entities/shop.md) · «system» · [level](./shop.md) (2 children)"),
             "{}",
             root
         );
@@ -1388,6 +1934,194 @@ mod tests {
             idx.contains("level page: [Public](./levels/scope-public.md)"),
             "{}",
             idx
+        );
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // The showcase graph's walk: a card per entity under entities/ listing one level
+    // in every direction with every entity link pointing at a card, and a page per
+    // view under diagrams/<kind>/ with the level, the legend, the steps, and the
+    // views around. Mirrors docs/consumers/docsgen.md#entity-cards and
+    // docs/consumers/docsgen.md#diagram-pages.
+    #[test]
+    fn cards_and_diagram_pages_walk_the_graph() {
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        std::fs::create_dir_all(&out).unwrap();
+        let mut s = crate::derive::tests::showcase_store();
+        s.out = out.clone();
+        let mut batch = crate::store::RecordBatch::new(1);
+        crate::derive::recompute(&mut s, "g1", &mut batch);
+        write_all(&s, &gs(&out));
+        let cards = out.join("docsgen/entities");
+        let pages = out.join("docsgen/diagrams");
+
+        // The order service's card: the header, the breadcrumb up (the scope root to
+        // its level page, the shop to its card), the context and inside views embedded
+        // two directories up with card links in the captions, the relationships,
+        // the flow at the shop's level, the sibling, the children, the long reads.
+        let card = std::fs::read_to_string(cards.join("order-service.md")).unwrap();
+        assert!(
+            card.starts_with("# Order Service\n\n`ent:order-service` · «service»"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("## Sits in\n\n[Public](../levels/scope-public.md) › [Shop](./shop.md) › Order Service\n"),
+            "{}",
+            card
+        );
+        let context = card.find("## In context").unwrap();
+        let inside = card.find("## Inside").unwrap();
+        assert!(context < inside);
+        assert!(
+            card[context..inside].contains("](../../diagrams/component/shop.svg)"),
+            "{}",
+            card
+        );
+        assert!(
+            card[context..inside].contains("[Inventory Service](./inventory-service.md)"),
+            "{}",
+            card
+        );
+        assert!(
+            card[context..inside].contains("· [page](../diagrams/component/shop.md)"),
+            "{}",
+            card
+        );
+        assert!(
+            card[inside..].contains("](../../diagrams/component/order-service.svg)"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("- dependency → [stock API](./stock-api.md) · 1 requirement"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("(../diagrams/usecase/shop-customer-shop.md) `view:usecase/shop-customer-shop`"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("## Siblings\n\n- [Inventory Service](./inventory-service.md)\n"),
+            "{}",
+            card
+        );
+        assert!(card.contains("## Children\n\n"), "{}", card);
+        assert!(card.contains("- [Order](./order.md)\n"), "{}", card);
+        assert!(
+            card.contains("- [Requirements document](../order-service.md) ("),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("- Level page of [Shop](../levels/shop.md)\n"),
+            "{}",
+            card
+        );
+        assert!(
+            card.contains("- Own level page: [Order Service](../levels/order-service.md)\n"),
+            "{}",
+            card
+        );
+        // No link on a card points at a requirements document except the long reads.
+        assert!(!card.contains("](../order-service.md#"), "{}", card);
+        assert!(!card.contains(".svg]]"), "{}", card);
+
+        // A leaf's card: a leaf inside, no children, its context the parent's level.
+        let leaf = std::fs::read_to_string(cards.join("order-item.md")).unwrap();
+        assert!(leaf.contains("## Inside\n\na leaf\n"), "{}", leaf);
+        assert!(!leaf.contains("## Children"), "{}", leaf);
+        assert!(
+            leaf.contains("](../../diagrams/component/order-service.svg)"),
+            "{}",
+            leaf
+        );
+        assert!(
+            leaf.contains("[Public](../levels/scope-public.md) › [Shop](./shop.md) › [Order Service](./order-service.md) › Order Item\n"),
+            "{}",
+            leaf
+        );
+
+        // The shop's level view page: the level line ends in the level page, the image
+        // sits three directories up, the legend links every drawn entity to its card
+        // and the ones with a level to their level view's page, and the views around
+        // are the shop's flow views, the root's view above, the order service's below.
+        let page = std::fs::read_to_string(pages.join("component/shop.md")).unwrap();
+        assert!(
+            page.starts_with("# Shop\n\n`view:component/shop` · component · "),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("## Level\n\n[Public](../../levels/scope-public.md) › [Shop](../../entities/shop.md) · level page: [Shop](../../levels/shop.md)\n"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("](../../../diagrams/component/shop.svg)"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("[source](../../../diagrams/component/shop.puml)"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("- [Order Service](../../entities/order-service.md) · «service» · [level below](./order-service.md)\n"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("- [Inventory Service](../../entities/inventory-service.md) · «service»\n"),
+            "{}",
+            page
+        );
+        assert!(!page.contains("## Steps"), "{}", page);
+        assert!(
+            page.contains("(../usecase/shop-customer-shop.md) `view:usecase/shop-customer-shop`"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("- Above: [Public](./public.md) `view:component/public`"),
+            "{}",
+            page
+        );
+        assert!(
+            page.contains("- Below: [Order Service](./order-service.md) `view:component/order-service`"),
+            "{}",
+            page
+        );
+
+        // The shop level's sequence page: the steps as drawn, each id linked to its
+        // block in a requirements document, the ends linked to their cards.
+        let seq = std::fs::read_to_string(pages.join("sequence/shop-customer-shop.md")).unwrap();
+        assert!(
+            seq.contains("## Level\n\n[Public](../../levels/scope-public.md) › [Shop](../../entities/shop.md) · level page: [Shop](../../levels/shop.md)\n"),
+            "{}",
+            seq
+        );
+        assert!(
+            seq.contains("## Steps\n\n- [`req:shop-1`](../../customer.md#reqshop-1) The customer submits the shopping cart through the checkout API. · [Customer](../../entities/customer.md) → [Order Service](../../entities/order-service.md)\n"),
+            "{}",
+            seq
+        );
+        assert!(
+            seq.contains("- Same level: ") && seq.contains("`view:component/shop`"),
+            "{}",
+            seq
+        );
+
+        // The state view's page belongs to its machine, not to a level.
+        let state = std::fs::read_to_string(pages.join("state/order.md")).unwrap();
+        assert!(
+            state.contains("## Level\n\nthe state machine of [Order](../../entities/order.md)\n"),
+            "{}",
+            state
         );
         std::fs::remove_dir_all(&out).ok();
     }

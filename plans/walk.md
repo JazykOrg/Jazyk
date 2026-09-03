@@ -1,10 +1,13 @@
 # Plan: the walk
 
-Status: in progress on the `levels` branch (2026-09-03). The spec is in the docs, the
-shared model is landed (`bootstrap/src/card.rs`, commit 21b1203), and three
-implementations run in parallel on their own branches, to be merged with `--no-ff`:
-the pages (docsgen and the renderer's link targets), the LSP (hover card and type
-definition), and the GUI explorer. Read this file, then the spec sections named below.
+Status: landed on the `levels` branch (2026-09-03): the spec in the docs, the shared
+model (`bootstrap/src/card.rs`), the pages (docsgen cards and diagram pages, every
+drawn entity in a rendering linking to its card), the LSP (hover card, type
+definition to the card, the VS Code extension routing the links into the preview),
+and the GUI explorer (card and page endpoints, detail expansion, history behind an
+addressable URL). Not yet exercised by a human in an editor or a browser: the
+definition of done below is the checklist for that. Read this file, then the spec
+sections named below.
 
 ## The owner's ask
 

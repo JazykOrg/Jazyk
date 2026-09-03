@@ -8,6 +8,7 @@ import { useSearchParams } from 'react-router'
 import { useCoverage, useGraph, useMatrix, useTree, useViews } from '../lib/queries'
 import type { Graph, TreeData, TreeNode, TreeRoot } from '../lib/api'
 import { ancestorsOf, levelChain } from '../lib/levels'
+import { selectNodeParams } from '../lib/nav'
 import { verifyClass } from '../components/Chip'
 import { reverseIndex } from '../components/Cards'
 
@@ -217,10 +218,11 @@ export default function GraphSidebar() {
     setSp(next, { replace: true })
   }
 
-  // Open in the inspector and focus on the map, one click.
+  // Open in the inspector and focus on the map, one click. An entity row is a step
+  // of the walk: its card opens and the explorer's position moves with it.
   const openAndFocus = (id: string) => {
     const next = new URLSearchParams(sp)
-    next.set('node', id)
+    selectNodeParams(next, id)
     next.set('focus', id)
     setSp(next)
   }

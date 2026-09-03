@@ -1,8 +1,16 @@
 // Inspector selection and cross-pane navigation. The inspector is the ?node=
 // search param, preserved on the current center; opening a node never navigates
-// away (docs/frontends/gui.md#inspector).
+// away (docs/frontends/gui.md#inspector). An entity id also becomes the explorer's
+// position (?entity=), so a click on an entity anywhere shows its card
+// (docs/frontends/gui.md#explore).
 import { useCallback } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
+
+// Open a node in the inspector; an entity moves the explorer with it.
+export function selectNodeParams(next: URLSearchParams, id: string) {
+  next.set('node', id)
+  if (id.startsWith('ent:')) next.set('entity', id)
+}
 
 export function useInspector(): {
   node: string | null
@@ -16,7 +24,7 @@ export function useInspector(): {
       setSp(
         (p) => {
           const next = new URLSearchParams(p)
-          next.set('node', id)
+          selectNodeParams(next, id)
           return next
         },
         { replace: false },
@@ -24,11 +32,13 @@ export function useInspector(): {
     },
     [setSp],
   )
+  // Closing clears the selection and the explorer's card; the overlaid view stays.
   const closeNode = useCallback(() => {
     setSp(
       (p) => {
         const next = new URLSearchParams(p)
         next.delete('node')
+        next.delete('entity')
         return next
       },
       { replace: true },
@@ -43,7 +53,7 @@ export function useNodeHref(): (id: string) => string {
   return useCallback(
     (id: string) => {
       const next = new URLSearchParams(loc.search)
-      next.set('node', id)
+      selectNodeParams(next, id)
       return `${loc.pathname}?${next.toString()}`
     },
     [loc.pathname, loc.search],

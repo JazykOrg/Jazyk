@@ -11,9 +11,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import cytoscape from 'cytoscape'
 import fcose from 'cytoscape-fcose'
-import { useDeliverable, useDocs, useGraph, useTree, useView } from '../lib/queries'
+import { useDeliverable, useDocs, useGraph, useTree, useView, useViewPage } from '../lib/queries'
 import type { Entity, Graph, ViewDetail } from '../lib/api'
 import { levelChain } from '../lib/levels'
+import { useExplorer } from '../lib/explore'
+import { selectNodeParams } from '../lib/nav'
 import NodeLink from '../components/NodeLink'
 import DiagramSvg from '../components/DiagramSvg'
 import '../routes/map.css'
@@ -372,20 +374,26 @@ export default function MapCenter() {
   const focusParam = params.get('focus')
   const selected = params.get('node')
   const viewParam = params.get('view') ?? ''
-  const viewQ = useView(viewParam)
+  // The explorer: the position (?entity=, ?view=, ?detail=) and the moves.
+  const explorer = useExplorer()
+  const viewQ = useView(viewParam, explorer.detail)
   const overlay = viewParam !== '' ? viewQ.data : undefined
+  // The diagram page of the overlaid view: the views around it, as chips.
+  const { data: page } = useViewPage(viewParam)
   const { data: tree } = useTree()
   // The breadcrumb: the chain from the scope root down to the overlaid level.
   const chain = useMemo(() => levelChain(tree, viewParam), [tree, viewParam])
 
   // Overlay another view, keeping the position addressable (?view=) and in history,
-  // so drilling down and back works like any navigation.
+  // so drilling down and back works like any navigation. The detail resets: it
+  // belongs to the view it was asked on.
   const openView = (id: string) => {
     setParams((p) => {
       const next = new URLSearchParams(p)
       next.set('view', id)
       next.set('node', id)
       next.delete('focus')
+      next.delete('detail')
       return next
     })
   }
@@ -397,8 +405,11 @@ export default function MapCenter() {
     drillRef.current = new Map((overlay?.children ?? []).map((c) => [c.member, c.view]))
   }, [overlay])
 
-  // Selection goes to the inspector: node param, and focus follows for the map.
+  // Selection goes to the inspector: node param, and focus follows for the map. An
+  // entity is a step of the walk (its card opens, the position moves), so it enters
+  // history; any other selection replaces in place.
   const select = (id: string | null) => {
+    const step = id !== null && id.startsWith('ent:')
     setParams(
       (p) => {
         const next = new URLSearchParams(p)
@@ -406,12 +417,12 @@ export default function MapCenter() {
           next.delete('node')
           next.delete('focus')
         } else {
-          next.set('node', id)
+          selectNodeParams(next, id)
           next.set('focus', id)
         }
         return next
       },
-      { replace: true },
+      { replace: !step },
     )
   }
   const selectRef = useRef(select)
@@ -805,7 +816,11 @@ export default function MapCenter() {
   const memberName = (id: string) =>
     overlay?.members.find((m) => m.id === id)?.name ?? graph?.entities[id]?.name ?? id
   const viewTitle = (id: string) => graph?.views[id]?.title ?? id
-  const level = chain ? chain.crumbs[chain.crumbs.length - 1] : null
+  // The member a level below belongs to, for the `Around` chips' labels.
+  const memberOfLevel = (view: string) => overlay?.children.find((c) => c.view === view)?.member
+  const structural = !!overlay && STRUCTURAL_KINDS.includes(overlay.kind)
+  const around = page?.around
+  const hasAround = !!around && (around.above !== null || around.sameLevel.length > 0 || around.below.length > 0)
 
   return (
     <div className="map-root">
@@ -880,7 +895,7 @@ export default function MapCenter() {
           </span>
         )}
       </div>
-      {overlay && (chain || overlay.children.length > 0) && (
+      {overlay && (chain || hasAround || structural) && (
         <div className="map-crumbs">
           {chain &&
             chain.crumbs.map((c, i) => {
@@ -909,34 +924,57 @@ export default function MapCenter() {
               </span>
             </>
           )}
-          {level && level.levelView && level.views.length > 0 && (
-            <span className="map-group">
-              <span className="map-group-label">diagrams</span>
-              {[level.levelView, ...level.views].map((id) => (
-                <a
-                  key={id}
-                  className={`map-level-chip${id === viewParam ? ' active' : ''}`}
-                  title={id}
-                  onClick={() => openView(id)}
-                >
-                  {id === level.levelView ? 'structure' : viewTitle(id)}
-                </a>
-              ))}
+          {/* Detail: the level's groupings collapsed, or expanded one level at a
+              time, the map redrawn from the graph (docs/frontends/gui.md#explore). */}
+          {structural && (
+            <span className="map-group" title="how many levels beneath the members draw, relationships lifted to what shows">
+              <span className="map-group-label">detail</span>
+              <button
+                className="ide-mini"
+                disabled={overlay.detail === 0}
+                onClick={() => explorer.setDetail(overlay.detail - 1)}
+              >
+                less detail
+              </button>
+              <span className="mono muted" style={{ fontSize: 10.5 }}>
+                {overlay.detail}
+              </span>
+              <button
+                className="ide-mini"
+                disabled={!overlay.deeper}
+                onClick={() => explorer.setDetail(overlay.detail + 1)}
+              >
+                more detail
+              </button>
             </span>
           )}
-          {overlay.children.length > 0 && (
+          {/* Around: the diagram page's neighbors as chips, one click sideways,
+              up, or down without going through the tree. */}
+          {around && hasAround && (
             <span className="map-group">
-              <span className="map-group-label">below</span>
-              {overlay.children.map((c) => (
+              <span className="map-group-label">around</span>
+              {around.above && (
                 <a
-                  key={c.member}
                   className="map-level-chip"
-                  title={`overlay ${c.view}`}
-                  onClick={() => openView(c.view)}
+                  title={`the level above: ${around.above}`}
+                  onClick={() => openView(around.above!)}
                 >
-                  {memberName(c.member)} ↓
+                  ↑ {viewTitle(around.above)}
+                </a>
+              )}
+              {around.sameLevel.map((id) => (
+                <a key={id} className="map-level-chip" title={id} onClick={() => openView(id)}>
+                  {viewTitle(id)}
                 </a>
               ))}
+              {around.below.map((id) => {
+                const member = memberOfLevel(id)
+                return (
+                  <a key={id} className="map-level-chip" title={`the level below: ${id}`} onClick={() => openView(id)}>
+                    {member ? memberName(member) : viewTitle(id)} ↓
+                  </a>
+                )
+              })}
             </span>
           )}
         </div>

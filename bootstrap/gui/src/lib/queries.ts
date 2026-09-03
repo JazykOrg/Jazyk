@@ -9,6 +9,7 @@ import {
   type Deliverable,
   type DocInfo,
   type DocRecord,
+  type EntityCardData,
   type FeedbackEntry,
   type Graph,
   type JournalEntry,
@@ -19,6 +20,7 @@ import {
   type VerifyRow,
   type ViewDetail,
   type ViewInfo,
+  type ViewPageData,
 } from './api'
 
 const opts = { placeholderData: keepPreviousData, staleTime: 5_000 }
@@ -39,11 +41,31 @@ export const useBoard = () =>
 export const useViews = () =>
   useQuery({ queryKey: ['views'], queryFn: () => get<{ views: ViewInfo[] }>('/api/views'), ...opts })
 
-// One view resolved for drawing: members, lifted arrows, steps, the machine, the picture.
-export const useView = (id: string) =>
+// One view resolved for drawing: members, lifted arrows, steps, the machine, the
+// picture. `detail` expands every member that many levels down, the arrows lifted
+// to the wider set (docs/frontends/gui.md#explore).
+export const useView = (id: string, detail = 0) =>
   useQuery({
-    queryKey: ['views', id],
-    queryFn: () => get<ViewDetail>(`/api/views/${encodeURIComponent(id)}`),
+    queryKey: ['views', id, detail],
+    queryFn: () => get<ViewDetail>(`/api/views/${encodeURIComponent(id)}${detail > 0 ? `?detail=${detail}` : ''}`),
+    enabled: id !== '',
+    ...opts,
+  })
+
+// The walk: one small card per entity and one page per diagram, from the shared
+// model (docs/frontends/gui.md#explore).
+export const useEntityCard = (id: string) =>
+  useQuery({
+    queryKey: ['card', id],
+    queryFn: () => getOr404<EntityCardData>(`/api/entities/${encodeURIComponent(id)}/card`),
+    enabled: id.startsWith('ent:'),
+    ...opts,
+  })
+
+export const useViewPage = (id: string) =>
+  useQuery({
+    queryKey: ['page', id],
+    queryFn: () => getOr404<ViewPageData>(`/api/views/${encodeURIComponent(id)}/page`),
     enabled: id !== '',
     ...opts,
   })

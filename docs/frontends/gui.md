@@ -85,7 +85,12 @@ Project and store reads:
   [level view](../compiler/diagrams.md#level-views) of its own, the member id and that
   view's id: the same list `get_view` answers
   ([drill-down](../compiler/concepts/levels.md#drill-down)). This is what the map
-  draws.
+  draws. `?detail=N` is the [explorer's](#explore) detail: every drawn entity's
+  children join the members N levels down, each marked `detail` with the level it
+  came in at and `parent` set, and the arrows lift to the wider set by the same
+  code. The reply's `detail` is the number of levels applied (the expansion stops
+  where the tree ends) and `deeper` says whether one more level would draw
+  anything.
 - `GET /api/entities/{id}/card`: the entity's [card](../consumers/docsgen.md#entity-cards)
   as JSON, from the shared model: `id`, `name`, `stereotype`, `definition`,
   `provenance` (`quote`, `derived`, or `decree`), `breadcrumb` (the chain from the
@@ -391,8 +396,9 @@ One workbench page. Navigation swaps panes, never the page. Six regions:
 Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`, `/graph`,
 `/board`, `/work`, `/feedback`, and `/settings` pick the center; `?node=` holds the
 inspector selection (any node id, a relationship, a state machine, or a goal);
-`?view=` the view overlaid on the map; `?goal=` the selected board card; `?run=` the
-selected run. A document takes `?section=` and `?quote=` to reveal and highlight a
+`?view=` the view overlaid on the map; `?entity=` the [explorer's](#explore)
+position and `?detail=` its detail under the overlaid view; `?goal=` the selected
+board card; `?run=` the selected run. A document takes `?section=` and `?quote=` to reveal and highlight a
 quote; a deliverable file takes `?site=<requirement>` to reveal that requirement's
 first located site, or `?line=` to reveal a line directly.
 
@@ -525,19 +531,34 @@ JSON, and `GET /api/views/{id}/page`, the diagram page as JSON). What the LSP ca
 do, this surface does:
 
 - Click a node, anywhere: on the map, in an overlaid level view, in the tree, in a
-  card. The inspector shows the entity's card: the definition, `Sits in`, the in-context
-  view, `Inside`, relationships, flows, siblings, children, each item a link that moves
-  the explorer. A diagram's nodes are live: clicking a box in an overlaid view opens
-  that entity's card and, when it has a level, offers the level below.
-- History: the explorer keeps a stack. Back and forward walk it; the URL carries the
-  position (`?entity=` beside `?view=`), so any point of the walk is addressable and
-  shareable.
+  card, any entity id in the app. The inspector shows the entity's card first, the
+  long detail under it: the definition, `Sits in`, the in-context view, `Inside`,
+  relationships, flows, siblings, children, each item a link that moves the
+  explorer. A diagram's nodes are live: clicking a box in an overlaid view opens
+  that entity's card and, when it has a level, offers the level below. Closing the
+  inspector clears the position; the overlaid view stays.
+- Where the map goes: a move from a card (a sibling, a child, a relationship, a
+  crumb) overlays the entity's context view (its parent's level, the scope root's
+  for a parentless entity) with the entity selected, so the map shows where the
+  entity sits. A click on a node already drawn (the map, the tree) keeps the
+  overlay. The scope root has no card: its crumb overlays the root's level view.
+- History: the explorer keeps a stack of positions (`?entity=` with `?view=`). Back
+  and forward walk it; every move pushes, and a browser back lands on the same stack
+  entry, so the two never disagree. The URL carries the position, so any point of
+  the walk is addressable and shareable: a URL with `?entity=` and no `?node=` opens
+  the inspector on the card.
 - Detail: a level view overlays with its groupings collapsed; `more detail` expands
   every grouping one level (its children draw inside it, relationships lifted as the
   renderer lifts them), `less detail` collapses one level back up to the level's
-  members. The map redraws from the graph; nothing is rendered by the build for this.
+  members. The control sits in the breadcrumb bar over a structural overlay, with the
+  level count between its two buttons; `more detail` disables where the tree ends.
+  The map redraws from the graph through `GET /api/views/{id}?detail=`; nothing is
+  rendered by the build for this. `?detail=` holds it and resets when the overlaid
+  view changes.
 - Sideways: the card's siblings and the diagram page's `Around` list are chips; one
   click moves to the sibling entity or the neighboring view without going up first.
+  `Around` sits in the breadcrumb bar: the level above (`↑`), the other views of the
+  same level, and the levels below (`↓`, labeled by member).
 - Up and down: the breadcrumb over the diagram panel stays; the card's `Inside` and
   `Sits in` are the same moves as chips.
 

@@ -4,6 +4,7 @@ mod answer;
 mod benchmark;
 mod bind;
 mod board;
+mod card;
 mod cli;
 mod context;
 mod control;

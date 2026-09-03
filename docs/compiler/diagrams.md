@@ -309,29 +309,29 @@ link. `inventory-service` has one child, so it has no level view and no link.
 
 ### Drill-down
 
-Every rendered member whose entity has a level view links to it:
+Every rendered entity links to its [card](../consumers/docsgen.md#entity-cards):
 
-- In the `.puml`, the member's element carries a PlantUML `[[...]]` hyperlink to the
-  level view's rendering: `[[../<kind>/<slug>.svg]]`, the same form as the collapsed-node
-  link under [lifting and collapse](#lifting-and-collapse). The link is part of the
-  emitted text, so it takes part in determinism and in the skip rule: a member gaining
-  or losing a level view changes the `.puml` and the view renders again.
-- In the `.svg`, the renderer emits the link as an anchor on the member's element. The
-  path is relative under `diagrams/`: from `diagrams/component/shop.svg` the link to the
-  level below `order-service` is `../component/order-service.svg`, and a `component`
-  level may link down into a `class` level the same way. A rendering opened from the out
-  directory navigates on click with no server behind it.
-- A member with fewer than two children has no level view and carries no link.
+- In the `.puml`, the element carries a PlantUML `[[...]]` hyperlink to the entity's
+  card: `[[../../docsgen/entities/<entity-slug>.md]]`, the same form as the
+  collapsed-node link under [lifting and collapse](#lifting-and-collapse). The link is
+  part of the emitted text, so it takes part in determinism and in the skip rule.
+- In the `.svg`, the renderer emits the link as an anchor on the element. The path is
+  relative under the out directory, so a rendering opened from the out directory
+  navigates on click with no server behind it, and a card served beside it links back.
+  The card is where the drill-down lives: its `Inside` section is the level below, its
+  `Sits in` line the level above. One link per node, and the card decides the rest.
+- A participant of a flow view links the same way; a message does not.
 - The view carries a `children` list beside its members, in `get_view`
   ([read tools](./tools.md#read-tools)) and in the GUI API: the level views reachable
-  from its members, one entry per linked member.
+  from its drawn entities, one entry per entity with a level of its own.
 
 What consumes the links:
 
-- [Docsgen](../consumers/docsgen.md) nests a page per level: the node's definition, its
-  level views embedded as `.svg`, its members with links down to their level pages, and a
-  breadcrumb up to the parent's page. The `.svg` anchors work inside the embedded
-  diagram, so a reader can dig through the picture or through the member list.
+- [Docsgen](../consumers/docsgen.md) renders a card per entity and a page per diagram
+  beside the level pages: a reader lands on a card, sees the level it sits in and the
+  level below it, and moves up, down, or sideways one link at a time. A diagram page
+  carries a legend, one link per drawn entity, because an image embedded in a markdown
+  preview does not click; the `.svg` anchors work wherever the file itself is opened.
 - The [GUI](../frontends/gui.md#graph) draws from the graph, not from the files. It
   shows the containment tree beside the diagram panel and a breadcrumb over it, and
   follows `children` to open the level below a clicked member.

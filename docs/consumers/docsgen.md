@@ -160,6 +160,76 @@ Only the entity page carries requirements. A grouping holds no requirements of i
 its level page shows what its members relate to through lifting, and each member's
 entity page shows the statements.
 
+## Entity cards
+
+The requirements document is the long read. The card is where a reader lands: one
+small page per entity at `<out>/docsgen/entities/<entity-slug>.md`, rendered with the
+other pages on every commit and on `jazyk docsgen`, pruned with the entity. Every link
+from a diagram, a hover, or another card points at a card, and the card lets the reader
+pick a direction: up, down, sideways, or into the detail. The card carries no
+requirement blocks; it links to them. The shared model behind it (`card.rs`) is the one
+the [LSP hover](../frontends/lsp.md#capabilities) and the
+[GUI explorer](../frontends/gui.md#explore) read, so the three surfaces walk the same
+graph.
+
+The card, in order:
+
+- The header: the name, the `stereotype`, and the `definition` in one paragraph. A
+  derived or decreed entity says so in one line with a link to its proposal.
+- `Sits in`: the breadcrumb from the scope root down to the parent, each a link to its
+  card (the scope root links to its [level page](#level-pages)), the entity itself
+  last and unlinked. This is the link up.
+- `In context`: the structural [level view](../compiler/diagrams.md#level-views) of the
+  parent's level (the scope root's for a parentless entity), embedded as an image, with
+  the caption line under it: every drawn entity linked to its card, and a link to the
+  view's [diagram page](#diagram-pages). The entity is one of the boxes; this is where
+  it is used.
+- `Inside`: when the entity has a level of its own, its level view embedded the same
+  way, and the flow views of that level as links to their diagram pages. A leaf says
+  `a leaf` and nothing more. This is the link down.
+- `Relationships`: one line per other entity: the relationship type as the
+  [relationship](../compiler/model/relationship.md) summarizes it, the direction, the
+  other entity as a link to its card, and the number of contributing requirements.
+  This is the link sideways along the edges.
+- `Flows`: the flow views at the parent's level in which the entity is a drawn
+  participant, each a link to its diagram page with its step count.
+- `Siblings`: the other children of the same parent, each a link to its card, with a
+  child count where one has a level. This is the link sideways along the level.
+- `Children`: the direct children, each a link, with child counts. Absent on a leaf.
+- `More`: the requirements document (with the requirement count), the level page of
+  the parent's level, the entity's own level page when it has one, and the proposal
+  when it is pending.
+
+Every list is short by construction: a level is under its
+[children limit](../compiler/graph.md#limits), and the card lists one level in each
+direction. A reader who wants the next level clicks; nothing is inlined two levels
+deep.
+
+## Diagram pages
+
+Every view has a page at `<out>/docsgen/diagrams/<kind>/<view-slug>.md`, rendered and
+pruned with the view. A diagram page is the same size as a card and is the other node
+of the walk: cards link to diagrams, diagrams link to cards.
+
+The page, in order:
+
+- The title and the view id, with the kind and the member count.
+- `Level`: for a level view or a lifted flow view, the breadcrumb of the level it
+  belongs to, each ancestor a link to its card, ending in a link to the level page.
+  This is the link up. A view with no level (a curated view, an object or state view)
+  says which entity or machine it belongs to instead.
+- The image, embedded as on every page, with the source link.
+- `Drawn`: one line per drawn entity in drawing order: a link to its card, its
+  `stereotype`, and, when it has a level view, a link to that view's page marked
+  `level below`. This is the legend: the image does not click inside a markdown
+  preview, the legend does.
+- `Steps` (flow kinds only): the members in order, each the statement with its id
+  linked to its heading in the requirements document, and `initiator → receiver` as
+  links to their cards, lifted as the diagram draws them.
+- `Around`: the other views of the same level (`use-case`, `sequence`, the structural
+  view), the level view of the level above, and the level views of the drawn entities
+  that have one. This is the link sideways and down.
+
 ## Ratification proposals
 
 A fact with `derived` or `decree` provenance is invented until the documents state it

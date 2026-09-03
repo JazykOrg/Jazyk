@@ -86,6 +86,20 @@ Project and store reads:
   view's id: the same list `get_view` answers
   ([drill-down](../compiler/concepts/levels.md#drill-down)). This is what the map
   draws.
+- `GET /api/entities/{id}/card`: the entity's [card](../consumers/docsgen.md#entity-cards)
+  as JSON, from the shared model: `id`, `name`, `stereotype`, `definition`,
+  `provenance` (`quote`, `derived`, or `decree`), `breadcrumb` (the chain from the
+  scope root, id and name each), `context` (the parent level's structural view id),
+  `inside` (the entity's own level view id, or null), `insideFlows` (the flow view ids
+  of its level), `relationships` (`{other, type, direction, count}`), `flows` (the
+  flow view ids at the parent's level it takes part in), `siblings` and `children`
+  (`{id, name, childCount}`), `requirementCount`, and `proposal` (the pending
+  ratification diagnostic id, or null).
+- `GET /api/views/{id}/page`: the view's [diagram page](../consumers/docsgen.md#diagram-pages)
+  as JSON: `id`, `kind`, `title`, `level` (the level target and its breadcrumb),
+  `drawn` (`{id, name, stereotype, levelView}` in drawing order), `steps` (flow kinds:
+  `{requirement, statement, from, to}`), and `around` (`{sameLevel, above, below}`
+  as view ids).
 - `GET /api/tree`: the containment tree, one node per scope root (`scope:<scope>`)
   and per entity, each with its children in document order, its child count, and
   its level view id when it has one (`null` on a leaf). The tree panel and the
@@ -502,6 +516,30 @@ other surfaces ([diagrams](../compiler/diagrams.md#rendering)).
 - Selecting an arrow opens its relationship in the inspector: the contribution group
   and its requirements.
 - Entity scope, stereotype, and edge-type filters carry over from the overview.
+
+### Explore
+
+The walk the [cards](../consumers/docsgen.md#entity-cards) give a markdown reader,
+the GUI gives live, from the same model (`GET /api/entities/{id}/card`, the card as
+JSON, and `GET /api/views/{id}/page`, the diagram page as JSON). What the LSP cannot
+do, this surface does:
+
+- Click a node, anywhere: on the map, in an overlaid level view, in the tree, in a
+  card. The inspector shows the entity's card: the definition, `Sits in`, the in-context
+  view, `Inside`, relationships, flows, siblings, children, each item a link that moves
+  the explorer. A diagram's nodes are live: clicking a box in an overlaid view opens
+  that entity's card and, when it has a level, offers the level below.
+- History: the explorer keeps a stack. Back and forward walk it; the URL carries the
+  position (`?entity=` beside `?view=`), so any point of the walk is addressable and
+  shareable.
+- Detail: a level view overlays with its groupings collapsed; `more detail` expands
+  every grouping one level (its children draw inside it, relationships lifted as the
+  renderer lifts them), `less detail` collapses one level back up to the level's
+  members. The map redraws from the graph; nothing is rendered by the build for this.
+- Sideways: the card's siblings and the diagram page's `Around` list are chips; one
+  click moves to the sibling entity or the neighboring view without going up first.
+- Up and down: the breadcrumb over the diagram panel stays; the card's `Inside` and
+  `Sits in` are the same moves as chips.
 
 ### Board
 

@@ -1184,6 +1184,16 @@ fn messages(scene: &Scene) -> Vec<Message> {
         .collect()
 }
 
+// The messages of a flow view as the emitter draws them: requirement id, initiator,
+// receiver, lifted to the view's level. The card model's steps.
+pub fn view_messages(store: &Store, view_id: &str, view: &View) -> Vec<(String, String, String)> {
+    let sc = scene(store, view_id, view);
+    messages(&sc)
+        .into_iter()
+        .map(|m| (m.rid, m.from, m.to))
+        .collect()
+}
+
 fn raw_messages(scene: &Scene) -> Vec<Message> {
     scene
         .requirements

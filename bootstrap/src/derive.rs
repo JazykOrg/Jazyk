@@ -822,6 +822,28 @@ pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
         .map(|l| l.target)
 }
 
+// Every lifted flow view with the level it belongs to, computed once for a walk over
+// the whole project. Mirrors docs/consumers/docsgen.md#entity-cards.
+pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
+    let rank = entity_document_rank(store);
+    let mut out = BTreeMap::new();
+    for l in levels(store, &rank).into_iter().filter(|l| l.children.len() >= 2) {
+        let members = level_members_of(store, &l, &rank);
+        for w in flow_view_rules(store, &l, &members) {
+            out.insert(w.id.clone(), l.target.clone());
+        }
+    }
+    out
+}
+
+// The entities a view draws, as the card model reads them.
+pub fn drawn_entities_of(store: &Store, view_id: &str) -> Vec<String> {
+    match store.graph.views.get(view_id) {
+        Some(v) => drawn_entities(store, view_id, v),
+        None => Vec::new(),
+    }
+}
+
 // The entities a view draws: the entity members of a structural, object, or state
 // view; the participants of a flow view (each member's message endpoints, lifted to the
 // view's level when it has one), in first-appearance order.

@@ -21,35 +21,36 @@ hands the reply to an [answer session](./acp.md#answer-sessions).
   quality, an `unplaced-behavior` warning on the behavior statement.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.
-- Hover on an entity: the entity's definition, stereotype, parent, attributes,
-  requirements, and relationships, rendered as [`load`](../compiler/context.md#tools)
-  renders them for that target at depth 1, so the hover matches what a
-  [session](../compiler/sessions.md) and the [MCP server](./mcp.md) see
-  ([rendering](../compiler/context.md#rendering)). Above the text sits the image of the
-  entity's most relevant view, embedded as a markdown image whose source is the
-  `file://` URI of the rendered `.svg` at `<out>/diagrams/<kind>/<slug>.svg`
-  ([output layout](../compiler/diagrams.md#output-layout)); editors render markdown
-  images in hovers. Beside it, the link to the entity's page at
-  `<out>/docsgen/<slug>.md`, where every relevant view is embedded
-  ([documentation generation](../consumers/docsgen.md)). E.g.:
+- Hover on an entity: the [card](../consumers/docsgen.md#entity-cards) in short,
+  read from the same model docsgen renders. In order: the name with its stereotype and
+  the `definition`; `Sits in`, the breadcrumb as text; the image of the view the
+  entity is used in (the structural level view of the parent's level, the scope root's
+  for a parentless entity), embedded as a markdown image whose source is the `file://`
+  URI of the rendered `.svg` at `<out>/diagrams/<kind>/<slug>.svg`
+  ([output layout](../compiler/diagrams.md#output-layout)), captioned with the view id;
+  under it, when the entity has a level of its own, the link to its inside view's
+  [diagram page](../consumers/docsgen.md#diagram-pages) with the child count, never a
+  second image; then one line of links: the card, the requirements document, the
+  level page of the parent's level. A derived entity's line names the pending proposal.
+  Editors render markdown images in hovers. E.g.:
 
   ```markdown
-  ![Order (state)](file:///home/ana/shop/jazyk-out/diagrams/state/order.svg)
-  [ent:order: requirements document](file:///home/ana/shop/jazyk-out/docsgen/order.md)
+  **Funds** · Funds gathers the balances and methods a customer spends at Checkout.
+  Sits in: Public › Checkout › **Funds**
+  ![view:class/checkout](file:///home/ana/shop/jazyk-out/diagrams/class/checkout.svg)
+  Inside: [view:class/funds](file:///home/ana/shop/jazyk-out/docsgen/diagrams/class/funds.md) (3 children)
+  [card](file:///.../docsgen/entities/funds.md) · [requirements (0)](file:///.../docsgen/funds.md) · [level: Checkout](file:///.../docsgen/levels/checkout.md)
   ```
-
-  The most relevant view is chosen deterministically, never by judgment:
-  - a view whose slug is the entity's own, in this order: `view:state/<slug>` (the
-    entity has a derived [state machine](../compiler/model/state-machine.md)),
-    `view:component/<slug>` (a «system»), `view:object/<slug>` (a type with instances);
-  - else the smallest view (fewest members) that lists the entity as a member, ties
-    broken by the [kind catalog](../compiler/model/view.md#kinds) order, then by id;
-  - no such view: the text hover alone. Nothing is invented.
 
   The image is the build output the last commit rendered; the hover never renders a
   view itself. When the ledger exists ([the ledger](../consumers/gen.md#the-ledger)), the
   hover appends a verification summary for the entity (verified over total, failing and
   stale counts).
+- Go to type definition on an entity: the entity's card at
+  `<out>/docsgen/entities/<slug>.md`. Definition stays the defining mention in the
+  prose; the type definition is the walk. From the card the reader clicks through
+  levels and diagrams in the editor's markdown preview, every link relative under the
+  out directory.
 - Hover inside a requirement's located quote: the requirement card, three parts, each part
   linked. The hover range is the located quote, so the whole statement highlights.
   - The requirement: the id, the `statement`, its facets, its edges and transition when

@@ -268,6 +268,11 @@ Flow views derive per level, and lifting is applied at derivation, not at render
   view and a `sequence` view whose participants are the lifted members, ids
   `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/<node-slug>-<cluster-slug>`.
 - A leaf level keeps today's clustering unchanged: lifting to a leaf is identity.
+- At render, every message endpoint lifts to its nearest ancestor among the level's
+  members, so a flow among leaves draws between their groupings (the checkout level's
+  sequence shows Funds, not the gift card and the loyalty point under it). An endpoint
+  with no ancestor there (the node itself, when a flow starts at the frame) draws as
+  itself.
 - State and object views stay per machine and per instantiated type; they do not
   derive per level.
 

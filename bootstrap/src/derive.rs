@@ -817,14 +817,14 @@ fn drawn_entities(store: &Store, view_id: &str, v: &View) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for m in &members {
         for p in flow_participants(store, std::slice::from_ref(m)) {
-            let drawn = match level.as_deref() {
-                Some(level) => lift_into(store, level, &p),
-                None => Some(p),
+            // An endpoint with no ancestor among the members draws as itself, as
+            // the emitter draws it. Mirrors docs/compiler/diagrams.md#level-views.
+            let d = match level.as_deref() {
+                Some(level) => lift_into(store, level, &p).unwrap_or(p),
+                None => p,
             };
-            if let Some(d) = drawn {
-                if !out.contains(&d) {
-                    out.push(d);
-                }
+            if !out.contains(&d) {
+                out.push(d);
             }
         }
     }

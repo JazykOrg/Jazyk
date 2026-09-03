@@ -1126,7 +1126,31 @@ fn message_of(store: &Store, rid: &str) -> Option<Message> {
     })
 }
 
+// The messages of a flow view, each endpoint lifted to its nearest ancestor among
+// the view's level members when the view has a level; an endpoint with none draws as
+// itself. Mirrors docs/compiler/diagrams.md#level-views.
 fn messages(scene: &Scene) -> Vec<Message> {
+    let level = crate::derive::flow_view_level(scene.store, scene.id)
+        .map(|t| crate::derive::level_view_members(scene.store, &t));
+    let lift = |id: String| -> String {
+        match level.as_deref() {
+            Some(members) => {
+                crate::derive::lift_into(scene.store, members, &id).unwrap_or(id)
+            }
+            None => id,
+        }
+    };
+    raw_messages(scene)
+        .into_iter()
+        .map(|m| Message {
+            from: lift(m.from),
+            to: lift(m.to),
+            rid: m.rid,
+        })
+        .collect()
+}
+
+fn raw_messages(scene: &Scene) -> Vec<Message> {
     scene
         .requirements
         .iter()
@@ -1724,6 +1748,76 @@ mod tests {
     use crate::derive::tests::showcase_store;
     use crate::store::RecordBatch;
     use regex::Regex;
+
+    // Mirrors docs/compiler/diagrams.md#level-views: a level's sequence view draws
+    // each message endpoint lifted to its nearest ancestor among the level's
+    // members, so a flow among leaves draws between their groupings; the frame
+    // itself, when a flow starts there, draws as itself.
+    #[test]
+    fn a_level_sequence_view_lifts_endpoints_to_the_level_members() {
+        let mut s = Store::default();
+        let ent = |name: &str, parent: Option<&str>| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:checkout".into(), ent("Checkout", None));
+        s.graph.entities.insert("ent:cart".into(), ent("Cart", Some("ent:checkout")));
+        s.graph.entities.insert("ent:funds".into(), ent("Funds", Some("ent:checkout")));
+        s.graph
+            .entities
+            .insert("ent:gift-card".into(), ent("Gift Card", Some("ent:funds")));
+        s.graph
+            .entities
+            .insert("ent:loyalty-point".into(), ent("Loyalty Point", Some("ent:funds")));
+        let req = |text: &str, a: &str, b: &str| Requirement {
+            statement: text.into(),
+            entities: vec![a.into(), b.into()],
+            edges: vec![ReqEdge {
+                a: a.into(),
+                b: b.into(),
+                rel_type: Some("dependency".into()),
+                cardinality: None,
+            }],
+            facets: vec![Facet {
+                facet: "behavior".into(),
+                reasoning: String::new(),
+                measure: None,
+            }],
+            source: Some(SourceRef {
+                doc: "checkout.md".into(),
+                section: "/checkout".into(),
+                quote: text.into(),
+            }),
+            ..Default::default()
+        };
+        s.graph.requirements.insert(
+            "req:c-1".into(),
+            req("A Gift Card pays for a Cart.", "ent:gift-card", "ent:cart"),
+        );
+        s.graph.requirements.insert(
+            "req:c-2".into(),
+            req("A Loyalty Point discounts a Cart.", "ent:loyalty-point", "ent:cart"),
+        );
+        s.graph.requirements.insert(
+            "req:c-3".into(),
+            req("The Checkout charges a Gift Card.", "ent:checkout", "ent:gift-card"),
+        );
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        let id = "view:sequence/checkout-funds-checkout";
+        let view = s.graph.views.get(id).unwrap_or_else(|| {
+            panic!("views: {:?}", s.graph.views.keys().collect::<Vec<_>>())
+        });
+        let puml = emit(&s, id, view);
+        assert!(puml.contains("participant \"Funds\""), "{}", puml);
+        assert!(puml.contains("participant \"Cart\""), "{}", puml);
+        assert!(!puml.contains("participant \"Gift Card\""), "{}", puml);
+        assert!(puml.contains("participant \"Checkout\""), "the frame draws as itself: {}", puml);
+        // The drill-down participants agree with the drawing.
+        let drawn = crate::derive::children_of_view(&s, id);
+        assert!(drawn.iter().any(|(m, _)| m == "ent:funds"), "{:?}", drawn);
+    }
 
     fn showcase() -> Store {
         let mut s = showcase_store();

@@ -3840,14 +3840,34 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
         ));
     }
     let members = level_members(store, target);
+    // The node's own document: the section that lists a member there is the heading
+    // it sits under, the partition the model groups by first.
+    // Mirrors docs/compiler/concepts/levels.md#naming.
+    let node_doc = if store.graph.entities.contains_key(target) {
+        dominant_document(store, target)
+    } else {
+        None
+    };
     for m in &members {
         let e = &store.graph.entities[m];
         let mut line = format!("member {}", m);
         if let Some(s) = &e.stereotype {
             line.push_str(&format!(" «{}»", s));
         }
-        if let Some(d) = dominant_document(store, m) {
-            line.push_str(&format!(" ({})", d));
+        let listing = node_doc.as_ref().and_then(|doc| {
+            e.mentions
+                .iter()
+                .find(|mn| &mn.doc == doc)
+                .map(|mn| format!("{}#{}", mn.doc, mn.section))
+        });
+        let dominant = dominant_document(store, m);
+        match (listing, dominant) {
+            (Some(l), Some(d)) if !l.starts_with(&format!("{}#", d)) => {
+                line.push_str(&format!(" ({}; {})", l, d));
+            }
+            (Some(l), _) => line.push_str(&format!(" ({})", l)),
+            (None, Some(d)) => line.push_str(&format!(" ({})", d)),
+            (None, None) => {}
         }
         hints.push(line);
     }
@@ -4711,6 +4731,40 @@ mod tests {
         fan_out_record(&mut s, "ent:backend", 12);
         fan_out_record(&mut s, "scope:public", 10);
         s
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member the
+    // node's own document lists carries the listing section (the heading it sits
+    // under) beside the document it is mentioned in most; a member the node's
+    // document never names carries its document alone.
+    #[test]
+    fn fan_out_hints_carry_the_listing_section_of_the_nodes_document() {
+        let mut s = levels_store();
+        s.graph
+            .entities
+            .get_mut("ent:cart")
+            .unwrap()
+            .mentions
+            .push(SourceRef {
+                doc: "arch.md".into(),
+                section: "/arch/data-model".into(),
+                quote: "cart".into(),
+            });
+        let goals = AbstractEntity.derive_goals(&s, &gen_settings());
+        let node = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        assert!(
+            node.hints
+                .iter()
+                .any(|h| h.starts_with("member ent:cart «component» (arch.md#/arch/data-model")),
+            "{:?}",
+            node.hints
+        );
+        assert!(
+            node.hints
+                .contains(&"member ent:pricing «component» (api.md)".to_string()),
+            "{:?}",
+            node.hints
+        );
     }
 
     // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose

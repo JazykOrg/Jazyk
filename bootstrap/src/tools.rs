@@ -3820,13 +3820,23 @@ impl ToolSession {
                     ));
                 }
                 if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
-                    return Err(ToolError::new(
-                        "near-duplicate",
+                    // A lookalike that is a peer of the members (a member of the
+                    // same level) carries the area's word without being the area:
+                    // the members never nest under it. Mirrors
+                    // docs/compiler/concepts/levels.md#naming.
+                    let peer = !members.contains(&eid) && self.parent_of(&eid) == parent;
+                    let message = if peer {
+                        format!(
+                            "`{}` looks like a name variant of `{}` ({}), a peer of the members at this level; a peer that carries the area's word is not the area and never becomes the members' parent: name the grouping from the heading or document that lists the members (or qualify the name), and let {} join the grouping of its own heading",
+                            name_arg, eid, ename, eid
+                        )
+                    } else {
                         format!(
                             "`{}` looks like a name variant of existing `{}` ({}); a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
                             name_arg, eid, ename, eid
-                        ),
-                    ));
+                        )
+                    };
+                    return Err(ToolError::new("near-duplicate", message));
                 }
                 // One changeset: the create and every move, or nothing.
                 if self.staged.len() + members.len() + 1 > self.mutation_limit {
@@ -7707,6 +7717,14 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "near-duplicate");
         assert!(err.message.contains("ent:storage-layer"), "{}", err.message);
+        // The lookalike sits beside the members at this level: a peer carrying the
+        // area's word, never their parent. Mirrors docs/compiler/concepts/levels.md#naming.
+        assert!(
+            err.message.contains("a peer of the members at this level")
+                && err.message.contains("never becomes the members' parent"),
+            "{}",
+            err.message
+        );
         let err = t
             .dispatch(
                 "group_entities",

@@ -988,6 +988,8 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
                     if !ids.is_empty() {
                         store.clear_changes(&ids);
                     }
+                    store.status.parked.retain(|p| p.id != goal_id);
+                    store.save_status();
                 }
             }
             let after = crate::board::Board::derive(&store, &proj, &control);

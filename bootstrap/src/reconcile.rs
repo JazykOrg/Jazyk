@@ -2191,6 +2191,9 @@ pub fn compile_with(
                 if !ids.is_empty() {
                     store.clear_changes(&ids);
                 }
+                // Resolving a parked goal clears its entry with its record; the
+                // tail only adds and replaces. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+                store.status.parked.retain(|p| p.id != *id);
                 attempts.remove(id);
                 continue;
             }

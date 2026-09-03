@@ -1533,24 +1533,49 @@ impl ToolSession {
         Ok(())
     }
 
-    // A sentence boundary is [.!?] followed by whitespace or the end of the text, so
-    // a dot inside `customer.md` or a versioned id never counts a phantom sentence
-    // (a naive split trained models to strip document names from justifications).
+    // A sentence boundary is [.!?] followed by the end of the text, or by whitespace
+    // and a sentence opener (an uppercase letter, a digit, a quote, a bracket), so a
+    // dot inside `customer.md` or a versioned id never counts a phantom sentence and
+    // an abbreviation running into lowercase (`vs. its member`, `e.g. the cart`)
+    // never ends one (a naive split trained models to strip document names and
+    // plain English from justifications, three bounced claims for one `vs.`).
     fn sentence_count(text: &str) -> usize {
+        let chars: Vec<char> = text.chars().collect();
         let mut count = 0usize;
         let mut has_content = false;
-        let mut chars = text.chars().peekable();
-        while let Some(c) = chars.next() {
-            if matches!(c, '.' | '!' | '?') && chars.peek().map_or(true, |n| n.is_whitespace()) {
-                if has_content {
-                    count += 1;
-                    has_content = false;
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            if matches!(c, '.' | '!' | '?') {
+                let mut j = i + 1;
+                while j < chars.len() && matches!(chars[j], '.' | '!' | '?') {
+                    j += 1;
                 }
-                continue;
+                let at_end = j >= chars.len();
+                let boundary = at_end
+                    || (chars[j].is_whitespace() && {
+                        let mut k = j;
+                        while k < chars.len() && chars[k].is_whitespace() {
+                            k += 1;
+                        }
+                        k >= chars.len()
+                            || chars[k].is_uppercase()
+                            || chars[k].is_ascii_digit()
+                            || matches!(chars[k], '"' | '\'' | '(' | '[' | '`' | '«')
+                    });
+                if boundary {
+                    if has_content {
+                        count += 1;
+                        has_content = false;
+                    }
+                    i = j;
+                    continue;
+                }
             }
             if !c.is_whitespace() {
                 has_content = true;
             }
+            i += 1;
         }
         if has_content {
             count += 1;
@@ -7068,6 +7093,20 @@ mod tests {
     // A WorkItem built from a GC goal carries the kind's name as its task; the
     // toolset is the kind's slice, never the read-only fallback (the snippet and
     // the MCP case path build their tool list from it).
+    // The justification counter: document names, ids, and abbreviations running
+    // into lowercase never end a sentence; an opener after the period does.
+    #[test]
+    fn sentence_count_ignores_dots_in_names_and_abbreviations() {
+        let n = ToolSession::sentence_count;
+        assert_eq!(n("The definition fits customer.md verbatim."), 1);
+        assert_eq!(n("Order is a separate concept (the area vs. its member), so it stands."), 1);
+        assert_eq!(n("It matches, e.g. the cart line. Nothing changed."), 2);
+        assert_eq!(n("One. Two. Three."), 3);
+        assert_eq!(n("Is it done? Yes! Done"), 3);
+        assert_eq!(n("Ends with an id like ent:order. (Then a bracket.)"), 2);
+        assert_eq!(n(""), 0);
+    }
+
     #[test]
     fn a_bare_document_reference_reads_its_root_section() {
         let mut t = session();

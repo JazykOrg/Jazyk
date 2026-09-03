@@ -979,6 +979,14 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
             // does: the journal entry is what closes the goal.
             if !ops.is_empty() || !commit.resolved.is_empty() {
                 store.apply(ops, &commit);
+                // The build loop clears a resolved goal's change records once the
+                // journal holds the resolution; the snippet does the same.
+                if commit.resolved.iter().any(|r| r.goal == goal_id) {
+                    let ids = board.records_of(goal_id);
+                    if !ids.is_empty() {
+                        store.clear_changes(&ids);
+                    }
+                }
             }
             let after = crate::board::Board::derive(&store, &proj, &control);
             let resolved = !after.open(goal_id);

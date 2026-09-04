@@ -4850,6 +4850,17 @@ mod tests {
         assert!(skill.contains("one `search` with `queries`"));
     }
 
+    // The extraction skill refuses a default stereotype: a concept the section only
+    // names and uses carries none, and `component`, `entity`, `class` are never
+    // defaults (the f2 root ingest labeled every domain concept «component»).
+    // Mirrors docs/compiler/skills/extraction.md.
+    #[test]
+    fn the_extraction_skill_refuses_default_stereotypes() {
+        let skill = include_str!("../../docs/compiler/skills/extraction.md");
+        assert!(skill.contains("carries no stereotype: leave the field absent"));
+        assert!(skill.contains("`component`, `entity`, and `class` are never defaults"));
+    }
+
     // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose
     // name is the heading of the document naming it and other members is the
     // level's namesake node.

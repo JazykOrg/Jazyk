@@ -1246,13 +1246,28 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
                 check(
                     id,
                     "participants-per-sequence-view",
-                    flow_participants(store, &flow).len() as u64,
+                    flow_view_participant_count(store, id, v) as u64,
                     &v.limits,
                 );
             }
         }
     }
     out
+}
+
+// The participants a sequence or communication view counts against its limit: for
+// a level's flow view, what the diagram draws after lifting; for any other, the
+// union of the members' initiators and receivers.
+// Mirrors docs/compiler/goals/split-view.md#created-when.
+pub fn flow_view_participant_count(store: &Store, view_id: &str, v: &View) -> usize {
+    if flow_view_level(store, view_id).is_some() {
+        return drawn_entities(store, view_id, v).len();
+    }
+    let flow: Vec<String> = live_members(store, v)
+        .into_iter()
+        .filter(|m| store.graph.requirements.contains_key(m))
+        .collect();
+    flow_participants(store, &flow).len()
 }
 
 // Write a threshold-crossed record once per crossing: a record already present for

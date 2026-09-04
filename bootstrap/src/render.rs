@@ -1873,6 +1873,9 @@ mod tests {
             "{}",
             puml
         );
+        // The limit counts what the level draws: three lifted participants, not the
+        // four leaves beneath them.
+        assert_eq!(crate::derive::flow_view_participant_count(&s, id, view), 3);
         // The drill-down participants agree with the drawing.
         let drawn = crate::derive::children_of_view(&s, id);
         assert!(drawn.iter().any(|(m, _)| m == "ent:funds"), "{:?}", drawn);

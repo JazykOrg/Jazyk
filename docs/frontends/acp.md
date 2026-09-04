@@ -100,7 +100,10 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   with its reasoning as its message text, because an OpenAI-compatible endpoint drops
   reasoning fields from input messages: without that, the model re-thinks from
   nothing each round and stalls again; with it, it reads the plan it just made and
-  acts on it. A turn the loop cannot finish (the
+  acts on it. A stall whose finish reason is `length` is a different case: the
+  completion cap cut the reasoning before any call, so re-thinking cannot help; the
+  nudge says so and asks for the call alone, with no further deliberation, and the
+  same two-strike fuse applies. A turn the loop cannot finish (the
   endpoint erroring past its retries) answers as a `refusal` stop with the error
   emitted as a message chunk, never as a protocol error: the client side treats an
   error response to `session/prompt` as fatal to the whole connection, and one

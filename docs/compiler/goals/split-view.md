@@ -37,7 +37,7 @@ Five limits of [the registry](../graph.md#the-registry) apply to views:
 | `members-per-structural-view` | 20 | 30 | shown members of a class, object, package, component, composite, or deployment view, after `collapse` |
 | `edges-per-view` | 40 | 60 | arrows the view draws after lifting and collapse, one per direction-and-type group |
 | `members-per-flow-view` | 12 | 20 | members of a use-case, activity, sequence, communication, timing, or overview view |
-| `participants-per-sequence-view` | 8 | 12 | the union of the members' initiators and receivers of a sequence or communication view |
+| `participants-per-sequence-view` | 8 | 12 | the participants a sequence or communication view draws: for a level's flow view, the members' initiators and receivers after [lifting](../diagrams.md#level-views) to the level, so a flow the fan-out folded into two boxes counts two, never the eleven leaves beneath them; otherwise the union of the members' initiators and receivers |
 | `instances-per-object-view` | 15 | 25 | members of an object view |
 
 A view's own bump (`limits: {<limit>: n}`) is the soft threshold for that view

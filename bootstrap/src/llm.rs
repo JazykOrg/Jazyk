@@ -621,12 +621,18 @@ impl Llm {
         let resp_body = String::from_utf8_lossy(&bytes).to_string();
         let v: Value = serde_json::from_str(&resp_body)
             .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
-        let msg = v["choices"][0]["message"].clone();
+        let mut msg = v["choices"][0]["message"].clone();
         if msg.is_null() {
             return Err(format!(
                 "no message in response :: {}",
                 truncate(&resp_body, 300)
             ));
+        }
+        // The finish reason rides on the message for the loop to read (a `length`
+        // finish is a reply the completion cap cut); the loop strips it before the
+        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
+        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
+            msg["finish_reason"] = Value::String(f.to_string());
         }
         let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
             (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
@@ -660,6 +666,7 @@ fn read_stream_message<R: BufRead>(
     let mut reasoning = String::new();
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
+    let mut finish_reason: Option<String> = None;
     let started = std::time::Instant::now();
     // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
     // still bounding a server that ignores `max_tokens`.
@@ -700,6 +707,9 @@ fn read_stream_message<R: BufRead>(
             };
             if let Some(u) = v["usage"]["completion_tokens"].as_u64() {
                 usage_tokens = Some(u);
+            }
+            if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
+                finish_reason = Some(f.to_string());
             }
             let delta = &v["choices"][0]["delta"];
             if let Some(c) = delta["content"].as_str() {
@@ -748,6 +758,9 @@ fn read_stream_message<R: BufRead>(
     });
     SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
     let mut msg = json!({"role": "assistant", "content": content});
+    if let Some(f) = finish_reason {
+        msg["finish_reason"] = json!(f);
+    }
     if !reasoning_content.is_empty() {
         msg["reasoning_content"] = json!(reasoning_content);
     }

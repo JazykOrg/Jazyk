@@ -345,7 +345,13 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         {
             llm::set_tools_mode(1);
         }
-        a.history.push(msg.clone());
+        // The finish reason is the loop's to read, never the provider's to see again.
+        let finish_reason = msg["finish_reason"].as_str().map(String::from);
+        let mut kept = msg.clone();
+        if let Some(o) = kept.as_object_mut() {
+            o.remove("finish_reason");
+        }
+        a.history.push(kept);
         for field in ["reasoning_content", "reasoning"] {
             if let Some(r) = msg[field].as_str() {
                 if !r.trim().is_empty() {
@@ -414,8 +420,12 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         .collect();
                     last["content"] = json!(format!("(my reasoning, not yet acted on) {}", tail));
                 }
-                a.history.push(json!({"role": "user", "content":
-                    "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."}));
+                let nudge = if finish_reason.as_deref() == Some("length") {
+                    "Your reasoning ran past the completion cap before any call or message. More thinking cannot fit: reply with the tool call alone, no further deliberation, or state your answer in one line."
+                } else {
+                    "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."
+                };
+                a.history.push(json!({"role": "user", "content": nudge}));
                 continue;
             }
             if called_any && !nudged {

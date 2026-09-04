@@ -28,10 +28,14 @@ defects surfaced that way (an ancestor admitted as a level's peer, a level ownin
 every flow that touched an interactor, sequence endpoints never lifted, internal
 flows drawn as self-messages, the first edge collapsing where another reached).
 The mini chain ends four levels deep with every fan-out under nine and the top
-sequence showing Checkout talking to Orders. Next in the chain: the view GC kinds
-(`split-view`, `curate-view`) on a state that crosses a view limit, the review of
-a grouping's ratification, `example-saas` traps one interaction at a time, then
-`f2` and `example-org` regressions and the dogfood, all as snippets. Written for a fresh session
+sequence showing Checkout talking to Orders. Since then (2026-09-04): the ratify accept and retract paths exercised end to end
+(accept by MCP or `jazyk answer --option 0`, the document gains the sentence, the
+provenance flips to quote; retract moves the members back), three seams fixed on the
+way; `example-saas` traps 4, 5, 7, and 8 pass after the member hints carry the
+listing section and the grouping gate tells a peer from an area; a split-view on a
+level's flow yields to the level's fan-out, and the sequence limit counts what the
+level draws after lifting. Running: the `f2` and `example-org` regressions and the
+VALIDATION.md numbers, then the dogfood, all as snippets. Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

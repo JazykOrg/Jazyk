@@ -1177,6 +1177,12 @@ pub enum GoalOutcome {
 }
 
 // One session's tool serving: reads answer from the snapshot, writes stage into the changeset.
+// The build's own bookkeeping rules, settled by the harness and never a session's to
+// resolve. Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+pub fn harness_owned_rule(rule: &str) -> bool {
+    rule == "incomplete-build" || rule == "ratification-pending" || rule.starts_with("unstable-")
+}
+
 pub struct ToolSession {
     pub snapshot: Store,
     pub scope: WorkScope,
@@ -1285,6 +1291,7 @@ impl ToolSession {
             resolved,
             rounds,
             tokens,
+            all_or_nothing: false,
         }
     }
 
@@ -3279,6 +3286,30 @@ impl ToolSession {
                 )
             }
             "search" => {
+                // Several names in one call: one result per query, in order, so
+                // search-before-create costs one round per section.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                if let Some(qs) = args.get("queries").and_then(Value::as_array) {
+                    let mut results = Vec::new();
+                    for q in qs {
+                        let Some(q) = q.as_str().map(str::trim).filter(|q| !q.is_empty()) else {
+                            return Err(ToolError::new(
+                                "bad-args",
+                                "queries takes a list of non-empty strings".to_string(),
+                            ));
+                        };
+                        let mut one = json!({"query": q});
+                        if let Some(k) = args.get("kind") {
+                            one["kind"] = k.clone();
+                        }
+                        // Straight to the handler: one queries call is one call
+                        // under the repeated-call guard, never one per name.
+                        let mut r = self.dispatch_inner("search", &one)?;
+                        r["query"] = json!(q);
+                        results.push(r);
+                    }
+                    return Ok(json!({"results": results}));
+                }
                 let query = Self::str_arg(args, "query")?;
                 let kind = Self::opt_str(args, "kind").unwrap_or_else(|| "entity".to_string());
                 if kind != "entity" && kind != "view" {
@@ -3461,6 +3492,11 @@ impl ToolSession {
                         }
                         if let Some(a) = &d.answer {
                             v["answered"] = json!(a.status);
+                        }
+                        // The build's own bookkeeping: never a session's to resolve.
+                        // Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+                        if harness_owned_rule(&d.rule) {
+                            v["owner"] = json!("harness");
                         }
                         v
                     })
@@ -3819,13 +3855,35 @@ impl ToolSession {
                     ));
                 }
                 if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
-                    return Err(ToolError::new(
-                        "near-duplicate",
+                    // A lookalike that is a peer of the members (a member of the
+                    // same level) carries the area's word without being the area:
+                    // the members never nest under it. Mirrors
+                    // docs/compiler/concepts/levels.md#naming.
+                    let sibling = !members.contains(&eid) && self.parent_of(&eid) == parent;
+                    let holds_children = self
+                        .snapshot
+                        .graph
+                        .entities
+                        .keys()
+                        .chain(self.staged_entities.keys())
+                        .any(|c| c != &eid && self.parent_of(c).as_deref() == Some(eid.as_str()));
+                    let message = if sibling && !holds_children {
                         format!(
-                            "`{}` looks like a name variant of existing `{}` ({}); a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
+                            "`{}` looks like a name variant of `{}` ({}), a peer of the members at this level; a peer that carries the area's word is not the area and never becomes the members' parent: name the grouping from the heading or document that lists the members (or qualify the name), and let {} join the grouping of its own heading",
                             name_arg, eid, ename, eid
-                        ),
-                    ));
+                        )
+                    } else if sibling {
+                        format!(
+                            "`{}` looks like a name variant of existing `{}` ({}), a sibling at this level that already holds children; a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
+                            name_arg, eid, ename, eid
+                        )
+                    } else {
+                        format!(
+                            "`{}` looks like a name variant of existing `{}` ({}), which sits at another level of the tree and names that level's concept; a move under it would cross levels, so qualify the grouping's name (the heading or document that lists the members, plus what they are) instead",
+                            name_arg, eid, ename
+                        )
+                    };
+                    return Err(ToolError::new("near-duplicate", message));
                 }
                 // One changeset: the create and every move, or nothing.
                 if self.staged.len() + members.len() + 1 > self.mutation_limit {
@@ -4498,6 +4556,16 @@ impl ToolSession {
                         format!(
                             "{} is a ratification proposal; it resolves when its edit option is applied or the fact is retracted, never through resolve_diagnostic",
                             id
+                        ),
+                    ));
+                }
+                // The build's own bookkeeping is the harness's to settle.
+                if harness_owned_rule(&d.rule) {
+                    return Err(ToolError::new(
+                        "not-resolvable",
+                        format!(
+                            "{} ({}) is owned by the harness: the build settles it itself (a parked goal resuming, a human's ruling), never a session; leave it and judge the entity",
+                            id, d.rule
                         ),
                     ));
                 }
@@ -5857,6 +5925,26 @@ mod tests {
             "{}",
             list
         );
+        // The build's own bookkeeping reads as harness-owned and never resolves
+        // through a session. Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+        let mut parked = t.staged_diags.values().next().unwrap().clone();
+        parked.rule = "incomplete-build".into();
+        parked.message = "goal parked".into();
+        t.snapshot
+            .graph
+            .diagnostics
+            .insert("diag:incomplete-build-1".into(), parked);
+        let list = t.dispatch("diagnostics", &json!({"rule": "incomplete-build"})).unwrap();
+        let owned = &list["diagnostics"].as_array().unwrap()[0];
+        assert_eq!(owned["owner"], "harness", "{}", list);
+        let err = t
+            .dispatch(
+                "resolve_diagnostic",
+                &json!({"id": "diag:incomplete-build-1", "reason": "resumed"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "not-resolvable");
+        assert!(err.message.contains("owned by the harness"), "{}", err.message);
         let r = t
             .dispatch(
                 "resolve_diagnostic",
@@ -6321,6 +6409,21 @@ mod tests {
             r
         );
         // A hit answers under the same key, so the caller reads one shape.
+        // Several names in one call: one result per query, in order, misses included.
+        // Mirrors docs/compiler/tools.md#read-tools.
+        let many = t
+            .dispatch("search", &json!({"queries": ["Customer", "Zebra Crossing"]}))
+            .unwrap();
+        let results = many["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2, "{}", many);
+        assert_eq!(results[0]["query"], "Customer");
+        assert!(!results[0]["hits"].as_array().unwrap().is_empty(), "{}", many);
+        assert_eq!(results[1]["query"], "Zebra Crossing");
+        assert!(results[1]["hits"].as_array().is_none_or(|h| h.is_empty()), "{}", many);
+        let err = t
+            .dispatch("search", &json!({"queries": ["Customer", ""]}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-args");
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
     }
@@ -7706,6 +7809,27 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "near-duplicate");
         assert!(err.message.contains("ent:storage-layer"), "{}", err.message);
+        // The lookalike sits beside the members at this level: a peer carrying the
+        // area's word, never their parent. Mirrors docs/compiler/concepts/levels.md#naming.
+        assert!(
+            err.message.contains("a peer of the members at this level")
+                && err.message.contains("never becomes the members' parent"),
+            "{}",
+            err.message
+        );
+        // A sibling that already holds children is the area: reuse it.
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Messaging Hub", "definition": "Moves messages.", "members": ["ent:c1", "ent:storage-layer"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(
+            err.message.contains("ent:messaging") && err.message.contains("already holds children"),
+            "{}",
+            err.message
+        );
         let err = t
             .dispatch(
                 "group_entities",
@@ -7714,6 +7838,24 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "near-duplicate");
         assert!(err.message.contains("already exists"), "{}", err.message);
+        // A lookalike at another level names that level's concept: qualify the name.
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:storage-layer", "parent": "ent:messaging"}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "group_entities",
+                &json!({"name": "Storage", "definition": "Keeps the data.", "members": ["ent:c1", "ent:messaging"], "reasoning": "why"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        assert!(
+            err.message.contains("another level") && err.message.contains("qualify"),
+            "{}",
+            err.message
+        );
         // definition and reasoning are non-empty; a member must resolve.
         for (args, rule) in [
             (

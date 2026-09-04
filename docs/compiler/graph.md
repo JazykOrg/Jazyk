@@ -178,7 +178,11 @@ Their semantics:
   [`ratify`](./goals/ratify.md). Staged on a derived or decreed fact it is a decree the
   same way. See [edit paths](./compilation.md#edit-paths).
 - `retract_decree` undoes one decree. A node created by decree is deleted, journaled
-  with the retraction as reason. A field decreed over a quoted fact returns to the prior
+  with the retraction as reason; quoted requirements that referenced a retracted entity
+  re-point to its parent, and an entity that holds children dissolves as
+  `dissolve_entity` would, the entry carrying the `dissolve_entity` mutation with the
+  children moved ([retract](./goals/ratify.md#retract)). A field decreed over a quoted
+  fact returns to the prior
   value and source recorded in the decree's journal entry. The open `ratify` goal closes
   with the record it stood on.
 - `bump_limit` sets `limits.<limit>` on one entity or view to a value, recorded with

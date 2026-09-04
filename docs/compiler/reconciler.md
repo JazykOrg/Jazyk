@@ -298,7 +298,8 @@ and computes coupling; the model names and judges.
   compile goal is open or parked in the cone ([GC gating](#gc-gating)), so a level is
   regrouped once, over settled children.
 - Hints: the fan-out count, the candidate partitions with their cohesion scores, the
-  members' stereotypes, the document each member is mentioned in most (documents and
+  members' stereotypes, the section of the node's own document that lists each
+  member and the document each member is mentioned in most (documents and
   headings are strong naming hints, see [naming](./concepts/levels.md#naming)), and
   any existing grouping under the node ([groupings](./concepts/levels.md#groupings)).
 
@@ -441,6 +442,15 @@ content: an entity is abstracted knowing every requirement this build gives it, 
 stream of partial states. Nothing waits for a global phase: as each cone settles, its GC
 goals become ready and run right there, while the graph is loaded. Mandatory GC goals
 run before optional ones within a burst.
+
+One GC goal yields to another: a [`split-view`](./goals/split-view.md) goal on a
+level view or on a lifted flow view of a level is blocked while an
+[`abstract-entity`](./goals/abstract-entity.md) goal on that level is open or parked,
+its readiness reason naming the fan-out goal (`fan-out first:
+g:abstract-entity:<target>`). Grouping the level is the structural answer to a picture
+over its limit (the flow lifts to the groupings and draws with fewer participants);
+splitting the picture is the last resort, so it is never batched before the fan-out.
+The rule is one-directional: a fan-out goal never waits for a view goal.
 
 ### Cones
 

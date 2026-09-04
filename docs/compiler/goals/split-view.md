@@ -16,6 +16,14 @@ node.
   [cone](../reconciler.md#cones) ([readiness](../reconciler.md#readiness)). The view is
   split once, over its final membership for the build, never over a stream of partial
   states.
+- Yields to the fan-out. A goal whose view is a [level view](../model/view.md#level-views)
+  or a lifted flow view of a level is blocked while an
+  [`abstract-entity`](./abstract-entity.md) goal on that level is open or parked, with
+  the readiness reason naming it (`fan-out first: g:abstract-entity:<target>`), and is
+  never batched before it. Grouping is the structural answer: a sequence view of
+  eleven participants at a level of eleven loose children draws with three once the
+  groupings stand and the flow lifts to them, and every split before that invents
+  structure. Splitting the picture is the last resort ([GC gating](../reconciler.md#gc-gating)).
 
 ## Created when
 

@@ -456,7 +456,33 @@ pub struct Board {
     tier1_open_docs: BTreeSet<String>,
     bind_open_by_entity: BTreeMap<String, usize>,
     cone_blockers: BTreeMap<String, Vec<String>>,
+    // The level each split-view target belongs to (a level view's own target, a
+    // lifted flow view's level), the input of the yield-to-fan-out rule.
+    // Mirrors docs/compiler/reconciler.md#gc-gating.
+    view_levels: BTreeMap<String, String>,
     records: BTreeMap<String, Vec<String>>,
+}
+
+// The level a view belongs to: a lifted flow view's level, or the target whose
+// structural level view it is (an entity, or `scope:<scope>` for a top level).
+// None for a curated, object, or state view.
+fn view_level_of(store: &Store, view_id: &str) -> Option<String> {
+    if let Some(l) = crate::derive::flow_view_level(store, view_id) {
+        return Some(l);
+    }
+    let mut targets: Vec<String> = store.graph.entities.keys().cloned().collect();
+    let mut scopes: Vec<String> = store
+        .graph
+        .entities
+        .values()
+        .map(|e| format!("{}{}", SCOPE_TARGET_PREFIX, e.scope))
+        .collect();
+    scopes.sort();
+    scopes.dedup();
+    targets.extend(scopes);
+    targets
+        .into_iter()
+        .find(|t| crate::derive::level_view_id(store, t).as_deref() == Some(view_id))
 }
 
 impl Board {
@@ -631,6 +657,12 @@ impl Board {
                 .collect();
             cone_blockers.insert(g.id.clone(), blockers);
         }
+        let mut view_levels: BTreeMap<String, String> = BTreeMap::new();
+        for g in goals.iter().filter(|g| g.kind == "split-view") {
+            if let Some(l) = view_level_of(store, &g.target) {
+                view_levels.insert(g.target.clone(), l);
+            }
+        }
 
         let mut board = Board {
             generation: store.status.generation,
@@ -651,6 +683,7 @@ impl Board {
             tier1_open_docs,
             bind_open_by_entity,
             cone_blockers,
+            view_levels,
             records,
         };
 
@@ -756,6 +789,12 @@ impl Board {
     // The open compile goals in a GC goal's cone.
     pub fn cone_blockers(&self, goal_id: &str) -> Vec<String> {
         self.cone_blockers.get(goal_id).cloned().unwrap_or_default()
+    }
+
+    // The level a split-view target belongs to, when it is a level view or a lifted
+    // flow view of one. Mirrors docs/compiler/reconciler.md#gc-gating.
+    pub fn view_level(&self, view_id: &str) -> Option<&str> {
+        self.view_levels.get(view_id).map(String::as_str)
     }
 
     pub fn goal(&self, id: &str) -> Option<&Goal> {
@@ -2054,6 +2093,65 @@ pub(crate) mod tests {
         let v = b.verdict();
         assert_eq!(v.state, "incomplete");
         assert_eq!((v.open, v.failed, v.optional), (1, 0, 0));
+    }
+
+    // A split-view goal on a level's view yields to the fan-out goal on that level:
+    // blocked naming it while the fan-out is open or parked, back under the cone rule
+    // once it is gone; the fan-out never waits for the view. Mirrors
+    // docs/compiler/reconciler.md#gc-gating.
+    #[test]
+    fn a_level_views_split_yields_to_the_levels_fan_out() {
+        let mut s = settled_store();
+        let scope = format!("{}public", SCOPE_TARGET_PREFIX);
+        let lv = crate::derive::level_view_id(&s, &scope).expect("the top level has a view");
+        if !s.graph.views.contains_key(&lv) {
+            let kind = lv.trim_start_matches("view:").split('/').next().unwrap().to_string();
+            s.graph.views.insert(
+                lv.clone(),
+                View {
+                    kind,
+                    title: "Public".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        record(
+            &mut s,
+            9,
+            store::CHANGE_THRESHOLD_CROSSED,
+            &lv,
+            "limits",
+            json!({"limit": "members-per-structural-view", "count": 23, "soft": 20, "hard": 30, "level": "soft", "goal": "split-view"}),
+        );
+        record(
+            &mut s,
+            9,
+            store::CHANGE_THRESHOLD_CROSSED,
+            &scope,
+            "limits",
+            json!({"limit": "children-per-entity", "count": 11, "soft": 9, "hard": 15, "level": "soft", "goal": "abstract-entity"}),
+        );
+        let b = derive(&s);
+        let split = format!("g:split-view:{}", lv);
+        let fan_out = format!("g:abstract-entity:{}", scope);
+        assert!(b.goal(&fan_out).is_some(), "fan-out goal derived");
+        assert_eq!(b.view_level(&lv), Some(scope.as_str()));
+        assert!(!b.is_ready(&split));
+        let reason = b.readiness[&split].reason().unwrap_or_default().to_string();
+        assert!(
+            reason.contains(&format!("fan-out first: {}", fan_out)),
+            "{}",
+            reason
+        );
+        let theirs = b.readiness[&fan_out].reason().unwrap_or_default().to_string();
+        assert!(!theirs.contains("split-view"), "{}", theirs);
+        // The fan-out resolved (its record cleared): the split falls back to the cone.
+        s.status
+            .clear_changes(&[store::CHANGE_THRESHOLD_CROSSED], &scope);
+        let b = derive(&s);
+        assert!(b.goal(&fan_out).is_none());
+        let reason = b.readiness[&split].reason().unwrap_or_default().to_string();
+        assert!(!reason.contains("fan-out first"), "{}", reason);
     }
 
     #[test]

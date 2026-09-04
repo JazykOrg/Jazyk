@@ -384,13 +384,18 @@ pub fn name_tokens(e: &Entity) -> BTreeSet<String> {
         .collect()
 }
 
+// The open judged diagnostics naming any of the ids. The build's own bookkeeping
+// (incomplete-build, ratification-pending, unstable-*) is left out: a session never
+// resolves it. Mirrors docs/compiler/goals/review-entity.md#hints.
 fn open_diags_naming<'a>(store: &'a Store, ids: &[&str]) -> Vec<(&'a String, &'a Diagnostic)> {
     store
         .graph
         .diagnostics
         .iter()
         .filter(|(_, d)| {
-            d.lifecycle == "open" && d.subjects.iter().any(|s| ids.contains(&s.as_str()))
+            d.lifecycle == "open"
+                && !crate::tools::harness_owned_rule(&d.rule)
+                && d.subjects.iter().any(|s| ids.contains(&s.as_str()))
         })
         .collect()
 }
@@ -1581,6 +1586,24 @@ impl GoalKind for ReviewEntity {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            // The level views around the entity, so a review never guesses a view
+            // id. Mirrors docs/compiler/goals/review-entity.md#hints.
+            {
+                let mut views = Vec::new();
+                if let Some(v) = crate::derive::level_view_id(store, &id) {
+                    views.push(format!("{} (this entity)", v));
+                }
+                let level_target = match &e.parent {
+                    Some(p) => store.resolve_id(p).to_string(),
+                    None => format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, e.scope),
+                };
+                if let Some(v) = crate::derive::level_view_id(store, &level_target) {
+                    views.push(format!("{} (its parent)", v));
+                }
+                if !views.is_empty() {
+                    hints.push(format!("level views: {}", views.join(", ")));
+                }
             }
             if let Some((soft, _)) = limits::threshold(
                 "requirements-per-entity",
@@ -3429,6 +3452,18 @@ impl GoalKind for SplitView {
         out
     }
     fn ready(&self, goal: &Goal, board: &Board) -> Ready {
+        // A level's picture yields to the level's fan-out: grouping is the structural
+        // answer, splitting the picture the last resort. Mirrors
+        // docs/compiler/goals/split-view.md and docs/compiler/reconciler.md#gc-gating.
+        if let Some(level) = board.view_level(&goal.target) {
+            let fan_out = format!("g:abstract-entity:{}", level);
+            if board.open(&fan_out) {
+                return Ready::Blocked(format!(
+                    "fan-out first: {} groups this level, and the flow lifts to the groupings",
+                    fan_out
+                ));
+            }
+        }
         gc_ready(goal, board)
     }
     fn pack(&self, store: &Store, batch: &[Goal]) -> String {
@@ -3828,14 +3863,34 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
         ));
     }
     let members = level_members(store, target);
+    // The node's own document: the section that lists a member there is the heading
+    // it sits under, the partition the model groups by first.
+    // Mirrors docs/compiler/concepts/levels.md#naming.
+    let node_doc = if store.graph.entities.contains_key(target) {
+        dominant_document(store, target)
+    } else {
+        None
+    };
     for m in &members {
         let e = &store.graph.entities[m];
         let mut line = format!("member {}", m);
         if let Some(s) = &e.stereotype {
             line.push_str(&format!(" «{}»", s));
         }
-        if let Some(d) = dominant_document(store, m) {
-            line.push_str(&format!(" ({})", d));
+        let listing = node_doc.as_ref().and_then(|doc| {
+            e.mentions
+                .iter()
+                .find(|mn| &mn.doc == doc)
+                .map(|mn| format!("{}#{}", mn.doc, mn.section))
+        });
+        let dominant = dominant_document(store, m);
+        match (listing, dominant) {
+            (Some(l), Some(d)) if !l.starts_with(&format!("{}#", d)) => {
+                line.push_str(&format!(" ({}; {})", l, d));
+            }
+            (Some(l), _) => line.push_str(&format!(" ({})", l)),
+            (None, Some(d)) => line.push_str(&format!(" ({})", d)),
+            (None, None) => {}
         }
         hints.push(line);
     }
@@ -4699,6 +4754,100 @@ mod tests {
         fan_out_record(&mut s, "ent:backend", 12);
         fan_out_record(&mut s, "scope:public", 10);
         s
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member the
+    // node's own document lists carries the listing section (the heading it sits
+    // under) beside the document it is mentioned in most; a member the node's
+    // document never names carries its document alone.
+    #[test]
+    fn fan_out_hints_carry_the_listing_section_of_the_nodes_document() {
+        let mut s = levels_store();
+        s.graph
+            .entities
+            .get_mut("ent:cart")
+            .unwrap()
+            .mentions
+            .push(SourceRef {
+                doc: "arch.md".into(),
+                section: "/arch/data-model".into(),
+                quote: "cart".into(),
+            });
+        let goals = AbstractEntity.derive_goals(&s, &gen_settings());
+        let node = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        assert!(
+            node.hints
+                .iter()
+                .any(|h| h.starts_with("member ent:cart «component» (arch.md#/arch/data-model")),
+            "{:?}",
+            node.hints
+        );
+        assert!(
+            node.hints
+                .contains(&"member ent:pricing «component» (api.md)".to_string()),
+            "{:?}",
+            node.hints
+        );
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#hints: a review names the level
+    // views around its entity (its own when it has children, its parent's level),
+    // and leaves the harness-owned bookkeeping out of the open diagnostics.
+    #[test]
+    fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
+        let mut s = levels_store();
+        let n = s.status.changes.len();
+        s.status.changes.push(ChangeRecord::new(
+            7,
+            n,
+            0,
+            store::CHANGE_ENTITY,
+            "ent:backend",
+            "fields",
+        ));
+        s.graph.diagnostics.insert(
+            "diag:incomplete-build-1".into(),
+            crate::model::Diagnostic {
+                rule: "incomplete-build".into(),
+                severity: "warning".into(),
+                subjects: vec!["ent:backend".into()],
+                message: "parked".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let goals = ReviewEntity.derive_goals(&s, &gen_settings());
+        let g = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        let own = crate::derive::level_view_id(&s, "ent:backend").unwrap();
+        let parent = crate::derive::level_view_id(&s, "scope:public").unwrap();
+        assert!(
+            g.hints.contains(&format!(
+                "level views: {} (this entity), {} (its parent)",
+                own, parent
+            )),
+            "{:?}",
+            g.hints
+        );
+        assert!(
+            !g.hints.iter().any(|h| h.contains("incomplete-build")),
+            "{:?}",
+            g.hints
+        );
+    }
+
+    // The agent contract asks for independent calls in one reply under the native
+    // codec. Mirrors docs/compiler/goals/prompts/agent-contract.md.
+    #[test]
+    fn the_contract_asks_for_independent_calls_in_one_reply() {
+        let contract = include_str!("../../docs/compiler/goals/prompts/agent-contract.md");
+        assert!(contract.contains("Independent calls go together in one reply"));
+        let skill = include_str!("../../docs/compiler/skills/extraction.md");
+        assert!(skill.contains("one `search` with `queries`"));
     }
 
     // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose

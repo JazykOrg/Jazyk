@@ -655,6 +655,7 @@ impl WorkItem {
             resolved: Vec::new(),
             rounds,
             tokens,
+            all_or_nothing: false,
         }
     }
 

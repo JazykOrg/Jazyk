@@ -115,8 +115,27 @@ the [abstraction skill](../skills/abstraction.md):
   grouping yet.
 - Documents and headings are the strongest naming hints. A `payment.md` suggests a
   Payments grouping; a `## Fulfillment` heading suggests Fulfillment. The model prefers
-  a name the documents already use for the area. The fan-out hints name the document
-  each member is mentioned in most for this reason.
+  a name the documents already use for the area. The fan-out hints name the section
+  of the node's own document that lists each member and the document each member is
+  mentioned in most for this reason.
+- Headings first. When the node's own document lists the level's members under
+  headings (`## Data model` with fourteen classes, `## Request handling` with four
+  handlers, `## Rendering` with three renderers), those headings are the partition:
+  one grouping per heading, named by the heading. The names of the documents the
+  members come from (`identity.md`, `billing.md`) name the level below such a
+  grouping, not this one; they wait for the fan-out on it.
+- A peer that carries an area's word is not the area. A Billing Handler handles
+  billing and sits beside the billing classes as a member of the same level; it is
+  never their container. The level's node for a document's entities is the entity
+  the document is about, the one its root heading names (the `namesake` hint), and
+  nothing else. When the `near-duplicate` gate refuses an area's name against such
+  a peer, the grouping takes the heading's name or a qualified one, and the peer
+  stays a member of its own heading's grouping. A sibling that already holds
+  children is the area and takes the members. A lookalike elsewhere in the tree
+  (a Billing Handler under Request handling while the billing classes sit under
+  the data model) names another level's concept: the grouping qualifies its name
+  (Billing classes), and never moves the members under it, since that would cross
+  levels.
 - Boundaries follow the cohesion hints, and the model may split or merge a candidate
   with a reason: a candidate that mixes two responsibilities splits; two candidates the
   documents treat as one area merge.

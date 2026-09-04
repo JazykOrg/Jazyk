@@ -42,7 +42,10 @@ loaded set as a stub.
 - `search({query, kind?})`: deterministic lookup over names and aliases: normalized
   exact match, then alias, then substring, then token overlap. `kind` narrows to
   `entity` (default) or `view` (matched on `title`). Returns `{hits}`, up to 8
-  `{id, name, definition}` entries. No embeddings, no LLM. A miss is an answer, not a
+  `{id, name, definition}` entries. `queries: [..]` in place of `query` answers
+  several names in one call as `{results: [{query, hits, ...}]}`, one entry per
+  query in order, so the search-before-create doctrine costs one round per section,
+  not one per name. No embeddings, no LLM. A miss is an answer, not a
   dead end: `hits` is empty and the result carries `entityCount`, the graph's entities
   by id and name (up to 25), and a `next` line saying the search will keep returning
   this and to create the entity instead. A bare empty list reads as "ask again", and
@@ -66,7 +69,10 @@ loaded set as a stub.
 - `diagnostics({lifecycle?, rule?, subject?})`: the diagnostics, `open` by default
   (`lifecycle` takes `open`, `resolved`, or `all`; `rule` and `subject` narrow
   further). Each entry carries id, rule, severity, lifecycle, triage, subjects,
-  message, and whether it carries an unanswered prompt. This is the read surface for
+  message, whether it carries an unanswered prompt, and `owner: harness` on the
+  build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
+  `unstable-*`), which no session resolves
+  ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)). This is the read surface for
   document health; without it an agent can only learn diagnostic state by reading the
   out directory off disk.
 
@@ -179,7 +185,9 @@ a mutating reply previews the goals the mutation will open
   `null` to remove it). The finding itself is edited through `report_diagnostic`'s
   natural-key upsert; this tool only maintains the question. Never touches a human-set
   `answer` or `triage`.
-- `resolve_diagnostic({id, reason})`.
+- `resolve_diagnostic({id, reason})`. Refused on a harness-owned rule
+  (`incomplete-build`, `ratification-pending`, `unstable-*`), naming the owner: the
+  build settles those itself ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)).
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
   `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
   counts as absent. `non-normative` is rejected for a section that already yielded a
@@ -214,8 +222,13 @@ variant of [`abstract-entity`](./goals/abstract-entity.md)
   `name` passes the `near-duplicate` gate against existing names, the same gate as
   `upsert_entity` ([validation gates](./graph.md#validation-gates)), so a lookalike
   of an existing area reuses that entity ([naming](./concepts/levels.md#naming));
-  `definition` and `reasoning` are non-empty. The reply carries the new `id` and
-  `moved`, the member ids reparented under it.
+  the refusal's advice follows where the lookalike sits: a sibling of the members
+  that already holds children is the area, and the members move under it; a sibling
+  with no children is a peer that carries the area's word, never the members'
+  parent, so the grouping takes the heading's name; a lookalike elsewhere in the tree
+  names another level's concept, and the grouping qualifies its name, since a move
+  under it would cross levels; `definition` and `reasoning` are non-empty. The reply
+  carries the new `id` and `moved`, the member ids reparented under it.
 - `dissolve_entity({id, reason})`: the inverse, for a grouping with derived provenance
   and no mentions. Its children reparent to its parent (they become parentless when
   the grouping was at the scope root), and the entity tombstones with a redirect to

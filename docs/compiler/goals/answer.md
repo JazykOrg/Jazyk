@@ -117,7 +117,8 @@ Rendered for the human, on the goal card and in `jazyk explain`:
   `reasoning`. For `unstable-derivation`: the two justifications side by side.
 - The cause: which commit filed the prompt, and the goal that commit was resolving.
 - Where to answer: the file (an LSP code action at the subject's quote), the GUI
-  questions panel, or chat.
+  questions panel, chat, or the terminal
+  ([`jazyk answer`](../../frontends/cli.md#jazyk-answer)).
 
 ## What the model sees
 
@@ -144,6 +145,9 @@ journal entry:
 - A chat session sends one summary of the open questions on start and lists them again
   on `/questions`; a person answers in plain chat, and the session's agent records it
   with `answer_diagnostic` ([questions in chat](../../frontends/acp.md#questions-in-chat)).
+- The terminal: `jazyk answer <diagnostic|goal>` prints the prompt with its options
+  numbered, and `--option N` or `--text "..."` answers it
+  ([`jazyk answer`](../../frontends/cli.md#jazyk-answer)).
 
 ### Apply an edit
 
@@ -173,7 +177,7 @@ Choosing an `answer` option or replying freeform records the text on the node wi
 - In a chat session, the session's own agent acts on the reply with the chat serving's
   tools, then resolves the diagnostic (`resolve_diagnostic`) or refines its question
   and leaves it open (`update_diagnostic`).
-- Anywhere else (an LSP code action, the GUI panel), jazyk spawns an
+- Anywhere else (an LSP code action, the GUI panel, `jazyk answer`), jazyk spawns an
   [answer session](../../frontends/acp.md#answer-sessions): the same shape as a worker
   session, the `chat` serving injected, the prompt carrying the diagnostic, the
   question, the reply, and the subjects in the loaded set, with the contract to act on

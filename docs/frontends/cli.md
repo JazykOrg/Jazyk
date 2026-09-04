@@ -210,6 +210,45 @@ its stage: a typed command is an approval. The generate stage covers
 [binding](../consumers/bind.md#when-binding-runs) too; decompilation releases through
 [`jazyk decompile`](#jazyk-decompile), never through `release`.
 
+### jazyk answer
+
+`jazyk answer <diagnostic|goal> [--option N | --text "..."]` answers one prompted
+diagnostic from the terminal: the scriptable form of the LSP code action, the GUI
+questions panel, and chat's `answer_diagnostic`
+([answers](../compiler/model/diagnostic.md#answers)). The argument is a diagnostic id
+(`diag:ratification-pending-6`), a `ratify` goal (`g:ratify:ent:funds`, resolved to
+its proposal), or an `answer` goal (`g:answer:diag:decision-2`).
+
+- Without `--option` or `--text`: print the question, its options numbered from 0
+  (`edit` options with their document and replacement text, `answer` options with
+  their label), and whether freeform is accepted, then exit 1. Nothing is written.
+- `--option N`: choose one option. An `edit` option applies as a dual write and
+  resolves the diagnostic in one changeset; on a ratification proposal it is the
+  accept ([the human path](../compiler/goals/ratify.md#the-human-path)) and the fact's
+  provenance flips to `quote`. The retract option of a ratification proposal is
+  deterministic too. Any other option records `handling` and runs an
+  [answer session](./acp.md#answer-sessions) in the foreground, printing its outcome.
+- `--text "..."`: a freeform reply. On a ratification proposal it is the accepted
+  sentence, landed where the proposal's edit would; elsewhere it records `handling`
+  and runs the answer session.
+
+E.g.:
+
+```
+$ jazyk answer g:ratify:ent:funds
+diag:ratification-pending-6  ratification-pending on ent:funds
+  Should docs/checkout.md state it? "Funds: Funds gathers ..."
+  0  Insert into docs/checkout.md /checkout (edit)
+  1  Retract (answer)
+  freeform accepted: a reply rewords the sentence
+$ jazyk answer g:ratify:ent:funds --option 0
+jazyk: applied: the sentence landed in docs/checkout.md and the fact is quoted from it
+```
+
+Exit codes: `0` when the answer landed (or the answer session handled it), `1` when
+nothing was written (no reply given, an unknown or already answered diagnostic, a
+refused retract with its reason, a failed answer session).
+
 ### jazyk status
 
 Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)) and

@@ -435,8 +435,11 @@ The hint computer emits, per fan-out goal:
 - `candidate [<id>, ...] (weight <w>)`: one line per coupling partition, largest first,
   at most the soft threshold of candidates and 12 ids per candidate (the rest summarized
   as a count), each with its internal weight. Suggestions from counts, never judgments.
-- `member <ent> «<stereotype>» (<document>)`: each child with its stereotype and the
-  document it is mentioned in most. Documents and headings are strong naming hints.
+- `member <ent> «<stereotype>» (<section>; <document>)`: each child with its
+  stereotype, the section of the node's own document that lists it (the heading it
+  sits under, when the node's document mentions it), and the document it is mentioned
+  in most. Documents and headings are strong naming hints; the listing sections are
+  the partition when they differ ([naming](../concepts/levels.md#naming)).
 - `grouping <ent> (<n> children)`: every existing grouping under the node, so a child
   that belongs in one is moved there, never regrouped beside it.
 - `namesake <ent> (<document> is headed <title>; <n> other member(s) of the level from

@@ -141,7 +141,14 @@ Computed by the harness and rendered under the goal block:
   part's `parent` disagrees with the stated whole, with the note that `update_entity`
   on the part sets it.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
-  naming the entity itself ride in the loaded set.
+  naming the entity itself ride in the loaded set. Harness-owned rules
+  (`incomplete-build`, `ratification-pending`, `unstable-*`) are left out: the build
+  settles them, and a review never resolves them
+  ([lifecycle](../model/diagnostic.md#lifecycle-and-triage)).
+- `level views: <view id> (this entity), <view id> (its parent)`: the structural
+  level view of the entity when it has children and of the level it sits in, so a
+  review reads the drawing without guessing view ids
+  ([level views](../model/view.md#level-views)).
 - The project's lint rules, restated with their severities
   ([linting](../project-settings.md#linting)).
 - The requirement count against `requirements-per-entity` when past the soft limit,

@@ -17,7 +17,12 @@ Where to look, from this directory:
   (`bootstrap/editors/vscode`) to see the card in short; go to type definition opens
   the card.
 - `jazyk gui` here, then the graph rail: click Checkout in the tree, then a box in
-  the overlaid level, then back.
+  the overlaid level, then back. The explorer's `generated` section opens the same
+  cards rendered, diagrams inline and clickable.
+- The owner's side of a grouping: `jazyk answer g:ratify:ent:funds` lists the
+  proposal's options; `--option 0` accepts it (the sentence lands in
+  `docs/checkout.md` and the next build flips Funds to quoted provenance);
+  `--option 1` retracts it (the members return to Checkout).
 
 `jazyk compile` from here rebuilds the state on the configured model; the chain took
 about ten sessions on a local 27B model.

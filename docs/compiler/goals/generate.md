@@ -77,13 +77,20 @@ ledger, not the model's word:
   record, or a stale `factHash`, is rejected naming the gate. A `factHash` that moved
   mid-session is recorded but leaves the entity pending: the goal derives again with
   the new facts.
-- `record_generation` applies the shape gates: a programmatic row with an empty
-  `artifact` or `run` is rejected naming the row; a declared test name absent from
-  the artifact, or a present test left undeclared, gets one corrective retry; a path
-  another entity owns is rejected with the owner named
+- `record_generation` applies the shape gates, all before any side effect: a
+  programmatic row with an empty `artifact` or `run` is rejected naming the row; a
+  row whose artifact does not exist, or a programmatic row whose artifact does not
+  contain the declared test name, is rejected naming the row and the file (the same
+  gate `record_binding` applies; the pipeline worker gets one corrective retry before
+  it records, and a row still wrong after it falls back to `llm`); a path that
+  escapes the deliverable is rejected naming it; a path another entity owns is
+  rejected with the owner named
   ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)); a
   `built` medium with no build recorded anywhere is rejected
-  ([the build](../../consumers/gen.md#the-build)).
+  ([the build](../../consumers/gen.md#the-build)). A record that lands removes the
+  files the entity's previous record listed and this manifest omits
+  ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)) and
+  names them in its reply.
 - A session that recorded and ended without marking still resolves the goal at the
   next derivation. A session that never recorded has not resolved it: retry once with
   a fresh session, then park

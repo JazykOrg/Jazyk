@@ -141,7 +141,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 pub fn record(
     store: &Store,
     rid: &str,
-    files: &[String],
+    files_in: &[String],
     test: &Value,
     verdict: &str,
     evidence: Option<&str>,
@@ -162,9 +162,9 @@ pub fn record(
         return Err("test.kind must be `programmatic` or `llm`".into());
     }
     let (artifact, name, run) = (
-        test["artifact"].as_str().unwrap_or_default().to_string(),
-        test["name"].as_str().unwrap_or_default().to_string(),
-        test["run"].as_str().unwrap_or_default().to_string(),
+        test["artifact"].as_str().unwrap_or_default().trim().to_string(),
+        test["name"].as_str().unwrap_or_default().trim().to_string(),
+        test["run"].as_str().unwrap_or_default().trim().to_string(),
     );
     if artifact.is_empty() || name.is_empty() {
         return Err("test.artifact and test.name are required".into());
@@ -174,13 +174,16 @@ pub fn record(
             "a programmatic test needs test.run: the command whose exit code is the verdict".into(),
         );
     }
+    // Every path the binding names stays under the deliverable
+    // (docs/consumers/gen.md#file-ownership-and-conventions).
     let tref = TestRef {
         kind: kind.into(),
         label: test["label"].as_str().unwrap_or("bound").into(),
-        artifact,
+        artifact: crate::gen::confine_rel(&artifact).map_err(|e| format!("test.artifact: {}", e))?,
         name: name.clone(),
         run,
-        cwd: test["cwd"].as_str().unwrap_or(".").into(),
+        cwd: crate::gen::confine_cwd(test["cwd"].as_str().unwrap_or("."))
+            .map_err(|e| format!("test.cwd: {}", e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
     if !path.exists() {
@@ -201,15 +204,14 @@ pub fn record(
     // Implementing files must exist: a binding names what carries the requirement, and
     // a path that is not there carries nothing. An empty list is the honest record of
     // an unimplemented requirement.
-    let mut files: Vec<String> = files
-        .iter()
-        .map(|f| f.trim().to_string())
-        .filter(|f| !f.is_empty())
-        .collect();
+    let mut files: Vec<String> = Vec::new();
+    for f in files_in.iter().filter(|f| !f.trim().is_empty()) {
+        files.push(crate::gen::confine_rel(f).map_err(|e| format!("files: {}", e))?);
+    }
     files.sort();
     files.dedup();
     for f in &files {
-        if !gs.deliverable.join(f).exists() {
+        if !gs.deliverable.join(f).is_file() {
             return Err(format!("implementing file `{}` does not exist under the deliverable; an unimplemented requirement records an empty files list", f));
         }
     }
@@ -644,6 +646,45 @@ mod tests {
             .as_array()
             .map(|a| a.is_empty())
             .unwrap_or(false));
+    }
+
+    // Every path a binding names stays under the deliverable: a climbing or absolute
+    // implementing file or artifact is rejected naming it, and the ledger is untouched.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn binding_paths_are_confined_to_the_deliverable() {
+        let s = tmp_store();
+        let gs = GenSettings {
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        std::fs::write(s.out.join("outside.sh"), "echo secret\n").unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        std::fs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 0\n", name),
+        )
+        .unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        let err = record(&s, "req:shop-1", &["../outside.sh".into()], &test, "pass", None, &gs)
+            .unwrap_err();
+        assert!(err.contains("files") && err.contains(".."), "{}", err);
+        let climbing = json!({"kind": "programmatic", "artifact": "../outside.sh", "name": "echo", "run": "sh ../outside.sh"});
+        let err = record(&s, "req:shop-1", &[], &climbing, "pass", None, &gs).unwrap_err();
+        assert!(err.contains("test.artifact"), "{}", err);
+        let absolute = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh", "cwd": "/tmp"});
+        let err = record(&s, "req:shop-1", &[], &absolute, "pass", None, &gs).unwrap_err();
+        assert!(err.contains("test.cwd"), "{}", err);
+        assert!(Ledger::load(&s.out).requirements.is_empty());
+        // The clean spelling normalizes.
+        let ok = json!({"kind": "programmatic", "artifact": "./tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        record(&s, "req:shop-1", &[], &ok, "fail", None, &gs).unwrap();
+        assert_eq!(
+            Ledger::load(&s.out).requirements["req:shop-1"].test.artifact,
+            "tests/shop.sh"
+        );
     }
 
     #[test]

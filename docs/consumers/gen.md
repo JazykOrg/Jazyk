@@ -276,6 +276,12 @@ manifest.
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
 - The ledger's file lists are sets: the harness deduplicates them on write.
+- Every path a manifest or a binding names is deliverable-relative, and the record
+  confines it before any side effect: an absolute path, or one that climbs out with
+  `..`, is rejected naming the path. Nothing the ledger records, strips markers from,
+  hashes, or removes reaches outside the deliverable (criteria paths resolve under
+  the out directory the same way). The served file tools apply the same rule
+  ([file and command tools](../compiler/goals/generate.md#file-and-command-tools)).
 - A corrective retry never costs the parts of an answer the complaint did not name.
   The previous answer goes back with it, the request is to change only what the
   complaint names, and what comes back is merged over it: a retry that returns no

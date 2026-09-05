@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Jazyk graph</title>
+  <meta name="description" content="The semantic graph Jazyk maintains: entities in one containment tree, requirement statements with verbatim quotes, views, derived relationships and state machines, sticky diagnostics. YAML on disk, ids minted once." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { brand: '#37bd99', accent: '#d81b60' } } }
+    }
+  </script>
+</head>
+<body class="bg-white text-slate-800 antialiased">
+  <header class="border-b border-slate-200">
+    <nav class="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-semibold text-slate-900">
+        <img src="/favicon.svg" alt="" class="h-7 w-7" />
+        Jazyk
+      </a>
+      <div class="flex items-center gap-6 text-sm">
+        <a href="/compilation/" class="hover:text-brand">Compilation</a>
+        <a href="/levels/" class="hover:text-brand">Levels</a>
+        <a href="/graph/" class="text-brand">Graph</a>
+        <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="mx-auto max-w-3xl px-6 py-16 text-center">
+      <h1 class="text-4xl font-bold tracking-tight text-slate-900">The graph</h1>
+      <p class="mt-3 text-lg text-slate-600">The build artifact is a persistent semantic graph, not a report</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <h2 class="text-2xl font-bold text-slate-900">Three authored kinds, two derived</h2>
+      <p class="mt-3 text-slate-600">Sections carry the documents' structure. Entities, requirements, and views are authored by sessions and by humans; relationships and state machines are recomputed from them on every commit. Diagnostics are the compiler's sticky judgment records. Nodes are created once and edited in place across builds: a rename keeps the id, a merge leaves a redirect, a dissolved grouping leaves a tombstone, and a cleared finding resolves instead of vanishing.</p>
+
+      <div class="mt-6 grid gap-4 sm:grid-cols-2">
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">Section</div>
+          <p class="mt-1 text-sm text-slate-600">Document structure as a parent and child tree. Holds the verbatim text; every quote locates inside it, whitespace-insensitively, never by character offset.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">Entity</div>
+          <p class="mt-1 text-sm text-slate-600">A domain concept with one living definition, a stereotype, attributes, and one <span class="font-mono text-xs">parent</span>: the containment tree that levels are built from. One concept, one node, never a per-document copy.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">Requirement</div>
+          <p class="mt-1 text-sm text-slate-600">A free-form statement restating what a sentence obliges, attached to entities, with the verbatim source sentence as its quote, directional edges, an optional transition, and facets.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">View</div>
+          <p class="mt-1 text-sm text-slate-600">What one diagram includes: kind, title, members, a query, collapses, exclusions. Never how it looks. Default views derive per level, per flow cluster, per machine; a curated view is authored.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">Relationship <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">derived</span></div>
+          <p class="mt-1 text-sm text-slate-600">One node per pair of entities, the contributing edges grouped by direction and type. No requirement, no edge.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">State machine <span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">derived</span></div>
+          <p class="mt-1 text-sm text-slate-600">One per subject entity, from the transitions its requirements carry. A state that no transition leaves is a check finding, not a picture.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5 sm:col-span-2">
+          <div class="font-semibold text-slate-900">Diagnostic</div>
+          <p class="mt-1 text-sm text-slate-600">A recorded judgment: contradiction, ambiguity, duplicate, uncovered section, a proposal awaiting ratification. Sticky by construction: it keeps its id across builds, and a human triage mark is never overwritten by the compiler. A diagnostic with a prompt is a question the owner answers, each option an exact edit to a document.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <h2 class="text-2xl font-bold text-slate-900">Provenance</h2>
+      <p class="mt-3 text-slate-600">Every fact has exactly one provenance. A <span class="font-mono text-sm">quote</span> is a verbatim sentence in a section. A <span class="font-mono text-sm">derived</span> fact names the nodes it came from and the reasoning. A <span class="font-mono text-sm">decree</span> is a human write on the graph. Derived and decreed facts carry a proposal for the sentence the documents should gain; accepting it writes the sentence and flips the provenance to a quote, so the graph converges toward fully quoted.</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <h2 class="text-2xl font-bold text-slate-900">On disk</h2>
+      <p class="mt-3 text-slate-600">Plain YAML, sorted for clean diffs, under <span class="font-mono text-sm">jazyk-out/</span>: one shard per node kind, one file per document's section tree and coverage, a journal entry per committed changeset, the diagrams, the generated pages, and a status file with the convergence verdict. One entity, one requirement, and one view, verbatim from a real build:</p>
+
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code># graph/entities.yaml
+ent:gift-card:
+  name: Gift Card
+  definition: A Gift Card is a prepaid balance a customer spends at Checkout.
+  stereotype: entity
+  parent: ent:funds
+  mentions:
+  - doc: docs/checkout.md
+    section: /checkout
+    quote: A Gift Card is a prepaid balance a customer spends at Checkout.
+  - doc: docs/checkout.md
+    section: /checkout/rules
+    quote: A Gift Card shall never be charged beyond its balance.
+  created: g16
+  updated: g20      # reparented under the Funds grouping
+
+# graph/requirements.yaml
+req:checkout-8:
+  statement: A Checkout turns a Cart into an Order.
+  entities:
+  - ent:checkout
+  - ent:cart
+  - ent:order
+  edges:
+  - a: ent:checkout
+    b: ent:cart
+    type: association
+  - a: ent:checkout
+    b: ent:order
+    type: association
+  facets:
+  - facet: behavior
+    reasoning: A Checkout turns a Cart into an Order.
+  source:
+    doc: docs/checkout.md
+    section: /checkout
+    quote: A Checkout turns a Cart into an Order.
+  created: g11
+  updated: g11</code></pre>
+
+      <p class="mt-4 text-slate-600">Ids are minted by the store at creation and never change, so generated code, tests, tickets, and cards bind to <span class="font-mono text-sm">ent:checkout</span> and stay bound through renames, merges, and reparents. The journal records every changeset with each goal's justification: the audit trail explains the graph, not just describes it.</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-16">
+      <h2 class="text-2xl font-bold text-slate-900">A view and its diagram</h2>
+      <p class="mt-3 text-slate-600">A view stores what a diagram includes, never how it looks. This one is the level view of Checkout, derived on every commit from its direct children plus the outside entities their edges reach; the renderer lifts every edge that touches a hidden descendant to the member that contains it and draws the picture on the right.</p>
+      <div class="mt-6 grid gap-4 md:grid-cols-2 items-start">
+        <pre class="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code># graph/views.yaml
+view:class/checkout:
+  kind: class
+  title: Checkout
+  members:
+  - ent:address
+  - ent:receipt
+  - ent:funds
+  - ent:pricing
+  - ent:selection
+  - ent:order
+  - ent:payment
+  provenance:
+    derived:
+      from:
+      - ent:checkout
+      - ent:address
+      - ent:receipt
+      - ent:funds
+      - ent:pricing
+      - ent:selection
+      - ent:order
+      - ent:payment
+      reasoning: 'default view: level view
+        of a node'
+  default: true
+  created: g13
+  updated: g20</code></pre>
+        <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+          <a href="/levels/#checkout"><img src="/levels/checkout-level.svg" width="470" height="195" class="block max-w-full h-auto" alt="Class diagram of the checkout level: Address, Funds, Receipt, Pricing, Order, Payment, Selection" /></a>
+          <p class="mt-2 text-xs text-slate-500"><span class="font-mono">diagrams/class/checkout.svg</span>. Funds, Pricing, and Selection hold levels of their own; the <a href="/levels/#checkout" class="text-brand hover:underline">levels page</a> digs in.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-20">
+      <h2 class="text-2xl font-bold text-slate-900">Queryable, the same way, everywhere</h2>
+      <p class="mt-3 text-slate-600">One loaded set serves every reader: a target in full, its edges, each neighbor as a stub, and a handle for whatever the budget cut off. A session loads the graph through it, and so do the CLI, the MCP server, the language server, and the GUI, so an agent asking about <span class="font-mono text-sm">ent:funds</span> sees exactly what the compiler saw.</p>
+
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>$ jazyk context ent:funds
+## ent:funds (Funds)  full
+parent: ent:checkout (Checkout)
+definition: Funds gathers the balances and methods a customer spends at
+  Checkout: the Gift Card, the Loyalty Point, and the Payment Method.
+views: view:class/checkout
+
+neighbors:
+- ent:checkout (Checkout) «process» A Checkout turns a Cart into an Order.
+  (12 edges) [h:ent:checkout]
+
+## Loaded (343/24.0k chars)
+- ent:funds   full: 0 requirements, parent ent:checkout</code></pre>
+
+      <p class="mt-4 text-sm text-slate-500">Schemas live under <a href="https://github.com/JazykOrg/Jazyk/tree/master/docs/compiler" class="text-brand hover:underline">docs/compiler</a> and publish at <span class="font-mono">jazyk.org/schemas</span>.</p>
+    </section>
+  </main>
+
+  <footer class="border-t border-slate-200">
+    <div class="mx-auto max-w-5xl px-6 py-8 text-sm text-slate-500 flex items-center justify-between">
+      <span>Jazyk — tongue, in Slavic languages.</span>
+      <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">github.com/JazykOrg/Jazyk</a>
+    </div>
+  </footer>
+</body>
+</html>

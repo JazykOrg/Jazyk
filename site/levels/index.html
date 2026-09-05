@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jazyk levels</title>
+  <meta name="description" content="Jazyk builds levels: entities summarize into groupings, every level gets its own structural, use case, and sequence diagrams, and digging into an entity shows the level below it. A walk of small generated pages, one per entity and one per diagram." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { brand: '#37bd99', accent: '#d81b60' } } }
+    }
+  </script>
+</head>
+<body class="bg-white text-slate-800 antialiased">
+  <header class="border-b border-slate-200">
+    <nav class="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-semibold text-slate-900">
+        <img src="/favicon.svg" alt="" class="h-7 w-7" />
+        Jazyk
+      </a>
+      <div class="flex items-center gap-6 text-sm">
+        <a href="/compilation/" class="hover:text-brand">Compilation</a>
+        <a href="/levels/" class="text-brand">Levels</a>
+        <a href="/graph/" class="hover:text-brand">Graph</a>
+        <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="mx-auto max-w-3xl px-6 py-16 text-center">
+      <h1 class="text-4xl font-bold tracking-tight text-slate-900">Levels</h1>
+      <p class="mt-3 text-lg text-slate-600">Every level gets its own diagrams, and digging into an entity shows the level below it</p>
+    </section>
+
+    <section class="mx-auto max-w-3xl px-6 pb-12">
+      <p class="text-slate-600">Requirements stay on the entities the documents state. Those entities summarize into higher-level entities, and those into higher still. A level is a node's direct children; the top level is the parentless entities of the project. Each level gets a structural diagram over its members and use case and sequence diagrams over the flows that lift into it. The tree is as deep as the documents and the model's judgment make it: one branch may stop at a service while another goes down to classes.</p>
+      <p class="mt-3 text-slate-600">The pressure that builds the tree is a limit. A node with more than nine direct children opens an optional goal to regroup them, mandatory past fifteen. The harness computes which children belong together, from the requirements that mention them and the relationships between them; the model names the grouping, or declines with a reason when the level is genuinely flat. A grouping is an entity with derived provenance from exactly its members, one sentence of definition, and no quote, because no document states it yet.</p>
+    </section>
+
+    <!-- The drill-down -->
+    <section class="border-t border-slate-200 bg-slate-50">
+      <div class="mx-auto max-w-3xl px-6 py-16 space-y-14">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Digging in</h2>
+          <p class="mt-3 text-slate-600">Three diagrams from one real build, in the order a reader walks them. The project is a bookkeeping backend described in a front door and four short documents, written to cross the children limit twice: twelve concepts at the root, then eleven under Checkout. Every image below is the file the compiler wrote; the boxes link the way the real renderings link to their cards.</p>
+        </div>
+
+        <div id="top">
+          <h3 class="text-xl font-semibold text-slate-900">1. The top level</h3>
+          <p class="mt-2 text-slate-600">The front door names four documents. Their twelve root concepts crossed the limit, and the session grouped them into the areas the documents already name: Orders, Shipping, and Platform. Checkout was a stated process whose own document lists the checkout glossary, so it became the area for that document instead of gaining a duplicate. Ledger, the stated backend, stands beside them.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+            <object type="image/svg+xml" data="./top-level.svg" width="402" height="181" class="mx-auto block" aria-label="Component diagram of the top level: Ledger, Checkout, Orders, Platform, Shipping">
+              <img src="./top-level.svg" alt="Component diagram of the top level: Ledger, Checkout, Orders, Platform, Shipping" />
+            </object>
+          </div>
+          <p class="mt-2 text-sm text-slate-500"><span class="font-mono">view:component/public</span> (component, 5 members): Ledger, Checkout, Orders, Platform, Shipping. Click Checkout.</p>
+          <p class="mt-4 text-slate-600">The top level's sequence draws the flows among its members. Every message here is a sentence stated about leaves two levels down, lifted to the grouping that contains them: Cart and Order are leaves, Checkout and Orders are what the level shows.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+            <object type="image/svg+xml" data="./top-level-sequence.svg" width="610" height="250" class="mx-auto block" aria-label="Sequence diagram at the top level: Checkout sends four messages to Orders and one to itself">
+              <img src="./top-level-sequence.svg" alt="Sequence diagram at the top level: Checkout sends four messages to Orders and one to itself" />
+            </object>
+          </div>
+          <p class="mt-2 text-sm text-slate-500"><span class="font-mono">view:sequence/checkout-checkout</span> (sequence, 5 steps). The sentence behind the fourth arrow, verbatim from <span class="font-mono">docs/checkout.md</span>: "A Checkout turns a Cart into an Order."</p>
+        </div>
+
+        <div id="checkout">
+          <h3 class="text-xl font-semibold text-slate-900">2. The checkout level</h3>
+          <p class="mt-2 text-slate-600">One flat glossary stated eleven concepts under Checkout. The session grouped them in seven rounds: Pricing (coupon, discount, tax, promotion), Funds (gift card, loyalty point, payment method), and Selection (cart, wishlist). Address and Receipt stayed where they were, because they share no noun a reader would name. Order and Payment are not children of Checkout; they are drawn because edges from inside the level reach them.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+            <object type="image/svg+xml" data="./checkout-level.svg" width="470" height="195" class="mx-auto block" aria-label="Class diagram of the checkout level: Address, Funds, Receipt, Pricing, Order, Payment, Selection">
+              <img src="./checkout-level.svg" alt="Class diagram of the checkout level: Address, Funds, Receipt, Pricing, Order, Payment, Selection" />
+            </object>
+          </div>
+          <p class="mt-2 text-sm text-slate-500"><span class="font-mono">view:class/checkout</span> (class, 7 members): Address, Receipt, Funds, Pricing, Selection, Order, Payment. Click Funds.</p>
+          <p class="mt-4 text-slate-600">The session's justification, as it landed in the journal:</p>
+          <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>resolved g:abstract-entity:ent:checkout  (7 rounds)
+  Checkout's 11 direct children are grouped into three derived groupings
+  under it — Pricing (coupon, discount, tax, promotion), Funds (gift-card,
+  loyalty-point, payment-method), and Selection (cart, wishlist) — each with
+  parent Checkout, derived provenance naming exactly its members, and a
+  one-sentence definition, reducing the level to 5 children (≤9). The harness
+  files a ratification proposal per derived grouping; Address and Receipt
+  stay ungrouped as they share no nameable noun.</code></pre>
+        </div>
+
+        <div id="funds">
+          <h3 class="text-xl font-semibold text-slate-900">3. The funds level</h3>
+          <p class="mt-2 text-slate-600">Inside Funds: the three members the grouping was derived from, and Order, reached by one edge from Loyalty Point. Each member is a leaf; its card says so and links to its requirements.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+            <object type="image/svg+xml" data="./funds-level.svg" width="452" height="178" class="mx-auto block" aria-label="Class diagram of the funds level: Gift Card, Loyalty Point, Payment Method, Order">
+              <img src="./funds-level.svg" alt="Class diagram of the funds level: Gift Card, Loyalty Point, Payment Method, Order" />
+            </object>
+          </div>
+          <p class="mt-2 text-sm text-slate-500"><span class="font-mono">view:class/funds</span> (class, 4 members): Gift Card, Loyalty Point, Payment Method, Order. Back up: <a href="#checkout" class="text-brand hover:underline">the checkout level</a>, <a href="#top" class="text-brand hover:underline">the top level</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- The card -->
+    <section class="mx-auto max-w-3xl px-6 py-16">
+      <h2 class="text-2xl font-bold text-slate-900">The card</h2>
+      <p class="mt-3 text-slate-600">Every box in every diagram links to a card: one small generated page per entity. The card is where a reader lands and picks a direction. Up is the breadcrumb. In context is the parent's level, where the entity is used. Inside is the entity's own level. Then its relationships, flows, siblings, and children, one level in every direction, and the requirements one click away. Funds' card, as written to disk:</p>
+      <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code># Funds
+
+`ent:funds` · Funds gathers the balances and methods a customer spends
+at Checkout: the Gift Card, the Loyalty Point, and the Payment Method.
+
+This entity is derived; see its [proposal](../funds.md#proposals).
+
+## Sits in
+
+[Public](../levels/scope-public.md) › [Checkout](./checkout.md) › Funds
+
+## In context
+
+![Checkout](../../diagrams/class/checkout.svg)
+
+`view:class/checkout` (class, 7 members): [Address], [Receipt], [Funds],
+[Pricing], [Selection], [Order], [Payment] · [source] · [page]
+
+## Inside
+
+![Funds](../../diagrams/class/funds.svg)
+
+`view:class/funds` (class, 4 members): [Gift Card], [Loyalty Point],
+[Payment Method], [Order] · [source] · [page]
+
+Flows of this level:
+
+- Loyalty Point: Checkout · [use case] · [sequence] (2 steps)
+
+## Relationships
+
+- association ↔ [Checkout](./checkout.md) · 4 requirements
+- composition ← [Checkout](./checkout.md) · 1 requirement
+- association → [Order](./order.md) · 1 requirement
+
+## Flows
+
+- Funds: Checkout · [use case] · [sequence] (4 steps)
+
+## Siblings
+
+- [Address](./address.md)
+- [Pricing](./pricing.md) (4 children)
+- [Receipt](./receipt.md)
+- [Selection](./selection.md) (2 children)
+
+## Children
+
+- [Gift Card](./gift-card.md)
+- [Loyalty Point](./loyalty-point.md)
+- [Payment Method](./payment-method.md)
+
+## More
+
+- [Requirements document](../funds.md) (0 requirements)
+- Level page of [Checkout](../levels/checkout.md)
+- Own level page: [Funds](../levels/funds.md)
+- [Proposal](../funds.md#proposals) `diag:ratification-pending-6`</code></pre>
+      <p class="mt-3 text-sm text-slate-500">Condensed: the link targets of the caption lines are elided. Every list is short by construction, because a level is under its children limit and the card lists one level in each direction.</p>
+    </section>
+
+    <!-- The proposal -->
+    <section class="border-t border-slate-200 bg-slate-50">
+      <div class="mx-auto max-w-3xl px-6 py-16">
+        <h2 class="text-2xl font-bold text-slate-900">The chapter the documents never wrote</h2>
+        <p class="mt-3 text-slate-600">A grouping is invented until ratified. No document states Funds, so the compiler proposes the sentence the documents should gain and where it goes: the architecture chapter the documents never wrote. The owner accepts or retracts it. Accepting writes the sentence into the section, and the grouping flips to quoted provenance like any stated entity. Retracting dissolves it: the members return to Checkout, a tombstone redirect keeps the old id resolving, and the next build re-derives whatever the documents still support.</p>
+        <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-5 text-sm leading-relaxed text-slate-700"><code>$ jazyk answer g:ratify:ent:funds
+diag:ratification-pending-6  ratification-pending on ent:funds
+  Should docs/checkout.md state it? "Funds: Funds gathers the balances and
+  methods a customer spends at Checkout: the Gift Card, the Loyalty Point,
+  and the Payment Method."
+  0  Insert into docs/checkout.md /checkout (edit)
+  1  Retract (answer)
+
+$ jazyk answer g:ratify:ent:funds --option 0</code></pre>
+        <p class="mt-4 text-slate-600">The reasoning travels with the proposal, so the owner reads why the model chose the name: the documents name a payment cluster of the gift card, the loyalty point, and the payment method; "Payment" was taken by a different concept, the one that settles an Invoice; so the area is named Funds, and the proposal is stated as a choice. A split the documents never suggest is always a choice, and the proposal carries it to the owner instead of deciding it.</p>
+      </div>
+    </section>
+
+    <!-- The walk -->
+    <section class="mx-auto max-w-3xl px-6 py-16">
+      <h2 class="text-2xl font-bold text-slate-900">One walk, three surfaces</h2>
+      <p class="mt-3 text-slate-600">The cards and the diagram pages are plain markdown on disk, one file per entity and one per diagram, rewritten on every commit and pruned with their node. A reader with no server opens a card in a markdown preview and walks. The same model serves two more places:</p>
+      <div class="mt-6 grid gap-4 sm:grid-cols-3">
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">On disk</div>
+          <p class="mt-1 text-sm text-slate-600">A card per entity, a page per diagram with a clickable legend, a page per level with its members. The index opens with the top level's members.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">In the editor</div>
+          <p class="mt-1 text-sm text-slate-600">Hovering an entity in a document shows the card in short: the definition, the breadcrumb, the level it sits in, and the link inside. Go to type definition opens the card.</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 p-5">
+          <div class="font-semibold text-slate-900">In the GUI</div>
+          <p class="mt-1 text-sm text-slate-600">The containment tree, a breadcrumb over the diagram panel, the diagrams inline and clickable, history behind an addressable URL, and more detail expanding a grouping in place.</p>
+        </div>
+      </div>
+      <p class="mt-6 text-slate-600">Diagrams stay projections. A level view derives from the tree and the requirements on its leaves; deleting a rendering loses nothing, and a reparent redraws every level it touches on the next commit.</p>
+      <p class="mt-6 text-sm text-slate-500">Measured on this example: a front door and four documents, two fan-outs (twelve at the root, eleven under Checkout), a tree four levels deep with the shape 5 / 17 / 9 / 1, every level under nine children, about ten sessions on a local 27B model. The full record is in <a href="https://github.com/JazykOrg/Jazyk/blob/master/bootstrap/VALIDATION.md" class="text-brand hover:underline">bootstrap/VALIDATION.md</a>; the design is in <a href="https://github.com/JazykOrg/Jazyk/blob/master/docs/compiler/concepts/levels.md" class="text-brand hover:underline">docs/compiler/concepts/levels.md</a>.</p>
+    </section>
+  </main>
+
+  <footer class="border-t border-slate-200">
+    <div class="mx-auto max-w-5xl px-6 py-8 text-sm text-slate-500 flex items-center justify-between">
+      <span>Jazyk — tongue, in Slavic languages.</span>
+      <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">github.com/JazykOrg/Jazyk</a>
+    </div>
+  </footer>
+</body>
+</html>

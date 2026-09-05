@@ -977,6 +977,71 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     out
 }
 
+// The generate goal's gate: record_generation landed for the entity with a factHash
+// equal to the live graph's and files that exist; with `require_run`, run_tests ran
+// afterwards too (no programmatic row of the entity is still never-run). Ok carries
+// the recorded file count. Err names what is missing and the call that lands it.
+// Mirrors docs/compiler/goals/generate.md#gate.
+pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Result<usize, String> {
+    let id = store.resolve_id(id).to_string();
+    if !store.graph.entities.contains_key(&id) {
+        return Err(format!("`{}` is not in the graph; nothing generates it", id));
+    }
+    let ledger = Ledger::load(&store.out);
+    let Some(e) = ledger.entities.get(&slug_of(&id)) else {
+        return Err(format!(
+            "no ledger entry for `{}`: record_generation has not landed; the gate is record_generation with the package's factHash, then run_tests",
+            id
+        ));
+    };
+    let live = fact_hash(store, &id);
+    if e.fact_hash != live {
+        return Err(format!(
+            "the record for `{}` carries factHash {} but the graph says {}: the facts moved since the package was built; begin_generation again and record_generation with the current factHash",
+            id, e.fact_hash, live
+        ));
+    }
+    let gone: Vec<&String> = e
+        .files
+        .iter()
+        .filter(|f| !gs.deliverable.join(f).is_file())
+        .collect();
+    if e.files.is_empty() || !gone.is_empty() {
+        return Err(format!(
+            "the record for `{}` lists files that do not exist under the deliverable ({}); write them, then record_generation again with every file the manifest names",
+            id,
+            if gone.is_empty() {
+                "no files at all".to_string()
+            } else {
+                gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
+            }
+        ));
+    }
+    if require_run {
+        let never_run: Vec<String> = reqs_of_sorted(store, &id)
+            .into_iter()
+            .filter(|rid| {
+                ledger
+                    .requirements
+                    .get(rid)
+                    .map(|row| {
+                        row.test.kind == "programmatic"
+                            && crate::verify::status_of(store, rid, row, gs)
+                                == ("unverified".to_string(), "never-run".to_string())
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        if !never_run.is_empty() {
+            return Err(format!(
+                "run_tests has not run since the record: {} never ran; call run_tests, then mark the goal",
+                never_run.join(", ")
+            ));
+        }
+    }
+    Ok(e.files.len())
+}
+
 // Why `jazyk gen` leaves an entity alone, for the person reading the trace: the
 // entity is current, a bind is still owed on it, or no row says generate.
 // Mirrors docs/consumers/gen.md#incremental-regeneration.
@@ -2675,6 +2740,41 @@ mod tests {
         assert!(ledger.requirements.contains_key("req:shop-1"));
     }
 
+    // The generate gate is the ledger's word: no record, a stale factHash, or
+    // recorded files that are not there each bounce a done claim naming the repair;
+    // with run_tests required, a programmatic row never run bounces it too.
+    // Mirrors docs/compiler/goals/generate.md#gate.
+    #[test]
+    fn the_generate_gate_reads_the_landed_record() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-gate-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
+        assert!(err.contains("record_generation has not landed"), "{}", err);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        let manifest = json!({"files": ["src/cart.rs", "tests/cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+            "artifact": "tests/cart.rs", "name": name, "run": "true", "files": ["src/cart.rs"]}]});
+        mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert_eq!(gate(&s, &gs, "ent:cart", false).unwrap(), 2);
+        let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
+        assert!(err.contains("run_tests has not run") && err.contains("req:shop-1"), "{}", err);
+        crate::verify::run_selected(&s, &gs, &[]).unwrap();
+        gate(&s, &gs, "ent:cart", true).unwrap();
+        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
+        assert!(err.contains("do not exist") && err.contains("src/cart.rs"), "{}", err);
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        s.graph.entities.get_mut("ent:cart").unwrap().definition = Some("moved".into());
+        let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
+        assert!(err.contains("facts moved"), "{}", err);
+        std::fs::remove_dir_all(&out).ok();
+    }
+
     // Every path a manifest names is confined before any side effect: an absolute
     // path or one climbing out with `..` is rejected naming it, and the rejected
     // record strips no marker, writes no ledger, and removes nothing.
@@ -3311,32 +3411,12 @@ fn gen_session(
     if let Some(e) = report.failed {
         return ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect();
     }
-    let ledger = Ledger::load(&store.out);
+    // Success is the gate's word: the record landed with current facts and existing
+    // files. Whether run_tests ran is the verify goal's business here; a session that
+    // recorded and ended resolves the goal at the next derivation
+    // (docs/compiler/goals/generate.md#gate).
     ids.iter()
-        .map(|id| {
-            let hash = fact_hash(store, id);
-            let res = match ledger.entities.get(&slug_of(id)) {
-                Some(e)
-                    if e.fact_hash == hash
-                        && !e.files.is_empty()
-                        && e.files.iter().all(|f| gs.deliverable.join(f).exists()) =>
-                {
-                    Ok(e.files.len())
-                }
-                Some(e) if e.fact_hash != hash => Err(format!(
-                    "the session recorded factHash {} but the graph says {}; the goal package carries the current one",
-                    e.fact_hash, hash
-                )),
-                Some(_) => Err(
-                    "the session recorded files that do not exist under the deliverable".into(),
-                ),
-                None => Err(
-                    "the session ended without record_generation; nothing landed in the ledger"
-                        .into(),
-                ),
-            };
-            (id.clone(), res)
-        })
+        .map(|id| (id.clone(), gate(store, gs, id, false)))
         .collect()
 }
 

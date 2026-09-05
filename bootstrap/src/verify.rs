@@ -83,6 +83,46 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
     }
 }
 
+// The verify goal's gate: a verdict (pass or fail) on the row with a requirement hash
+// equal to the live statement hash and the test and files hashes rebaselined, which
+// is exactly a row whose derived status is verified, failing, or unimplemented. Err
+// names what is missing and the call that lands it.
+// Mirrors docs/compiler/goals/verify.md#gate.
+pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
+    let rid = store.resolve_id(rid).to_string();
+    let ledger = Ledger::load(&store.out);
+    let Some(row) = ledger.requirements.get(&rid) else {
+        return Err(format!(
+            "no ledger row for `{}`: nothing binds it, so there is no verdict to record; the row is bind work",
+            rid
+        ));
+    };
+    let (status, reason) = status_of(store, &rid, row, gs);
+    match status.as_str() {
+        "verified" | "failing" | "unimplemented" => Ok(()),
+        "unverified" => Err(format!(
+            "no verdict on `{}` ({}): run_tests for a programmatic row, or begin_verification then record_verdict with the package's factHash for an llm row",
+            rid, reason
+        )),
+        "stale-requirement" => Err(format!(
+            "the statement of `{}` moved since the row was recorded, so a verdict on it verifies an old sentence; {}",
+            rid,
+            repair_for(&status, &reason, &rid, &row.entity)
+        )),
+        "stale-test" | "stale-code" => Err(format!(
+            "`{}` is {} ({}): the bytes moved after the last verdict, so it judged something else; run again (run_tests or record_verdict rebaselines the hashes)",
+            rid, status, reason
+        )),
+        _ => Err(format!(
+            "`{}` is {} ({}); {}",
+            rid,
+            status,
+            reason,
+            repair_for(&status, &reason, &rid, &row.entity)
+        )),
+    }
+}
+
 // Rows needing action, with derived status and reason. Requirements the graph holds
 // but the ledger does not appear as `missing`, so ungenerated work is never silent.
 // Filters: `stale` (the default) lists what the board owes a verify goal, so a
@@ -1197,6 +1237,30 @@ mod tests {
         std::fs::remove_dir_all(&out).ok();
     }
 
+    // The verify gate holds exactly when a verdict stands on a current row; every
+    // other state names the call that lands it. Mirrors docs/compiler/goals/verify.md#gate.
+    #[test]
+    fn the_verify_gate_reads_the_landed_verdict() {
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("no verdict") && err.contains("run_tests"), "{}", err);
+        mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
+        gate(&s, &gs, "req:shop-1").unwrap();
+        mark(&s, "req:shop-1", "fail", None, Some("boom"), Some(1), &gs).unwrap();
+        gate(&s, &gs, "req:shop-1").unwrap();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// moved").unwrap();
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("stale-code"), "{}", err);
+        mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
+        s.graph.requirements.get_mut("req:shop-1").unwrap().statement = "Reworded.".into();
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("moved since") && err.contains("jazyk gen"), "{}", err);
+        assert!(gate(&s, &gs, "req:none").unwrap_err().contains("bind work"));
+        std::fs::remove_dir_all(&out).ok();
+    }
+
     #[test]
     fn iso_clock_shape() {
         let t = now_iso();
@@ -1445,6 +1509,13 @@ pub fn run_all(
             ),
         );
     }
+    // The verify goals this run resolved, by the gate's word rather than the tally's
+    // (docs/compiler/goals/verify.md#gate).
+    let resolved = selected
+        .iter()
+        .filter_map(|r| r["requirement"].as_str())
+        .filter(|rid| gate(store, gs, rid).is_ok())
+        .count();
     Ok(json!({
         "rows": selected.len(),
         "verified": verified,
@@ -1452,5 +1523,6 @@ pub fn run_all(
         "runnerFailed": runner_failed,
         "stale": stale,
         "skipped": skipped,
+        "resolved": resolved,
     }))
 }

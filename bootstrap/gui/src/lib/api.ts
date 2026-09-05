@@ -307,6 +307,8 @@ export interface PreviewData {
   executor?: string
   executorError?: string
   humanBlocked?: boolean
+  // In compile: manual before a release: the batch the release would form.
+  gated?: boolean
   note?: string
 }
 

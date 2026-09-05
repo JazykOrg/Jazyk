@@ -1,10 +1,41 @@
 // Work: the generation worklist, with live per-entity progress while a gen job runs.
 import { Link } from 'react-router'
 import { post } from '../lib/api'
-import { useGenPending } from '../lib/queries'
+import { useGenPending, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
 import './routes.css'
+
+// The unclaimed report beside the decompile action: deliverable files no binding
+// names, and the click that drafts docs for them. Decompilation stays outside the
+// goal board (docs/frontends/gui.md#work).
+function Unclaimed({ busy }: { busy: boolean }) {
+  const { data: w } = useWorkers()
+  if (!w) return null
+  const n = w.unclaimed ?? 0
+  return (
+    <div className="card">
+      <p className="row" style={{ margin: '2px 0' }}>
+        <b>unclaimed</b>
+        <span className={n > 0 ? 'v-stale' : 'muted'}>
+          {n === 0 ? 'every deliverable file is bound to a requirement' : `${n} deliverable file${n === 1 ? '' : 's'} no binding names`}
+        </span>
+        <button
+          disabled={busy || n === 0}
+          title="draft documents describing what the unclaimed files do; records a decompile release and runs like compile and generate"
+          onClick={() => post('/api/jobs', { kind: 'decompile' })}
+        >
+          decompile ▸
+        </button>
+      </p>
+      {(w.decompileReleased ?? []).length > 0 && (
+        <p className="muted mono" style={{ margin: '2px 0' }}>
+          released for: {(w.decompileReleased ?? []).join(', ')}
+        </p>
+      )}
+    </div>
+  )
+}
 
 export default function Work() {
   const pending = useGenPending()
@@ -48,6 +79,9 @@ export default function Work() {
         <Link to="/work/verify">verification matrix</Link>
       </div>
 
+      <Unclaimed busy={busy} />
+
+      <h2>generation packages</h2>
       {rows.length === 0 && <p className="empty">no pending generation work</p>}
       {rows.map((r) => (
         <div key={r.entity} className="card">

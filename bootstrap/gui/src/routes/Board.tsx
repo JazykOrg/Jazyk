@@ -2,16 +2,28 @@
 // tier, the ready tier first; GC cards carry their cone state. A card click opens
 // the follow session when a session holds the goal, otherwise the inspector with
 // the explanation. Mirrors docs/frontends/gui.md#board.
-import { useMemo } from 'react'
-import { useSearchParams } from 'react-router'
+import { useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { post } from '../lib/api'
 import type { BoardGoal, GoalState } from '../lib/api'
 import { useBoard } from '../lib/queries'
 import { useApp } from '../lib/store'
-import { useInspector } from '../lib/nav'
+import { selectNodeParams, useInspector } from '../lib/nav'
+import { pressable } from '../lib/a11y'
 import { linkifyIds } from '../components/NodeLink'
 import PreviewPane from '../components/PreviewPane'
 import './routes.css'
+
+// The diagnostic a blocked ratify or answer card waits on, named in its hints
+// (`proposal diag:...`, `prompt diag:...`), so the card can jump to it.
+function blockingDiag(g: BoardGoal): string | null {
+  for (const h of g.hints ?? []) {
+    const m = h.match(/\b(diag:[a-z0-9-]+)/)
+    if (m) return m[1]
+  }
+  return null
+}
 
 export function stateWord(s: GoalState): string {
   if (typeof s === 'string') return s
@@ -39,6 +51,7 @@ function changeLine(change: unknown): string {
 
 function GoalCard({ g }: { g: BoardGoal }) {
   const [sp, setSp] = useSearchParams()
+  const qc = useQueryClient()
   const { openNode } = useInspector()
   const jobs = useApp((a) => a.jobs)
   const setChatOpen = useApp((a) => a.setChatOpen)
@@ -47,16 +60,22 @@ function GoalCard({ g }: { g: BoardGoal }) {
   const note = notes[g.id]
   const running = Object.values(jobs).find((j) => j.state === 'running')
   const inSession = !!g.claimedBy || (running && g.batch && stateWord(g.state) === 'open')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
   const open = () => {
     // A running session holding the goal opens as the follow session; otherwise
-    // the inspector explains the goal.
+    // the inspector explains the goal. `?goal=` holds the selected card either way.
+    const next = new URLSearchParams(sp)
+    next.set('goal', g.id)
     if (inSession && running) {
+      setSp(next, { replace: true })
       selectChat(`follow-${running.id}`)
       setChatOpen(true)
       return
     }
-    openNode(g.id)
+    selectNodeParams(next, g.id)
+    setSp(next)
   }
 
   const preview = (e: React.MouseEvent) => {
@@ -66,6 +85,15 @@ function GoalCard({ g }: { g: BoardGoal }) {
     setSp(next, { replace: true })
   }
 
+  // The inspector on the goal, with its ripple pane opened at once.
+  const ripple = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const next = new URLSearchParams(sp)
+    selectNodeParams(next, g.id)
+    next.set('ripple', '1')
+    setSp(next)
+  }
+
   const word = stateWord(g.state)
   const detail = stateDetail(g.state)
   const change = g.change as Record<string, unknown> | undefined
@@ -73,19 +101,47 @@ function GoalCard({ g }: { g: BoardGoal }) {
     (g.kind === 'split-view' || g.kind === 'abstract-entity') &&
     typeof change?.limit === 'string' &&
     typeof change?.count === 'number'
-  const dismiss = (e: React.MouseEvent) => {
+  // A decree that raises the node's own threshold: the goal stops deriving
+  // until the raised threshold is crossed (docs/frontends/gui.md#board).
+  const dismiss = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    void post(`/api/facts/${encodeURIComponent(g.target)}/edit`, {
-      field: `limits.${change!.limit as string}`,
-      value: change!.count as number,
-    })
+    setBusy(true)
+    setErr(null)
+    try {
+      await post(`/api/facts/${encodeURIComponent(g.target)}/edit`, {
+        field: `limits.${change!.limit as string}`,
+        value: change!.count as number,
+      })
+      for (const key of ['board', 'status', 'graph', 'views', 'journal']) void qc.invalidateQueries({ queryKey: [key] })
+    } catch (x) {
+      setErr((x as Error).message)
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const cls = note?.event === 'resolved' ? 'goal-resolved' : word === 'failed' ? 'goal-failed' : ''
+  // A blocked answer or ratify card jumps to where the human acts: the questions
+  // list in the chat pane, and the diagnostic itself in the inspector.
+  const blocking = word === 'blocked' && (g.kind === 'answer' || g.kind === 'ratify') ? blockingDiag(g) : null
+  const jump = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (blocking) openNode(blocking)
+    setChatOpen(true)
+  }
+
+  const cls =
+    note?.event === 'resolved'
+      ? 'goal-resolved'
+      : word === 'failed'
+        ? 'goal-failed'
+        : inSession && running
+          ? 'goal-session'
+          : ''
   return (
     <div
       className={`card goal-card ${cls} ${sp.get('goal') === g.id ? 'job-sel' : ''}`}
-      onClick={open}
+      title={inSession && running ? 'open the session holding this goal' : 'open the goal in the inspector'}
+      {...pressable(open)}
     >
       <div className="row">
         <b>{g.kind}</b>
@@ -98,7 +154,7 @@ function GoalCard({ g }: { g: BoardGoal }) {
         {!inSession && word === 'open' && g.ready && <span className="chip v-ok">ready</span>}
         {!inSession && word === 'open' && !g.ready && <span className="chip sev-none">waiting</span>}
         {word !== 'open' && <span className={`chip ${word === 'failed' ? 'v-bad' : 'v-stale'}`}>{word}</span>}
-        {g.gated && <span className="chip sev-info">gated</span>}
+        {g.gated && <span className="chip sev-info" title="awaiting a release">gated</span>}
       </div>
       {note?.event === 'resolved' && (
         <p className="v-ok" style={{ margin: '2px 0' }}>✓ {linkifyIds(note.text || 'resolved')}</p>
@@ -106,52 +162,56 @@ function GoalCard({ g }: { g: BoardGoal }) {
       {changeLine(g.change) && <p className="muted" style={{ margin: '2px 0' }}>{changeLine(g.change)}</p>}
       {g.cause && (
         <p className="muted mono" style={{ margin: '2px 0' }}>
-          cause: g{g.cause.generation} #{g.cause.mutation}
+          cause:{' '}
+          <Link to={`/journal/${g.cause.generation}`} title="the journal entry that opened this goal" onClick={(e) => e.stopPropagation()}>
+            g{g.cause.generation}
+          </Link>{' '}
+          #{g.cause.mutation}
           {g.cause.via ? ` via ${g.cause.via}` : ''}
         </p>
       )}
       {detail && <p className="v-stale" style={{ margin: '2px 0' }}>{word}: {detail}</p>}
-      {g.blockedBy && word === 'open' && (
-        <p className="muted" style={{ margin: '2px 0' }}>waiting: {g.blockedBy}</p>
+      {g.blockedBy && word !== 'failed' && (
+        <p className="muted" style={{ margin: '2px 0' }}>{word === 'open' ? 'waiting' : 'blocked'}: {g.blockedBy}</p>
+      )}
+      {word === 'parked' && (
+        <p className="muted" style={{ margin: '2px 0' }}>out of budget; the next build resumes it first</p>
       )}
       {(g.hints ?? []).length > 0 && (
         <p className="muted" style={{ margin: '2px 0' }}>hints: {(g.hints ?? []).join(' · ')}</p>
       )}
+      {err && <p className="goal-err">{err}</p>}
       <p className="row" style={{ margin: '4px 0 0' }}>
-        <button onClick={preview}>preview</button>
+        <button onClick={preview} title="the prompt of the batch this goal would join">preview</button>
         <button
           onClick={(e) => {
             e.stopPropagation()
             openNode(g.id)
           }}
+          title="the change record, the readiness sentence, what blocks it"
         >
           explain
         </button>
+        <button onClick={ripple} title="the causal chain around this goal's target">ripple</button>
         {dismissable && (
-          <button title={`raise the ${change!.limit as string} threshold on ${g.target} to ${change!.count as number}`} onClick={dismiss}>
+          <button
+            disabled={busy}
+            title={`raise the ${change!.limit as string} threshold on ${g.target} to ${change!.count as number}: a decree, the goal stops deriving`}
+            onClick={(e) => void dismiss(e)}
+          >
             dismiss
           </button>
         )}
         {word === 'blocked' && (g.kind === 'answer' || g.kind === 'ratify') && (
-          <QuestionJump />
+          <button
+            onClick={jump}
+            title={g.kind === 'ratify' ? 'the ratification proposal waits in the questions list' : 'the question waits in the questions list'}
+          >
+            {g.kind === 'ratify' ? 'proposal' : 'answer'}
+          </button>
         )}
       </p>
     </div>
-  )
-}
-
-function QuestionJump() {
-  const setChatOpen = useApp((a) => a.setChatOpen)
-  return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation()
-        setChatOpen(true)
-      }}
-      title="the question waits in the chat pane's questions list"
-    >
-      answer
-    </button>
   )
 }
 
@@ -223,7 +283,9 @@ export default function Board() {
       )}
       {goals.length === 0 && (
         <p className="empty">
-          {board.data.note ?? 'the board is empty; the graph reflects the docs'}
+          {board.data.goals.length > 0
+            ? 'no goals match the filters in the sidebar'
+            : (board.data.note ?? 'the board is empty; the graph reflects the docs')}
         </p>
       )}
       <div className="grid2">

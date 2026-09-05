@@ -738,6 +738,10 @@ pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {
 // The per-entity generation package a session receives.
 pub async fn gen_package(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
     let store = load_store(&st).await;
+    let id = store.resolve_id(&id).to_string();
+    if !store.graph.entities.contains_key(&id) {
+        return err(StatusCode::NOT_FOUND, format!("no entity {}", id));
+    }
     match crate::gen::task_package(&store, &id, &st.gs()) {
         Ok(v) => Json(v).into_response(),
         Err(e) => err(StatusCode::BAD_REQUEST, e),

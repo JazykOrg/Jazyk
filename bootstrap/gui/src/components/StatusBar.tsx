@@ -1,5 +1,6 @@
 // The persistent status bar: read-only project state, every segment links into
 // the app. The run controls live in the activity panel's control line.
+import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { verdictText } from '../lib/api'
 import { useProject, useStatus } from '../lib/queries'
@@ -10,6 +11,14 @@ export default function StatusBar() {
   const { data: proj } = useProject()
   const connected = useApp((a) => a.connected)
   const setActivityOpen = useApp((a) => a.setActivityOpen)
+
+  // The tab names the project, so two servers side by side are told apart
+  // (docs/frontends/gui.md#serving).
+  useEffect(() => {
+    if (!proj) return
+    const dir = proj.root.replace(/\/+$/, '').split('/').pop() || proj.root
+    document.title = `${dir} · jazyk`
+  }, [proj])
 
   const diag = s?.diagnostics ?? {}
   const cov = s?.coverage

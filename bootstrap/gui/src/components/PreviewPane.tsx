@@ -35,6 +35,11 @@ export default function PreviewPane({ target, onClose }: { target: string; onClo
         <b>preview</b>
         {p?.batch && <span className="mono">{p.batch.id}</span>}
         {p?.batch?.tier != null && <span className="chip sev-none">tier {p.batch.tier}</span>}
+        {p?.gated && (
+          <span className="chip sev-info" title="the batch the release forms; nothing runs until it is released">
+            awaiting release
+          </span>
+        )}
         {p?.executor && <span className="chip sev-info" title="the executor this batch resolves to">{p.executor}</span>}
         {p?.executorError && <span className="v-bad">{p.executorError}</span>}
         <span className="bar-right" />

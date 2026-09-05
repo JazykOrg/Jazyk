@@ -118,8 +118,9 @@ Project and store reads:
   for a generation range, paginated, newest first. Each entry carries its
   `resolved_goals` with their justifications and its `opened_goals` with their causes.
 - `GET /api/diff?from=&to=`: per-node before and after between two generations,
-  reconstructed by replaying the journal. This powers the change review views. The
-  journal entries between two builds are the release diff (see
+  reconstructed by replaying the journal. `to` past the current generation is
+  clamped to it; `from` below 1 or above `to` is `400`. This powers the change
+  review views. The journal entries between two builds are the release diff (see
   [release diffs](../consumers/pm.md#release-diffs-from-the-journal)).
 - `GET /api/docsgen/{slug}`: the rendered per-entity requirements document.
 - `GET /api/feedback?limit=`: the [feedback log](../compiler/tools.md#feedback-tool),
@@ -141,8 +142,10 @@ The board and causality:
   `goals({})` lists [over MCP](./mcp.md#compilation-over-mcp).
 - `GET /api/preview?goal=`: the next session's prompt exactly as the model receives it
   ([preview](../compiler/sessions.md#preview)), plus the batch's toolset and the
-  executor it resolves to. With `goal=`, the batch that goal would join. A preview
-  makes no LLM call and spends nothing.
+  executor it resolves to. With `goal=`, the batch that goal would join. In
+  `compile: manual` before a release, the gated goals form no batch yet, so the
+  reply carries the batch the release would form, with `gated: true` and a note
+  saying so. A preview makes no LLM call and spends nothing.
 - `GET /api/explain?target=`: for a goal id, the change record that produced it, what
   its readiness says, and what blocks it; for a node id or a section reference, the
   cone of goals a change to it would open. The same rendering as `jazyk explain`.
@@ -216,7 +219,7 @@ Generation and verification:
 
 - `GET /api/gen/pending`, `GET /api/gen/package/{entity}`: the open `generate` and
   `bind` goals as [generation](../consumers/gen.md) rows, and the per-entity
-  generation package a session receives.
+  generation package a session receives (`404` for an unknown entity).
 - `GET /api/verify/pending`: pending verification grouped by reason.
 - `GET /api/verify/matrix`: every ledger row with its
   [derived status](../consumers/gen.md#status-is-derived-never-stored), plus rollup
@@ -248,7 +251,8 @@ Deliverable:
   path, located against the current text (`exact`, `moved`, or `lost`), and each test
   whose artifact is this path, located by its embedded test name. Every entry names
   its requirement and current verification status. A file that is not text reports its
-  size instead. Reads are confined to the deliverable directory.
+  size instead. Reads are confined to the deliverable directory: a path that leaves
+  it is `400`, a missing file is `404`.
 - `GET /api/deliverable/baseline?path=`: the file as it stood before the last
   generation run rewrote it, from the snapshot generation takes at write time (see
   [incremental regeneration](../consumers/gen.md#incremental-regeneration)). `404`
@@ -291,9 +295,10 @@ Diagnostics:
 Transcripts:
 
 - `GET /api/trace`: past runs from the transcripts on disk under `<out>/trace/`,
-  newest first, capped at 200: each with its stem, its metadata line, its outcome
-  when the run finished (a missing outcome means it died mid-run), and its event
-  count. The [activity panel](#activity)'s run list.
+  newest first (by the start the metadata line records), capped at 200: each with
+  its stem, its metadata line, its outcome when the run finished (a missing outcome
+  means it died mid-run), and its event count. The [activity panel](#activity)'s
+  run list.
 - `GET /api/trace/{stem}`: one whole transcript: the metadata, the outcome, and
   every event, elided the same way the live stream is ([jobs](#jobs)). Event `n`
   with nothing cut is `GET /api/trace/{stem}/{n}` ([jobs](#jobs)).
@@ -401,8 +406,8 @@ One workbench page. Navigation swaps panes, never the page. Six regions:
   the board, the work views, the settings form.
 - The inspector: the detail pane beside the center. Selecting a node anywhere (a code
   lens, a map node, an arrow, a list row, a goal card, an id chip) shows its detail
-  here, beside the center, never replacing it. Closable; the center keeps its state
-  under it.
+  here, beside the center, never replacing it. Closable (its close button, or
+  Escape outside a text field); the center keeps its state under it.
 - The chat pane: the persistent pane on the far right, collapsible to a strip. The
   conversation surface: chat sessions with the agent and follow views of automated
   work, each with its loaded-set panel. See [chat](#chat).
@@ -631,7 +636,8 @@ do, this surface does:
 - Sideways: the card's siblings and the diagram page's `Around` list are chips; one
   click moves to the sibling entity or the neighboring view without going up first.
   `Around` sits in the breadcrumb bar: the level above (`↑`), the other views of the
-  same level, and the levels below (`↓`, labeled by member).
+  same level (labeled by kind and title, since the use case and the sequence of one
+  flow share a title), and the levels below (`↓`, labeled by member).
 - Up and down: the breadcrumb over the diagram panel stays; the card's `Inside` and
   `Sits in` are the same moves as chips.
 
@@ -671,9 +677,11 @@ same board `jazyk status` counts, whichever process runs the build.
   (the [follow session](#chat)); otherwise it opens the goal in the inspector with its
   explanation (`GET /api/explain?target=`).
 - Card actions: `preview` opens the [preview pane](#preview) on the batch this goal
-  would join; `explain` and `ripple` open the inspector; a blocked `answer` card jumps
-  to its question in the [questions list](#questions), a blocked `ratify` card to its
-  proposal; a `split-view` or `abstract-entity` card offers `dismiss`, which stages
+  would join; `explain` and `ripple` open the inspector (`ripple` with the ripple
+  pane already open); a blocked `answer` card jumps to its question in the
+  [questions list](#questions), a blocked `ratify` card to its proposal (the
+  questions list, and the proposal's diagnostic in the inspector); a `split-view`
+  or `abstract-entity` card offers `dismiss`, which stages
   [`bump_limit`](../compiler/graph.md#mutations) on the node (through
   `POST /api/facts/{id}/edit` with `{field: limits.<limit>, value}`): a decree that
   raises the node's own threshold ([per-node bumps](../compiler/graph.md#per-node-bumps)).

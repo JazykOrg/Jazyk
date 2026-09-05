@@ -6,6 +6,7 @@
 import { useExplorer } from '../lib/explore'
 import { useEntityCard, useGraph, useTree } from '../lib/queries'
 import { useInspector } from '../lib/nav'
+import { pressable } from '../lib/a11y'
 import type { CardKin, CardRelation } from '../lib/api'
 
 const SCOPE_PREFIX = 'scope:'
@@ -30,13 +31,13 @@ export default function ExploreCard({ id }: { id: string }) {
 
   const chipClass = (vid: string) => `xp-chip${x.view === vid ? ' active' : ''}`
   const kin = (k: CardKin, view?: string) => (
-    <a key={k.id} className="xp-chip" title={k.id} onClick={() => x.goEntity(k.id, view ? { view } : undefined)}>
+    <a key={k.id} className="xp-chip" title={k.id} {...pressable(() => x.goEntity(k.id, view ? { view } : undefined))}>
       {k.name}
       {k.childCount > 0 && <span className="xp-count">{k.childCount}</span>}
     </a>
   )
   const viewChip = (vid: string, ent?: string, label?: string) => (
-    <a key={vid} className={chipClass(vid)} title={vid} onClick={() => x.goView(vid, ent)}>
+    <a key={vid} className={chipClass(vid)} title={vid} {...pressable(() => x.goView(vid, ent))}>
       {label ?? viewTitle(vid)}
     </a>
   )
@@ -68,7 +69,7 @@ export default function ExploreCard({ id }: { id: string }) {
       {c.definition && <p style={{ margin: '4px 0' }}>{c.definition}</p>}
       {c.proposal && (
         <p style={{ margin: '2px 0' }}>
-          <a className="xp-chip" onClick={() => openNode(c.proposal!)} title={c.proposal}>
+          <a className="xp-chip" {...pressable(() => openNode(c.proposal!))} title={c.proposal}>
             ratification proposal
           </a>
         </p>
@@ -93,12 +94,12 @@ export default function ExploreCard({ id }: { id: string }) {
                 <a
                   className={`xp-chip${rootView ? '' : ' disabled'}`}
                   title={rootView ? `overlay ${rootView}` : `${b.id}: no level view`}
-                  onClick={() => rootView && x.goView(rootView)}
+                  {...pressable(() => rootView && x.goView(rootView))}
                 >
                   {b.name}
                 </a>
               ) : (
-                <a className="xp-chip" title={b.id} onClick={() => x.goEntity(b.id)}>
+                <a className="xp-chip" title={b.id} {...pressable(() => x.goEntity(b.id))}>
                   {b.name}
                 </a>
               )}
@@ -139,7 +140,7 @@ export default function ExploreCard({ id }: { id: string }) {
                 key={`${r.other}|${r.type}`}
                 className="xp-chip"
                 title={`${r.other}: ${r.count} requirement${r.count === 1 ? '' : 's'}`}
-                onClick={() => x.goEntity(r.other)}
+                {...pressable(() => x.goEntity(r.other))}
               >
                 <span className="muted mono">
                   {arrow(r)} {r.type}

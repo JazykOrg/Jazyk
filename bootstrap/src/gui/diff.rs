@@ -186,12 +186,28 @@ pub struct DiffQ {
     to: u64,
 }
 
-pub async fn diff(State(st): State<SharedState>, Query(p): Query<DiffQ>) -> Response {
-    if p.from > p.to {
-        return super::api::err(StatusCode::BAD_REQUEST, "from must be <= to");
+// The range a request may ask for: `from` at least 1, `to` no further than the
+// store's generation. Replay walks one journal file per generation, so an
+// unclamped `to` would spin through billions of missing files.
+pub(crate) fn clamp_range(from: u64, to: u64, generation: u64) -> Result<(u64, u64), String> {
+    if from > to {
+        return Err("from must be <= to".into());
     }
+    if from == 0 {
+        return Err("from must be at least 1".into());
+    }
+    Ok((from, to.min(generation)))
+}
+
+pub async fn diff(State(st): State<SharedState>, Query(p): Query<DiffQ>) -> Response {
+    let generation = crate::store::read_generation(&st.out);
+    let (from, to) = match clamp_range(p.from, p.to, generation) {
+        Ok(r) => r,
+        Err(e) => return super::api::err(StatusCode::BAD_REQUEST, e),
+    };
     let out = st.out.clone();
     let result = tokio::task::spawn_blocking(move || {
+        let p = DiffQ { from, to };
         let mut before_slot: Option<Replay> = None;
         let after = replay_to(&out, p.to, Some((p.from, &mut before_slot)));
         let before = before_slot.unwrap_or_default();
@@ -216,4 +232,36 @@ pub async fn diff(State(st): State<SharedState>, Query(p): Query<DiffQ>) -> Resp
     .await
     .expect("diff task panicked");
     Json(result).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The range is clamped to what the journal can hold: `to` past the store's
+    // generation folds back to it, `from` below 1 and an inverted range are refused.
+    #[test]
+    fn range_clamps_to_the_generation_and_refuses_nonsense() {
+        assert_eq!(clamp_range(1, 3, 10), Ok((1, 3)));
+        assert_eq!(clamp_range(2, 99_999_999, 10), Ok((2, 10)));
+        assert!(clamp_range(5, 2, 10).is_err());
+        assert!(clamp_range(0, 2, 10).is_err());
+    }
+
+    // Replaying creates, updates, and deletes reconstructs a node's before and
+    // after; a bump lands in the node's limits.
+    #[test]
+    fn replay_folds_ops_in_order() {
+        let mut r = Replay::default();
+        r.apply(&json!({"op": "create_entity", "id": "ent:a", "entity": {"name": "A"}}));
+        r.apply(&json!({"op": "update_entity", "id": "ent:a", "definition": "an a"}));
+        r.apply(&json!({"op": "bump_limit", "id": "ent:a", "limit": "requirements-per-entity", "value": 90}));
+        assert_eq!(r.nodes["ent:a"]["name"], "A");
+        assert_eq!(r.nodes["ent:a"]["definition"], "an a");
+        assert_eq!(r.nodes["ent:a"]["limits"]["requirements-per-entity"], 90);
+        r.apply(&json!({"op": "delete_entity", "id": "ent:a"}));
+        assert!(!r.nodes.contains_key("ent:a"));
+        assert_eq!(kind_of("req:x"), "requirement");
+        assert_eq!(kind_of("zzz"), "node");
+    }
 }

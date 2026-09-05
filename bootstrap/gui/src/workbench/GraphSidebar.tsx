@@ -9,6 +9,7 @@ import { useCoverage, useGraph, useMatrix, useTree, useViews } from '../lib/quer
 import type { Graph, TreeData, TreeNode, TreeRoot } from '../lib/api'
 import { ancestorsOf, levelChain } from '../lib/levels'
 import { selectNodeParams } from '../lib/nav'
+import { pressable } from '../lib/a11y'
 import { verifyClass } from '../components/Chip'
 import { reverseIndex } from '../components/Cards'
 
@@ -111,7 +112,7 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
             key={id}
             className={`wb-tree-view${view === id ? ' active' : ''}`}
             title={`overlay ${id}`}
-            onClick={() => overlayView(id)}
+            {...pressable(() => overlayView(id))}
           >
             {id.replace(/^view:/, '')}
           </a>
@@ -137,7 +138,7 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
           >
             {n.children.length === 0 ? '·' : open ? '▾' : '▸'}
           </button>
-          <a className="wb-tree-name" onClick={() => openAndFocus(n.id)} title={n.id}>
+          <a className="wb-tree-name" {...pressable(() => openAndFocus(n.id))} title={n.id}>
             {n.name}
             {n.stereotype ? <span className="muted"> «{n.stereotype}»</span> : null}
           </a>
@@ -147,7 +148,7 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
             </span>
           )}
           {proposal && (
-            <a className="wb-tree-proposal" title="the ratification proposal" onClick={() => openDiagnostic(proposal)}>
+            <a className="wb-tree-proposal" title="the ratification proposal" {...pressable(() => openDiagnostic(proposal))}>
               ratify
             </a>
           )}
@@ -174,7 +175,7 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
           <a
             className="wb-tree-name mono"
             title={r.levelView ? `overlay ${r.levelView}` : 'the scope root'}
-            onClick={() => r.levelView && overlayView(r.levelView)}
+            {...pressable(() => r.levelView && overlayView(r.levelView))}
           >
             {r.target}
           </a>
@@ -306,7 +307,7 @@ export default function GraphSidebar() {
               key={id}
               className={`wb-list-row${node === id ? ' active' : ''}`}
               title={r.statement}
-              onClick={() => openAndFocus(id)}
+              {...pressable(() => openAndFocus(id))}
             >
               <span className={`mono ${verifyClass(rows[id]?.status)}`}>●</span>{' '}
               <span className="mono">{id}</span> <span className="sub">{r.statement}</span>
@@ -316,7 +317,9 @@ export default function GraphSidebar() {
 
       {list === 'views' && (
         <>
-          {!views.data && <p className="muted wb-side-pad">loading…</p>}
+          {views.error && <p className="error-inline wb-side-pad">{views.error.message}</p>}
+          {!views.data && !views.error && <p className="muted wb-side-pad">loading…</p>}
+          {views.data && views.data.views.length === 0 && <p className="muted wb-side-pad">no views yet</p>}
           {(views.data?.views ?? []).length > 0 &&
             // Grouped by kind, default views marked, member count and limits state.
             [...new Set((views.data?.views ?? []).map((v) => v.kind))].sort().map((kind) => (
@@ -331,7 +334,8 @@ export default function GraphSidebar() {
                       <a
                         key={v.id}
                         className={`wb-list-row${node === v.id ? ' active' : ''}`}
-                        onClick={() => overlayView(v.id)}
+                        title={`overlay ${v.id}`}
+                        {...pressable(() => overlayView(v.id))}
                       >
                         {v.title}
                         {v.default && <span className="chip sev-none">default</span>}{' '}
@@ -357,7 +361,7 @@ export default function GraphSidebar() {
               key={id}
               className={`wb-list-row${node === id ? ' active' : ''}`}
               title={d.message}
-              onClick={() => openAndFocus(id)}
+              {...pressable(() => openAndFocus(id))}
             >
               <span className={`mono sev-${d.severity}`}>{d.severity}</span>{' '}
               <span className="mono">{d.rule}</span> <span className="sub">{d.message}</span>
@@ -367,7 +371,11 @@ export default function GraphSidebar() {
 
       {list === 'coverage' && (
         <>
-          {!coverage.data && <p className="muted wb-side-pad">loading…</p>}
+          {coverage.error && <p className="error-inline wb-side-pad">{coverage.error.message}</p>}
+          {!coverage.data && !coverage.error && <p className="muted wb-side-pad">loading…</p>}
+          {coverage.data && Object.keys(coverage.data).length === 0 && (
+            <p className="muted wb-side-pad">no document has reconciled yet</p>
+          )}
           {coverage.data &&
             Object.entries(coverage.data)
               .sort(([a], [b]) => a.localeCompare(b))
@@ -380,12 +388,13 @@ export default function GraphSidebar() {
                   <a
                     key={doc}
                     className="wb-list-row mono"
-                    onClick={() => {
+                    title="inspect the document's ties and focus it on the map"
+                    {...pressable(() => {
                       const next = new URLSearchParams(sp)
                       next.set('node', `doc:${doc}`)
                       next.set('focus', `doc:${doc}`)
                       setSp(next)
-                    }}
+                    })}
                   >
                     {doc}{' '}
                     <span className="sub">

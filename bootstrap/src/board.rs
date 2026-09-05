@@ -1026,13 +1026,18 @@ impl Board {
                 flush(&mut current, &mut batches);
             }
         }
-        // Compile tiers first, then GC; within a tier, batches holding parked goals
-        // first, then document level and path.
+        // Compile tiers first, then GC with mandatory batches before optional ones;
+        // within a tier, batches holding parked goals first, then document level and
+        // path. Mirrors docs/compiler/reconciler.md#gc-gating.
         let rank = |b: &Batch| {
             let parked = b
                 .goals
                 .iter()
                 .any(|id| matches!(self.goal(id).map(|g| &g.state), Some(GoalState::Parked)));
+            let optional = b
+                .goals
+                .iter()
+                .all(|id| self.goal(id).is_some_and(|g| !g.mandatory));
             let level = b
                 .goals
                 .first()
@@ -1043,6 +1048,7 @@ impl Board {
             (
                 matches!(b.class, Class::Gc),
                 b.tier.unwrap_or(0),
+                optional,
                 !parked,
                 level,
                 b.locality.clone(),
@@ -2052,6 +2058,61 @@ pub(crate) mod tests {
         assert_eq!(b.batches.len(), 1);
         assert_eq!(b.batches[0].id, "b3-1");
         assert_eq!(b.batches[0].class, Class::Gc);
+    }
+
+    // Mandatory GC goals run before optional ones within a burst: the batch holding
+    // the goal past its hard limit ranks ahead of the batch holding the one over its
+    // soft limit, whatever their localities sort like.
+    // Mirrors docs/compiler/reconciler.md#gc-gating.
+    #[test]
+    fn mandatory_gc_batches_rank_before_optional_ones() {
+        let mut s = settled_store();
+        // Optional: the entity's locality sorts first by name.
+        record(
+            &mut s,
+            9,
+            store::CHANGE_THRESHOLD_CROSSED,
+            "ent:order",
+            "limits",
+            json!({"limit": "requirements-per-entity", "count": 54, "soft": 50, "hard": 80, "level": "soft", "goal": "abstract-entity"}),
+        );
+        // Mandatory: a curated view past its hard limit.
+        s.graph.views.insert(
+            "view:class/zoo".into(),
+            View {
+                kind: "class".into(),
+                title: "Zoo".into(),
+                members: vec!["ent:order".into()],
+                ..Default::default()
+            },
+        );
+        record(
+            &mut s,
+            10,
+            store::CHANGE_THRESHOLD_CROSSED,
+            "view:class/zoo",
+            "limits",
+            json!({"limit": "members-per-structural-view", "count": 31, "soft": 20, "hard": 30, "level": "hard", "goal": "split-view"}),
+        );
+        let b = derive(&s);
+        let optional = "g:abstract-entity:ent:order";
+        let mandatory = "g:split-view:view:class/zoo";
+        assert!(!b.goal(optional).unwrap().mandatory);
+        assert!(b.goal(mandatory).unwrap().mandatory);
+        assert!(b.is_ready(optional), "{:?}", b.readiness.get(optional));
+        assert!(b.is_ready(mandatory), "{:?}", b.readiness.get(mandatory));
+        let at = |goal: &str| {
+            b.batches
+                .iter()
+                .position(|batch| batch.goals.iter().any(|g| g == goal))
+                .expect("batched")
+        };
+        assert!(
+            at(mandatory) < at(optional),
+            "mandatory first: {:?}",
+            b.batches.iter().map(|x| &x.goals).collect::<Vec<_>>()
+        );
+        assert!(b.batches.iter().all(|x| x.class == Class::Gc));
     }
 
     #[test]

@@ -151,7 +151,10 @@ A read-only audit compared every doc area with the code that mirrors it and foun
 
 On `example-saas` at 30% coverage the board held 479 goals, 358 of them
 `rejudge-pair`, against 144 requirements and 36 entities; the pairwise judgments
-dominate a corpus by an order of magnitude over ingest. Candidates: a
-`pairs-per-entity` limit in the registry (the lexically closest pairs, the rest left
-to `review-entity`, which reads every statement anyway), and a batch-level verdict
-list so one session settles a level's pairs in one claim.
+dominate a corpus by an order of magnitude over ingest. Measured under Claude Code:
+a pair session settles four pairs (org) to eight (f2) in six to twenty calls with
+nothing loaded, so the batch is far under the budget. First lever: fill a pair batch
+toward the context budget within its locality. Second: a `pairs-per-entity` limit in
+the registry (the lexically closest pairs, the rest left to `review-entity`, which
+reads every statement anyway). Third: a batch-level verdict list so one claim settles
+a level's pairs.

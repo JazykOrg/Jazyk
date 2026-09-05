@@ -11,15 +11,18 @@ same configuration a build would use. See [CLI](../frontends/cli.md#jazyk-benchm
 
 ## Deferred cases
 
-Benchmark cases per goal kind are deferred until after the landing: real use shows
-what needs grading before cases are written for it. The case set grades four kinds:
-`reconcile-section`, `review-entity`, `generate`, and `verify`. Every other kind in the
-[goal catalog](../compiler/reconciler.md#goal-derivation) (`place-anchors`,
-`rejudge-pair`, `retrace`, `conform-instance`, and the GC kinds) has no case, and no
-case grades transition facets, attributes, edge cardinality, or view curation. Verdict
-quality is the first thing the deferred cases measure: a judgment gate checks that a
-verdict with reasoning exists, never that the verdict is true, so only a planted ground
-truth can grade it.
+Benchmark cases per goal kind were deferred until after the landing: real use shows
+what needs grading before cases are written for it. The landing graded four kinds
+(`reconcile-section`, `review-entity`, `generate`, `verify`); the cases after it grade
+six more, each against a planted ground truth: `rejudge-pair` and `dedupe-candidates`
+(verdict quality: a judgment gate checks that a verdict with reasoning exists, never
+that the verdict is true, so only a planted contradiction, duplicate, or lookalike can
+grade it), `declare-edges`, `curate-view`, `split-view`, and the fan-out variant of
+`abstract-entity`. Every other kind in the
+[goal catalog](../compiler/reconciler.md#goal-derivation) (`place-anchors`, `retrace`,
+`conform-instance`, `bind`, and the caps variant of `abstract-entity`) has no case,
+and no case grades transition facets, attributes, edge cardinality, or the
+`flow-unplaced` path of `curate-view`.
 
 The harness keeps compiling meanwhile: a case keys on a goal kind and a target, one
 session resolves that goal in a sandbox, and requirement checks match the `statement`
@@ -99,15 +102,19 @@ difference. Per codec, the benchmark reports:
 
 - per-case scores: checks passed over checks total (0 to 1), with the first failing
   check named. An aborted session scores 0 with the abort reason.
-- per-tier scores: the mean case score for `extraction`, `review`, `generation`, and
-  `verification`. These are the scale results; a tier at 0.8 says most of the skill
-  is there and names what is missing.
+- per-tier scores: the mean case score for `extraction`, `review`, `structure`,
+  `generation`, and `verification`. These are the scale results; a tier at 0.8 says
+  most of the skill is there and names what is missing.
 - a verdict per workflow, routing work instead of rejecting models:
   - compilation: `not-capable`, `extraction` (can drive
     [`reconcile-section`](../compiler/goals/reconcile-section.md) sessions), or
-    `review` (can also be trusted with judgment kinds; the graded one is
-    [`review-entity`](../compiler/goals/review-entity.md)). A tier is held when every
-    one of its cases scores 1.
+    `review` (can also be trusted with judgment kinds; the graded ones are
+    [`review-entity`](../compiler/goals/review-entity.md),
+    [`rejudge-pair`](../compiler/goals/rejudge-pair.md), and
+    [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md)). A tier is held
+    when every one of its cases scores 1. The `structure` tier (the GC kinds that
+    restructure the graph) reports a score and holds no verdict yet: its cases are
+    young, and a verdict off them waits for measured runs.
   - generation: `capable` when every generation-tier case scores 1, else
     `not-capable`. A capable model writes real files with the file tools, records an
     honest manifest, and its tests are falsifiable.
@@ -255,6 +262,36 @@ Review tier (one `review-entity` goal):
   See [review-lookalike](./cases/review-lookalike.md).
 - Lint application: a project lint rule is reported where it fires and nowhere else.
   See [review-lint](./cases/review-lint.md).
+- Pair judgment (one [`rejudge-pair`](../compiler/goals/rejudge-pair.md) goal): two
+  statements that cannot both hold are filed as `contradiction` naming both, and one
+  obligation stated in two documents is filed as `duplicate-requirement` with both
+  requirements kept, never deleted. See [rejudge-pair](./cases/rejudge-pair.md).
+- Lookalike pair judgment (one
+  [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md) goal): one concept
+  under two names merges with the absorbed name kept as an alias, and two entities
+  that share a word and nothing else stay apart. See
+  [dedupe-candidates](./cases/dedupe-candidates.md).
+
+Structure tier (one GC goal derived from the seeded fixture,
+[derived goals](./cases.md#derived-goals)):
+
+- Fan-out grouping (the fan-out variant of
+  [`abstract-entity`](../compiler/goals/abstract-entity.md#the-fan-out-variant)): a
+  top level of twelve children from three documents ends under nine, every grouping
+  derived from exactly its members and named along the documents, and a stated
+  entity headed like its document takes that document's entities instead of gaining
+  a twin. See [abstract-entity](./cases/abstract-entity.md).
+- View splitting ([`split-view`](../compiler/goals/split-view.md)): a sequence view
+  over its participant limit is split along the section boundary the documents state,
+  a sub-view exists, the original is within its limit, and every original member is
+  accounted for. See [split-view](./cases/split-view.md).
+- View curation ([`curate-view`](../compiler/goals/curate-view.md)): a query match
+  that belongs is confirmed and a stated instance is excluded from the class view with
+  a note. See [curate-view](./cases/curate-view.md).
+- Edge declaration ([`declare-edges`](../compiler/goals/declare-edges.md)): a
+  whole-part sentence yields directional `composition` edges from the whole to each
+  part and none between the parts; a sentence that relates no pair stages nothing.
+  See [declare-edges](./cases/declare-edges.md).
 
 Generation tier (a real [`generate`](../compiler/goals/generate.md) goal session
 against a fixture graph and a temp deliverable):
@@ -280,8 +317,9 @@ emit valid calls passes nothing.
 
 A case name is the `name` field of its `yaml` block, usually the file stem
 (`extract`, `gen-basic`). A file holding a pair adds suffixed names (`review-clean`,
-`verify-judge-pass`, `verify-judge-fail`); `jazyk benchmark [case...]` and
-`begin_case` take every name as written.
+`verify-judge-pass`, `verify-judge-fail`, `rejudge-pair-contradiction`,
+`abstract-entity-namesake`); `jazyk benchmark [case...]` and `begin_case` take every
+name as written.
 
 ## Deterministic grading
 

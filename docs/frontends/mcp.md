@@ -99,6 +99,60 @@ most specific wins: server instructions carry the loop, each `begin_*` reply car
 the batch's own assembled prompt (or the package, for binding and generation), and
 each tool description names what to call next.
 
+The injected serving reaches the agent over one of two transports. Stdio is the
+default: the `session/new` entry names the `jazyk mcp` command and the agent spawns
+it. An agent that speaks MCP only over HTTP gets the same serving over
+[MCP over HTTP](#mcp-over-http) instead; the choice is made per agent from its
+`initialize` reply ([worker sessions](./acp.md#worker-sessions)).
+
+## MCP over HTTP
+
+Some agents advertise their MCP clients as URL clients. Claude Code through
+`claude-code-acp` answers `initialize` with `mcpCapabilities: {http: true, sse: true}`;
+protocol version 1 has no stdio flag, so the reply says nothing about stdio either
+way. Jazyk takes the advertisement at its word: for such an agent it serves the
+session's toolset over the MCP streamable HTTP transport, in its own process, and the
+agent spawns nothing:
+
+- One server per session, for the session's lifetime. It binds `127.0.0.1` on a port
+  the operating system picks, and the `session/new` entry is an `http` MCP server:
+  `{type: "http", name: "jazyk", url: "http://127.0.0.1:<port>/mcp", headers: [...]}`.
+- A per-session bearer token guards it. The token is minted from the OS entropy
+  source when the server starts and travels in the entry's headers as
+  `Authorization: Bearer <token>`. A request without the header, or with another
+  token, answers `401` and never reaches the handler; the refusal is a `note` in the
+  transcript. Nothing else on the machine can call the serving, because nothing else
+  holds the token.
+- It speaks JSON-RPC 2.0 over `POST` to the one endpoint, the MCP streamable HTTP
+  transport (protocol version `2025-03-26`; the `initialize` reply echoes the
+  client's requested version, as the stdio serving does). A request answers `200`
+  with `application/json` carrying the one response object; a notification answers
+  `202` with no body; a batch array answers an array. `GET` and `DELETE` on the
+  endpoint answer `405`: the serving opens no server-initiated stream and issues no
+  `Mcp-Session-Id`, because one server is one session.
+- Every request dispatches through the same handler the stdio loop uses: one
+  registry, one set of schemas ([tools](../compiler/tools.md)), the same
+  [bridge flags](#mcp-into-acp-sessions) (`--ephemeral`, `--only`, `--build-token`,
+  `--packaged`, `--serve-files`), the same transcript under `<out>/trace`. The
+  batch lifecycle (`begin_goals`, the write tools, `mark_goal_done`, `done`) behaves
+  identically, because it is the same code.
+- The server stops when the session closes. Jazyk closes the session first (the agent
+  tears its client down), then stops the listener and runs the implicit finish, the
+  same one end of input runs on a stdio serving: staged work commits under the
+  budget path's gates, and the transcript finishes.
+- A server that cannot start fails the session before it is created: the trace
+  carries `sessionFailed` with `session: mcp http serving: cannot bind 127.0.0.1:
+  <error>`, and the batch retries or fails as any session failure does. A session
+  that started over HTTP says so in its trace with one `note`,
+  `mcp serving: http on 127.0.0.1:<port>`. An agent that cannot reach the serving
+  reports the failure through its own update stream, so it reads as tool rows
+  carrying the agent's error, never as silence.
+
+The stdio serving is not going anywhere: standalone agents connect to `jazyk mcp`
+over stdio, the [IDE proxy](./acp.md#the-ide-proxy) injects a stdio entry, and the
+embedded agent advertises no HTTP capability. HTTP exists for the session path and
+only where the agent asks for it.
+
 ## The work loop
 
 The agent-facing loop, common to the compile, generate, and verify toolsets:

@@ -40,6 +40,51 @@ jazyk is specific to any agent.
 A profile names a command, arguments, extra environment, and whether jazyk must serve
 file tools to it (`serve_files`, for agents that bring no editor of their own).
 
+### Claude Code
+
+Claude Code runs as an ACP agent through Zed's adapter. The profile:
+
+```toml
+[acp.agents.claude]
+command = "npx"
+args = ["--yes", "@zed-industries/claude-code-acp"]
+```
+
+What the adapter does that a session must account for:
+
+- Claude Code refuses to start inside another Claude Code session. Every process a
+  Claude Code session spawns carries `CLAUDECODE=1`, jazyk included when an agent
+  drives it, and the adapter's Claude Code inherits it. The refusal reaches jazyk as
+  `session/new` answering `Query closed before response received`; the reason is
+  on the adapter's stderr (`Claude Code cannot be launched inside another Claude
+  Code session`), which the session failure now quotes. The profile clears the
+  variable, which is what Claude Code itself says to do:
+
+  ```toml
+  [acp.agents.claude]
+  command = "npx"
+  args = ["--yes", "@zed-industries/claude-code-acp"]
+
+  [acp.agents.claude.env]
+  CLAUDECODE = ""
+  ```
+
+  The settings reader takes `env` as a subtable, as above; an inline table on the
+  `env` key is not read.
+
+- Its `initialize` reply advertises `mcpCapabilities: {http: true, sse: true}`, so
+  worker sessions on this profile get the serving over
+  [MCP over HTTP](./mcp.md#mcp-over-http). With the variable cleared the adapter
+  creates sessions over either transport; `JAZYK_ACP_MCP=stdio` pins the other.
+- It asks the client for permission before every tool call, jazyk's tools included,
+  unless its permission mode bypasses that. Worker sessions answer by rule
+  ([permissions](#permissions)), so no Claude Code flag or setting is needed for
+  jazyk tools to run. The adapter reads the user's Claude Code settings (`user`,
+  `project`, `local` sources), so a rule there applies too.
+- It needs a logged-in Claude Code on the machine (the adapter's auth method is the
+  terminal login). `CLAUDE_CODE_EXECUTABLE` in the profile's `env` points it at a
+  specific `claude` binary.
+
 ## Executors
 
 The `[acp]` profile is the executor for every session unless an override names
@@ -237,6 +282,17 @@ The automated path. For each goal batch the runner:
    (`b<generation>-<n>`) names the session, its lease, and its trace label. The
    toolset is the union of what the batch's goal kinds need
    ([toolsets](../compiler/sessions.md#toolsets)).
+   The entry's transport follows the agent's `initialize` reply, decided once per
+   agent when its host starts:
+   - Stdio is the default: the entry names the command and the agent spawns it.
+   - HTTP when the reply advertises `mcpCapabilities.http`: jazyk starts one
+     [MCP over HTTP](./mcp.md#mcp-over-http) server for the session (loopback, a
+     random port, a per-session bearer token in the entry's headers) and lists it as
+     an `http` server. The server stops when the session closes.
+   - Protocol version 1 has no stdio flag (the transport is mandatory on paper), so
+     an agent that advertises HTTP is taken at its word. `JAZYK_ACP_MCP` pins the
+     choice for a run (`stdio` or `http`;
+     [environment tuning](../compiler/project-settings.md#environment-tuning)).
 2. Prompts with the batch's contract itself: the
    [assembled session prompt](../compiler/sessions.md#the-prompt) (the agent
    contract, the active skills, the project block, the goals block, the
@@ -283,6 +339,12 @@ A host process that dies would otherwise take every later session with it: sessi
 creation and prompts fail with `acp host is gone`. The runner treats that as the
 host's death, not the batch's: the cached host is dropped, the next session (a batch
 retry included) spawns a fresh one, and only a spawn that fails again fails its batch.
+An agent that answers `session/new` with an error takes the host driver with it (the
+client library treats the error as fatal to the connection), so the session's failure
+carries the agent's error and the last lines of the agent's stderr:
+`session: acp host for claude ended while creating a session: <the error>; agent
+stderr: <its last lines>`. The host keeps those lines for exactly this: an agent's
+refusal is usually explained only there.
 
 ## Chat sessions
 

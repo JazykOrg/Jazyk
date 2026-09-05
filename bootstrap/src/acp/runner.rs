@@ -3,9 +3,11 @@
 // gets one injected `jazyk mcp` serving scoped to the batch, the prompt is the
 // assembled session prompt, and success is read from the store, never from the
 // agent's word. Mirrors docs/frontends/acp.md#worker-sessions.
-use super::config::{self, ResolvedAgent, EMBEDDED};
-use super::host::{AcpHost, McpSpec};
+use super::config::{self, McpTransport, ResolvedAgent, EMBEDDED};
+use super::host::{AcpHost, McpEntry, McpSpec, SessionHandle};
+use super::http::HttpServing;
 use super::translate::UpdateTranslator;
+use crate::mcp::BridgeFlags;
 use crate::llm::Llm;
 use crate::model::Goal;
 use crate::project::Project;
@@ -77,6 +79,84 @@ impl BatchRun {
 
     fn is_ledger(&self) -> bool {
         self.serving_mode() != "compile"
+    }
+}
+
+// The serving one session gets, before its transport is known: the toolsets and the
+// bridge flags. Rendered as the `jazyk mcp` command line for a stdio entry, or
+// started in process for an HTTP entry (docs/frontends/mcp.md#mcp-over-http).
+struct ServingPlan {
+    modes: Vec<String>,
+    flags: BridgeFlags,
+}
+
+impl ServingPlan {
+    fn stdio_spec(&self, out: &Path) -> McpSpec {
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "jazyk".to_string());
+        let mut args = vec![
+            "mcp".to_string(),
+            self.modes.join(","),
+            "--out".to_string(),
+            out.to_string_lossy().into_owned(),
+        ];
+        if self.flags.ephemeral {
+            args.push("--ephemeral".to_string());
+        }
+        if let Some(only) = &self.flags.only {
+            args.push("--only".to_string());
+            args.push(only.clone());
+        }
+        if self.flags.packaged {
+            args.push("--packaged".to_string());
+        }
+        if let Some(t) = &self.flags.build_token {
+            args.push("--build-token".to_string());
+            args.push(t.clone());
+        }
+        if self.flags.serve_files {
+            args.push("--serve-files".to_string());
+        }
+        if let Some(sink) = &self.flags.edit_sink {
+            args.push("--edit-sink".to_string());
+            args.push(sink.clone());
+        }
+        McpSpec {
+            name: "jazyk".to_string(),
+            command: exe,
+            args,
+            env: Vec::new(),
+        }
+    }
+
+    fn http_serving(&self, project: &Project, out: &Path) -> Result<HttpServing, String> {
+        HttpServing::start(
+            project.clone(),
+            out.to_path_buf(),
+            self.modes.clone(),
+            self.flags.clone(),
+        )
+    }
+}
+
+// A session with its serving: the HTTP serving lives exactly as long as the session
+// and is stopped after it closes; a stdio serving is the agent's child and needs
+// nothing from us.
+struct Opened {
+    session: SessionHandle,
+    serving: Option<HttpServing>,
+}
+
+impl Opened {
+    // Close the session (the agent tears down; a stdio serving runs its implicit
+    // finish on the EOF), then stop the HTTP serving (its implicit finish).
+    fn close(self) {
+        self.session.close();
+        if let Some(h) = self.serving {
+            h.stop();
+        }
     }
 }
 
@@ -238,12 +318,9 @@ impl AcpRunner {
     }
 
     // One session on the named agent, spawning its host on first use. The lock
-    // guards the spawn, not the session.
-    fn session_on(
-        &self,
-        agent: &ResolvedAgent,
-        mcp: Vec<McpSpec>,
-    ) -> Result<super::host::SessionHandle, String> {
+    // guards the spawn, not the session. The serving's transport follows what the
+    // host's initialize reply advertised (docs/frontends/acp.md#worker-sessions).
+    fn session_on(&self, agent: &ResolvedAgent, plan: &ServingPlan) -> Result<Opened, String> {
         let mut hosts = self.hosts.lock().unwrap();
         if !hosts.contains_key(&agent.name) {
             let host = AcpHost::start(
@@ -253,11 +330,7 @@ impl AcpRunner {
             )?;
             hosts.insert(agent.name.clone(), host);
         }
-        match hosts[&agent.name].new_session(
-            &self.project.root,
-            mcp.clone(),
-            super::policy::PermissionPolicy::Auto,
-        ) {
+        match self.open_on(&hosts[&agent.name], plan) {
             // The cached host died since its spawn. Its death is not the batch's:
             // replace it once and only a spawn that fails again fails the caller.
             // Mirrors docs/frontends/acp.md#worker-sessions.
@@ -268,11 +341,7 @@ impl AcpRunner {
                     self.project.root.clone(),
                     self.extra_env_for(agent),
                 )?;
-                let s = host.new_session(
-                    &self.project.root,
-                    mcp,
-                    super::policy::PermissionPolicy::Auto,
-                );
+                let s = self.open_on(&host, plan);
                 hosts.insert(agent.name.clone(), host);
                 s
             }
@@ -280,9 +349,72 @@ impl AcpRunner {
         }
     }
 
-    fn session(&self, mcp: Vec<McpSpec>) -> Result<super::host::SessionHandle, String> {
+    // One session on a live host: the serving over the transport the host's agent
+    // takes, started before the session and stopped after it.
+    fn open_on(&self, host: &AcpHost, plan: &ServingPlan) -> Result<Opened, String> {
+        let transport = config::choose_transport(
+            host.info().mcp_http,
+            config::mcp_transport_pin().as_deref(),
+        );
+        let (entry, serving) = match transport {
+            McpTransport::Stdio => (McpEntry::Stdio(plan.stdio_spec(&self.out)), None),
+            McpTransport::Http => {
+                let serving = plan.http_serving(&self.project, &self.out)?;
+                let entry = McpEntry::Http {
+                    name: "jazyk".to_string(),
+                    url: serving.url.clone(),
+                    headers: vec![serving.header()],
+                };
+                (entry, Some(serving))
+            }
+        };
+        let session = host.new_session_with(
+            &self.project.root,
+            vec![entry],
+            super::policy::PermissionPolicy::Auto,
+        )?;
+        Ok(Opened { session, serving })
+    }
+
+    fn session(&self, plan: &ServingPlan) -> Result<Opened, String> {
         let agent = self.default_agent.clone();
-        self.session_on(&agent, mcp)
+        self.session_on(&agent, plan)
+    }
+
+    // A session with no serving at all, for one-shot prose completions on the
+    // default agent. No transport to choose.
+    fn bare_session(&self) -> Result<SessionHandle, String> {
+        let agent = self.default_agent.clone();
+        let mut hosts = self.hosts.lock().unwrap();
+        if !hosts.contains_key(&agent.name) {
+            let host = AcpHost::start(
+                agent.clone(),
+                self.project.root.clone(),
+                self.extra_env_for(&agent),
+            )?;
+            hosts.insert(agent.name.clone(), host);
+        }
+        let open = |host: &AcpHost| {
+            host.new_session(
+                &self.project.root,
+                Vec::new(),
+                super::policy::PermissionPolicy::Auto,
+            )
+        };
+        match open(&hosts[&agent.name]) {
+            Err(e) if e.contains("acp host") => {
+                hosts.remove(&agent.name);
+                let host = AcpHost::start(
+                    agent.clone(),
+                    self.project.root.clone(),
+                    self.extra_env_for(&agent),
+                )?;
+                let s = open(&host);
+                hosts.insert(agent.name.clone(), host);
+                s
+            }
+            r => r,
+        }
     }
 
     // Mark this runner as part of a running internal build: its servings carry the
@@ -295,60 +427,35 @@ impl AcpRunner {
     // as the prompt. Used when a non-edit answer arrives from a frontend with no
     // live session. Mirrors docs/frontends/acp.md#answer-sessions.
     pub fn run_answer(&self, prompt: &str, _label: &str) -> Result<(), String> {
-        let exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "jazyk".to_string());
-        let spec = McpSpec {
-            name: "jazyk".to_string(),
-            command: exe,
-            args: vec![
-                "mcp".to_string(),
-                "chat".to_string(),
-                "--ephemeral".to_string(),
-                "--out".to_string(),
-                self.out.to_string_lossy().into_owned(),
-            ],
-            env: Vec::new(),
+        let plan = ServingPlan {
+            modes: vec!["chat".to_string()],
+            flags: BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
         };
-        let session = self.session(vec![spec])?;
-        let outcome = session.prompt(prompt, Arc::new(|_| {}));
-        session.close();
+        let opened = self.session(&plan)?;
+        let outcome = opened.session.prompt(prompt, Arc::new(|_| {}));
+        opened.close();
         outcome.map(|_| ())
     }
 
     // The serving injected into one batch's session: the mode the goal class needs,
     // scoped to the batch. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
-    fn mcp_spec(&self, batch: &BatchRun, agent: &ResolvedAgent) -> McpSpec {
-        let exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "jazyk".to_string());
+    fn serving_plan(&self, batch: &BatchRun, agent: &ResolvedAgent) -> ServingPlan {
         let mode = batch.serving_mode();
-        let mut args = vec![
-            "mcp".to_string(),
-            mode.to_string(),
-            "--ephemeral".to_string(),
-            "--out".to_string(),
-            self.out.to_string_lossy().into_owned(),
-            "--only".to_string(),
-            batch.id.clone(),
-            // The contract travels as the session prompt; begin_goals answers with
-            // an ack.
-            "--packaged".to_string(),
-        ];
-        if let Some(t) = self.build_token.lock().unwrap().as_ref() {
-            args.push("--build-token".to_string());
-            args.push(t.clone());
-        }
-        if mode == "generate" && agent.serve_files {
-            args.push("--serve-files".to_string());
-        }
-        McpSpec {
-            name: "jazyk".to_string(),
-            command: exe,
-            args,
-            env: Vec::new(),
+        ServingPlan {
+            modes: vec![mode.to_string()],
+            flags: BridgeFlags {
+                ephemeral: true,
+                only: Some(batch.id.clone()),
+                // The contract travels as the session prompt; begin_goals answers
+                // with an ack.
+                packaged: true,
+                build_token: self.build_token.lock().unwrap().clone(),
+                serve_files: mode == "generate" && agent.serve_files,
+                edit_sink: None,
+            },
         }
     }
 
@@ -453,7 +560,7 @@ impl AcpRunner {
             }
         };
         let gen_before = crate::store::read_generation(&self.out);
-        let session = match self.session_on(&agent, vec![self.mcp_spec(batch, &agent)]) {
+        let opened = match self.session_on(&agent, &self.serving_plan(batch, &agent)) {
             Ok(s) => s,
             Err(e) => {
                 let e = format!("session: {}", e);
@@ -461,6 +568,15 @@ impl AcpRunner {
                 return failed_report(e, 0, 0);
             }
         };
+        // The transport is news only when it is not the default.
+        if let Some(h) = &opened.serving {
+            trace.event(TraceEvent::Note {
+                label: label.clone(),
+                text: format!("mcp serving: http on 127.0.0.1:{}", h.port),
+                verbose: false,
+            });
+        }
+        let session = opened.session.clone();
         let translator = Arc::new(Mutex::new(
             UpdateTranslator::new(&label).with_doc(scope.doc()),
         ));
@@ -501,7 +617,7 @@ impl AcpRunner {
                 }
             }
         }
-        session.close();
+        opened.close();
         let mut t = translator.lock().unwrap();
         t.finish(trace);
         let tokens = t.tokens;
@@ -591,7 +707,7 @@ impl AcpRunner {
             );
         }
         let session = self
-            .session(Vec::new())
+            .bare_session()
             .map_err(|e| format!("session: {}", e))?;
         let text: Arc<Mutex<String>> = Default::default();
         let sink = text.clone();

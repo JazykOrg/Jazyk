@@ -126,6 +126,34 @@ pub fn embedded_profile() -> ResolvedAgent {
     }
 }
 
+// The transport of the serving injected into a session.
+// Mirrors docs/frontends/acp.md#worker-sessions and docs/frontends/mcp.md#mcp-over-http.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum McpTransport {
+    // The default: the entry names `jazyk mcp` and the agent spawns it.
+    Stdio,
+    // The agent advertised `mcpCapabilities.http`: jazyk serves the session's toolset
+    // over MCP streamable HTTP on a loopback port for the session's lifetime.
+    Http,
+}
+
+// The choice from what the agent's initialize reply advertised and the run's pin
+// (`JAZYK_ACP_MCP`, `stdio` or `http`; anything else means follow the reply).
+// Protocol version 1 has no stdio flag, so an agent that advertises HTTP is taken at
+// its word.
+pub fn choose_transport(http_advertised: bool, pin: Option<&str>) -> McpTransport {
+    match pin.map(|p| p.trim().to_ascii_lowercase()).as_deref() {
+        Some("stdio") => McpTransport::Stdio,
+        Some("http") => McpTransport::Http,
+        _ if http_advertised => McpTransport::Http,
+        _ => McpTransport::Stdio,
+    }
+}
+
+pub fn mcp_transport_pin() -> Option<String> {
+    std::env::var("JAZYK_ACP_MCP").ok().filter(|s| !s.trim().is_empty())
+}
+
 // Idle watchdog for worker sessions: a turn with no update for this long is cancelled.
 // Mirrors docs/compiler/project-settings.md#environment-tuning.
 pub fn idle_timeout() -> std::time::Duration {
@@ -304,6 +332,19 @@ mod tests {
             )),
             "kindly"
         );
+    }
+
+    // The transport follows the capability: HTTP when advertised, stdio otherwise,
+    // and the pin outranks the reply either way.
+    // Mirrors docs/frontends/acp.md#worker-sessions.
+    #[test]
+    fn transport_follows_the_advertised_capability_unless_pinned() {
+        assert_eq!(choose_transport(false, None), McpTransport::Stdio);
+        assert_eq!(choose_transport(true, None), McpTransport::Http);
+        assert_eq!(choose_transport(true, Some("auto")), McpTransport::Http);
+        assert_eq!(choose_transport(true, Some("stdio")), McpTransport::Stdio);
+        assert_eq!(choose_transport(false, Some("http")), McpTransport::Http);
+        assert_eq!(choose_transport(false, Some(" HTTP ")), McpTransport::Http);
     }
 
     #[test]

@@ -19,7 +19,7 @@ properties:
     description: >-
       The tier the case gates. Tier scores and workflow verdicts derive from these
     type: string
-    enum: [extraction, review, generation, verification]
+    enum: [extraction, review, structure, generation, verification]
     default: extraction
   par:
     description: The effort a competent model needs; efficiency compares against it
@@ -37,14 +37,29 @@ properties:
     additionalProperties: false
     properties:
       kind:
-        description: The goal kind of the session
+        description: >-
+          The goal kind of the session. The first four build the goal from the target;
+          the rest derive it from the seeded fixture (cases.md#derived-goals)
         type: string
-        enum: [reconcile-section, review-entity, generate, verify]
+        enum:
+          - reconcile-section
+          - review-entity
+          - generate
+          - verify
+          - rejudge-pair
+          - declare-edges
+          - dedupe-candidates
+          - curate-view
+          - split-view
+          - abstract-entity
       target:
         description: >-
           The goal's target. A document path for reconcile-section (the session holds
           every section of that document as one batch), an entity id for review-entity
-          and generate, a requirement id for verify
+          and generate, a requirement id for verify and declare-edges, a requirement
+          pair `req:a~req:b` for rejudge-pair, an entity pair `ent:a~ent:b` for
+          dedupe-candidates, a view id for curate-view and split-view, an entity id or
+          `scope:<scope>` for abstract-entity
         type: string
   given:
     description: The fixture the sandbox store is seeded from
@@ -63,7 +78,10 @@ properties:
         additionalProperties: false
         properties:
           entities:
-            description: Map of entity id to entity fields
+            description: >-
+              Map of entity id to entity fields: name, aliases, definition, mentions
+              (section reference and quote), plus stereotype, parent, scope, and
+              provenance where the case needs them
             type: object
             additionalProperties:
               type: object
@@ -72,6 +90,13 @@ properties:
               Map of requirement id to requirement fields. A requirement carries
               statement, entities, and source, plus edges, transition, and facets
               where the case needs them
+            type: object
+            additionalProperties:
+              type: object
+          views:
+            description: >-
+              Map of view id to view fields: kind, title, members, query, collapse,
+              excluded, provenance. A seeded view is curated
             type: object
             additionalProperties:
               type: object
@@ -121,12 +146,20 @@ definitions:
         $ref: '#/definitions/entityAbsent'
       entityCount:
         $ref: '#/definitions/entityCount'
+      entityNameCount:
+        $ref: '#/definitions/entityNameCount'
+      nodeExists:
+        $ref: '#/definitions/nodeExists'
       requirementExists:
         $ref: '#/definitions/requirementExists'
       requirementCount:
         $ref: '#/definitions/requirementCount'
       relationshipExists:
         $ref: '#/definitions/relationshipExists'
+      edgeDeclared:
+        $ref: '#/definitions/edgeDeclared'
+      edgeAbsent:
+        $ref: '#/definitions/edgeAbsent'
       mutationCount:
         $ref: '#/definitions/mutationCount'
       diagnosticExists:
@@ -135,6 +168,24 @@ definitions:
         $ref: '#/definitions/diagnosticAbsent'
       coverageSet:
         $ref: '#/definitions/coverageSet'
+      childCount:
+        $ref: '#/definitions/childCount'
+      parentIs:
+        $ref: '#/definitions/parentIs'
+      groupingOf:
+        $ref: '#/definitions/groupingOf'
+      viewExists:
+        $ref: '#/definitions/viewExists'
+      viewMember:
+        $ref: '#/definitions/viewMember'
+      viewExcludes:
+        $ref: '#/definitions/viewExcludes'
+      viewMemberOrder:
+        $ref: '#/definitions/viewMemberOrder'
+      viewWithinLimit:
+        $ref: '#/definitions/viewWithinLimit'
+      membersAccounted:
+        $ref: '#/definitions/membersAccounted'
       generationRecorded:
         $ref: '#/definitions/generationRecorded'
       rowPerRequirement:
@@ -236,7 +287,7 @@ definitions:
   diagnosticExists:
     description: >-
       An open diagnostic with this rule exists. With a subject, its subjects must
-      include it
+      include it; with subjects, every listed id
     type: object
     required: [rule]
     additionalProperties: false
@@ -246,6 +297,11 @@ definitions:
       subject:
         description: A node id the diagnostic must list in its subjects
         type: string
+      subjects:
+        description: Node ids the diagnostic must all list in its subjects
+        type: array
+        items:
+          type: string
   diagnosticAbsent:
     description: No open diagnostic with this rule exists in the resulting graph
     type: object
@@ -266,6 +322,182 @@ definitions:
       state:
         type: string
         enum: [unprocessed, covered, non-normative]
+  entityNameCount:
+    description: >-
+      The number of entities whose name matches the pattern is within bounds. max 1
+      on a stated name says no twin of it was minted
+    type: object
+    required: [namePattern]
+    additionalProperties: false
+    properties:
+      namePattern:
+        description: Regular expression tested against every entity name
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  nodeExists:
+    description: >-
+      An entity, requirement, or view with this id exists, not tombstoned or
+      redirected
+    type: object
+    required: [id]
+    additionalProperties: false
+    properties:
+      id:
+        type: string
+  edgeDeclared:
+    description: >-
+      The requirement's edges carry an edge from a to b (direction counts),
+      optionally of this type
+    type: object
+    required: [requirement, a, b]
+    additionalProperties: false
+    properties:
+      requirement:
+        type: string
+      a:
+        description: The edge's a end, by id or exact name
+        type: string
+      b:
+        description: The edge's b end, by id or exact name
+        type: string
+      type:
+        description: The relationship type the edge must carry
+        type: string
+  edgeAbsent:
+    description: The requirement's edges carry no edge between a and b in either direction
+    type: object
+    required: [requirement, a, b]
+    additionalProperties: false
+    properties:
+      requirement:
+        type: string
+      a:
+        type: string
+      b:
+        type: string
+  childCount:
+    description: >-
+      The number of direct children of the entity, or of parentless entities for
+      scope:<scope>, is within bounds
+    type: object
+    required: [parent]
+    additionalProperties: false
+    properties:
+      parent:
+        description: An entity by id or exact name, or scope:<scope> for a top level
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  parentIs:
+    description: The entity's parent resolves to the named entity
+    type: object
+    required: [entity, parent]
+    additionalProperties: false
+    properties:
+      entity:
+        type: string
+      parent:
+        type: string
+  groupingOf:
+    description: >-
+      An entity with derived provenance exists whose from names exactly the listed
+      members and whose direct children are exactly them, optionally with a name
+      matching the pattern
+    type: object
+    required: [members]
+    additionalProperties: false
+    properties:
+      members:
+        type: array
+        minItems: 2
+        items:
+          type: string
+      namePattern:
+        type: string
+  viewExists:
+    description: >-
+      A view of the kind whose title matches the pattern exists, leaving out the view
+      under excluding
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      kind:
+        type: string
+      titlePattern:
+        type: string
+      excluding:
+        description: A view id the check leaves out, the original a split left behind
+        type: string
+  viewMember:
+    description: The id is in the view's members and not in its excluded
+    type: object
+    required: [view, member]
+    additionalProperties: false
+    properties:
+      view:
+        type: string
+      member:
+        type: string
+  viewExcludes:
+    description: The view's excluded lists the id with a note that is not a placeholder
+    type: object
+    required: [view, member]
+    additionalProperties: false
+    properties:
+      view:
+        type: string
+      member:
+        type: string
+  viewMemberOrder:
+    description: Both are members of the view and before precedes after
+    type: object
+    required: [view, before, after]
+    additionalProperties: false
+    properties:
+      view:
+        type: string
+      before:
+        type: string
+      after:
+        type: string
+  viewWithinLimit:
+    description: >-
+      The view's count for the named limit is at or under its soft threshold,
+      recomputed the way the commit counts it
+    type: object
+    required: [view, limit]
+    additionalProperties: false
+    properties:
+      view:
+        type: string
+      limit:
+        description: A view limit of the registry (graph.md#limits)
+        type: string
+  membersAccounted:
+    description: >-
+      Every listed id is still in the view's members, or in its excluded with a
+      note, or hidden under an entity the view collapses, or a member of another view
+    type: object
+    required: [view, members]
+    additionalProperties: false
+    properties:
+      view:
+        type: string
+      members:
+        type: array
+        minItems: 1
+        items:
+          type: string
   generationRecorded:
     description: >-
       The target entity's ledger entry landed: files recorded, every file exists,

@@ -501,7 +501,9 @@ rows directly. `programmatic` rows execute their recorded command (exit 0 is a p
 `llm` rows run the in-process harness, judging the criteria against the requirement's
 `statement`. `--kind programmatic|llm` filters; `--force` also reruns `verified` rows;
 `--list` prints the derived status table (one row per requirement: id, `statement`,
-status) without running; `--audit` rebuilds the ledger from the artifact markers. Exit
+status, and for a row that is not `verified` the reason and the repair the ledger
+names, e.g. `stale-test  the test file changed  rerun: jazyk test req:orders-6`)
+without running; `--audit` rebuilds the ledger from the artifact markers. Exit
 0 when every targeted row is `verified`, 1 otherwise.
 
 ### jazyk decompile

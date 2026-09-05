@@ -2081,11 +2081,24 @@ pub fn run_test(opts: &Options, targets: &[String]) -> i32 {
                 .get(store.resolve_id(rid))
                 .map(|q| q.statement.clone())
                 .unwrap_or_default();
+            // A row that is not verified says why and how to repair it.
+            // Mirrors docs/frontends/cli.md#jazyk-test.
+            let status = r["status"].as_str().unwrap_or("");
+            let mut tail = String::new();
+            if status != "verified" {
+                if let Some(reason) = r["reason"].as_str().filter(|x| !x.is_empty()) {
+                    tail.push_str(&format!("  {}", reason));
+                }
+                if let Some(repair) = r["repair"].as_str().filter(|x| !x.is_empty()) {
+                    tail.push_str(&format!("  {}", repair));
+                }
+            }
             println!(
-                "{:24} {:60} {}",
+                "{:24} {:60} {}{}",
                 rid,
                 llm::truncate(&statement, 58),
-                r["status"].as_str().unwrap_or("")
+                status,
+                tail
             );
         }
         println!("jazyk: {} verify goal(s)", selected.len());

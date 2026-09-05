@@ -4861,6 +4861,17 @@ mod tests {
         assert!(skill.contains("`component`, `entity`, and `class` are never defaults"));
     }
 
+    // The abstraction skill refuses a grouping named as the plural of one member or
+    // with a word another level uses for stated children (the org root fan-out minted
+    // "Departments" beside the company that holds the departments; the near-duplicate
+    // gate folds no plurals). Mirrors docs/compiler/skills/abstraction.md.
+    #[test]
+    fn the_abstraction_skill_refuses_a_plural_of_a_member_as_a_grouping_name() {
+        let skill = include_str!("../../docs/compiler/skills/abstraction.md");
+        assert!(skill.contains("never named as the plural of one member"));
+        assert!(skill.contains("the near-duplicate gate folds no plurals"));
+    }
+
     // Mirrors docs/compiler/goals/abstract-entity.md#fan-out-hints: a member whose
     // name is the heading of the document naming it and other members is the
     // level's namesake node.

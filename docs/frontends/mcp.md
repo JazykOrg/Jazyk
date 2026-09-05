@@ -107,10 +107,12 @@ it. An agent that speaks MCP only over HTTP gets the same serving over
 
 ## MCP over HTTP
 
-Some agents run their MCP clients against URLs only. Claude Code through
-`claude-code-acp` advertises `mcpCapabilities: {http: true, sse: true}` and fails
-session creation when the entry is a stdio command. For such an agent jazyk serves the
-session's toolset over the MCP streamable HTTP transport:
+Some agents advertise their MCP clients as URL clients. Claude Code through
+`claude-code-acp` answers `initialize` with `mcpCapabilities: {http: true, sse: true}`;
+protocol version 1 has no stdio flag, so the reply says nothing about stdio either
+way. Jazyk takes the advertisement at its word: for such an agent it serves the
+session's toolset over the MCP streamable HTTP transport, in its own process, and the
+agent spawns nothing:
 
 - One server per session, for the session's lifetime. It binds `127.0.0.1` on a port
   the operating system picks, and the `session/new` entry is an `http` MCP server:

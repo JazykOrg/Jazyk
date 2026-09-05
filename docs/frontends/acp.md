@@ -52,10 +52,30 @@ args = ["--yes", "@zed-industries/claude-code-acp"]
 
 What the adapter does that a session must account for:
 
-- Its `initialize` reply advertises `mcpCapabilities: {http: true, sse: true}` and
-  no stdio, and a stdio entry fails session creation (`Query closed before response
-  received`). Worker sessions on this profile get the serving over
-  [MCP over HTTP](./mcp.md#mcp-over-http).
+- Claude Code refuses to start inside another Claude Code session. Every process a
+  Claude Code session spawns carries `CLAUDECODE=1`, jazyk included when an agent
+  drives it, and the adapter's Claude Code inherits it. The refusal reaches jazyk as
+  `session/new` answering `Query closed before response received`; the reason is
+  on the adapter's stderr (`Claude Code cannot be launched inside another Claude
+  Code session`), which the session failure now quotes. The profile clears the
+  variable, which is what Claude Code itself says to do:
+
+  ```toml
+  [acp.agents.claude]
+  command = "npx"
+  args = ["--yes", "@zed-industries/claude-code-acp"]
+
+  [acp.agents.claude.env]
+  CLAUDECODE = ""
+  ```
+
+  The settings reader takes `env` as a subtable, as above; an inline table on the
+  `env` key is not read.
+
+- Its `initialize` reply advertises `mcpCapabilities: {http: true, sse: true}`, so
+  worker sessions on this profile get the serving over
+  [MCP over HTTP](./mcp.md#mcp-over-http). With the variable cleared the adapter
+  creates sessions over either transport; `JAZYK_ACP_MCP=stdio` pins the other.
 - It asks the client for permission before every tool call, jazyk's tools included,
   unless its permission mode bypasses that. Worker sessions answer by rule
   ([permissions](#permissions)), so no Claude Code flag or setting is needed for
@@ -319,6 +339,12 @@ A host process that dies would otherwise take every later session with it: sessi
 creation and prompts fail with `acp host is gone`. The runner treats that as the
 host's death, not the batch's: the cached host is dropped, the next session (a batch
 retry included) spawns a fresh one, and only a spawn that fails again fails its batch.
+An agent that answers `session/new` with an error takes the host driver with it (the
+client library treats the error as fatal to the connection), so the session's failure
+carries the agent's error and the last lines of the agent's stderr:
+`session: acp host for claude ended while creating a session: <the error>; agent
+stderr: <its last lines>`. The host keeps those lines for exactly this: an agent's
+refusal is usually explained only there.
 
 ## Chat sessions
 

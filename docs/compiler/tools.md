@@ -163,7 +163,11 @@ a mutating reply previews the goals the mutation will open
   [`reconcile-section`](./goals/reconcile-section.md) goal. The `id` must be one of
   the batch's proposals (`unknown-anchor` otherwise).
 - `orphan_anchor({id})`: leave one proposed anchor homeless; it stays a stale anchor
-  on its old document. Same `id` rule.
+  on its old document while that section still exists, for the
+  [`reconcile-section`](./goals/reconcile-section.md) goal there to re-record or
+  delete. An anchor whose section is gone has nothing to stay on: the
+  [sweep](./graph.md#the-sweep) behind the commit deletes a requirement anchor
+  (`requirement-deleted`, journaled) and prunes a mention anchor. Same `id` rule.
 - `report_diagnostic({rule, severity, subjects, message, reasoning, prompt?})`. `rule`
   is one of the judged rules: `contradiction`, `duplicate-entity`,
   `duplicate-requirement`, `missing-link`, `ambiguity`, `lint` for violations of the

@@ -502,6 +502,15 @@ harness derives and a session resolves. Both are named `gc` on every surface.
 
 ### The sweep
 
+The sweep runs behind every commit, whichever path committed: a session's `done`, a
+decree, a dual write, a ratification, an answer, a triage, a check run. It runs under
+the commit's lock, after the commit's own entry, and a build runs it once more after
+alignment, since the `edit` and `align` entries are no changeset. What it did lands as
+entries of its own (`gc` for deletions and dissolutions, `settle-diagnostics` for the
+settles below), each a generation; a sweep with nothing to do writes nothing. The
+commit's reply lists the sweep's actions, so a serving or a frontend can say what a
+commit swept. Nothing waits for the next build: the graph is honest between builds.
+
 - A requirement whose source section disappeared and was not re-anchored during
   reconcile is deleted by the store, journaled. An anchor named by a pending
   [alignment proposal](./alignment.md#what-applies-and-what-is-proposed) is exempt until

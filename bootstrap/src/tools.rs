@@ -211,7 +211,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "orphan_anchor",
-            description: "Leave one proposed anchor homeless: no candidate section states it any more. It stays a stale anchor for the extraction turn, which will delete it unless the document still states it.",
+            description: "Leave one proposed anchor homeless: no candidate section states it any more. While its old section still exists it stays a stale anchor there for the extraction turn, which will delete it unless the document still states it; an anchor whose section is gone is deleted by the sweep at commit.",
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {

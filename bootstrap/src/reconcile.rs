@@ -2280,22 +2280,14 @@ pub fn compile_with(
     report
 }
 
-// The deterministic sweep and the stranded-diagnostic settle, traced.
+// The deterministic sweep (garbage collection and both settles), traced. Every
+// commit already runs it behind its own entry (Store::apply); the build runs it here
+// after alignment, which commits no changeset, and after each session so the trace
+// says what a session's commit swept. Mirrors docs/compiler/graph.md#the-sweep.
 fn sweep(store: &mut Store, trace: &Trace) {
-    let gc_actions = store.gc();
-    if !gc_actions.is_empty() {
-        trace.line("build", &format!("gc: {}", gc_actions.join("; ")));
-    }
-    let settled = store.settle_dangling_diags();
-    if !settled.is_empty() {
-        trace.line("build", &format!("settle: {}", settled.join("; ")));
-    }
-    // The markers settle here, not only at the tail: a starved build never reaches
-    // the checks, and a standing marker is evidence a session would adjudicate.
-    // Mirrors docs/compiler/graph.md#the-sweep.
-    let markers = store.settle_cleared_markers();
-    if !markers.is_empty() {
-        trace.line("build", &format!("settle: {}", markers.join("; ")));
+    let actions = store.sweep();
+    if !actions.is_empty() {
+        trace.line("build", &format!("sweep: {}", actions.join("; ")));
     }
 }
 
@@ -4463,15 +4455,17 @@ mod tests {
         assert_eq!(staged.len(), 2);
         let report = s.apply(staged, &Commit::store("decree"));
         assert!(report.skipped.is_empty(), "{:?}", report.skipped);
-        // The sweep is its own `gc` commit, run by the build loop after every
-        // generation it lands (`reconcile::run`), never a phase of `Store::apply`.
-        let actions = s.gc();
+        // The sweep runs behind every commit as its own `gc` entry, the decree's
+        // included, and the report carries what it did; a second sweep finds nothing.
+        // Mirrors docs/compiler/graph.md#the-sweep.
+        let actions = report.swept.clone();
         assert!(
             actions.iter().any(|a| a
                 .starts_with("dissolved ent:platform (1 child(ren) reparented to ent:backend)")),
             "{:?}",
             actions
         );
+        assert!(s.gc().is_empty());
         assert!(s.graph.entities.get("ent:platform").is_none());
         assert_eq!(s.resolve_id("ent:platform"), "ent:backend");
         assert_eq!(

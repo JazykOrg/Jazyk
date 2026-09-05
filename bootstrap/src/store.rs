@@ -397,6 +397,10 @@ pub struct CommitReport {
     pub touched_entities: BTreeSet<String>,
     // Final requirement ids created or whose statement or quote changed in substance.
     pub changed_requirements: BTreeSet<String>,
+    // What the sweep did right after this commit landed (the deletions, prunes,
+    // dissolutions, and settled diagnostics, one line each), empty when nothing was
+    // due. Mirrors docs/compiler/graph.md#the-sweep.
+    pub swept: Vec<String>,
 }
 
 // A document that changed, with what a reconcile session needs to know.
@@ -1786,6 +1790,10 @@ impl Store {
     // settle-diagnostics. Mirrors docs/compiler/graph.md#the-sweep.
     pub fn settle_cleared_markers(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
+        self.settle_cleared_markers_locked()
+    }
+
+    fn settle_cleared_markers_locked(&mut self) -> Vec<String> {
         let cleared = self.cleared_markers();
         if cleared.is_empty() {
             return Vec::new();
@@ -1816,6 +1824,10 @@ impl Store {
     // Mirrors docs/compiler/reconciler.md#pairs.
     pub fn settle_dangling_diags(&mut self) -> Vec<String> {
         let _flock = FileLock::acquire(&self.out);
+        self.settle_dangling_diags_locked()
+    }
+
+    fn settle_dangling_diags_locked(&mut self) -> Vec<String> {
         let missing = self.missing_diag_subjects();
         if missing.is_empty() {
             return Vec::new();
@@ -3752,6 +3764,7 @@ impl Store {
                     changes: Vec::new(),
                     touched_entities: BTreeSet::new(),
                     changed_requirements: BTreeSet::new(),
+                    swept: Vec::new(),
                 };
             }
         }
@@ -3988,6 +4001,11 @@ impl Store {
         // `.puml` matches the file on disk is skipped.
         // Mirrors docs/compiler/diagrams.md#rendering.
         crate::render::render_all(self, &self.out);
+        // The sweep runs at every commit, whichever path committed: a session's
+        // done, a decree, a dual write, a ratification, an answer, a triage. It
+        // lands behind this commit's entry under the same lock, as entries of its
+        // own when it did anything. Mirrors docs/compiler/graph.md#changesets.
+        let swept = self.sweep_locked();
         CommitReport {
             applied: applied.len(),
             skipped,
@@ -4000,7 +4018,26 @@ impl Store {
                 .chain(dirt.revised.keys())
                 .cloned()
                 .collect(),
+            swept,
         }
+    }
+
+    // The deterministic sweep as one unit: the mechanical garbage collection, the
+    // settle of judged diagnostics whose subjects are gone, and the settle of marker
+    // diagnostics whose condition cleared. Every commit runs it behind its own entry
+    // (`apply`); a build runs it after alignment too, before any session, since the
+    // `edit` entry is no changeset. Returns one line per action.
+    // Mirrors docs/compiler/graph.md#the-sweep.
+    pub fn sweep(&mut self) -> Vec<String> {
+        let _flock = FileLock::acquire(&self.out);
+        self.sweep_locked()
+    }
+
+    fn sweep_locked(&mut self) -> Vec<String> {
+        let mut actions = self.gc();
+        actions.extend(self.settle_dangling_diags_locked());
+        actions.extend(self.settle_cleared_markers_locked());
+        actions
     }
 
     // An anchor-stale record on a section, its anchors merged with any earlier record
@@ -4996,9 +5033,22 @@ mod tests {
         );
     }
 
+    // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes
+    // an entity with nothing on it (no mention, requirement, attribute, child, or
+    // provenance); a decreed attribute stands in for the mention a real one carries.
     fn entity(name: &str) -> Entity {
         Entity {
             name: name.into(),
+            attributes: vec![Attribute {
+                name: "fixture".into(),
+                r#type: None,
+                value: None,
+                provenance: Provenance::Decree {
+                    author: "test".into(),
+                    at: String::new(),
+                    note: None,
+                },
+            }],
             ..Default::default()
         }
     }
@@ -5284,9 +5334,8 @@ mod tests {
         let under = |id: &str, parent: &str| Op::CreateEntity {
             id: id.into(),
             entity: Entity {
-                name: "Config".into(),
                 parent: Some(parent.into()),
-                ..Default::default()
+                ..entity("Config")
             },
         };
         let r = s.apply(
@@ -5511,9 +5560,8 @@ mod tests {
                 Op::CreateEntity {
                     id: "ent:wishlist".into(),
                     entity: Entity {
-                        name: "Wishlist".into(),
                         parent: Some("ent:buyer".into()),
-                        ..Default::default()
+                        ..entity("Wishlist")
                     },
                 },
                 Op::CreateRequirement {
@@ -5635,9 +5683,8 @@ mod tests {
                 Op::CreateEntity {
                     id: "ent:parcel".into(),
                     entity: Entity {
-                        name: "Parcel".into(),
                         parent: Some("ent:orders".into()),
-                        ..Default::default()
+                        ..entity("Parcel")
                     },
                 },
             ],
@@ -5704,15 +5751,14 @@ mod tests {
                 Op::CreateEntity {
                     id: "ent:orders".into(),
                     entity: Entity {
-                        name: "Orders".into(),
                         parent: Some("ent:shop".into()),
-                        ..Default::default()
+                        ..entity("Orders")
                     },
                 },
             ],
             &session(),
         );
-        let update_parent = |id: &str, parent: &str| Op::UpdateEntity {
+        let update_parent =|id: &str, parent: &str| Op::UpdateEntity {
             id: id.into(),
             name: None,
             definition: None,
@@ -6437,8 +6483,14 @@ mod tests {
             .changes
             .iter()
             .any(|c| c.kind == CHANGE_REPARENT_FLIP && c.subject == "ent:cache"));
+        // Both members move back under the re-minted grouping: the sweep behind the
+        // commit dissolves a grouping left with one child.
         let r = s.apply(
-            vec![tier("ent:tier"), move_to("ent:cache", "ent:tier")],
+            vec![
+                tier("ent:tier"),
+                move_to("ent:cache", "ent:tier"),
+                move_to("ent:other", "ent:tier"),
+            ],
             &session(),
         );
         let (new_id, _) = s
@@ -7097,6 +7149,62 @@ mod tests {
         assert_eq!(s.status.generation, gen);
     }
 
+    // The sweep runs at every commit, not only inside a build: a decree committed
+    // through `apply` on a store holding an unanchored requirement lands its own
+    // entry, then the sweep lands a `gc` entry behind it and the report says so.
+    // Mirrors docs/compiler/graph.md#changesets and #the-sweep.
+    #[test]
+    fn every_commit_runs_the_sweep_behind_its_own_entry() {
+        let mut s = Store {
+            out: own_dir("sweep-at-commit"),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nbody\n");
+        s.graph.requirements.insert(
+            "req:gone-1".into(),
+            Requirement {
+                statement: "The X ys.".into(),
+                entities: vec!["ent:x".into()],
+                source: Some(mention("gone.md", "/gone", "x")),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:x".into(),
+            Entity {
+                name: "X".into(),
+                mentions: vec![mention("gone.md", "/gone", "x")],
+                ..Default::default()
+            },
+        );
+        let report = s.apply(
+            vec![create("ent:fresh", "Fresh")],
+            &Commit::store("decree"),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert!(
+            report.swept.iter().any(|a| a.contains("req:gone-1")),
+            "the sweep ran behind the decree: {:?}",
+            report.swept
+        );
+        assert!(!s.graph.requirements.contains_key("req:gone-1"));
+        assert!(!s.graph.entities.contains_key("ent:x"));
+        assert!(s.graph.entities.contains_key("ent:fresh"));
+        // The decree's own entry, then the sweep's, each a generation.
+        let decree = journal_entry(&s, report.generation);
+        assert_eq!(decree.kind, "decree");
+        let gc = journal_entry(&s, report.generation + 1);
+        assert_eq!(gc.kind, "gc");
+        assert_eq!(s.status.generation, report.generation + 1);
+        // A clean store commits without a sweep entry.
+        let report = s.apply(
+            vec![create("ent:other", "Other")],
+            &Commit::store("decree"),
+        );
+        assert!(report.swept.is_empty(), "{:?}", report.swept);
+        assert_eq!(s.status.generation, report.generation);
+    }
+
     #[test]
     fn check_diags_reconcile_not_regenerate() {
         let mut s = Store {
@@ -7180,6 +7288,11 @@ mod tests {
             out: tmp(),
             ..Default::default()
         };
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\nThe Cart holds items a Customer intends to buy. It keeps items.\n",
+        );
         s.graph.entities.insert("ent:cart".into(), entity("Cart"));
         s.graph.requirements.insert(
             "req:t-1".into(),
@@ -7515,6 +7628,17 @@ mod tests {
             created: None,
             updated: None,
         };
+        // The subjects exist: the sweep behind every commit settles a finding whose
+        // subjects are gone.
+        for id in ["req:a", "req:b"] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: format!("{} holds.", id),
+                    ..Default::default()
+                },
+            );
+        }
         s.apply(
             vec![Op::ReportDiagnostic {
                 id: String::new(),
@@ -7558,6 +7682,15 @@ mod tests {
             created: None,
             updated: None,
         };
+        for id in ["req:a", "req:b"] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: format!("{} holds.", id),
+                    ..Default::default()
+                },
+            );
+        }
         let r = s.apply(
             vec![Op::ReportDiagnostic {
                 id: String::new(),
@@ -8122,14 +8255,16 @@ mod tests {
         );
         // The mention derived from req:t-1's source followed the requirement.
         assert_eq!(s.graph.entities["ent:a"].mentions[0].section, "/t/basket");
-        assert_eq!(
-            s.graph.requirements["req:t-3"]
-                .source
-                .as_ref()
-                .unwrap()
-                .section,
-            "/t/cart"
+        // The orphaned anchor's section is gone and no proposal names it any more:
+        // the sweep behind the commit deletes the requirement, journaled, and the
+        // report says so. Mirrors docs/compiler/graph.md#the-sweep.
+        assert!(!s.graph.requirements.contains_key("req:t-3"));
+        assert!(
+            report.swept.iter().any(|a| a.contains("req:t-3")),
+            "{:?}",
+            report.swept
         );
+        assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:t-3"));
         assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
         // A substantive quote change is a revision owed a pair judgment; the flagged
         // anchor is recorded stale on its new section.
@@ -8144,23 +8279,17 @@ mod tests {
         assert_eq!(stale.detail["anchors"], serde_json::json!(["req:t-2"]));
 
         // The next sync lists the flagged anchor as stale on its document even though
-        // its quote locates, and the orphan (section gone) as stale too.
+        // its quote locates; the orphan is gone, so it is nobody's stale anchor.
         let d3 = s.sync_docs(&parsed2);
         let t = d3.iter().find(|d| d.doc == "t.md").expect("item");
         assert!(t.stale_anchors.contains(&"req:t-2".to_string()));
-        assert!(t.stale_anchors.contains(&"req:t-3".to_string()));
+        assert!(!t.stale_anchors.contains(&"req:t-3".to_string()));
         assert!(!t.stale_anchors.contains(&"req:t-1".to_string()));
         assert!(t.dirty_sections.contains(&"/t/basket".to_string()));
 
-        // A commit that names the anchor clears the flag; resolving the section's
-        // reconcile goal clears the rest.
-        s.apply(
-            vec![Op::DeleteRequirement {
-                id: "req:t-3".into(),
-                reason: "gone".into(),
-            }],
-            &session(),
-        );
+        // A commit that leaves the flagged anchor alone leaves the flag; resolving
+        // the section's reconcile goal clears it.
+        s.apply(vec![], &session());
         assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
         let mut commit = session();
         commit.resolved.push(Resolved {

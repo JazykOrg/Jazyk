@@ -33,6 +33,8 @@ scratchpad's `validation-notes.md`, `iterate-cycle-1.md`, and `iterate-cycle-2.m
 | example-novel | qwen3.8:27b | incomplete, 3 parked, 38 warnings | 5% (2 of 37) | 3, 51k | not graded |
 | example-org | qwen3.8:27b | refused (a dead orphan held the lease); superseded by the gpt run | n/a | n/a | n/a |
 | dogfood (`docs/`) | gpt-5.5 | no result: the first live window lost 262 sessions to the host death (fixed since, not rerun) | not recorded | not recorded | n/a |
+| f2 on the levels branch, snippets | qwen3.8:27b | not converged by design: 3 advance sessions (0 failures) then 7 goal snippets | 7 of 25 sections in the advance | 3 + 7, tokens not recorded | 6 pass (of 6) |
+| example-org on the levels branch, snippets | qwen3.8:27b | not converged by design: 3 advance sessions (0 failures) then 9 goal snippets, the root fan-out among them | 11 of 32 sections in the advance | 3 + 9, tokens not recorded | 8 pass (of 8; trap 5 on five of its eight sites) |
 
 The f2 traps: 1 cross-document identity (`ent:order`), 2 buyer lookalike, 3 the 21 versus
 30 day contradiction, 4 a rule hidden in an Examples section, 5 junk bait in `admin.md`,
@@ -277,6 +279,29 @@ Each found by a run, documented first, then fixed. The commit gists:
 - Two open design questions for the owner: whether a component view should include
   outside entities with any edge to a child, and whether a non-actor flow cluster needs
   an actor before deriving a use-case view.
+- The completion cap trade-off (levels chain). On `qwen3.8:27b` the default 4096-token
+  cap cuts a fan-out's deliberation (the pre-namesake root fan-out aborted on it and
+  resolved at 16384), while 16384 lets an extraction over-think past the 600 s call
+  timeout (f2's root batch failed twice that way). The `length` nudge closes the gap
+  for extraction (five of five stalls acted on at once in the regressions); a fan-out
+  that needs a long deliberation still wants the larger cap, so the cap is a
+  per-run choice, not a setting the harness picks.
+- Invented stereotypes. Extraction labels what the documents only name: f2's root
+  ingest set «component» on Order, Payment, Shipment, Returns, Catalog, Inventory, and
+  the Admin CLI and «entity» on Product from one sentence; org set «component» on
+  Department and Team; the mini chain's checkout ingest set «entity» on seven leaves
+  and «process» on Checkout. A structural label on one child flips its level's
+  diagram to a component view, so the labels shape the pictures. The extraction skill
+  now refuses defaults; whether a gate should demand a supporting quote is open (org's
+  EXPECTED says stereotypes are the model's judgment).
+- The frame as a sequence participant. A level's lifted sequence draws the level's
+  own parent as a participant when a flow names that node itself: the Funds level's
+  sequence in the mini chain draws Funds, Checkout, and Order because "A Gift Card is
+  a prepaid balance a customer spends at Checkout" names Checkout, the node whose level
+  Funds sits in. The derivation is faithful to the requirement and the picture reads as
+  if the frame were a peer of its own children. The level view keeps the frame out
+  (`e7f781d`); the sequence does not, and whether it should is a design question for
+  the owner (`derive.rs`).
 - The deferred harness list (cycle 2, still open after the ceiling, multi-call, and
   breaker fixes): a build-lease heartbeat and takeover (a wedged holder survived 3.5
   hours); a terminal trace line per session attempt; GC-sweep normalization of
@@ -327,9 +352,11 @@ graded hours later.
 - The forced root fan-out on the pre-namesake snapshot aborted once on the default
   4096 completion cap (seven empty turns, each 17k characters of reasoning cut
   mid-deliberation, the right conclusion every time) and resolved in 9 rounds with
-  `JAZYK_MAX_COMPLETION_TOKENS=16384`. A reasoning model that overruns the cap looks
-  like a silent stop to the agent loop, which nudges it seven times at three minutes
-  each; the nudge should name the cap (`acp/agent/agent_loop.rs`, open).
+  `JAZYK_MAX_COMPLETION_TOKENS=16384`. A reasoning model that overruns the cap looked
+  like a silent stop to the agent loop, which nudged it seven times at three minutes
+  each; the loop now reads the finish reason and a `length` stall gets its own nudge
+  (the cap is named, the model is asked for the call alone), measured in
+  [the regressions](#f2-and-example-org-regressions) below.
 
 ### The owner's side of a grouping (accept and retract)
 
@@ -364,9 +391,10 @@ A `split-view` goal on a sequence view of eleven honest participants failed hone
 (every split invents structure) while the level's fan-out was parked beside it. The
 goal now blocks on `fan-out first: g:abstract-entity:<level>` while the fan-out is
 open or parked (`jazyk benchmark` refuses it without `--force`), and the forced fan-out
-lifts the same flow to two participants. Open: the participant count behind the
-threshold record is taken over the members' raw entities, never lifted to the level's
-members, so the goal outlives the picture it was filed for (`derive.rs`).
+lifts the same flow to two participants. The participant count behind the threshold
+record was taken over the members' raw entities, never lifted to the level's members,
+so the goal outlived the picture it was filed for; it now counts what the level draws
+after lifting (`25f6a00`).
 
 ### example-saas, the API Server and its data model
 
@@ -399,11 +427,92 @@ forced:
 - Not measured here: traps 1, 2, 3, 6, 9, 10 depend on the ingest and the judgment
   goals that the snapshot's remaining sessions have not run.
 
-Scorecard for the levels snippets: 5 of 5 fan-outs graded resolve to the documents'
-own names after the fixes (root, namesake, node form, API Server, data model); the
-accept and retract paths pass; the split-view yield passes; 9 harness defects found
-and fixed on the branch (the retract of a grouping, the partial commit on refusal,
-the missing terminal path, the split-view yield, the member hints without sections,
-the gate's advice on a peer and on another level, plus the earlier toolset, auto-load,
-and parked-list fixes); 2 findings open in other owners' files (the completion-cap
-nudge, the unlifted participant count).
+### f2 and example-org regressions
+
+Both from generation-0 copies (`f2-levels`, `org-levels`), advanced with `compile
+--sessions 3` on the default completion cap and then snippeted goal by goal; a
+judgment goal that needs two documents was chained (a snippet's sandbox copied as the
+next snapshot, so the pair the second ingest opens is snippeted on the third). Every
+transcript is in the session scratchpad (`snippet-f2-*.json`, `snippet-org-*.json`).
+
+- The cap nudge, measured. Five ingest sessions across the two corpora (f2's root,
+  admin, and catalog batches; org's departments and operations batches) each hit
+  exactly one reasoning-only turn cut at the 4096-token cap after their searches, and
+  every one answered the `length` nudge on the next turn with "I need to act."
+  followed by the batched upserts: five of five acted on the first nudge, zero
+  repeats. The previous binary's two attempts at f2's root died on the idle watchdog
+  and the 600 s call timeout, and org's table-of-contents section repeated the same
+  cut reasoning four times. The trade-off stands: `JAZYK_MAX_COMPLETION_TOKENS=16384`
+  let an extraction over-think past the call timeout; 4096 with the nudge finished
+  every session (19 to 37 rounds).
+- f2, 6 of 6 traps pass. Trap 1: one `ent:order`, reused by every ingest (system,
+  admin, orders, shipping). Trap 2: "to its buyer" recorded on `ent:customer`, no buyer
+  entity, 7 rounds. Trap 3, chained: orders lifecycle (9 rounds; placed→cancelled with
+  trigger `not paid` and guard `21 days after placement`, EXPECTED to the letter), then
+  payment rules on that sandbox (7 rounds; placed→paid on `Payment confirmed`,
+  placed→on hold on `Payment fails` [three times]; `sm:order` renders EXPECTED's
+  machine exactly, and the commit opened the deadline pair), then the `rejudge-pair`
+  on the third copy: 4 rounds, one `contradiction` error quoting both sentences with a
+  two-option prompt carrying the exact edit for either document. Trap 4: the Examples
+  rule extracted verbatim as a constraint in 9 rounds after reading the sibling
+  section to check it is stated nowhere else, the 40 units named illustration, no SKU
+  entity. Trap 5 inside the advance: 11 entities, none for a flag, path, or command,
+  both commands and both flags verbatim in statements on the Admin CLI. Trap 6:
+  glossary and roadmap non-normative in 5 and 7 rounds, nothing minted, no suspicious
+  finding.
+- example-org, 8 of 8 traps pass on the sites measured. Trap 1: Employee and Manager
+  reused across README, departments, expenses, and policies. Trap 2: `update_entity
+  ent:finance add_aliases ["Finance department"]`, no second node, 8 rounds. Trap 3,
+  chained: spending (the 250 rule), then expenses steps on that sandbox (the approver
+  table as one statement; the commit opened the exact pair), then the `rejudge-pair`:
+  4 rounds, one `contradiction` error whose reasoning names the 250 to 500 band, the
+  gpt-5.5 miss now a pass under the cycle-2 band rule. Trap 4: the salary-band rule
+  verbatim from Background, the history named as history, 6 rounds. Trap 5: no entity
+  for EX-12, the `S:\Finance\Claims` path, `CC-4410`, the expense tool, the ledger, the
+  tracker, the spreadsheet, or Pearl Street (five of the eight junk sites snippeted;
+  HR-04, HR-21, and the careers URL were not). Trap 6: the glossary non-normative in 4
+  rounds. Trap 7: `sm:application` is EXPECTED's machine exactly (six arrows, one
+  guard, no hired state, no exit from offered), and `compile --sessions 0` on the
+  sandbox files `dead-end-state` naming offered. Trap 8: the quality facet with no
+  `measure` and the reasoning "'promptly' is a bare adverb with no stated bound";
+  `quality-unmeasured` filed on it.
+- Levels on the regressions. f2 derives `component/public` (Customer, Operators,
+  Orderly, Product) and `component/orderly` (seven children plus the lifted
+  outsiders), every element carrying its card link, flow views per level beside the
+  root ones. org crossed the root's soft limit at ten parentless entities after the
+  hiring ingest, and the forced root fan-out resolved in 8 rounds to Hiring pipeline
+  ("Hiring" bounced against Hiring Manager and was qualified from the document's own
+  word) and Departments (the Department type, Employee, Manager, Team), root 10 → 4,
+  the coupling candidate that mixed the company into the hiring cluster declined as an
+  artifact. The second name is the finding: it sits beside the company whose level
+  holds the real departments, and the near-duplicate gate folds no plurals, so
+  "Departments" passed against `Department`. The abstraction skill now forbids a
+  grouping named as the plural of a member or with a word another level uses for
+  stated children (`e96199d`); the gate's plural fold is open (`near_name`). Loop 2
+  on the rebuilt binary, same snapshot: 10 rounds, Hiring pipeline again, and the
+  four moved under Ridgeline Outfitters with the Employee Handbook in one bundled
+  whole-part statement, the justification citing the skill's warning by name; root
+  10 → 2.
+- Two more findings from the same runs. Extraction invented stereotypes: f2's root
+  ingest labeled seven domain concepts «component» and Product «entity» from one
+  sentence that names them; the extraction skill now says a concept the section only
+  names carries none and `component`, `entity`, `class` are never defaults
+  (`c1b490d`). The near-duplicate gate's token-containment rule cost five rounds on org (Employee vs
+  Employee Handbook, Store Manager vs Manager, Account Manager vs Manager, Sales
+  Associate vs Sales, People Partner vs People), every one repaired with a note; three
+  of the five calls already carried the lookalike's department as `parent`, so a call
+  whose `parent` is the lookalike could pass without the note (open).
+- Not measured: a converged verdict on either corpus (the snippets grade goals, not
+  builds), the remaining trap 5 sites, and the stereotype rule on a rerun (the one
+  ingest snippeted after it landed, f2's stock rules, minted no entity, so the rule
+  never came into play). The plural rule was measured (loop 2 above).
+
+Scorecard for the levels snippets: 6 of 6 fan-outs graded resolve to the documents'
+own names after the fixes (root, namesake, node form, API Server, data model, the org
+root); the accept and retract paths pass; the split-view yield passes; f2 6 of 6 and
+org 8 of 8 traps pass on the levels binary; 11 defects found and fixed on the branch
+(the retract of a grouping, the partial commit on refusal, the missing terminal path,
+the split-view yield, the member hints without sections, the gate's advice on a peer
+and on another level, the earlier toolset, auto-load, and parked-list fixes, the
+default stereotype, the plural grouping name); 2 findings open in the gate (the plural
+fold, the parent shortcut).

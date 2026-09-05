@@ -59,53 +59,152 @@ fn load_dotenv() {
     }
 }
 
+// One line per command, in the order docs/frontends/cli.md documents them.
+const COMMANDS: &[(&str, &str)] = &[
+    ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
+    ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
+    ("check [path...]", "compile, exit non-zero on error diagnostics (CI)"),
+    ("watch [path...]", "recompile on change, one line per goal"),
+    ("monitor [--json] [--once]", "print ready and blocked goals as the state changes; --once exits at the first"),
+    ("release [compile|generate]", "approve gated goals in manual mode without running anything"),
+    ("answer <diag|goal> [--option N | --text T]", "answer a prompted diagnostic; without a reply, list its options"),
+    ("status [--json]", "the store version, the last verdict, the board counts, what to do next"),
+    ("preview [goal|target|batch]", "the next session's prompt, exactly as the model receives it"),
+    ("explain [goal|target]", "why a goal exists, or what a change to a target opens"),
+    ("ripple [root] [--back]", "walk a change's cascade through the journal (id, g412, or doc)"),
+    ("context <target>", "what the `load` tool renders (--depth N, --expand HANDLE)"),
+    ("query <text> [--json]", "search entities"),
+    ("gen [entity...]", "resolve the bind and generate goals into the deliverable (--force)"),
+    ("test [target...]", "resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)"),
+    ("decompile [path...]", "draft docs describing what unclaimed code does"),
+    ("docsgen", "render the requirements documents, entity cards, level and diagram pages"),
+    ("viewer [--out FILE]", "render the graph to a self-contained HTML page"),
+    ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
+    ("mcp <toolsets>", "the MCP server: compile,generate,verify,decompile,benchmark,chat,graph"),
+    ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
+    ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
+    ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
+    ("benchmark [case...]", "grade the configured agent and model"),
+];
+
 fn top_usage() -> String {
     let mut s = String::new();
     s.push_str("jazyk: natural language compiler (goal-based)\n\n");
     s.push_str("usage:\n");
-    s.push_str("  jazyk init                     scaffold a project (jazyk.toml, docs/, deliverable/) here\n");
-    s.push_str("  jazyk compile [path...]        run one build: sessions resolve goals until the board converges\n");
-    s.push_str(
-        "  jazyk check [path...]          compile, exit non-zero on error diagnostics (CI)\n",
-    );
-    s.push_str("  jazyk watch [path...]          recompile on change, one line per goal\n");
-    s.push_str(
-        "  jazyk status                   the store version, the last verdict, the board counts\n",
-    );
-    s.push_str("  jazyk preview [goal|target]    the next session's prompt, exactly as the model receives it\n");
-    s.push_str(
-        "  jazyk explain [goal|target]    why a goal exists, or what a change to a target opens\n",
-    );
-    s.push_str("  jazyk ripple [root] [--back]   walk a change's cascade through the journal (id, g412, or doc)\n");
-    s.push_str("  jazyk context <target>         what the `load` tool renders (--depth N, --expand HANDLE)\n");
-    s.push_str("  jazyk query <text>             search entities\n");
-    s.push_str("  jazyk gen [entity...]          resolve the bind and generate goals into the deliverable (--force)\n");
-    s.push_str("  jazyk test [target...]         resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)\n");
-    s.push_str("  jazyk decompile [path...]      draft docs describing what unclaimed code does\n");
-    s.push_str(
-        "  jazyk docsgen                  render per-entity requirements documents and their diagrams\n",
-    );
-    s.push_str("  jazyk viewer [--out FILE]      render the graph to a self-contained HTML page\n");
-    s.push_str(
-        "  jazyk gui [--port N]           local GUI: web app, API, events, LSP over WebSocket\n",
-    );
-    s.push_str("  jazyk mcp <toolsets>           the MCP server: compile,generate,verify,decompile,benchmark,chat,graph\n  jazyk monitor [--json] [--once]  print ready and blocked goals as the state changes; --once exits at the first\n  jazyk release [compile|generate]  approve gated goals in manual mode without running anything\n");
-    s.push_str("  jazyk answer <diag|goal>       answer a prompted diagnostic (--option N | --text \"...\"; none lists the options)\n");
-    s.push_str("  jazyk lsp                      language server over stdio (read-only; compile or watch rebuilds)\n");
-    s.push_str("  jazyk agent                    the embedded ACP agent over stdio (spawned by the bridge)\n");
-    s.push_str("  jazyk benchmark [case...]      grade the configured agent and model\n");
+    let width = COMMANDS.iter().map(|(u, _)| u.len()).max().unwrap_or(0) + 2;
+    for (usage, what) in COMMANDS {
+        s.push_str(&format!("  jazyk {:<width$} {}\n", usage, what, width = width));
+    }
     s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
     s.push_str(
         "         --verbose, -v   the full session trace: prompts, payloads, the goal cascade\n",
     );
     s.push_str("         --quiet, -q     only the board summary, gc bursts, and the verdict\n");
     s.push_str("         --help, -h      print help and exit\n");
+    s.push_str("\n`jazyk <command> --help` prints that command's arguments, options, and exit codes.\n");
     s
 }
 
 fn usage() -> ! {
     eprintln!("{}", top_usage());
     std::process::exit(2);
+}
+
+// A usage error: the message, then where the right form is written. Exit 2, the
+// code every usage error carries. Mirrors docs/frontends/cli.md#help.
+fn usage_error(cmd: &str, msg: &str) -> ! {
+    if cmd.is_empty() || cmd_usage(cmd).is_none() {
+        eprintln!("jazyk: {}; `jazyk --help` lists the commands", msg);
+    } else {
+        eprintln!(
+            "jazyk: {}; `jazyk {} --help` shows its arguments and options",
+            msg, cmd
+        );
+    }
+    std::process::exit(2);
+}
+
+// The options every command accepts: the common options and the trace levels.
+const COMMON_OPTIONS: &[&str] = &[
+    "--help",
+    "-h",
+    "--out",
+    "--llm-base-url",
+    "--model",
+    "--api-key",
+    "--agent",
+    "--verbose",
+    "-v",
+    "--quiet",
+    "-q",
+];
+
+// Options that take a value; a bare one at the end of the line is a usage error.
+const VALUE_OPTIONS: &[&str] = &[
+    "--llm-base-url",
+    "--model",
+    "--api-key",
+    "--out",
+    "--depth",
+    "--expand",
+    "--kind",
+    "--port",
+    "--gui-dist",
+    "--mcp",
+    "--agent",
+    "--acp",
+    "--ide",
+    "--only",
+    "--project",
+    "--goal",
+    "--sessions",
+    "--option",
+    "--text",
+    "--build-token",
+    "--edit-sink",
+];
+
+// How many positional arguments a command takes (None: any number), and the
+// options it honors beyond the common ones. A command's help lists exactly these.
+// Mirrors docs/frontends/cli.md#help.
+fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> {
+    Some(match cmd {
+        "init" => (Some(0), &["--mcp", "--acp"]),
+        "compile" => (None, &["--sessions"]),
+        "check" | "watch" | "decompile" => (None, &[]),
+        "status" => (Some(0), &["--json"]),
+        "preview" | "explain" => (Some(1), &[]),
+        "ripple" => (Some(1), &["--back"]),
+        "context" => (Some(1), &["--depth", "--expand"]),
+        "query" => (None, &["--json"]),
+        "gen" => (None, &["--force"]),
+        "test" => (None, &["--kind", "--list", "--audit", "--force"]),
+        "codegen" | "testgen" => (None, &[]),
+        "docsgen" | "lsp" | "agent" => (Some(0), &[]),
+        "viewer" => (Some(0), &[]),
+        "gui" => (
+            Some(0),
+            &["--port", "--no-open", "--watch", "--gui-dist", "--no-token"],
+        ),
+        "mcp" => (
+            Some(1),
+            &[
+                "--write",
+                "--ephemeral",
+                "--only",
+                "--build-token",
+                "--packaged",
+                "--serve-files",
+                "--edit-sink",
+            ],
+        ),
+        "monitor" => (Some(0), &["--json", "--once"]),
+        "release" => (Some(1), &[]),
+        "answer" => (Some(1), &["--option", "--text"]),
+        "acp" => (Some(2), &["--ide"]),
+        "benchmark" => (None, &["--project", "--goal", "--force"]),
+        _ => return None,
+    })
 }
 
 const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --out DIR";
@@ -127,7 +226,7 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...]\n\n\
+            "usage: jazyk compile [path...] [--sessions N]\n\n\
              Run one build. The reconciler derives the goal board from the documents\n\
              and the graph; sessions resolve ready goals batch by batch until the\n\
              board converges. Prints the board summary first, a `gc burst:` line as\n\
@@ -135,6 +234,8 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              with its counts last. Explicit paths skip project discovery and run ad\n\
              hoc on those files.\n\n\
              options:\n  \
+             --sessions N    run at most N sessions, then stop with an honest incomplete\n  \
+             \x20               (0 derives the board and parks every goal without an LLM call)\n  \
              --verbose, -v   every session's prompt, the goal cascade, raw payloads\n  \
              --quiet, -q     only the board summary, gc bursts, and the verdict\n\
              {}\n\n\
@@ -166,24 +267,30 @@ fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "status" => format!(
-            "usage: jazyk status\n\n\
+            "usage: jazyk status [--json]\n\n\
              Summarize status.yaml and the board: the store version and generation, the\n\
              last verdict with its counts, the live board counts (derived from disk the\n\
              way compile derives them), coverage, open diagnostics by severity, the\n\
-             last build's cost, and the unclaimed report.\n\n\
+             medium warning, the shape line (entities per depth, the fan-out histogram),\n\
+             the last build's cost, the unattached remainder, the unclaimed report, and\n\
+             `next:` lines naming the command that moves the board. Reads only.\n\n\
+             options:\n  \
+             --json   one JSON object with the same fields instead of text\n\
              {}",
             COMMON_OUT
         ),
         "preview" => format!(
-            "usage: jazyk preview [goal|target]\n\n\
+            "usage: jazyk preview [goal|target|batch]\n\n\
              Render the next session's prompt exactly as the model would receive it:\n\
              the agent contract, the active skills, the project block, the goals\n\
-             block, the loaded set with its handles, and the protocol line. With a\n\
-             goal id, the batch that goal would join; with a target, the batch of the\n\
-             first goal on it; without an argument, the batch the scheduler would\n\
-             claim next. A goal that is not ready renders behind a `not ready:` line.\n\
-             `ratify` and `answer` goals have no session; preview prints what the\n\
-             human owes instead. Makes no LLM call and writes nothing.\n\n\
+             block, the loaded set with its handles, and the protocol line naming the\n\
+             batch the session claims. With a goal id, the batch that goal would join;\n\
+             with a target (a node id, a section reference, a document path), the batch\n\
+             of the first ready goal on it; with a batch id (b<generation>-<n>), that\n\
+             batch; without an argument, the batch the scheduler would claim next. A\n\
+             goal that is not ready renders behind a `not ready:` line. `ratify` and\n\
+             `answer` goals have no session; preview prints what the human owes\n\
+             instead. Makes no LLM call and writes nothing.\n\n\
              {}\n\n\
              exit: 0 when a prompt was rendered, 1 when nothing rendered (the reason prints)",
             COMMON_OUT
@@ -236,8 +343,12 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              An edit option (a ratification proposal's accept) applies as a dual\n\
              write and resolves the diagnostic; the retract option is deterministic\n\
              too; any other reply records handling and runs its answer session here.\n\n\
+             options:\n  \
+             --option N     choose option N (numbered from 0 in the listing)\n  \
+             --text \"...\"   a freeform reply; one of --option and --text, never both\n\
              {}\n\n\
-             exit: 0 when the answer landed, 1 when nothing was written (the reason prints)",
+             exit: 0 when the answer landed, 1 when nothing was written (the reason prints),\n\
+             2 on a usage error",
             COMMON_OUT
         ),
         "release" => format!(
@@ -245,8 +356,10 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              Record a release: approve the gated goals for the named stage (both when\n\
              unnamed) without running anything. The watchers wake, whichever worker\n\
              is attached does the work. The generate stage covers binding too;\n\
-             decompilation releases through `jazyk decompile`.\n\n\
-             {}",
+             decompilation releases through `jazyk decompile`. Prints how many gated\n\
+             goals the release approved and what is ready now.\n\n\
+             {}\n\n\
+             exit: 0; 2 on an unknown stage",
             COMMON_OUT
         ),
         "context" => format!(
@@ -262,9 +375,12 @@ fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_OUT
         ),
         "query" => format!(
-            "usage: jazyk query <text>\n\n\
-             Search entities. Prints one {{id, name, definition}} line per match.\n\n\
-             {}",
+            "usage: jazyk query <text> [--json]\n\n\
+             Search entities. Prints one `id (name): definition` line per match.\n\n\
+             options:\n  \
+             --json   one {{\"id\", \"name\", \"definition\"}} object per line instead\n\
+             {}\n\n\
+             exit: 0 when something matched, 1 when nothing did",
             COMMON_OUT
         ),
         "gen" => format!(
@@ -305,9 +421,11 @@ fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "docsgen" => format!(
             "usage: jazyk docsgen\n\n\
-             Render the per-entity requirements documents into <out>/docsgen/ without\n\
-             compiling. The diagrams they embed re-render with them, skipped for\n\
-             unchanged .puml content, so every image link resolves.\n\n\
+             Render the documentation pages into <out>/docsgen/ without compiling:\n\
+             the per-entity requirements documents, the entity cards (entities/), the\n\
+             level pages (levels/), and the diagram pages (diagrams/<kind>/). The\n\
+             summary counts every page written. The diagrams they embed render with\n\
+             them, skipped for unchanged .puml content, so every image link resolves.\n\n\
              {}",
             COMMON_OUT
         ),
@@ -400,95 +518,62 @@ fn main() {
     let mut positional: Vec<String> = Vec::new();
     let mut cmd = String::new();
     let mut want_help = false;
+    // Every option seen, checked against the command's shape once the command is
+    // known (it may follow its options: `jazyk --out x status`).
+    let mut seen: Vec<String> = Vec::new();
+    // Usage errors wait for the command name so the message can point at its help.
+    let mut errors: Vec<String> = Vec::new();
+    // A whole number, or a usage error naming the option and what it got.
+    fn number<T: std::str::FromStr>(flag: &str, v: &str, errors: &mut Vec<String>) -> Option<T> {
+        match v.parse::<T>() {
+            Ok(n) => Some(n),
+            Err(_) => {
+                errors.push(format!("{} takes a whole number, got `{}`", flag, v));
+                None
+            }
+        }
+    }
     let mut i = 1;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        if VALUE_OPTIONS.contains(&arg) {
+            seen.push(arg.to_string());
+            i += 1;
+            let Some(v) = args.get(i).cloned() else {
+                errors.push(format!("{} takes a value", arg));
+                break;
+            };
+            match arg {
+                "--llm-base-url" => opts.base_url = Some(v),
+                "--model" => opts.model = Some(v),
+                "--api-key" => opts.api_key = Some(v),
+                "--out" => opts.out = Some(v),
+                "--depth" => opts.depth = number(arg, &v, &mut errors),
+                "--expand" => opts.expand.push(v),
+                "--kind" => opts.kind = Some(v),
+                "--port" => opts.port = number(arg, &v, &mut errors),
+                "--gui-dist" => opts.gui_dist = Some(v),
+                "--mcp" => opts.mcp = Some(v),
+                "--agent" => opts.agent = Some(v),
+                // `--acp` names the editor during init; `--ide` is the same argument
+                // spelled for `acp install`. Mirrors docs/frontends/cli.md#jazyk-acp.
+                "--acp" | "--ide" => opts.acp_ide = Some(v),
+                "--only" => opts.only = Some(v),
+                "--project" => opts.project = Some(v),
+                "--goal" => opts.goal = Some(v),
+                "--sessions" => opts.sessions = number(arg, &v, &mut errors),
+                "--option" => opts.option = number(arg, &v, &mut errors),
+                "--text" => opts.text = Some(v),
+                "--build-token" => opts.build_token = Some(v),
+                "--edit-sink" => opts.edit_sink = Some(v),
+                _ => unreachable!("every value option is matched"),
+            }
+            i += 1;
+            continue;
+        }
+        match arg {
             "--help" | "-h" => want_help = true,
             "help" if cmd.is_empty() => want_help = true,
-            "--llm-base-url" => {
-                i += 1;
-                opts.base_url = args.get(i).cloned();
-            }
-            "--model" => {
-                i += 1;
-                opts.model = args.get(i).cloned();
-            }
-            "--api-key" => {
-                i += 1;
-                opts.api_key = args.get(i).cloned();
-            }
-            "--out" => {
-                i += 1;
-                opts.out = args.get(i).cloned();
-            }
-            "--depth" => {
-                i += 1;
-                opts.depth = args.get(i).and_then(|s| s.parse::<u32>().ok());
-            }
-            "--expand" => {
-                i += 1;
-                if let Some(h) = args.get(i) {
-                    opts.expand.push(h.clone());
-                }
-            }
-            "--kind" => {
-                i += 1;
-                opts.kind = args.get(i).cloned();
-            }
-            "--port" => {
-                i += 1;
-                opts.port = args.get(i).and_then(|s| s.parse::<u16>().ok());
-            }
-            "--gui-dist" => {
-                i += 1;
-                opts.gui_dist = args.get(i).cloned();
-            }
-            "--mcp" => {
-                i += 1;
-                opts.mcp = args.get(i).cloned();
-            }
-            "--agent" => {
-                i += 1;
-                opts.agent = args.get(i).cloned();
-            }
-            // `--acp` names the editor during init; `--ide` is the same argument
-            // spelled for `acp install`. Mirrors docs/frontends/cli.md#jazyk-acp.
-            "--acp" | "--ide" => {
-                i += 1;
-                opts.acp_ide = args.get(i).cloned();
-            }
-            "--only" => {
-                i += 1;
-                opts.only = args.get(i).cloned();
-            }
-            "--project" => {
-                i += 1;
-                opts.project = args.get(i).cloned();
-            }
-            "--goal" => {
-                i += 1;
-                opts.goal = args.get(i).cloned();
-            }
-            "--sessions" => {
-                i += 1;
-                opts.sessions = args.get(i).and_then(|s| s.parse().ok());
-            }
-            "--option" => {
-                i += 1;
-                opts.option = args.get(i).and_then(|s| s.parse().ok());
-            }
-            "--text" => {
-                i += 1;
-                opts.text = args.get(i).cloned();
-            }
-            "--build-token" => {
-                i += 1;
-                opts.build_token = args.get(i).cloned();
-            }
-            "--edit-sink" => {
-                i += 1;
-                opts.edit_sink = args.get(i).cloned();
-            }
             "--back" => opts.back = true,
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
@@ -504,8 +589,16 @@ fn main() {
             "--force" => opts.force = true,
             "--list" => opts.list = true,
             "--audit" => opts.audit = true,
+            // An option nobody defined is a typo, never a positional: `status --bogus`
+            // must not become an explicit document path.
+            s if s.starts_with('-') && s.len() > 1 => {
+                errors.push(format!("unknown option `{}`", s));
+            }
             s if cmd.is_empty() => cmd = s.to_string(),
             s => positional.push(s.to_string()),
+        }
+        if arg.starts_with('-') && arg.len() > 1 {
+            seen.push(arg.to_string());
         }
         i += 1;
     }
@@ -516,19 +609,57 @@ fn main() {
         std::env::set_var("JAZYK_ACP_AGENT", a);
     }
 
+    // Help prints to stdout and exits 0; help for a command that does not exist is
+    // the unknown-command error. Mirrors docs/frontends/cli.md#help.
     if want_help {
         let key = match cmd.as_str() {
             "codegen" | "testgen" => "gen",
             c => c,
         };
-        match cmd_usage(key) {
-            Some(u) => println!("{}", u),
-            None => println!("{}", top_usage()),
+        if key.is_empty() {
+            println!("{}", top_usage());
+            std::process::exit(0);
         }
-        std::process::exit(0);
+        match cmd_usage(key) {
+            Some(u) => {
+                println!("{}", u);
+                std::process::exit(0);
+            }
+            None => usage_error("", &format!("unknown command `{}`", cmd)),
+        }
     }
     if cmd.is_empty() {
         usage();
+    }
+    let Some((arity, extra)) = command_shape(&cmd) else {
+        usage_error("", &format!("unknown command `{}`", cmd));
+    };
+    if let Some(e) = errors.first() {
+        usage_error(&cmd, e);
+    }
+    // The options a command honors are exactly the ones its help lists; anything
+    // else is refused rather than ignored (`check --sessions 0` would otherwise run
+    // every session). Mirrors docs/frontends/cli.md#help.
+    if let Some(stray) = seen
+        .iter()
+        .find(|o| !COMMON_OPTIONS.contains(&o.as_str()) && !extra.contains(&o.as_str()))
+    {
+        usage_error(&cmd, &format!("`{}` does not take {}", cmd, stray));
+    }
+    if let Some(max) = arity {
+        if positional.len() > max {
+            let got = positional
+                .iter()
+                .map(|p| format!("`{}`", p))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let takes = match max {
+                0 => "no arguments".to_string(),
+                1 => "one argument".to_string(),
+                n => format!("at most {} arguments", n),
+            };
+            usage_error(&cmd, &format!("`{}` takes {} (got {})", cmd, takes, got));
+        }
     }
 
     let code = match cmd.as_str() {
@@ -536,25 +667,23 @@ fn main() {
         "compile" => cli::run_compile(&positional, &opts),
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),
-        "status" => cli::run_status(&positional, &opts),
+        "status" => cli::run_status(&opts),
         "preview" => cli::run_preview(&positional, &opts),
         "explain" => cli::run_explain(&positional, &opts),
         "ripple" => cli::run_ripple(&positional, &opts),
         "context" => match positional.first() {
-            Some(target) => cli::run_context(&positional[1..], &opts, target),
-            None => {
-                eprintln!("{}", cmd_usage("context").unwrap());
-                2
-            }
+            Some(target) => cli::run_context(&opts, target),
+            None => usage_error(
+                "context",
+                "`context` takes a target: a node id (ent:..., req:..., view:...) or a section reference (doc.md#/ref)",
+            ),
         },
         "query" => {
             if positional.is_empty() {
-                eprintln!("{}", cmd_usage("query").unwrap());
-                2
-            } else {
-                let q = positional.join(" ");
-                cli::run_query(&[], &opts, &q)
+                usage_error("query", "`query` takes the text to search for");
             }
+            let q = positional.join(" ");
+            cli::run_query(&opts, &q)
         }
         "mcp" => match positional.first().map(|s| s.as_str()) {
             Some(arg) => {
@@ -574,12 +703,20 @@ fn main() {
                     "graph",
                     "chat",
                 ];
-                if modes.is_empty() || modes.iter().any(|m| !known.contains(&m.as_str())) {
-                    eprintln!("{}", cmd_usage("mcp").unwrap());
-                    2
-                } else if opts.write && !modes.iter().any(|m| m == "graph") {
-                    eprintln!("jazyk: --write applies to the graph toolset only; compile gates writes behind begin_goals");
-                    2
+                if let Some(bad) = modes.iter().find(|m| !known.contains(&m.as_str())) {
+                    usage_error(
+                        "mcp",
+                        &format!("unknown toolset `{}`; one of {}", bad, known.join(", ")),
+                    );
+                }
+                if modes.is_empty() {
+                    usage_error("mcp", "`mcp` takes the toolsets to serve, comma separated");
+                }
+                if opts.write && !modes.iter().any(|m| m == "graph") {
+                    usage_error(
+                        "mcp",
+                        "--write applies to the graph toolset only; compile gates writes behind begin_goals",
+                    );
                 } else {
                     let (proj, _llm, out) = cli::resolve(&[], &opts);
                     let bridge = mcp::BridgeFlags {
@@ -594,12 +731,9 @@ fn main() {
                     0
                 }
             }
-            _ => {
-                eprintln!("{}", cmd_usage("mcp").unwrap());
-                2
-            }
+            _ => usage_error("mcp", "`mcp` takes the toolsets to serve, comma separated"),
         },
-        "monitor" => cli::run_monitor(&positional, &opts),
+        "monitor" => cli::run_monitor(&opts),
         "release" => cli::run_release(&positional, &opts),
         "answer" => cli::run_answer(&positional, &opts),
         "gen" => cli::run_gen(&opts, &positional),

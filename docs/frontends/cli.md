@@ -46,8 +46,9 @@ build, inspects the [graph store](../compiler/graph.md) and the
   or `none`) skips the prompt, and a non-interactive stdin skips it too.
 
 The server entry is read-only; add `--write` to its `args` to hand the agent the
-[write tools](../compiler/tools.md#write-tools). Exit `0` when something was set up,
-`1` when nothing was written.
+[write tools](../compiler/tools.md#write-tools). A `--mcp`, `--agent`, or `--acp` value
+that names nothing jazyk knows is a usage error before any file is written. Exit `0`
+when something was set up, `1` when nothing was written, `2` on a usage error.
 
 ### jazyk compile
 
@@ -62,7 +63,9 @@ scheduler [batches](../compiler/reconciler.md#batching) ready goals; and
 the build lease enforces it); the agent process lives for the run. `--sessions N` runs
 at most N sessions and stops with an honest `incomplete`, so a project advances one
 batch at a time and any moment can be copied for a
-[snippet](../benchmark/benchmark.md#snippets-from-a-real-project).
+[snippet](../benchmark/benchmark.md#snippets-from-a-real-project). `--sessions 0`
+derives the board, parks every ready goal with the limit as the reason, and makes no
+LLM call. A value that is not a whole number is a usage error, never an unlimited run.
 [Executor overrides](../compiler/project-settings.md#executors) per goal kind or class
 send some sessions to a different agent.
 
@@ -170,7 +173,10 @@ nothing: on every state change it prints the ready goals on the
 quiet until the next change. One block per notice; `--json` prints one JSON object per
 line instead. Output is flushed per notice, so a pipe reads events as they happen.
 Blocked goals print with their reason (an unanswered prompt, a ratification proposal, a
-gated release), so the notice says what a human owes. E.g.:
+gated release), so the notice says what a human owes. The text notice lists at most
+five ready goals and three blocked ones, the goals blocked on a human before the gated
+ones, and counts the rest (`... and N more ready`, `... and N more blocked`); the JSON
+notice carries every goal. E.g.:
 
 ```
 jazyk: 3 goals ready, 1 blocked
@@ -210,6 +216,17 @@ its stage: a typed command is an approval. The generate stage covers
 [binding](../consumers/bind.md#when-binding-runs) too; decompilation releases through
 [`jazyk decompile`](#jazyk-decompile), never through `release`.
 
+The output says what the release did: how many gated goals it approved, how many
+goals are ready now per stage (compile, bind, generate), and a `next:` line naming the
+command that runs them. In `auto` mode nothing is gated and the line says so. E.g.:
+
+```
+jazyk: released generate: 73 gated goal(s) approved; ready now: 63 compile, 0 bind, 0 generate
+next: `jazyk compile` runs the compile goals (or an attached worker claims them)
+```
+
+Exit `0`; `2` when the stage is not `compile` or `generate`.
+
 ### jazyk answer
 
 `jazyk answer <diagnostic|goal> [--option N | --text "..."]` answers one prompted
@@ -222,6 +239,7 @@ its proposal), or an `answer` goal (`g:answer:diag:decision-2`).
 - Without `--option` or `--text`: print the question, its options numbered from 0
   (`edit` options with their document and replacement text, `answer` options with
   their label), and whether freeform is accepted, then exit 1. Nothing is written.
+  Both together, or an `--option` that is not a whole number, is a usage error.
 - `--option N`: choose one option. An `edit` option applies as a dual write and
   resolves the diagnostic in one changeset; on a ratification proposal it is the
   accept ([the human path](../compiler/goals/ratify.md#the-human-path)) and the fact's
@@ -247,12 +265,15 @@ jazyk: applied: the sentence landed in docs/checkout.md and the fact is quoted f
 
 Exit codes: `0` when the answer landed (or the answer session handled it), `1` when
 nothing was written (no reply given, an unknown or already answered diagnostic, a
-refused retract with its reason, a failed answer session).
+refused retract with its reason, a failed answer session), `2` on a usage error.
 
 ### jazyk status
 
-Summarize `status.yaml` (see [storage layout](../compiler/graph.md#storage-layout)) and
-the board:
+`jazyk status [--json]` summarizes `status.yaml` (see
+[storage layout](../compiler/graph.md#storage-layout)) and the board. It reads only and
+takes no arguments; outside a project (no `jazyk.toml` above the working directory) it
+says so on stderr and reads the ad hoc store at the working directory. The lines, in
+order:
 
 - the store `version` and the generation counter,
 - the last verdict with its counts,
@@ -277,7 +298,14 @@ the board:
 - the [unattached remainder](../consumers/gen.md#the-unattached-remainder): generated
   mass no requirement claims, summed over the ledger, with the worst entity's ratio,
 - the [unclaimed report](../consumers/bind.md#the-unclaimed-report): deliverable
-  files no binding names.
+  files no binding names,
+- `next:` lines, one per owed action, naming the command that moves the board: the
+  first build when none has run, the goals blocked on a human with the `answer`
+  command for the first of them, the ready goals with the command that runs them
+  (`compile` for graph goals, `gen` and `test` for ledger goals), the gated goals
+  with the `release` that approves them, the failed goals with the `explain` that
+  shows the reason. With nothing owed the line says the graph reflects the docs, or
+  points at `explain` when open goals all wait on something.
 
 E.g.:
 
@@ -294,7 +322,13 @@ unclaimed: 3 file(s) no binding names (`jazyk decompile` drafts docs for them)
   - src/cart.rs
   - src/coupon.rs
   - src/tax.rs
+next: 2 goal(s) wait on a human: `jazyk answer g:ratify:ent:funds` lists the options
 ```
+
+`--json` prints one JSON object with the same fields (`root`, `out`, `version`,
+`generation`, `verdict`, `board` with its counts including `ready` and `gated`,
+`coverage`, `diagnostics`, `medium`, `shape`, `cost`, `unattached`, `unclaimed`,
+`next`) for scripts. Exit `0`.
 
 ### jazyk preview
 
@@ -303,18 +337,24 @@ model would receive it: the agent contract, the active skills, the project block
 goals block for the batch, the loaded set with its handles, and the worker protocol line
 (see [the prompt](../compiler/sessions.md#the-prompt)). With a goal id, it renders the
 batch that goal would join; with a target (a node id, a section reference, a document
-path), the batch of the first ready goal on that target; with a batch id
-(`b<generation>-<n>`, as the [board](../compiler/reconciler.md#batching) lists them),
-that batch's prompt; without an argument, the batch the scheduler would claim next.
-A goal that is not ready yet renders all the same, with a `not ready:` line and the
-readiness reason above the prompt, so its session can be
-inspected before its tier arrives. The rendering is deterministic, so what `preview`
-prints is what the session will spend; it makes no LLM call and writes nothing. The
+path, whose goals sit on its sections), the batch of the first ready goal on that
+target; with a batch id (`b<generation>-<n>`, as the
+[board](../compiler/reconciler.md#batching) lists them), that batch's prompt; without
+an argument, the batch the scheduler would claim next. The prompt is the one the next
+session receives, batch id included: the protocol line names the id the board minted
+for that batch, the same id `begin_goals` accepts, and the project block carries the
+control plane's mode, never a constant. A goal that is not ready yet renders all the
+same, with a `not ready:` line and the readiness reason above the prompt, so its
+session can be inspected before its tier arrives; since the scheduler has not formed
+its batch, the protocol line carries a placeholder id (`b<generation>-?`) and the
+`not ready:` line says so. The rendering is deterministic, so what `preview` prints is
+what the session will spend; it makes no LLM call and writes nothing. The
 [GUI](./gui.md) shows the same pane before a release in `manual` mode
 ([preview](../compiler/sessions.md#preview)).
 
 `ratify` and `answer` goals have no session; for those `preview` prints what the human
-owes instead of a prompt.
+owes instead of a prompt, closing with the `jazyk answer` command that lists the
+options.
 
 Exit codes: `0` when a prompt was rendered, `1` when nothing rendered (an empty board,
 an unknown goal, a target with no goal, a blocked-on-human goal); the reason prints.
@@ -421,8 +461,10 @@ jazyk context view:class/commerce --expand h:view:class/commerce:members
 
 ### jazyk query
 
-`jazyk query <text>` runs the [search tool](../compiler/tools.md#read-tools) and prints the
-matches, one `{id, name, definition}` line each.
+`jazyk query <text> [--json]` runs the [search tool](../compiler/tools.md#read-tools)
+and prints the matches, one `id (name): definition` line each; `--json` prints one
+`{"id", "name", "definition"}` object per line instead. Exit `0` when something
+matched, `1` when nothing did (the text form says so on stderr).
 
 ### jazyk gen
 
@@ -569,8 +611,16 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `jazyk <command> --help` prints that command's usage: its arguments, the options it
   honors (only those), and its exit codes where they carry meaning. `jazyk help <command>`
   is equivalent.
-- Help prints to stdout and exits `0`. A missing or unknown command prints the top-level
-  usage to stderr and exits `2`.
+- Help prints to stdout and exits `0`. A missing command prints the top-level usage to
+  stderr and exits `2`; an unknown command (with or without `--help`, or after `help`)
+  prints one line naming it and pointing at `jazyk --help`, and exits `2`.
+- The options a command honors are exactly the ones its help lists. An option a
+  command does not honor, an option jazyk does not define, an option missing its value,
+  a value that is not a whole number where one is required (`--sessions`, `--depth`,
+  `--port`, `--option`), or more positional arguments than the command takes is a
+  usage error: one line naming the problem and the help to read, on stderr, exit `2`.
+  Nothing runs and nothing is written. A misspelled option is never taken for a
+  document path, and a bad `--sessions` value is never taken for an unlimited run.
 
 ## Project discovery
 

@@ -216,11 +216,11 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations; none for a considered judgment recorded but not surfaced. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string", "enum": REVIEW_RULES},
-                    "severity": {"type": "string", "enum": ["error", "warning", "info"]},
+                    "severity": {"type": "string", "enum": SEVERITIES},
                     "subjects": {"type": "array", "items": {"type": "string"}},
                     "message": {"type": "string"},
                     "reasoning": {"type": "string"},
@@ -248,7 +248,7 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(
                 json!({
                     "section": {"type": "string"},
-                    "state": {"type": "string", "enum": ["covered", "non-normative"]},
+                    "state": {"type": "string", "enum": SETTABLE_COVERAGE},
                     "note": {"type": "string"}
                 }),
                 &["section", "state"],
@@ -4504,12 +4504,13 @@ impl ToolSession {
                     ));
                 }
                 let severity = Self::str_arg(args, "severity")?;
-                if !["error", "warning", "info", "none"].contains(&severity.as_str()) {
+                if !SEVERITIES.contains(&severity.as_str()) {
                     return Err(ToolError::new(
                         "bad-severity",
                         format!(
-                            "severity `{}` must be error, warning, info, or none",
-                            severity
+                            "severity `{}` must be one of: {}",
+                            severity,
+                            SEVERITIES.join(", ")
                         ),
                     ));
                 }
@@ -4661,10 +4662,14 @@ impl ToolSession {
             "set_coverage" => {
                 let section = Self::str_arg(args, "section")?;
                 let state = Self::str_arg(args, "state")?;
-                if !["covered", "non-normative"].contains(&state.as_str()) {
+                if !SETTABLE_COVERAGE.contains(&state.as_str()) {
                     return Err(ToolError::new(
                         "bad-state",
-                        format!("state `{}` must be covered or non-normative", state),
+                        format!(
+                            "state `{}` must be one of: {}",
+                            state,
+                            SETTABLE_COVERAGE.join(", ")
+                        ),
                     ));
                 }
                 // A placeholder note counts as absent; weak models emit these literally.
@@ -5972,6 +5977,41 @@ mod tests {
             .dispatch("get_entity", &json!({"id": "ent:customer"}))
             .unwrap();
         assert_eq!(v["definition"], "a person who buys things");
+    }
+
+    #[test]
+    // The severity gate is the model's own list: `none` (a considered judgment
+    // recorded but not surfaced) passes, an invented level is refused naming the
+    // list. Mirrors docs/compiler/model/diagnostic.md#fields.
+    #[test]
+    fn severity_gate_is_the_diagnostic_models_list() {
+        let mut t = session();
+        let v = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "none",
+                        "subjects": ["ent:customer"], "message": "Considered, not surfaced."}),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let err = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "critical",
+                        "subjects": ["ent:customer"], "message": "Nope."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-severity");
+        for s in SEVERITIES {
+            assert!(err.message.contains(s), "{}", err.message);
+        }
+        let err = t
+            .dispatch(
+                "set_coverage",
+                &json!({"section": "/shop/cart", "state": "unprocessed"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-state");
     }
 
     #[test]

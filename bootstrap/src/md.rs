@@ -93,17 +93,90 @@ struct Head {
     line: usize,
 }
 
+// A fence line: the fence character (backtick or tilde), its length, and the info
+// string after it. A closing fence carries an empty info string.
+fn fence(line: &str) -> Option<(char, usize, &str)> {
+    let t = line.trim_start();
+    let c = t.chars().next()?;
+    if c != '`' && c != '~' {
+        return None;
+    }
+    let n = t.chars().take_while(|&x| x == c).count();
+    if n < 3 {
+        return None;
+    }
+    Some((c, n, t[n..].trim()))
+}
+
+// Whether `line` closes a fence opened with `c` repeated `n` times.
+fn closes(line: &str, c: char, n: usize) -> bool {
+    matches!(fence(line), Some((fc, fn_, info)) if fc == c && fn_ >= n && info.is_empty())
+}
+
+// One fenced block: its line range (the fences included), its kind, and its title.
+struct Block {
+    start: usize,
+    end: usize,
+    kind: &'static str,
+    title: String,
+}
+
+// The fenced blocks inside `lines[start..end]`, in order. A block is a `diagram`
+// when its info string names PlantUML or its first line opens one (`@start...`),
+// else a `code-block`. An unclosed fence runs to the end of the range.
+// Mirrors docs/compiler/parsing.md#section-tree.
+fn blocks(lines: &[&str], start: usize, end: usize) -> Vec<Block> {
+    let mut out = Vec::new();
+    let mut i = start;
+    while i < end {
+        let Some((c, n, info)) = fence(lines[i]) else {
+            i += 1;
+            continue;
+        };
+        let mut j = i + 1;
+        while j < end && !closes(lines[j], c, n) {
+            j += 1;
+        }
+        let close = if j < end { j + 1 } else { end };
+        let lang = info.split_whitespace().next().unwrap_or("").to_lowercase();
+        let first = lines.get(i + 1).map(|l| l.trim_start()).unwrap_or("");
+        let diagram =
+            matches!(lang.as_str(), "plantuml" | "puml" | "uml") || first.starts_with("@start");
+        let kind = if diagram { "diagram" } else { "code-block" };
+        let title = if info.is_empty() && diagram {
+            "plantuml".to_string()
+        } else {
+            info.to_string()
+        };
+        out.push(Block {
+            start: i,
+            end: close,
+            kind,
+            title,
+        });
+        i = close;
+    }
+    out
+}
+
 pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
     let lines: Vec<&str> = text.lines().collect();
     let mut heads: Vec<Head> = Vec::new();
-    let mut in_code = false;
+    let mut in_code: Option<(char, usize)> = None;
     for (i, l) in lines.iter().enumerate() {
-        if l.trim_start().starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        if in_code {
-            continue;
+        match in_code {
+            Some((c, n)) => {
+                if closes(l, c, n) {
+                    in_code = None;
+                }
+                continue;
+            }
+            None => {
+                if let Some((c, n, _)) = fence(l) {
+                    in_code = Some((c, n));
+                    continue;
+                }
+            }
         }
         let t = l.trim_start();
         let hashes = t.chars().take_while(|&c| c == '#').count();
@@ -197,6 +270,52 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
         );
         stack.push((h.level, sl));
     }
+    // Fenced blocks are sections of their own under the section whose body holds
+    // them, ordered before that section's subheadings; the parent keeps its whole
+    // body, so a quote locates in the section that states it.
+    // Mirrors docs/compiler/parsing.md#section-tree.
+    let holders: Vec<(String, usize, usize)> = sections
+        .iter()
+        .filter(|(_, s)| matches!(s.kind.as_str(), "preamble" | "root" | "heading"))
+        .map(|(r, s)| (r.clone(), s.lines[0], s.lines[1]))
+        .collect();
+    let mut block_sections: Vec<(String, Section)> = Vec::new();
+    let mut shifts: HashMap<String, usize> = HashMap::new();
+    for (parent, start, end) in holders {
+        let found = blocks(&lines, start, end);
+        let mut per_kind: HashMap<&str, usize> = HashMap::new();
+        for (order, b) in found.iter().enumerate() {
+            let n = per_kind.entry(b.kind).or_insert(0);
+            *n += 1;
+            let reference = if parent == "/" {
+                format!("/{}-{}", b.kind, n)
+            } else {
+                format!("{}/{}-{}", parent, b.kind, n)
+            };
+            let raw = lines[b.start..b.end].join("\n");
+            block_sections.push((
+                reference,
+                Section {
+                    title: b.title.clone(),
+                    kind: b.kind.to_string(),
+                    order,
+                    parent: Some(parent.clone()),
+                    hash: hash_hex(&raw),
+                    raw,
+                    lines: [b.start, b.end],
+                },
+            ));
+        }
+        if !found.is_empty() {
+            shifts.insert(parent, found.len());
+        }
+    }
+    for s in sections.values_mut() {
+        if let Some(n) = s.parent.as_ref().and_then(|p| shifts.get(p)) {
+            s.order += n;
+        }
+    }
+    sections.extend(block_sections);
     sections
 }
 
@@ -275,7 +394,58 @@ mod tests {
     fn ignores_headings_in_code_blocks() {
         let text = "# Top\n```\n# not a heading\n```\n## Real\n";
         let s = parse_sections(text);
-        assert_eq!(s.len(), 2);
+        assert_eq!(s.len(), 3, "{:?}", s.keys().collect::<Vec<_>>());
+        assert_eq!(s["/top/code-block-1"].kind, "code-block");
+        assert_eq!(s["/top/real"].kind, "heading");
+        // A tilde fence closes only on tildes, so a backtick line inside stays.
+        let text = "# Top\n~~~\n```\n# still code\n~~~\n## Real\n";
+        let s = parse_sections(text);
+        assert_eq!(s.len(), 3, "{:?}", s.keys().collect::<Vec<_>>());
+    }
+
+    // A fenced block is a section of its own under the section whose body holds it:
+    // a PlantUML block is a `diagram` (by info string or an `@start` first line), any
+    // other fence a `code-block`. The parent keeps its whole body, block orders come
+    // before subheadings, references count per kind, and every kind is in the
+    // model's list. Mirrors docs/compiler/parsing.md#section-tree.
+    #[test]
+    fn fenced_blocks_become_diagram_and_code_block_sections() {
+        let text = "Intro.\n\n```yaml\nkey: 1\n```\n\n# Top\n\nThe Cart holds items.\n\n```plantuml\n@startuml\nCart --> Item : holds\n@enduml\n```\n\nMore prose.\n\n```\n@startuml\nA -> B\n@enduml\n```\n\n```rust\nfn x() {}\n```\n\n## Sub\nbody\n";
+        let s = parse_sections(text);
+        let keys: Vec<&String> = s.keys().collect();
+        assert!(s.contains_key("/code-block-1"), "{:?}", keys);
+        assert_eq!(s["/code-block-1"].parent.as_deref(), Some("/"));
+        assert_eq!(s["/code-block-1"].title, "yaml");
+        let d1 = &s["/top/diagram-1"];
+        assert_eq!(d1.kind, "diagram");
+        assert_eq!(d1.title, "plantuml");
+        assert_eq!(d1.parent.as_deref(), Some("/top"));
+        assert!(d1.raw.starts_with("```plantuml\n@startuml"));
+        assert!(d1.raw.ends_with("```"));
+        assert_eq!(d1.lines, [10, 15]);
+        let d2 = &s["/top/diagram-2"];
+        assert_eq!(d2.title, "plantuml", "a bare fence opening with @startuml");
+        assert_eq!(d2.order, 1);
+        let c = &s["/top/code-block-1"];
+        assert_eq!(c.kind, "code-block");
+        assert_eq!(c.title, "rust");
+        assert_eq!(c.order, 2);
+        // The subheading follows the three blocks; the parent's raw still holds them.
+        assert_eq!(s["/top/sub"].order, 3);
+        assert!(s["/top"].raw.contains("Cart --> Item"));
+        assert!(s["/top"].raw.contains("More prose."));
+        assert_ne!(d1.hash, d2.hash);
+        for sec in s.values() {
+            assert!(
+                crate::model::SECTION_KINDS.contains(&sec.kind.as_str()),
+                "{}",
+                sec.kind
+            );
+        }
+        // An unclosed fence runs to the end of its section.
+        let s = parse_sections("# Top\n```\nopen\n## Next\nbody\n");
+        assert_eq!(s["/top/code-block-1"].lines, [1, 5]);
+        assert!(!s.contains_key("/top/next"), "{:?}", s.keys().collect::<Vec<_>>());
     }
 
     #[test]

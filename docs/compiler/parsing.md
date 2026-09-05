@@ -18,23 +18,39 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 
 ## Section tree
 
-A section is a heading and its body, a list item, a code block, a blockquote, or a
-diagram. Sections form a tree per document.
+A section is a heading and its body, or a fenced block inside that body: a code block,
+or a diagram. Sections form a tree per document.
 
 Content before the first heading, and a document with no headings at all, forms a
 `preamble` section referenced `/`, with no title and no parent. No prose is invisible
 to extraction because of where it sits. A file of only blank lines yields no sections
 (that is [`empty-file`](./compilation.md#checks) territory).
 
+A fenced block (three or more backticks or tildes, closed by a fence of the same
+character at least as long, or running to the end of its section when unclosed) is a
+section of its own, a child of the section whose body holds it, ordered before that
+section's subheadings. A block whose info string names PlantUML (`plantuml`, `puml`,
+`uml`) or whose first line opens one (`@start...`) is a `diagram`
+([diagrams as input](./diagrams.md#diagrams-as-input)); any other fence is a
+`code-block`. The block's `raw` is the block with its fences. The parent keeps its whole
+body, the block included, so a quote locates in the section that states it and a change
+inside a block dirties the block and its parent both.
+
+List items and blockquotes stay inside their section's body: the kinds `list-item` and
+`blockquote` are reserved for a handler that produces them, and the Markdown handler
+does not.
+
 Each section carries:
 
-- `title`: the heading or item text.
+- `title`: the heading text, or a block's info string (`plantuml` for a bare fence
+  opening a diagram; empty for a bare code fence).
 - `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
   `diagram`.
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent. The root section has none.
-- `raw`: the verbatim source text. Concatenating `raw` in tree order reconstructs the
-  document.
+- `raw`: the verbatim source text. Concatenating the `raw` of the heading kinds
+  (`preamble`, `root`, `heading`) in tree order reconstructs the document; the block
+  kinds repeat text their parent already holds.
 - `hash`: a content hash of `raw`, used for [diffing](#section-diffing) and
   [alignment](./alignment.md).
 - `lines`: the line range in the source file, for editor integration.
@@ -43,6 +59,10 @@ Each section carries:
 
 - A section's internal reference is its path inside the document, derived from heading
   slugs. E.g. `/cli/commands/compile`.
+- A block's internal reference is its parent's reference followed by `/<kind>-<n>`,
+  `n` counting the parent's blocks of that kind in order from 1. E.g.
+  `/cli/commands/diagram-1`, `/cli/commands/code-block-2`; a block in the preamble is
+  `/code-block-1`.
 - The full reference joins the document path and the internal reference with `#`.
   E.g. `docs/cli.md#/cli/commands/compile`.
 - Links between documents in the source (relative markdown links) are recorded and feed

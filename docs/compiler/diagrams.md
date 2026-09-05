@@ -206,7 +206,8 @@ without drawing every leaf:
   shows the strongest type ([ranking](./model/relationship.md#rendering): generalization,
   realization, composition, aggregation, association, dependency) and carries the count of
   concrete edges beneath it as its label. A count of one draws no label. `instantiation`
-  never promotes with the others and keeps its own group.
+  is dropped before grouping and never drawn as an arrow: it names the instance's type
+  in the object view.
 - An edge whose two ends lift to the same shown node is not drawn.
 - Lifting stores nothing. It is render-time aggregation over `parent` chains, so it
   cannot drift. The lifted arrow's justification is the set of concrete edges beneath it:
@@ -214,7 +215,8 @@ without drawing every leaf:
 - Views nest. A collapsed node carries the same PlantUML link every rendered entity
   carries, the link to its card (`[[../../docsgen/entities/<slug>.md]]`,
   [drill-down](#drill-down)); the card's `Inside` section is the level the collapse
-  hid. A view carries no link to another rendering.
+  hid. A view carries no link to another rendering, the `overview` kind's `:ref:` steps
+  to the sequence views they reference being the one exception.
 
 E.g.: `ent:a` contains `ent:a1`, `ent:b` contains `ent:b1`, and a requirement declares
 `{a: ent:a1, b: ent:b1, type: dependency}`. A view showing only `a` and `b` draws one
@@ -359,8 +361,9 @@ the goal stands. The renderer never truncates silently:
 - A view whose members have no subtrees to collapse (a flow view, an object view) renders
   every member.
 - Both cases mark the picture. The `title` line carries the view's title with the suffix
-  `(collapsed: n subtrees over limit)`, or `(over limit: n members)` when nothing could
-  collapse.
+  `(collapsed: n subtrees over limit)`, or `(over limit: n members)`, `(over limit: n
+  edges)`, or `(over limit: n participants)` when nothing could collapse, naming the
+  limit that was crossed.
 
 ## Output layout
 

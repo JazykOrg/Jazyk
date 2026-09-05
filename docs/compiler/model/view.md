@@ -97,13 +97,13 @@ view:component/backend:
 | kind | members | what the emitter draws | limits |
 | --- | --- | --- | --- |
 | `class` | entities | one class per member with its typed attributes; one arrow per relationship group among the members, lifted | structural, edges |
-| `object` | entities (instances) | one object per member, named `instance : Type` through its `instantiation` group, with its attribute values; links from `association` groups among the members | `instances-per-object-view`, edges |
+| `object` | entities (instances) | one object per member, named `instance : Type` through its `instantiation` group, with its attribute values; links from every relationship group among the members except `instantiation` | `instances-per-object-view`, edges |
 | `package` | entities (the packages) | one package per member holding its children as classes; relationships between packages lifted to the packages | structural, edges |
 | `component` | entities | members as components; entities the members realize as interfaces (the lollipop); `dependency` toward an interface as the socket; members labeled `actor` as actors | structural, edges |
-| `composite` | one entity | the member as the boundary, its children as parts, connectors from relationships among the parts and crossing the boundary | structural, edges |
+| `composite` | entities (the boundary and its parts) | the first member as the boundary, its children as parts, connectors from relationships among the parts and crossing the boundary | structural, edges |
 | `deployment` | entities | each member as an artifact; every attribute with a `value` on a member is a placement, the artifact inside a node labeled `<value> <name>` (`region = EU` → `node "EU region"`), members sharing a placement share the node; a member without valued attributes is a bare artifact; nothing synthesizes topology | structural, edges |
 | `use-case` | requirements (ordered) | one use case for the view; the members' actors | flow |
-| `activity` | requirements (ordered) | one action per member in order; `failure-mode` members as branches | flow |
+| `activity` | requirements (ordered) | one action per member in order; a member whose transition leaves a state another member's transition also leaves draws as a branch | flow |
 | `state` | one entity | the subject's derived [state machine](./state-machine.md) | states (on the subject) |
 | `sequence` | requirements (ordered) | one message per member from its initiator to its receiver; the participants are the union | flow, participants |
 | `communication` | requirements (ordered) | the same messages, numbered in order, the participants as boxes | flow, participants |

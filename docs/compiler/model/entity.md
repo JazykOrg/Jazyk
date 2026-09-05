@@ -58,7 +58,7 @@ coincidental.
 - `name`: the primary handle. `aliases`: alternate names seen in the documents.
 - `definition`: the one living definition, refined as documents are reconciled. It is
   never forked per document.
-- `scope`: keeps distinct same-name concepts apart. See [scopes](../concepts/scopes.md).
+- `scope`: keeps distinct same-name concepts apart; defaults to `public`. See [scopes](../concepts/scopes.md).
 - `stereotype`: a free-form judged label: `system`, `service`, `interface`, `actor`,
   `table`, `character`, `department`, whatever the model judges the medium calls the
   concept. Nothing enumerates the allowed values, and the harness keys on structure, not

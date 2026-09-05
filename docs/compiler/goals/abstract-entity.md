@@ -233,7 +233,7 @@ The hint computer emits, per goal:
   over-budget lists become handles.
 - `<count> > <limit> (<limit name>, soft <s>, hard <h>)`: the change, one line per
   crossed limit.
-- `load sm:<slug>`: for the state limit, the machine with its states and transitions.
+- `load sm:<entity-slug>`: for the state limit, the machine with its states and transitions.
 - `group <noun> (<n> requirements, <section>)`: candidate cohesion groups, best first:
   content tokens (minus the entity's own name tokens) recurring across at least three
   of the entity's statements, with the section title where most of them are quoted.

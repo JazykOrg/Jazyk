@@ -4142,7 +4142,30 @@ impl Store {
         &mut self,
         parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
     ) -> Vec<DirtyDoc> {
+        self.sync_docs_inner(parsed, true)
+    }
+
+    // The same alignment without a write: the section trees, the dirty set, the
+    // alignment blocks, and the records land in memory and the `edit` and `align`
+    // entries are minted but never written, so a read-only consumer (status, preview,
+    // release, monitor, the GUI board) derives from the documents as they stand
+    // while the entries stay a build's to write.
+    // Mirrors docs/compiler/reconciler.md#goal-derivation.
+    pub fn sync_docs_in_memory(
+        &mut self,
+        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+    ) -> Vec<DirtyDoc> {
+        self.sync_docs_inner(parsed, false)
+    }
+
+    fn sync_docs_inner(
+        &mut self,
+        parsed: &BTreeMap<String, (String, BTreeMap<String, Section>)>,
+        persist: bool,
+    ) -> Vec<DirtyDoc> {
         use crate::align::Full;
+        let mut entries: Vec<JournalEntry> = Vec::new();
+        let mut removed_docs: Vec<String> = Vec::new();
         let changed: BTreeSet<String> = self
             .docs
             .iter()
@@ -4244,7 +4267,7 @@ impl Store {
                 }
             }
             self.docs.remove(&doc);
-            std::fs::remove_file(self.out.join("docs").join(format!("{}.yaml", doc))).ok();
+            removed_docs.push(doc.clone());
             stale.sort();
             stale.dedup();
             if !stale.is_empty() {
@@ -4419,7 +4442,7 @@ impl Store {
                 .chain(removed_refs.iter())
                 .cloned()
                 .collect();
-            self.write_journal(&entry);
+            entries.push(entry);
             self.commit_records(batch);
         }
 
@@ -4437,7 +4460,7 @@ impl Store {
                     "candidates": p.candidates.iter().map(|c| c.section.clone()).collect::<Vec<_>>()})
             }));
             let entry = self.journal_entry(&build, &Commit::store("align"), mutations);
-            self.write_journal(&entry);
+            entries.push(entry);
         }
         // Stale anchors and pending proposals, under the last generation written.
         let generation = self.status.generation;
@@ -4457,8 +4480,16 @@ impl Store {
         }
         self.commit_records(batch);
         self.prune_records();
-        // Persist the synced records so context reads see the new sections.
-        self.save();
+        if persist {
+            for doc in &removed_docs {
+                std::fs::remove_file(self.out.join("docs").join(format!("{}.yaml", doc))).ok();
+            }
+            for entry in &entries {
+                self.write_journal(entry);
+            }
+            // Persist the synced records so context reads see the new sections.
+            self.save();
+        }
         self.reevaluate_items(out)
     }
 

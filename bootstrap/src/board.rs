@@ -752,11 +752,15 @@ impl Board {
         board
     }
 
-    // Load the store, sync the section trees, read the control plane, derive.
+    // Load the store, align the documents in memory, read the control plane, derive.
+    // A read-only derivation never commits: the `edit` and `align` entries are a
+    // build's to write (a stray argument read as a document path once emptied a
+    // project's section tree through this call).
+    // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn compute(proj: &Project, out: &Path) -> Board {
         let mut store = Store::load(out);
         let (parsed, _) = crate::reconcile::parse_all(proj);
-        store.sync_docs(&parsed);
+        store.sync_docs_in_memory(&parsed);
         let control = Control::load(proj, out);
         Board::derive(&store, proj, &control)
     }
@@ -2343,6 +2347,62 @@ pub(crate) mod tests {
         assert_eq!(localities.len(), 2, "{:?}", localities);
         assert_eq!(b.batches.len(), 1, "{:?}", b.batches);
         assert_eq!(b.batches[0].goals.len(), 2);
+    }
+
+    // A read-only derivation never commits: Board::compute on a store whose documents
+    // changed on disk leaves the journal, the section trees, and the generation
+    // untouched while the board shows the dirty section's goal.
+    // Mirrors docs/compiler/reconciler.md#goal-derivation.
+    #[test]
+    fn compute_derives_from_changed_documents_without_writing() {
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-board-compute-{}-{}",
+            std::process::id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("a.md"), "# A\n\nThe first body.\n").unwrap();
+        let out = root.join("jazyk-out");
+        let proj = Project {
+            root: root.clone(),
+            out: out.clone(),
+            docs_glob: vec!["docs/**/*.md".into()],
+            ..Default::default()
+        };
+        // A build's alignment writes the trees once.
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        let (parsed, _) = crate::reconcile::parse_all(&proj);
+        assert!(parsed.contains_key("docs/a.md"), "{:?}", parsed.keys());
+        s.sync_docs(&parsed);
+        let generation = s.status.generation;
+        let journal = |out: &Path| {
+            std::fs::read_dir(out.join("journal"))
+                .map(|d| d.count())
+                .unwrap_or(0)
+        };
+        let entries = journal(&out);
+        assert!(entries >= 1);
+        // The document changes on disk; a read-only derivation sees it and writes nothing.
+        std::fs::write(docs.join("a.md"), "# A\n\nThe second body.\n").unwrap();
+        let b = Board::compute(&proj, &out);
+        assert!(
+            b.goals
+                .iter()
+                .any(|g| g.kind == "reconcile-section" && g.target == "docs/a.md#/a"),
+            "{:?}",
+            b.goals.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
+        assert_eq!(journal(&out), entries);
+        let on_disk = Store::load(&out);
+        assert_eq!(on_disk.status.generation, generation);
+        assert!(on_disk.docs["docs/a.md"].sections["/a"]
+            .raw
+            .contains("The first body."));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

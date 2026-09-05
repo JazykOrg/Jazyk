@@ -77,7 +77,13 @@ is derived, never stored. `derive_goals` recomputes it from disk whenever it is
 consulted: at the start of a build, after every commit, on every `goals` call over
 [MCP](../frontends/mcp.md#compilation-over-mcp), and for the
 [GUI board](../frontends/gui.md#board). The inputs are the documents, the graph, the
-ledger, and the change records, parked list, and failed list in `status.yaml`. The graph
+ledger, and the change records, parked list, and failed list in `status.yaml`. A
+derivation outside a build (`jazyk status`, `preview`, `release`, `monitor`, the GUI
+board, a `goals` call) aligns the documents in memory and derives from that, so the
+board shows the goals the next build will open; it writes nothing. The `edit` and
+`align` entries, the section trees, and the records they carry are written by the
+build that aligns for real, or by the serving's `done` before its commit. A read-only
+command never moves the graph. The graph
 never stores goals, so it cannot grow with them.
 
 E.g.:

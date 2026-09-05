@@ -17,6 +17,34 @@ pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/bind-contract.md").into()
 }
 
+// Why an existing row owes a bind, or None when it is current: the statement moved
+// under it, or nothing judges it any more (the artifact is gone from disk, or a
+// programmatic artifact lost the declared test name).
+// Mirrors docs/consumers/bind.md#when-binding-runs.
+fn bind_reason(
+    store: &Store,
+    gs: &GenSettings,
+    _rid: &str,
+    r: &crate::model::Requirement,
+    row: &ReqRow,
+) -> Option<&'static str> {
+    if hash_hex(&r.statement) != row.hashes.requirement {
+        return Some("requirement-changed");
+    }
+    let artifact = artifact_path(&store.out, gs, &row.test);
+    if !artifact.exists() {
+        return Some("artifact-gone");
+    }
+    if row.test.kind == "programmatic"
+        && !std::fs::read_to_string(&artifact)
+            .map(|c| !row.test.name.trim().is_empty() && c.contains(&row.test.name))
+            .unwrap_or(false)
+    {
+        return Some("artifact-gone");
+    }
+    None
+}
+
 // Requirements owing a bind, with a reason. Deterministic; no model.
 // Mirrors docs/consumers/bind.md#when-binding-runs.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
@@ -25,15 +53,10 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     for (rid, r) in &store.graph.requirements {
         let reason = match ledger.requirements.get(rid) {
             None => "unbound",
-            Some(row) => {
-                if hash_hex(&r.statement) != row.hashes.requirement {
-                    "requirement-changed"
-                } else if !artifact_path(&store.out, gs, &row.test).exists() {
-                    "artifact-gone"
-                } else {
-                    continue;
-                }
-            }
+            Some(row) => match bind_reason(store, gs, rid, r, row) {
+                Some(reason) => reason,
+                None => continue,
+            },
         };
         let entity = r
             .entities
@@ -80,17 +103,12 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         .get(&crate::gen::slug_of(&entity))
         .map(|e| e.files.clone())
         .unwrap_or_default();
-    let reason = ledger
-        .requirements
-        .get(&rid)
-        .map(|row| {
-            if hash_hex(&r.statement) != row.hashes.requirement {
-                "requirement-changed"
-            } else {
-                "artifact-gone"
-            }
-        })
-        .unwrap_or("unbound");
+    // The reason the row owes a bind; a current row begun anyway reads `current`,
+    // so the session knows it is re-binding by choice, not by the board's word.
+    let reason = match ledger.requirements.get(&rid) {
+        None => "unbound",
+        Some(row) => bind_reason(store, gs, &rid, r, row).unwrap_or("current"),
+    };
     Ok(json!({
         "requirement": rid,
         "entity": entity,

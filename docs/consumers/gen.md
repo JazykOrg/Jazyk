@@ -510,12 +510,16 @@ requirements:
 A requirement's verification status is a pure function of the row, the live graph, and
 the files on disk, recomputed at every read. First match wins:
 
-1. No row, or the test artifact is missing → `missing`. A row whose requirement id is
-   absent from the graph is also `missing` (reason `requirement-gone`), but it is
-   never actionable work: see [deletion](#deletion-prunes-the-ledger).
+1. No row → `missing` (reason `not-generated`). The test artifact is gone from disk,
+   or a programmatic artifact no longer contains the declared test `name` → `missing`
+   (reason `artifact-gone`): nothing judges the requirement any more, and the repair
+   is a [re-bind](./bind.md#when-binding-runs). A row whose requirement id is absent
+   from the graph is also `missing` (reason `requirement-gone`), but it is never
+   actionable work: see [deletion](#deletion-prunes-the-ledger).
 2. The live `statement` hash differs from `hashes.requirement` → `stale-requirement`.
-   The test verifies a sentence the graph does not hold. Regeneration is needed;
-   `jazyk test` refuses to run the row and points at `jazyk gen`.
+   The test verifies a sentence the graph does not hold. The repair is a re-bind, then
+   generation if the re-bind reads `unimplemented` ([the cascade](#the-cascade));
+   `jazyk test` refuses to run the row and says so.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
 5. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
@@ -527,18 +531,26 @@ the files on disk, recomputed at every read. First match wins:
    `runner-failed`, so a broken machine reads as unverified, not as a failing
    deliverable (see [runners](#runners)).
 
-Hashes are written at exactly three moments: generation resolves a goal (all three),
-binding records a row (`record_binding` writes all three), and a test run completes
-(`test` and `files` rebaseline, never `requirement`). Every
-staleness flip is a deterministic hash comparison. The model owns three judgments only:
-the test kind, the test itself, and the verdict of an `llm` run.
+Hashes are written at exactly four moments: generation resolves a goal (all three),
+binding records a row (`record_binding` writes all three), a test run completes
+(`test` and `files` rebaseline, never `requirement`), and
+[`jazyk test --audit`](#runners) rebaselines `test` and `files` against the artifacts
+on disk. Every staleness flip is a deterministic hash comparison. The model owns three
+judgments only: the test kind, the test itself, and the verdict of an `llm` run.
+
+Every row a status surface lists carries its `reason` beside the status and a
+`repair`: one sentence naming the command or goal that clears it (`jazyk gen <entity>`
+for a re-bind and regeneration, `jazyk test <requirement>` for a rerun, nothing for a
+`failing` row, which is a finding). `jazyk test --list` prints both.
 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
 change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
 ([when binding runs](./bind.md#when-binding-runs)), a `generate` goal for the entity of
 an `unimplemented` row or an entity whose facts moved, a `verify` goal for `stale-test`,
 `stale-code`, and `unverified` ([the verify goal](../compiler/goals/verify.md)). A
-`failing` row is a diagnostic, never a goal.
+`failing` row is a diagnostic, never a goal: `verification_tasks` and the board leave
+it alone until its test or files change. `jazyk test` and `run_tests` with no target
+rerun it anyway, because a rerun is what a person asking for one wants.
 
 ### The cascade
 
@@ -562,7 +574,7 @@ Deleting a requirement ends its obligation, and its ledger row must not outlive 
   requirement to bury it; absence from the graph is the signal.
 - Until a record runs, such a row reads `missing` with reason `requirement-gone`, and
   no `verify` goal derives from it: it is not work, and no repair applies to it.
-  `run_tests` skips it the same way.
+  `run_tests` skips it the same way. `jazyk test --audit` prunes it too.
 
 Without pruning, a compilation that deletes a requirement leaves a row no tool can
 remove: the manifest only adds and updates, reruns skip the row, and the board would
@@ -616,9 +628,9 @@ would name the wrong culprit.
 
 - `programmatic`: `jazyk test` executes `run` in `cwd` under the deliverable. Exit 0 is
   a pass, anything else is a fail. Before running, the runner greps the artifact for the
-  test `name`; if absent the row is `stale-test`, not `failing`, and nothing executes.
-  The row records the exit code beside the output, so a verdict can be read back
-  without rerunning it.
+  test `name`; if absent the row is `missing` (reason `artifact-gone`), not `failing`,
+  nothing executes, and the row is bind work. The row records the exit code beside the
+  output, so a verdict can be read back without rerunning it.
 - `llm`: two harnesses, one contract. `jazyk test` packages the criteria file and the
   requirement's loaded set in-process and asks the configured model for a verdict
   ([the verify goal](../compiler/goals/verify.md)). An external agent connected to
@@ -649,13 +661,24 @@ of the tool:
 Anything else is a real verdict. A row that fails on its own assertion, beside rows
 that pass, is exactly what verification is for.
 
-`jazyk test --audit` rebuilds the ledger from the artifacts: it scans the deliverable
-and the criteria directory for the test names derived from the live statements,
-recreates rows the ledger lost, and refreshes the `test` and `files` hashes of rows
-whose artifacts still carry their statement hash. Sites are not rebuilt: only
-generation records them, so an audit-rebuilt row has none until the next `jazyk gen`.
-The `requirement` hash is never rewritten from the live graph: an artifact carrying an
-outdated statement hash stays `stale-requirement` until regeneration.
+`jazyk test --audit` rebuilds the ledger from the artifacts, without running anything:
+
+- Existing rows whose artifact still carries the test name derived from the live
+  statement (for an `llm` row, the criteria file's front matter with the requirement
+  id and the full statement hash) refresh their `test` and `files` hashes. A refresh
+  that moves either hash drops the verdict to `none`: the old verdict judged other
+  bytes, and an audit never turns a hand edit into a `verified` row nothing reran. The
+  row reads `unverified` and reruns.
+- Rows whose requirement left the graph are pruned, the same way `record_generation`
+  prunes them.
+- Lost `llm` rows are recreated from their criteria files: the file carries everything
+  the row needs. A lost programmatic test the scan finds is reported under `found`,
+  never recreated: only the [bind goal](./bind.md#the-bind-goal) can record the command
+  that runs it, so the requirement stays `missing` and binds, and the bind session
+  finds the existing test instead of writing a second one.
+- Sites are not rebuilt: only generation records them.
+- The `requirement` hash is never rewritten from the live graph: an artifact carrying
+  an outdated statement hash stays `stale-requirement` until it is re-bound.
 
 ## Incremental regeneration
 

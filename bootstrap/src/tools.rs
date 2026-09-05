@@ -1486,6 +1486,24 @@ impl ToolSession {
                 return Err(ToolError::new(&v.rule, v.message));
             }
         }
+        // The ledger kinds' gates read the landed ledger, never the changeset: a
+        // claim on a bind, generate, or verify goal is validated against the row
+        // or record the goal page names, and the refusal carries the repair.
+        // Mirrors docs/compiler/goals/bind.md#gate, generate.md#gate, verify.md#gate.
+        let ledger = match gs.kind.as_str() {
+            "bind" => crate::bind::gate(&self.snapshot, &self.gen, &gs.target),
+            "generate" => {
+                crate::gen::gate(&self.snapshot, &self.gen, &gs.target, true).map(|_| ())
+            }
+            "verify" => crate::verify::gate(&self.snapshot, &self.gen, &gs.target),
+            _ => Ok(()),
+        };
+        if let Err(message) = ledger {
+            return Err(ToolError::new(
+                &format!("{}-gate", gs.kind),
+                format!("{}: {}", gs.goal, message),
+            ));
+        }
         // The fan-out variant's own level faces its count even when the changeset left
         // it alone. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
         if gs.kind == "abstract-entity" {
@@ -2340,7 +2358,48 @@ impl ToolSession {
                 ),
             ));
         }
-        Ok(self.gen.deliverable.join(rel))
+        // Symlinks resolve before the path is trusted: the deepest existing ancestor
+        // is canonicalized and must stay under the canonical deliverable, so a link
+        // inside the deliverable pointing outside is refused like `..`. The part that
+        // does not exist yet (a file about to be written) rides on the resolved
+        // ancestor. Mirrors docs/compiler/tools.md#generation-tools.
+        let root = self.deliverable_root();
+        let joined = root.join(rel);
+        let mut probe = joined.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        while !probe.exists() {
+            let Some(name) = probe.file_name().map(|n| n.to_os_string()) else {
+                break;
+            };
+            tail.push(name);
+            probe = probe
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| root.clone());
+        }
+        let mut resolved = probe.canonicalize().unwrap_or(probe);
+        if !resolved.starts_with(&root) {
+            return Err(ToolError::new(
+                "bad-path",
+                format!(
+                    "`{}` resolves outside the deliverable directory through a symlink; the deliverable is the sandbox",
+                    rel
+                ),
+            ));
+        }
+        for name in tail.into_iter().rev() {
+            resolved.push(name);
+        }
+        Ok(resolved)
+    }
+
+    // The deliverable directory with its own symlinks resolved, the prefix every
+    // sandboxed path must keep.
+    fn deliverable_root(&self) -> std::path::PathBuf {
+        self.gen
+            .deliverable
+            .canonicalize()
+            .unwrap_or_else(|_| self.gen.deliverable.clone())
     }
 
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
@@ -2397,8 +2456,9 @@ impl ToolSession {
             }
             "list_files" => {
                 let rel = Self::opt_str(args, "path").unwrap_or_default();
+                let base = self.deliverable_root();
                 let root = if rel.is_empty() {
-                    self.gen.deliverable.clone()
+                    base.clone()
                 } else {
                     self.deliverable_path(&rel)?
                 };
@@ -2418,9 +2478,14 @@ impl ToolSession {
                         {
                             continue;
                         }
+                        // A link pointing out of the deliverable is not listed:
+                        // what cannot be read is not offered.
+                        if p.canonicalize().is_ok_and(|c| !c.starts_with(&base)) {
+                            continue;
+                        }
                         if p.is_dir() {
                             stack.push(p);
-                        } else if let Ok(r) = p.strip_prefix(&self.gen.deliverable) {
+                        } else if let Ok(r) = p.strip_prefix(&base) {
                             out.push(r.to_string_lossy().replace('\\', "/"));
                         }
                     }
@@ -7841,6 +7906,117 @@ mod tests {
             &json!({"goal": goal, "reason": "the section contradicts itself"}),
         )
         .unwrap();
+    }
+
+    // A claim on a ledger goal is validated against the ledger the goal page names:
+    // with no row or record landed, bind, generate, and verify claims are refused
+    // naming the call that lands one. Mirrors docs/compiler/tools.md#goal-tools.
+    #[test]
+    fn mark_goal_done_on_ledger_goals_reads_the_ledger() {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-ledger-gate-{}-{}",
+            std::process::id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The Cart holds items.".into(),
+                entities: vec!["ent:cart".into()],
+                ..Default::default()
+            },
+        );
+        let goal = |kind: &str, target: &str| Goal {
+            id: format!("g:{}:{}", kind, target),
+            kind: kind.into(),
+            mandatory: true,
+            target: target.into(),
+            ..Default::default()
+        };
+        let goals = vec![
+            goal("bind", "req:t-1"),
+            goal("generate", "ent:cart"),
+            goal("verify", "req:t-1"),
+        ];
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        for (id, rule, repair) in [
+            ("g:bind:req:t-1", "bind-gate", "record_binding"),
+            ("g:generate:ent:cart", "generate-gate", "record_generation"),
+            ("g:verify:req:t-1", "verify-gate", "bind work"),
+        ] {
+            let err = t
+                .dispatch(
+                    "mark_goal_done",
+                    &json!({"goal": id, "justification": "Landed."}),
+                )
+                .unwrap_err();
+            assert_eq!(err.rule, rule);
+            assert!(err.message.contains(repair), "{}", err.message);
+            assert!(err.message.contains(id), "{}", err.message);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The file tools' sandbox holds after symlinks resolve: a link inside the
+    // deliverable pointing outside is refused like `..`, and is not listed.
+    // Mirrors docs/compiler/tools.md#generation-tools.
+    #[test]
+    fn deliverable_paths_resolve_symlinks_before_trusting_them() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-sandbox-{}-{}",
+            std::process::id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let deliverable = base.join("deliverable");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(deliverable.join("src")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(deliverable.join("src").join("ok.txt"), "fine\n").unwrap();
+        std::fs::write(outside.join("secret.txt"), "no\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, deliverable.join("link")).unwrap();
+        let mut t = session();
+        t.gen.deliverable = deliverable.clone();
+        let v = t
+            .dispatch("read_text_file", &json!({"path": "src/ok.txt"}))
+            .unwrap();
+        assert!(v["content"].as_str().unwrap_or_default().contains("fine"), "{}", v);
+        #[cfg(unix)]
+        {
+            let err = t
+                .dispatch("read_text_file", &json!({"path": "link/secret.txt"}))
+                .unwrap_err();
+            assert_eq!(err.rule, "bad-path");
+            assert!(err.message.contains("symlink"), "{}", err.message);
+            let err = t
+                .dispatch(
+                    "write_text_file",
+                    &json!({"path": "link/new.txt", "content": "x"}),
+                )
+                .unwrap_err();
+            assert_eq!(err.rule, "bad-path");
+            assert!(!outside.join("new.txt").exists());
+            let list = t.dispatch("list_files", &json!({})).unwrap();
+            let files: Vec<String> = list["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().to_string())
+                .collect();
+            assert!(files.contains(&"src/ok.txt".to_string()), "{:?}", files);
+            assert!(!files.iter().any(|f| f.starts_with("link")), "{:?}", files);
+        }
+        let err = t
+            .dispatch("read_text_file", &json!({"path": "../outside/secret.txt"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-path");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     // The fan-out variant faces its level's count at mark_goal_done even when the

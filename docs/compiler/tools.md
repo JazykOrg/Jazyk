@@ -284,7 +284,13 @@ clear or keep change records; they are not graph mutations
   goal is complete; the journal records it and `jazyk ripple` shows it beside each
   step. The serving validates the claim against the goal kind's gate when staged and
   again at commit, and rejects a false one with the gate named (each gate is stated on
-  the kind's page under `goals/`). `evidence` carries what the gate reads for kinds
+  the kind's page under `goals/`). The ledger kinds read the landed ledger, never the
+  changeset: a [`bind`](./goals/bind.md#gate) claim needs a current row recorded by
+  `record_binding`, a [`generate`](./goals/generate.md#gate) claim a record with the
+  live `factHash`, existing files, and `run_tests` run since, a
+  [`verify`](./goals/verify.md#gate) claim a verdict standing on a current row; the
+  rejection (`bind-gate`, `generate-gate`, `verify-gate`) names what is missing and
+  the call that lands it. `evidence` carries what the gate reads for kinds
   that ask for it, e.g. a verdict per neighbor for
   [`rejudge-pair`](./goals/rejudge-pair.md). A goal outside the batch is rejected.
 - `mark_goal_failed({goal, reason})`: always accepted. A goal that cannot be
@@ -463,7 +469,11 @@ serves no file editing over MCP. For an agent that brings none (the embedded age
 the serving adds `read_text_file`, `write_text_file`, `list_files`, and `run_command`,
 sandboxed to the deliverable, when the profile sets
 [`serve_files`](./project-settings.md#acp)
-([file and command tools](./goals/generate.md#file-and-command-tools)).
+([file and command tools](./goals/generate.md#file-and-command-tools)). The sandbox
+holds after symlinks resolve: a path is relative, carries no `..`, and its deepest
+existing ancestor canonicalizes under the canonical deliverable directory, so a link
+inside the deliverable that points outside is refused (`bad-path`) like `..` would be,
+and `list_files` does not list it.
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
   the open `generate` goals: `{entity, reason, changed}` where `changed` lists the

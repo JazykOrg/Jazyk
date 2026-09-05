@@ -49,9 +49,16 @@ one draft per session.
 ## Drafts land in the docs tree
 
 There is no shadow tree and no second pipeline. `submit_draft` validates the draft
-(one H1, no em dash, a path the docs glob includes) and writes it as a normal file
-under the docs glob. The compiler picks it up like any hand-written document:
-sections, dirty set, `reconcile-section` sessions, the graph.
+(exactly one H1, no em dash, a project-relative path with no `..` that the docs glob
+includes) and writes it as a normal file under the docs glob. The compiler picks it
+up like any hand-written document: sections, dirty set, `reconcile-section` sessions,
+the graph.
+
+A draft never overwrites a document a person wrote or edited. A path that already
+exists is accepted only when the file on disk is an unedited draft (its content hash
+still equals the hash recorded at submission), so a scope drafted again replaces its
+own earlier draft and nothing else; any other existing file is rejected naming the
+path, and the session picks another.
 
 The out directory records each draft in `decompile/drafts.yaml`: the document path and
 the content hash as submitted. That record is what ratification reads.

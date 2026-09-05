@@ -175,16 +175,21 @@ pub fn submit(
     content: &str,
     scope: Option<&str>,
 ) -> Result<Value, String> {
-    let path = path.trim().trim_start_matches("./");
-    if path.is_empty() || path.contains("..") {
-        return Err("path must be a project-relative documentation path".into());
-    }
+    // A project-relative path under the docs tree, never one that climbs out or
+    // starts at the root (docs/consumers/decompile.md#drafts-land-in-the-docs-tree).
+    let path = crate::gen::confine_rel(path)
+        .map_err(|e| format!("path must be a project-relative documentation path: {}", e))?;
+    let path = path.as_str();
     let content = content.trim_end();
     if content.is_empty() {
         return Err("content is empty; a draft states what the code does".into());
     }
-    if !content.lines().any(|l| l.starts_with("# ")) {
-        return Err("a draft is a document: it needs one H1 heading".into());
+    let h1s = content.lines().filter(|l| l.starts_with("# ")).count();
+    if h1s != 1 {
+        return Err(format!(
+            "a draft is one document with exactly one H1 heading (`# Title`); this one has {}",
+            h1s
+        ));
     }
     if content.contains('\u{2014}') {
         return Err("the draft contains an em dash; the documentation voice uses commas, periods, parentheses, or colons".into());
@@ -208,6 +213,19 @@ pub fn submit(
         ));
     }
     let abs = proj.root.join(path);
+    // A draft never overwrites a document a person wrote or edited: only an
+    // unedited draft at the same path (its hash still the recorded one) is replaced
+    // (docs/consumers/decompile.md#drafts-land-in-the-docs-tree).
+    if abs.exists() {
+        let on_disk = std::fs::read_to_string(&abs).map(|t| hash_hex(&t)).ok();
+        let drafted = drafts(out).get(path).cloned();
+        if on_disk.is_none() || drafted != on_disk {
+            return Err(format!(
+                "`{}` already exists and is not an unedited draft: a person wrote or edited it, and a draft never overwrites that; pick another path, or edit that document by hand",
+                path
+            ));
+        }
+    }
     if let Some(dir) = abs.parent() {
         std::fs::create_dir_all(dir).ok();
     }
@@ -392,6 +410,47 @@ mod tests {
     fn a_draft_outside_the_docs_glob_is_rejected() {
         let (proj, store, _gs) = tmp();
         assert!(submit(&proj, &store.out, "notes/x.md", "# X\n\nBody.", None).is_err());
+        // A climbing or absolute path never reaches the file system.
+        let err = submit(&proj, &store.out, "../x.md", "# X\n\nBody.", None).unwrap_err();
+        assert!(err.contains(".."), "{}", err);
+        let err = submit(&proj, &store.out, "/tmp/x.md", "# X\n\nBody.", None).unwrap_err();
+        assert!(err.contains("absolute"), "{}", err);
+        assert!(!proj.root.join("x.md").exists());
+    }
+
+    // A draft is one document: two H1s are two documents, none is a fragment.
+    // Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
+    #[test]
+    fn a_draft_needs_exactly_one_h1() {
+        let (proj, store, _gs) = tmp();
+        let err = submit(&proj, &store.out, "docs/x.md", "# X\n\nBody.\n\n# Y\n\nMore.", None)
+            .unwrap_err();
+        assert!(err.contains("exactly one H1") && err.contains("2"), "{}", err);
+        assert!(submit(&proj, &store.out, "docs/x.md", "## X\n\nBody.", None).is_err());
+    }
+
+    // A draft never overwrites a document a person wrote or edited; it replaces only
+    // its own unedited predecessor. Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
+    #[test]
+    fn a_draft_never_overwrites_an_edited_document() {
+        let (proj, store, _gs) = tmp();
+        std::fs::create_dir_all(proj.root.join("docs")).unwrap();
+        std::fs::write(proj.root.join("docs/src.md"), "# Src\n\nWritten by hand.\n").unwrap();
+        let err = submit(&proj, &store.out, "docs/src.md", "# Src\n\nDrafted.", None).unwrap_err();
+        assert!(err.contains("not an unedited draft"), "{}", err);
+        assert_eq!(
+            std::fs::read_to_string(proj.root.join("docs/src.md")).unwrap(),
+            "# Src\n\nWritten by hand.\n"
+        );
+        // A draft of its own may be drafted again.
+        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nFirst draft.", None).unwrap();
+        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nSecond draft.", None).unwrap();
+        assert!(std::fs::read_to_string(proj.root.join("docs/lib.md"))
+            .unwrap()
+            .contains("Second"));
+        // Once a person edits it, the draft is theirs.
+        std::fs::write(proj.root.join("docs/lib.md"), "# Lib\n\nSecond draft, reviewed.\n").unwrap();
+        assert!(submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nThird draft.", None).is_err());
     }
 
     #[test]

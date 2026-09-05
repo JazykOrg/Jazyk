@@ -102,7 +102,9 @@ by name; the board notices the gap, with the reason in the record:
   is (an adopted project).
 - `requirement-changed`: the `statement` hash moved. The requirement was reworded, so
   the recorded test judges a sentence the graph does not hold.
-- `artifact-gone`: the test artifact is gone from disk.
+- `artifact-gone`: the test artifact is gone from disk, or a programmatic artifact no
+  longer contains the declared test name (the test was renamed or deleted by hand).
+  Nothing judges the requirement, so the session searches for the test again.
 
 The goal exists exactly while the row is absent or stale and disappears the moment a
 current row lands. A requirement that left the graph derives nothing: its row is

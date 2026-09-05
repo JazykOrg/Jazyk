@@ -101,6 +101,12 @@ impl Default for Options {
 // optional MCP integration for a coding agent. Warns instead of overwriting.
 // Mirrors docs/frontends/cli.md#jazyk-init.
 pub fn run_init(opts: &Options) -> i32 {
+    // A flag naming something jazyk does not know is a usage error before any file
+    // is written: a scaffold followed by a refusal would exit 1 with work done.
+    if let Err(e) = init_flags_known(opts) {
+        eprintln!("jazyk: {}; `jazyk init --help` lists the choices", e);
+        return 2;
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let path = cwd.join("jazyk.toml");
     let mut wrote_something = false;
@@ -160,6 +166,39 @@ pub fn run_init(opts: &Options) -> i32 {
     } else {
         1
     }
+}
+
+// Every `--mcp`, `--agent`, and `--acp` value names a known choice or `none`.
+// Mirrors docs/frontends/cli.md#jazyk-init.
+fn init_flags_known(opts: &Options) -> Result<(), String> {
+    if let Some(m) = opts.mcp.as_deref() {
+        if m != "none" && !MCP_AGENTS.iter().any(|a| a.0 == m) {
+            return Err(format!(
+                "unknown MCP agent `{}`; one of {}, none",
+                m,
+                MCP_AGENTS.iter().map(|a| a.0).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    if let Some(a) = opts.agent.as_deref() {
+        if a != "none" && !ACP_AGENTS.iter().any(|x| x.0 == a) {
+            return Err(format!(
+                "unknown agent `{}`; one of {}, none",
+                a,
+                ACP_AGENTS.iter().map(|x| x.0).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    if let Some(ide) = opts.acp_ide.as_deref() {
+        if ide != "none" && !crate::acp::install::IDES.contains(&ide) {
+            return Err(format!(
+                "unknown editor `{}`; one of {}, none",
+                ide,
+                crate::acp::install::IDES.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 // The starter jazyk.toml `jazyk init` (and the init_project chat tool) writes.
@@ -716,15 +755,33 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
         }
     }
     let (proj, _llm, out) = resolve(&[], opts);
+    let gated_before = crate::board::Board::compute(&proj, &out).counts().gated;
     crate::control::release(&proj, &out, stage);
     let board = crate::board::Board::compute(&proj, &out);
+    let counts = board.counts();
+    let approved = gated_before.saturating_sub(counts.gated);
+    let ready_compile = board.ready_of(&crate::board::Board::graph_kinds());
+    let ready_bind = board.ready_of(&["bind"]);
+    let ready_generate = board.ready_of(&["generate"]);
     println!(
-        "jazyk: released {}: {} compile, {} bind, {} generate goal(s) now ready",
+        "jazyk: released {}: {} gated goal(s) approved; ready now: {} compile, {} bind, {} generate",
         stage.unwrap_or("compile and generate"),
-        board.ready_of(&crate::board::Board::graph_kinds()),
-        board.ready_of(&["bind"]),
-        board.ready_of(&["generate"]),
+        approved,
+        ready_compile,
+        ready_bind,
+        ready_generate,
     );
+    if approved == 0 && gated_before == 0 {
+        println!("jazyk: nothing was gated; in auto mode a release changes nothing");
+    }
+    if ready_compile > 0 {
+        println!("next: `jazyk compile` runs the compile goals (or an attached worker claims them)");
+    }
+    if ready_bind + ready_generate > 0 {
+        println!("next: `jazyk gen` runs the bind and generate goals");
+    } else if counts.gated == 0 && ready_compile == 0 && !board.open_goals().is_empty() {
+        println!("next: no goal is ready yet; `jazyk explain` says what each waits for");
+    }
     0
 }
 
@@ -734,9 +791,13 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
 // Mirrors docs/frontends/cli.md#jazyk-answer.
 pub fn run_answer(args: &[String], opts: &Options) -> i32 {
     let Some(target) = args.first() else {
-        eprintln!("jazyk: answer takes a diagnostic id, a ratify goal, or an answer goal");
+        eprintln!("jazyk: `answer` takes a diagnostic id, a ratify goal, or an answer goal; `jazyk explain` lists the goals blocked on a human");
         return 2;
     };
+    if opts.option.is_some() && opts.text.is_some() {
+        eprintln!("jazyk: `answer` takes one reply: --option N or --text \"...\", not both");
+        return 2;
+    }
     let (proj, _llm, out) = resolve(&[], opts);
     let did = if let Some(rest) = target.strip_prefix("g:answer:") {
         rest.to_string()
@@ -820,8 +881,8 @@ pub fn run_answer(args: &[String], opts: &Options) -> i32 {
 // print the ready work and which MCP tool begins it on every state change. One block
 // per notice, quiet otherwise; --json prints one object per line.
 // Mirrors docs/frontends/cli.md#jazyk-monitor.
-pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
-    let (proj, _llm, out) = resolve(paths, opts);
+pub fn run_monitor(opts: &Options) -> i32 {
+    let (proj, _llm, out) = resolve(&[], opts);
     let json_mode = opts.json;
     let gs = crate::gen::GenSettings::resolve(&proj);
     // The watched surfaces: docs plus the ledger and its files, same as await_changes.
@@ -862,8 +923,10 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
         if once && !has_work {
             return false;
         }
+        // One JSON object per line: the object, then the newline a line reader waits
+        // for. Mirrors docs/frontends/cli.md#jazyk-monitor.
         let rendered = if json_mode {
-            board.answer().to_string()
+            format!("{}\n", board.answer())
         } else {
             let counts = board.counts();
             let mut s = String::new();
@@ -882,12 +945,18 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                         g.hints.first().cloned().unwrap_or_default()
                     ));
                 }
-                for g in board
+                if ready.len() > 5 {
+                    s.push_str(&format!("  ... and {} more ready\n", ready.len() - 5));
+                }
+                // What a human owes prints before what a release owes: the gated
+                // goals share one line below, the human-blocked ones name their ask.
+                let mut blocked: Vec<&crate::model::Goal> = board
                     .goals
                     .iter()
                     .filter(|g| matches!(g.state, crate::model::GoalState::Blocked { .. }))
-                    .take(3)
-                {
+                    .collect();
+                blocked.sort_by_key(|g| !crate::goals::blocked_on_human(&g.kind));
+                for g in blocked.iter().take(3) {
                     s.push_str(&format!(
                         "  blocked: {} {} ({})\n",
                         g.kind,
@@ -898,6 +967,9 @@ pub fn run_monitor(paths: &[String], opts: &Options) -> i32 {
                             .and_then(|r| r.reason())
                             .unwrap_or("")
                     ));
+                }
+                if blocked.len() > 3 {
+                    s.push_str(&format!("  ... and {} more blocked\n", blocked.len() - 3));
                 }
                 if counts.gated > 0 {
                     s.push_str(&format!(
@@ -1168,15 +1240,40 @@ pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
 // status.yaml and the board: the store version, the last verdict with its counts,
 // the live board counts, coverage, diagnostics, the last build's cost, and the
 // unclaimed report. Mirrors docs/frontends/cli.md#jazyk-status.
-pub fn run_status(paths: &[String], opts: &Options) -> i32 {
-    let (proj, _llm, out) = resolve(paths, opts);
+pub fn run_status(opts: &Options) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (proj, _llm, out) = resolve(&[], opts);
+    // Outside a project the store is the ad hoc one at the working directory: say
+    // so, because every other line would otherwise read as a project's.
+    if project::find_root(&cwd).is_none() {
+        eprintln!(
+            "jazyk: no jazyk.toml above {}; reading the ad hoc store at {} (`jazyk init` starts a project here)",
+            cwd.display(),
+            out.display()
+        );
+    }
     let store = Store::load(&out);
-    let s = &store.status;
-    println!("store: version {}, generation {}", s.version, s.generation);
-    println!("verdict: {}", s.verdict);
     // The board is derived from disk the same way compile derives it, so on a tree
     // with pending edits this shows the goals the next build will run.
     let board = crate::board::Board::compute(&proj, &out);
+    let report = status_report(&proj, &store, &board);
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    } else {
+        print!("{}", render_status(&report));
+    }
+    0
+}
+
+// Everything `jazyk status` prints, gathered once: the text and the JSON render the
+// same object. Mirrors docs/frontends/cli.md#jazyk-status.
+pub(crate) fn status_report(
+    proj: &Project,
+    store: &Store,
+    board: &crate::board::Board,
+) -> serde_json::Value {
+    use serde_json::json;
+    let s = &store.status;
     let counts = board.counts();
     let open_of = |class: &str| {
         board
@@ -1191,16 +1288,6 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
             })
             .count()
     };
-    println!(
-        "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional",
-        counts.open,
-        open_of("compile"),
-        open_of("gc"),
-        counts.blocked,
-        counts.parked,
-        counts.failed,
-        counts.optional
-    );
     let (mut total, mut covered) = (0usize, 0usize);
     for rec in store.docs.values() {
         for (r, sec) in &rec.sections {
@@ -1218,50 +1305,35 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
     } else {
         covered * 100 / total
     };
-    println!("coverage: {}% ({} of {} sections)", pct, covered, total);
     let mut by_sev: std::collections::BTreeMap<&str, usize> = Default::default();
     for d in store.graph.diagnostics.values() {
         if d.lifecycle == "open" && d.triage.as_deref() != Some("suppressed") {
             *by_sev.entry(d.severity.as_str()).or_default() += 1;
         }
     }
-    println!(
-        "diagnostics: {}",
-        if by_sev.is_empty() {
-            "none".to_string()
-        } else {
-            by_sev
-                .iter()
-                .map(|(k, v)| format!("{} {}{}", v, k, if *v == 1 { "" } else { "s" }))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }
-    );
-    println!("{}", shape_line(&store));
+    let shape = reconcile::shape(store);
     // The last build's cost, with the biggest goal kind's share beside the totals.
     let c = &s.costs;
-    if c.sessions > 0 || c.tokens > 0 {
-        let tokens = if c.tokens >= 1000 {
-            format!("{}k", c.tokens / 1000)
-        } else {
-            c.tokens.to_string()
-        };
-        let mut line = format!("cost: {} sessions, {} tokens", c.sessions, tokens);
-        if let Some((kind, l)) = c.by_kind.iter().max_by_key(|(_, l)| (l.tokens, l.sessions)) {
-            let share = if c.tokens > 0 {
-                l.tokens * 100 / c.tokens
-            } else {
-                l.sessions * 100 / c.sessions.max(1)
-            };
-            if share > 0 {
-                line.push_str(&format!(" ({}% {})", share, kind));
-            }
-        }
-        println!("{}", line);
-    }
+    let cost = if c.sessions > 0 || c.tokens > 0 {
+        let top = c
+            .by_kind
+            .iter()
+            .max_by_key(|(_, l)| (l.tokens, l.sessions))
+            .map(|(kind, l)| {
+                let share = if c.tokens > 0 {
+                    l.tokens * 100 / c.tokens
+                } else {
+                    l.sessions * 100 / c.sessions.max(1)
+                };
+                json!({"kind": kind, "share": share})
+            });
+        json!({"sessions": c.sessions, "tokens": c.tokens, "top": top})
+    } else {
+        serde_json::Value::Null
+    };
     // The unattached remainder, summed over the ledger: generated mass no
     // requirement claims. Mirrors docs/consumers/gen.md#the-unattached-remainder.
-    let ledger = crate::gen::Ledger::load(&out);
+    let ledger = crate::gen::Ledger::load(&store.out);
     let measured: Vec<(&String, &crate::gen::Unattached)> = ledger
         .entities
         .iter()
@@ -1270,7 +1342,7 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
     let (ufiles, ulines) = measured
         .iter()
         .fold((0u64, 0u64), |(f, l), (_, u)| (f + u.files, l + u.lines));
-    if ufiles > 0 || ulines > 0 {
+    let unattached = if ufiles > 0 || ulines > 0 {
         let worst = measured
             .iter()
             .max_by(|a, b| {
@@ -1279,33 +1351,207 @@ pub fn run_status(paths: &[String], opts: &Options) -> i32 {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap();
-        println!(
-            "unattached: {} file(s), {} line(s) (worst {} at {:.2})",
-            ufiles, ulines, worst.0, worst.1.ratio
-        );
-    }
+        json!({"files": ufiles, "lines": ulines, "worst": {"entity": worst.0, "ratio": worst.1.ratio}})
+    } else {
+        serde_json::Value::Null
+    };
     // The unclaimed report: deliverable files no binding names, the decompilation
     // worklist. Mirrors docs/consumers/bind.md#the-unclaimed-report.
-    let gs = crate::gen::GenSettings::resolve(&proj);
-    let un = crate::bind::unclaimed(&proj, &store, &gs);
-    if !un.is_empty() {
-        println!(
-            "unclaimed: {} file(s) no binding names (`jazyk decompile` drafts docs for them)",
-            un.len()
-        );
-        for f in un.iter().take(8) {
-            println!("  - {}", f);
-        }
-        if un.len() > 8 {
-            println!("  ... and {} more", un.len() - 8);
-        }
-    }
+    let gs = crate::gen::GenSettings::resolve(proj);
+    let unclaimed = crate::bind::unclaimed(proj, store, &gs);
     // The medium warning: the ledger's toolchain and the recorded run commands
     // disagree. Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
-    if let Some(w) = crate::gen::medium_divergence(&crate::gen::Ledger::load(&store.out)) {
-        println!("medium: {}", w);
+    let medium = crate::gen::medium_divergence(&ledger);
+    // What moves the board from here, one line per owed action, the human's first.
+    let human: Vec<&crate::model::Goal> = board
+        .goals
+        .iter()
+        .filter(|g| {
+            matches!(g.state, crate::model::GoalState::Blocked { .. })
+                && crate::goals::blocked_on_human(&g.kind)
+        })
+        .collect();
+    let failed: Vec<&crate::model::Goal> = board
+        .goals
+        .iter()
+        .filter(|g| matches!(g.state, crate::model::GoalState::Failed { .. }))
+        .collect();
+    let mut next: Vec<String> = Vec::new();
+    // No verdict on record: no build has run here yet.
+    if s.verdict.state.is_empty() {
+        next.push("`jazyk compile` runs the first build".to_string());
     }
-    0
+    if let Some(g) = human.first() {
+        next.push(format!(
+            "{} goal(s) wait on a human: `jazyk answer {}` lists the options",
+            human.len(),
+            g.id
+        ));
+    }
+    if counts.ready > 0 {
+        let ledger_ready = board.ready_of(&crate::board::LEDGER_KINDS);
+        let compile_ready = counts.ready.saturating_sub(ledger_ready);
+        if compile_ready > 0 {
+            next.push(format!(
+                "{} goal(s) ready: `jazyk compile` runs them (`jazyk preview` shows the first prompt)",
+                compile_ready
+            ));
+        }
+        if ledger_ready > 0 {
+            next.push(format!(
+                "{} bind, generate, or verify goal(s) ready: `jazyk gen` binds and generates, `jazyk test` verifies",
+                ledger_ready
+            ));
+        }
+    }
+    if counts.gated > 0 {
+        let ledger_gated = board.gated_of(&crate::board::LEDGER_KINDS);
+        let compile_gated = counts.gated.saturating_sub(ledger_gated);
+        if compile_gated > 0 {
+            next.push(format!(
+                "{} goal(s) await a compile release: `jazyk release compile` approves them (or `jazyk compile`, a typed command is an approval)",
+                compile_gated
+            ));
+        }
+        if ledger_gated > 0 {
+            next.push(format!(
+                "{} bind or generate goal(s) await a generate release: `jazyk release generate` approves them (or `jazyk gen`)",
+                ledger_gated
+            ));
+        }
+    }
+    if let Some(g) = failed.first() {
+        next.push(format!(
+            "{} failed goal(s): `jazyk explain {}` shows the reason",
+            failed.len(),
+            g.id
+        ));
+    }
+    if next.is_empty() {
+        if board.open_goals().is_empty() {
+            next.push("nothing to do; the graph reflects the docs".to_string());
+        } else {
+            next.push(
+                "no goal is ready; `jazyk explain` says what each open goal waits for".to_string(),
+            );
+        }
+    }
+    json!({
+        "root": proj.root.display().to_string(),
+        "out": store.out.display().to_string(),
+        "version": s.version,
+        "generation": s.generation,
+        "verdict": s.verdict.to_string(),
+        "board": {
+            "open": counts.open,
+            "compile": open_of("compile"),
+            "gc": open_of("gc"),
+            "blocked": counts.blocked,
+            "parked": counts.parked,
+            "failed": counts.failed,
+            "optional": counts.optional,
+            "ready": counts.ready,
+            "gated": counts.gated,
+        },
+        "coverage": {"percent": pct, "covered": covered, "total": total},
+        "diagnostics": by_sev,
+        "medium": medium,
+        "shape": {"perDepth": shape.per_depth, "bands": shape.bands, "line": shape_line(store)},
+        "cost": cost,
+        "unattached": unattached,
+        "unclaimed": unclaimed,
+        "next": next,
+    })
+}
+
+// The text form of the status report, one line per field in the documented order.
+pub(crate) fn render_status(r: &serde_json::Value) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "store: version {}, generation {}\n",
+        r["version"], r["generation"]
+    ));
+    s.push_str(&format!("verdict: {}\n", r["verdict"].as_str().unwrap_or("")));
+    let b = &r["board"];
+    s.push_str(&format!(
+        "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional\n",
+        b["open"], b["compile"], b["gc"], b["blocked"], b["parked"], b["failed"], b["optional"]
+    ));
+    let c = &r["coverage"];
+    s.push_str(&format!(
+        "coverage: {}% ({} of {} sections)\n",
+        c["percent"], c["covered"], c["total"]
+    ));
+    let diags = r["diagnostics"].as_object();
+    s.push_str(&format!(
+        "diagnostics: {}\n",
+        match diags {
+            Some(m) if !m.is_empty() => m
+                .iter()
+                .map(|(k, v)| {
+                    let n = v.as_u64().unwrap_or(0);
+                    format!("{} {}{}", n, k, if n == 1 { "" } else { "s" })
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "none".to_string(),
+        }
+    ));
+    if let Some(m) = r["medium"].as_str() {
+        s.push_str(&format!("medium: {}\n", m));
+    }
+    s.push_str(&format!("{}\n", r["shape"]["line"].as_str().unwrap_or("")));
+    if let Some(cost) = r["cost"].as_object() {
+        let tokens = cost["tokens"].as_u64().unwrap_or(0);
+        let tokens = if tokens >= 1000 {
+            format!("{}k", tokens / 1000)
+        } else {
+            tokens.to_string()
+        };
+        let mut line = format!("cost: {} sessions, {} tokens", cost["sessions"], tokens);
+        if let Some(top) = cost["top"].as_object() {
+            if top["share"].as_u64().unwrap_or(0) > 0 {
+                line.push_str(&format!(
+                    " ({}% {})",
+                    top["share"],
+                    top["kind"].as_str().unwrap_or("")
+                ));
+            }
+        }
+        s.push_str(&line);
+        s.push('\n');
+    }
+    if let Some(u) = r["unattached"].as_object() {
+        s.push_str(&format!(
+            "unattached: {} file(s), {} line(s) (worst {} at {:.2})\n",
+            u["files"],
+            u["lines"],
+            u["worst"]["entity"].as_str().unwrap_or(""),
+            u["worst"]["ratio"].as_f64().unwrap_or(0.0)
+        ));
+    }
+    let un: Vec<&str> = r["unclaimed"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if !un.is_empty() {
+        s.push_str(&format!(
+            "unclaimed: {} file(s) no binding names (`jazyk decompile` drafts docs for them)\n",
+            un.len()
+        ));
+        for f in un.iter().take(8) {
+            s.push_str(&format!("  - {}\n", f));
+        }
+        if un.len() > 8 {
+            s.push_str(&format!("  ... and {} more\n", un.len() - 8));
+        }
+    }
+    if let Some(next) = r["next"].as_array() {
+        for n in next.iter().filter_map(|v| v.as_str()) {
+            s.push_str(&format!("next: {}\n", n));
+        }
+    }
+    s
 }
 
 // The shape line: the entity count per depth of the containment tree (the parentless
@@ -1347,77 +1593,155 @@ pub fn shape_line(store: &Store) -> String {
 // Mirrors docs/frontends/cli.md#jazyk-preview.
 pub fn run_preview(args: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(&[], opts);
-    let mut store = Store::load(&out);
-    let (parsed, _) = reconcile::parse_all(&proj);
-    store.sync_docs(&parsed);
-    let control = crate::control::Control::load(&proj, &out);
-    let board = crate::board::Board::derive(&store, &proj, &control);
+    let (store, control, board) = board_from_disk(&proj, &out);
     let target = args.first().map(String::as_str).unwrap_or("").trim();
+    match preview_text(&store, &control, &board, target) {
+        Ok(text) => {
+            print!("{}", text);
+            0
+        }
+        Err(text) => {
+            // What the human owes prints on stdout (it is the answer); a reason
+            // nothing rendered prints on stderr.
+            if text.starts_with("jazyk:") {
+                eprintln!("{}", text);
+            } else {
+                print!("{}", text);
+            }
+            1
+        }
+    }
+}
 
+// The store with the documents on disk synced in, the control plane, and the board
+// derived from them: what `preview` and `explain` read. Nothing is committed.
+fn board_from_disk(
+    proj: &Project,
+    out: &std::path::Path,
+) -> (Store, crate::control::Control, crate::board::Board) {
+    let mut store = Store::load(out);
+    let (parsed, _) = reconcile::parse_all(proj);
+    store.sync_docs(&parsed);
+    let control = crate::control::Control::load(proj, out);
+    let board = crate::board::Board::derive(&store, proj, &control);
+    (store, control, board)
+}
+
+// The prompt a batch receives, assembled the way the runner, the MCP serving, and
+// the GUI assemble it: the project block carries the mode the control plane holds
+// and the batch id the board minted, so the protocol line names the batch
+// `begin_goals` will accept. Mirrors docs/frontends/cli.md#jazyk-preview.
+fn batch_prompt(
+    store: &Store,
+    control: &crate::control::Control,
+    goals: &[crate::model::Goal],
+    batch_id: &str,
+) -> String {
+    let (loaded, skills) = crate::session::initial_loaded(store, goals);
+    let mut pb = crate::session::ProjectBlock::compute(store, goals, &control.compile);
+    pb.batch = batch_id.to_string();
+    crate::session::session_prompt(store, goals, &loaded, &skills, &pb)
+}
+
+// The text `jazyk preview` prints: Ok with a rendered prompt (exit 0), Err with the
+// human path or the reason nothing rendered (exit 1).
+pub(crate) fn preview_text(
+    store: &Store,
+    control: &crate::control::Control,
+    board: &crate::board::Board,
+    target: &str,
+) -> Result<String, String> {
     if target.is_empty() {
         // The batch the scheduler would claim next.
         let Some(batch) = board.batches.first() else {
-            if board.open_goals().is_empty() {
-                eprintln!(
+            return Err(if board.open_goals().is_empty() {
+                format!(
                     "jazyk: nothing to preview; the board is empty ({})",
                     board.verdict()
-                );
+                )
             } else {
-                eprintln!(
-                    "jazyk: no ready batch; `jazyk explain` says what every open goal waits for"
-                );
-            }
-            return 1;
+                "jazyk: no ready batch; `jazyk explain` says what every open goal waits for"
+                    .to_string()
+            });
         };
-        let goals = batch_goals(&board, batch);
-        print!("{}", crate::session::preview(&store, &goals));
-        return 0;
+        return Ok(batch_prompt(
+            store,
+            control,
+            &batch_goals(board, batch),
+            &batch.id,
+        ));
     }
-
-    // A goal id, a batch id, or a target with goals on it.
+    // A batch id, as the board lists them.
+    if let Some(batch) = board.batches.iter().find(|b| b.id == target) {
+        return Ok(batch_prompt(
+            store,
+            control,
+            &batch_goals(board, batch),
+            &batch.id,
+        ));
+    }
+    // A goal id, or a target with goals on it: a node id, a section reference, or a
+    // document path (whose goals sit on its sections).
     let goal = board.goal(target).cloned().or_else(|| {
-        let on_target: Vec<&crate::model::Goal> =
-            board.goals.iter().filter(|g| g.target == target).collect();
+        let doc_prefix = (!target.contains('#')).then(|| format!("{}#", target));
+        let on_target: Vec<&crate::model::Goal> = board
+            .goals
+            .iter()
+            .filter(|g| {
+                g.target == target
+                    || doc_prefix
+                        .as_ref()
+                        .is_some_and(|p| g.target.starts_with(p.as_str()))
+            })
+            .collect();
         on_target
             .iter()
             .find(|g| board.is_ready(&g.id))
             .or_else(|| on_target.first())
             .map(|g| (*g).clone())
     });
-    if goal.is_none() {
-        if let Some(batch) = board.batches.iter().find(|b| b.id == target) {
-            let goals = batch_goals(&board, batch);
-            print!("{}", crate::session::preview(&store, &goals));
-            return 0;
-        }
-    }
     let Some(goal) = goal else {
-        eprintln!(
-            "jazyk: no goal on `{}`; `jazyk explain` lists the board",
-            target
-        );
-        return 1;
+        return Err(format!(
+            "jazyk: no goal on `{}`; `jazyk explain` lists the board, `jazyk explain {}` what a change there would open",
+            target, target
+        ));
     };
     // ratify and answer have no session: print the human path instead of a prompt.
     if crate::goals::blocked_on_human(&goal.kind) {
-        println!("{} is blocked on a human; no session runs for it", goal.id);
-        println!("  owed: {}", crate::session::gate_line(&goal.kind));
-        println!("  change: {}", crate::session::change_line(&goal));
+        let mut s = format!(
+            "{} is blocked on a human; no session runs for it\n",
+            goal.id
+        );
+        s.push_str(&format!(
+            "  owed: {}\n",
+            crate::session::gate_line(&goal.kind)
+        ));
+        s.push_str(&format!(
+            "  change: {}\n",
+            crate::session::change_line(&goal)
+        ));
         for h in &goal.hints {
-            println!("  hint: {}", h);
+            s.push_str(&format!("  hint: {}\n", h));
         }
-        return 1;
+        s.push_str(&format!(
+            "  next: `jazyk answer {}` lists the options\n",
+            goal.id
+        ));
+        return Err(s);
     }
     // The batch the goal joins; a goal in no scheduled batch renders alone, behind
-    // the readiness reason.
+    // the readiness reason, under a placeholder id the scheduler has not minted.
     if let Some(batch) = board
         .batches
         .iter()
         .find(|b| b.goals.iter().any(|id| id == &goal.id))
     {
-        let goals = batch_goals(&board, batch);
-        print!("{}", crate::session::preview(&store, &goals));
-        return 0;
+        return Ok(batch_prompt(
+            store,
+            control,
+            &batch_goals(board, batch),
+            &batch.id,
+        ));
     }
     let reason = match board.readiness.get(&goal.id) {
         Some(crate::goals::Ready::Blocked(r)) => r.clone(),
@@ -1429,9 +1753,13 @@ pub fn run_preview(args: &[String], opts: &Options) -> i32 {
             None => "not scheduled in a ready batch".to_string(),
         },
     };
-    println!("not ready: {}", reason);
-    print!("{}", crate::session::preview(&store, &[goal]));
-    0
+    let placeholder = format!("b{}-?", store.status.generation);
+    Ok(format!(
+        "not ready: {} (the batch id {} below is a placeholder until the scheduler forms its batch)\n{}",
+        reason,
+        placeholder,
+        batch_prompt(store, control, std::slice::from_ref(&goal), &placeholder)
+    ))
 }
 
 fn batch_goals(
@@ -1450,11 +1778,7 @@ fn batch_goals(
 // Mirrors docs/frontends/cli.md#jazyk-explain.
 pub fn run_explain(args: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(&[], opts);
-    let mut store = Store::load(&out);
-    let (parsed, _) = reconcile::parse_all(&proj);
-    store.sync_docs(&parsed);
-    let control = crate::control::Control::load(&proj, &out);
-    let board = crate::board::Board::derive(&store, &proj, &control);
+    let (store, _control, board) = board_from_disk(&proj, &out);
     let target = args.first().map(String::as_str).unwrap_or("").trim();
     if target.is_empty() {
         println!("{}", board.summary_line());
@@ -1472,7 +1796,10 @@ pub fn run_explain(args: &[String], opts: &Options) -> i32 {
             0
         }
         None => {
-            eprintln!("jazyk: `{}` names no goal and no known target", target);
+            eprintln!(
+                "jazyk: `{}` names no goal and no known target; a goal is g:<kind>:<target>, a target is a node id (ent:..., req:..., view:...), a section reference (doc.md#/ref), or a document path",
+                target
+            );
             1
         }
     }
@@ -1611,8 +1938,8 @@ pub fn run_decompile(opts: &Options, scopes: &[String]) -> i32 {
 // `jazyk context <target>`: exactly what `load` renders, then the status block.
 // `--expand HANDLE` follows the named handles first, as `expand` would.
 // Mirrors docs/frontends/cli.md#jazyk-context.
-pub fn run_context(paths: &[String], opts: &Options, target: &str) -> i32 {
-    let (_proj, _llm, out) = resolve(paths, opts);
+pub fn run_context(opts: &Options, target: &str) -> i32 {
+    let (_proj, _llm, out) = resolve(&[], opts);
     let store = Store::load(&out);
     let depth = opts.depth.unwrap_or(1);
     match context::cli_context(&store, target, depth, &opts.expand) {
@@ -1891,16 +2218,27 @@ pub fn run_viewer(opts: &Options) -> i32 {
     }
 }
 
-pub fn run_query(paths: &[String], opts: &Options, query: &str) -> i32 {
-    let (_proj, _llm, out) = resolve(paths, opts);
+// The search tool from the terminal: one `id (name): definition` line per match, or
+// one JSON object per line under --json. Mirrors docs/frontends/cli.md#jazyk-query.
+pub fn run_query(opts: &Options, query: &str) -> i32 {
+    let (_proj, _llm, out) = resolve(&[], opts);
     let store = Store::load(&out);
     let hits = store.search(query);
     if hits.is_empty() {
-        println!("no matches");
+        if !opts.json {
+            eprintln!("jazyk: no entity matches `{}`", query);
+        }
         return 1;
     }
     for (id, name, def) in hits {
-        println!("{} ({}): {}", id, name, def);
+        if opts.json {
+            println!(
+                "{}",
+                serde_json::json!({"id": id, "name": name, "definition": def})
+            );
+        } else {
+            println!("{} ({}): {}", id, name, def);
+        }
     }
     0
 }
@@ -1953,22 +2291,105 @@ mod tests {
     }
 
     // The help text names the goal commands and carries no em dash anywhere; the
-    // top line says goal-based. Mirrors docs/frontends/cli.md#help.
+    // top line says goal-based. Every command the top usage lists has a shape (its
+    // arity and options) and a help page of its own, and each help page names only
+    // options the parser accepts for it. Mirrors docs/frontends/cli.md#help.
     #[test]
     fn help_lists_the_goal_commands() {
         let usage = crate::top_usage();
-        for cmd in ["preview", "explain", "ripple"] {
+        for cmd in ["preview", "explain", "ripple", "acp", "monitor", "release", "answer"] {
             assert!(usage.contains(cmd), "`{}` missing from the top usage", cmd);
         }
         assert!(usage.contains("goal-based"), "{}", usage);
         assert!(!usage.contains('\u{2014}'), "em dash in the top usage");
-        for cmd in [
-            "compile", "check", "watch", "status", "preview", "explain", "ripple", "context",
-            "monitor", "release", "answer", "gen", "test", "mcp", "docsgen",
-        ] {
-            let u = crate::cmd_usage(cmd).expect(cmd);
+        for (line, _) in crate::COMMANDS {
+            let cmd = line.split_whitespace().next().unwrap();
+            let (_, extra) = crate::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
+            let u = crate::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);
+            for opt in extra.iter() {
+                assert!(
+                    u.contains(opt),
+                    "`{}` honors {} but its help does not mention it",
+                    cmd,
+                    opt
+                );
+            }
         }
+    }
+
+    // A one-document project in a temp dir: the smallest board with a ready batch.
+    fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
+        let project = Project::load(&dir);
+        let out = project.out.clone();
+        std::fs::create_dir_all(&out).unwrap();
+        crate::control::Control {
+            compile: "auto".into(),
+            ..Default::default()
+        }
+        .save(&out);
+        (project, out)
+    }
+
+    // The previewed PROTOCOL line names the batch the board minted (b<generation>-<n>,
+    // numbered from 1), the same id `begin_goals` accepts: a preview formatting its
+    // own id sent a real session's first call into `no-ready-batch`. The batch id and
+    // a document path resolve to the same prompt. Mirrors docs/frontends/cli.md#jazyk-preview.
+    #[test]
+    fn preview_names_the_boards_own_batch() {
+        let (proj, out) = temp_project("preview");
+        let (store, control, board) = board_from_disk(&proj, &out);
+        let batch = board.batches.first().expect("a ready batch").clone();
+        assert!(!batch.id.ends_with("-0"), "batches number from 1: {}", batch.id);
+
+        let text = preview_text(&store, &control, &board, "").unwrap();
+        let proto = text
+            .lines()
+            .find(|l| l.starts_with("PROTOCOL"))
+            .expect("a protocol line");
+        assert!(proto.contains(&batch.id), "{}", proto);
+        assert!(!proto.contains(&format!("b{}-0", store.status.generation)), "{}", proto);
+        // The mode is the control plane's, never a constant.
+        assert!(text.contains("auto mode"), "{}", text);
+
+        assert_eq!(preview_text(&store, &control, &board, &batch.id).unwrap(), text);
+        let by_doc = preview_text(&store, &control, &board, "docs/a.md").unwrap();
+        assert!(by_doc.contains(&batch.id), "{}", by_doc);
+        assert!(preview_text(&store, &control, &board, "b0-99").is_err());
+        assert!(preview_text(&store, &control, &board, "ent:ghost").is_err());
+        std::fs::remove_dir_all(proj.root).ok();
+    }
+
+    // `jazyk status` closes with what to do next: on a fresh project the first build,
+    // and the ready count with the command that runs it; the JSON carries the same
+    // lines. Mirrors docs/frontends/cli.md#jazyk-status.
+    #[test]
+    fn status_says_what_to_do_next() {
+        let (proj, out) = temp_project("status");
+        let (store, _control, board) = board_from_disk(&proj, &out);
+        let report = status_report(&proj, &store, &board);
+        let next: Vec<&str> = report["next"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(next.iter().any(|n| n.contains("`jazyk compile` runs the first build")), "{:?}", next);
+        assert!(next.iter().any(|n| n.contains("ready: `jazyk compile` runs them")), "{:?}", next);
+        let text = render_status(&report);
+        assert!(text.starts_with("store: version"), "{}", text);
+        assert!(text.contains("\nnext: "), "{}", text);
+        assert!(text.contains("shape: "), "{}", text);
+        std::fs::remove_dir_all(proj.root).ok();
     }
 
     // The verdict line the build prints last carries the counts, in both shapes.

@@ -19,11 +19,15 @@ the [ledger](../../consumers/gen.md#the-ledger):
   stereotype, attributes, every referencing statement with its edges) differs from
   the live graph. `detail.changed` lists
   the requirement ids added, removed, or reworded since the last generation.
+- `files-gone`: the entity has a ledger entry whose facts match, but a file it records
+  is gone from the deliverable (deleted by hand). `detail.changed` lists the missing
+  files. The part has to be written again before its rows can be judged.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
   is `unimplemented` (the test fails and nothing implements it). The bound test is
   the acceptance gate; generation is the work that clears it.
 
-An entity with no ledger entry becomes generation work through `unimplemented` rows
+The reasons are checked in that order and the first that holds names the goal. An
+entity with no ledger entry becomes generation work through `unimplemented` rows
 only: [`bind`](./bind.md) classifies first, and an adopted entity whose rows all read
 `verified` derives nothing. An entity with no requirement derives nothing.
 `jazyk gen --force` regenerates the named entities against the recorded decision
@@ -73,13 +77,20 @@ ledger, not the model's word:
   record, or a stale `factHash`, is rejected naming the gate. A `factHash` that moved
   mid-session is recorded but leaves the entity pending: the goal derives again with
   the new facts.
-- `record_generation` applies the shape gates: a programmatic row with an empty
-  `artifact` or `run` is rejected naming the row; a declared test name absent from
-  the artifact, or a present test left undeclared, gets one corrective retry; a path
-  another entity owns is rejected with the owner named
+- `record_generation` applies the shape gates, all before any side effect: a
+  programmatic row with an empty `artifact` or `run` is rejected naming the row; a
+  row whose artifact does not exist, or a programmatic row whose artifact does not
+  contain the declared test name, is rejected naming the row and the file (the same
+  gate `record_binding` applies; the pipeline worker gets one corrective retry before
+  it records, and a row still wrong after it falls back to `llm`); a path that
+  escapes the deliverable is rejected naming it; a path another entity owns is
+  rejected with the owner named
   ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)); a
   `built` medium with no build recorded anywhere is rejected
-  ([the build](../../consumers/gen.md#the-build)).
+  ([the build](../../consumers/gen.md#the-build)). A record that lands removes the
+  files the entity's previous record listed and this manifest omits
+  ([incremental regeneration](../../consumers/gen.md#incremental-regeneration)) and
+  names them in its reply.
 - A session that recorded and ended without marking still resolves the goal at the
   next derivation. A session that never recorded has not resolved it: retry once with
   a fresh session, then park
@@ -136,8 +147,11 @@ build                              the recorded build (reuse and extend, never a
 runCommands                        the established toolchain; reuse it
 changed                            requirement ids added, removed, or reworded
 generatedFiles                     other entities' files with what each holds; never write to them
+supportFiles                       the deliverable-wide files any session may rewrite
+buildEntry, buildError             the build's entry with its content; the standing failure, if any
 boundTests                         tests binding wrote; make them pass
-requirementGroups                  each requirement with its testName, statement, quote
+requirementGroups                  each requirement with its testName, statement, quote, openDiagnostics
+contradicted, mediumWarning        the disputed requirements; the medium's standing divergence
 context                            the entity's neighborhood (../context.md#rendering)
 ```
 

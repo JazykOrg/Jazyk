@@ -475,15 +475,14 @@ fn level_page_text(store: &Store, target: &str) -> String {
             if let Some(st) = &ent.stereotype {
                 s.push_str(&format!(" · «{}»", st));
             }
+            if let Some(d) = &ent.definition {
+                s.push_str(&format!(" · {}", d));
+            }
             s.push_str(&format!(
                 " · [card]({}) · [entity page]({})\n\n",
                 rel(LEVELS_DIR, &card_path(target)),
                 rel(LEVELS_DIR, &doc_path(target))
             ));
-            if let Some(d) = &ent.definition {
-                s.push_str(d);
-                s.push_str("\n\n");
-            }
             if let Some(p) = &ent.provenance {
                 s.push_str(&format!(
                     "This entity is {} ({}); see its [proposals]({}#proposals).\n\n",
@@ -1260,14 +1259,14 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         let mut s = String::new();
         s.push_str(&format!("# {}\n\n", ent.name));
         s.push_str(&format!("`{}`", id));
+        if !ent.aliases.is_empty() {
+            s.push_str(&format!(" · also known as: {}", ent.aliases.join(", ")));
+        }
         if let Some(st) = &ent.stereotype {
             s.push_str(&format!(" · «{}»", st));
         }
         if ent.scope != "public" {
             s.push_str(&format!(" · scope `{}`", ent.scope));
-        }
-        if !ent.aliases.is_empty() {
-            s.push_str(&format!(" · also known as: {}", ent.aliases.join(", ")));
         }
         // The one link out of the documents' web: the card, where the walk starts.
         s.push_str(&format!(" · [card]({})", rel(DOCS_DIR, &card_path(id))));
@@ -1301,6 +1300,25 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             }
             s.push_str(&line);
             s.push_str("\n\n");
+        }
+        // The level pages: the parent's level (the scope root's for a parentless
+        // entity) and the entity's own when it has one.
+        {
+            let parent_target = match &ent.parent {
+                Some(p) => store.resolve_id(p).to_string(),
+                None => format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, ent.scope),
+            };
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(l) = level_link(store, &parent_target, DOCS_DIR) {
+                parts.push(format!("Level: {}", l));
+            }
+            if let Some(l) = level_link(store, id, DOCS_DIR) {
+                parts.push(format!("Own level: {}", l));
+            }
+            if !parts.is_empty() {
+                s.push_str(&parts.join(" · "));
+                s.push_str("\n\n");
+            }
         }
         if !ent.attributes.is_empty() {
             s.push_str("Attributes:\n\n");
@@ -1562,7 +1580,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                         store.graph.entities[m].name,
                         rel(DOCS_DIR, &card_path(m))
                     );
-                    if n > 0 {
+                    if n >= 2 {
                         format!("{} ({} children)", link, n)
                     } else {
                         link
@@ -1708,9 +1726,149 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 idx.push_str("\n\n");
             }
         }
+        idx.push_str("Reports: [glossary](./glossary.md) · [fragmentation](./fragmentation.md) · [staleness](./staleness.md)\n\n");
         std::fs::write(dir.join("index.md"), idx).ok();
+        written += write_reports(store, &dir);
     }
     written
+}
+
+// The three reports the index links: the glossary, the fragmentation report, and the
+// staleness report. Mirrors docs/consumers/docsgen.md#glossary,
+// docs/consumers/docsgen.md#fragmentation-reports, and
+// docs/consumers/docsgen.md#staleness-reports.
+fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
+    // A link into a source document: relative from docsgen when the out directory
+    // sits where the default puts it, the bare reference otherwise.
+    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some("jazyk-out");
+    let section_link = |doc: &str, section: &str| -> String {
+        let text = format!("{}#{}", doc, section);
+        if default_out {
+            format!("[{}](../../{}#{})", text, doc, crate::md::slug(section.trim_start_matches('/')))
+        } else {
+            format!("`{}`", text)
+        }
+    };
+    // Glossary.
+    let mut g = String::from("# Glossary\n\n");
+    let mut entities: Vec<(&String, &crate::model::Entity)> = store.graph.entities.iter().collect();
+    entities.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()).then(a.0.cmp(b.0)));
+    for (id, e) in &entities {
+        let mut line = format!("- **{}**", e.name);
+        if !e.aliases.is_empty() {
+            line.push_str(&format!(" (also: {})", e.aliases.join(", ")));
+        }
+        if let Some(st) = &e.stereotype {
+            line.push_str(&format!(" «{}»", st));
+        }
+        if let Some(d) = &e.definition {
+            line.push_str(&format!(": {}", d));
+        }
+        line.push_str(&format!(" · [card]({})", rel(DOCS_DIR, &card_path(id))));
+        let mut secs: Vec<(String, String)> = e
+            .mentions
+            .iter()
+            .map(|m| (m.doc.clone(), m.section.clone()))
+            .collect();
+        secs.sort();
+        secs.dedup();
+        if !secs.is_empty() {
+            let links: Vec<String> = secs.iter().map(|(d, sct)| section_link(d, sct)).collect();
+            line.push_str(&format!(" · sections: {}", links.join(", ")));
+        }
+        g.push_str(&line);
+        g.push('\n');
+    }
+    std::fs::write(dir.join("glossary.md"), g).ok();
+    // Fragmentation.
+    let mut rows: Vec<(usize, usize, String, String, Vec<String>)> = Vec::new();
+    for (id, e) in &store.graph.entities {
+        let mut docs: Vec<String> = e.mentions.iter().map(|m| m.doc.clone()).collect();
+        docs.sort();
+        docs.dedup();
+        let mut secs: Vec<(String, String)> = e
+            .mentions
+            .iter()
+            .map(|m| (m.doc.clone(), m.section.clone()))
+            .collect();
+        secs.sort();
+        secs.dedup();
+        if docs.len() > 1 {
+            rows.push((docs.len(), secs.len(), e.name.clone(), id.clone(), docs));
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    let mut f = String::from("# Fragmentation\n\nEntities whose mentions span several documents, most spread first.\n\n");
+    if rows.is_empty() {
+        f.push_str("No entity is mentioned in more than one document.\n");
+    }
+    for (nd, ns, name, id, docs) in &rows {
+        f.push_str(&format!(
+            "- [{}]({}): {} documents, {} sections: {}\n",
+            name,
+            rel(DOCS_DIR, &card_path(id)),
+            nd,
+            ns,
+            docs.join(", ")
+        ));
+    }
+    std::fs::write(dir.join("fragmentation.md"), f).ok();
+    // Staleness.
+    let anchor_of = |subject: &str| -> Option<(String, String)> {
+        let rs = store.resolve_id(subject);
+        if let Some(r) = store.graph.requirements.get(rs) {
+            return r.source.as_ref().map(|src| (src.doc.clone(), src.section.clone()));
+        }
+        store
+            .graph
+            .entities
+            .get(rs)
+            .and_then(|e| e.mentions.first().map(|m| (m.doc.clone(), m.section.clone())))
+    };
+    let mut per: BTreeMap<(String, String), BTreeMap<String, usize>> = BTreeMap::new();
+    for d in store.graph.diagnostics.values() {
+        if d.lifecycle != "open" {
+            continue;
+        }
+        let mut anchors: Vec<(String, String)> = d.subjects.iter().filter_map(|s| anchor_of(s)).collect();
+        anchors.sort();
+        anchors.dedup();
+        for a in anchors {
+            *per.entry(a).or_default().entry(d.rule.clone()).or_insert(0) += 1;
+        }
+    }
+    let mut ranked: Vec<(usize, (String, String), BTreeMap<String, usize>)> = per
+        .into_iter()
+        .map(|(k, rules)| (rules.values().sum::<usize>(), k, rules))
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut st = String::from("# Staleness\n\nOpen diagnostics by the section their subjects anchor in, most burdened first.\n\n");
+    if ranked.is_empty() {
+        st.push_str("No open diagnostic anchors in a section.\n");
+    }
+    for (total, (doc, section), rules) in &ranked {
+        let parts: Vec<String> = rules.iter().map(|(r, n)| format!("{} ×{}", r, n)).collect();
+        st.push_str(&format!("- {}: {} ({})\n", section_link(doc, section), total, parts.join(", ")));
+    }
+    let mut weak: Vec<String> = Vec::new();
+    for (doc, rec) in &store.docs {
+        for (sec, cov) in &rec.coverage {
+            if cov.state == "non-normative" && cov.note.as_deref().map(|n| n.trim().len()).unwrap_or(0) < 20 {
+                weak.push(format!(
+                    "- {}: {}",
+                    section_link(doc, sec),
+                    cov.note.as_deref().filter(|n| !n.trim().is_empty()).unwrap_or("(no note)")
+                ));
+            }
+        }
+    }
+    if !weak.is_empty() {
+        st.push_str("\n## Non-normative sections to re-review\n\nMarked non-normative with an empty or short note.\n\n");
+        st.push_str(&weak.join("\n"));
+        st.push('\n');
+    }
+    std::fs::write(dir.join("staleness.md"), st).ok();
+    3
 }
 
 #[cfg(test)]
@@ -1769,9 +1927,9 @@ mod tests {
         std::fs::write(out.join("docsgen/entities/ghost.md"), "old").ok();
         std::fs::create_dir_all(out.join("docsgen/diagrams/class")).ok();
         std::fs::write(out.join("docsgen/diagrams/class/ghost.md"), "old").ok();
-        // The document and the card: two pages.
+        // The document, the card, and the three reports: five pages.
         let n = write_all(&s, &gs(&out));
-        assert_eq!(n, 2);
+        assert_eq!(n, 5);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));
         assert!(doc.contains("req:shop-1"));
@@ -2078,6 +2236,16 @@ mod tests {
             "{}",
             card
         );
+        // The three reports the index links.
+        let out_dir = out.join("docsgen");
+        let glossary = std::fs::read_to_string(out_dir.join("glossary.md")).unwrap();
+        assert!(glossary.contains("- **Customer**"), "{}", glossary);
+        assert!(glossary.contains("[card](./entities/customer.md)"), "{}", glossary);
+        assert!(out_dir.join("fragmentation.md").exists());
+        let staleness = std::fs::read_to_string(out_dir.join("staleness.md")).unwrap();
+        assert!(staleness.starts_with("# Staleness"), "{}", staleness);
+        let index = std::fs::read_to_string(out_dir.join("index.md")).unwrap();
+        assert!(index.contains("[glossary](./glossary.md)"), "{}", index);
         assert!(
             card.contains("[use case](../diagrams/usecase/shop-customer-shop.md) · [sequence](../diagrams/sequence/shop-customer-shop.md)"),
             "{}",

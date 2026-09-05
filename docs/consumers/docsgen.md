@@ -26,7 +26,7 @@ The page, in order:
   provenance is `derived` or `decree` says so here and links to its proposal. An
   entity with a level (two or more children) links to its [level page](#level-pages);
   every entity links to the level page of its parent, or of the scope root when it has
-  no parent. The requirements documents link among themselves (parent, children, ties,
+  no parent, on the containment line. The requirements documents link among themselves (parent, children, ties,
   relationships); the card is the one link out of that web.
 - `## Diagrams`: the rendered views the entity appears in
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
@@ -318,24 +318,30 @@ of the index after the views.
 
 ## Glossary
 
-The glossary is generated from the graph: every entity's name, aliases, `stereotype`,
-and `definition`, sorted by name, linked to its page and to its defining sections through
-its mentions. The graph is the only input, so a term missing from the glossary is a term
-missing from the graph.
+The glossary, `<out>/docsgen/glossary.md`, is generated from the graph: every entity's
+name, aliases, `stereotype`, and `definition`, sorted by name, each linked to its
+[card](#entity-cards) and to its defining sections through its mentions (relative links
+into the source documents). The graph is the only input, so a term missing from the
+glossary is a term missing from the graph. The index links the glossary.
 
 ## Fragmentation reports
 
-An entity whose mentions span many documents may deserve its own page. The report ranks
-entities by mention spread (documents touched, sections per document), so an owner can
-decide what to consolidate. Fragmentation is a query over the `mentions`
-[axis](../compiler/context.md#axes), nothing more.
+An entity whose mentions span many documents may deserve its own page. The report,
+`<out>/docsgen/fragmentation.md`, ranks entities by mention spread (documents touched,
+then sections touched), most spread first, one line per entity with the counts and the
+documents, so an owner can decide what to consolidate. Fragmentation is a query over
+the `mentions` [axis](../compiler/context.md#axes), nothing more. Entities mentioned in
+one document only are left out; an empty report says so. The index links it.
 
 ## Staleness reports
 
 Open [diagnostics](../compiler/model/diagnostic.md) grouped by section give a staleness
-map of the docs: which pages accumulate contradictions, stale anchors, and low-confidence
-facts. Sections marked `non-normative` whose `note` looks weak are listed for re-review.
-See [coverage](../compiler/compilation.md#coverage).
+map of the docs: `<out>/docsgen/staleness.md` lists, per section that any open
+diagnostic's subjects anchor in (a requirement through its source, an entity through its
+first mention), the count per rule, most burdened first, so a reader sees which pages
+accumulate contradictions, stale anchors, and low-confidence facts. Below it, sections
+marked `non-normative` whose `note` is empty or under twenty characters are listed for
+re-review. See [coverage](../compiler/compilation.md#coverage). The index links it.
 
 ## Plain-English lint
 

@@ -323,6 +323,11 @@ They bound the endpoint and the process; session and build budgets are
   payloads.
 - `JAZYK_ACP_IDLE_TIMEOUT`: seconds a [worker session](../frontends/acp.md#worker-sessions)
   may go without an update before jazyk cancels it (default 600).
+- `JAZYK_ACP_MCP`: the transport of the serving injected into
+  [worker sessions](../frontends/acp.md#worker-sessions), `stdio` or `http`. Unset
+  (or `auto`), the choice follows the agent's `initialize` reply: HTTP when it
+  advertises `mcpCapabilities.http`, stdio otherwise
+  ([MCP over HTTP](../frontends/mcp.md#mcp-over-http)).
 - `JAZYK_PLANTUML`: path to the official PlantUML native binary, selecting it as the
   renderer behind the render seam for the process
   ([the renderer](./diagrams.md#the-renderer)). Unset, the in-process renderer draws

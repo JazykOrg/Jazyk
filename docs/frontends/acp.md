@@ -40,6 +40,31 @@ jazyk is specific to any agent.
 A profile names a command, arguments, extra environment, and whether jazyk must serve
 file tools to it (`serve_files`, for agents that bring no editor of their own).
 
+### Claude Code
+
+Claude Code runs as an ACP agent through Zed's adapter. The profile:
+
+```toml
+[acp.agents.claude]
+command = "npx"
+args = ["--yes", "@zed-industries/claude-code-acp"]
+```
+
+What the adapter does that a session must account for:
+
+- Its `initialize` reply advertises `mcpCapabilities: {http: true, sse: true}` and
+  no stdio, and a stdio entry fails session creation (`Query closed before response
+  received`). Worker sessions on this profile get the serving over
+  [MCP over HTTP](./mcp.md#mcp-over-http).
+- It asks the client for permission before every tool call, jazyk's tools included,
+  unless its permission mode bypasses that. Worker sessions answer by rule
+  ([permissions](#permissions)), so no Claude Code flag or setting is needed for
+  jazyk tools to run. The adapter reads the user's Claude Code settings (`user`,
+  `project`, `local` sources), so a rule there applies too.
+- It needs a logged-in Claude Code on the machine (the adapter's auth method is the
+  terminal login). `CLAUDE_CODE_EXECUTABLE` in the profile's `env` points it at a
+  specific `claude` binary.
+
 ## Executors
 
 The `[acp]` profile is the executor for every session unless an override names
@@ -237,6 +262,17 @@ The automated path. For each goal batch the runner:
    (`b<generation>-<n>`) names the session, its lease, and its trace label. The
    toolset is the union of what the batch's goal kinds need
    ([toolsets](../compiler/sessions.md#toolsets)).
+   The entry's transport follows the agent's `initialize` reply, decided once per
+   agent when its host starts:
+   - Stdio is the default: the entry names the command and the agent spawns it.
+   - HTTP when the reply advertises `mcpCapabilities.http`: jazyk starts one
+     [MCP over HTTP](./mcp.md#mcp-over-http) server for the session (loopback, a
+     random port, a per-session bearer token in the entry's headers) and lists it as
+     an `http` server. The server stops when the session closes.
+   - Protocol version 1 has no stdio flag (the transport is mandatory on paper), so
+     an agent that advertises HTTP is taken at its word. `JAZYK_ACP_MCP` pins the
+     choice for a run (`stdio` or `http`;
+     [environment tuning](../compiler/project-settings.md#environment-tuning)).
 2. Prompts with the batch's contract itself: the
    [assembled session prompt](../compiler/sessions.md#the-prompt) (the agent
    contract, the active skills, the project block, the goals block, the

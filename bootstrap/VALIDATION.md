@@ -516,3 +516,46 @@ the split-view yield, the member hints without sections, the gate's advice on a 
 and on another level, the earlier toolset, auto-load, and parked-list fixes, the
 default stereotype, the plural grouping name); 2 findings open in the gate (the plural
 fold, the parent shortcut).
+
+### Claude Code as the session model
+
+Every example compiled with Claude Code driving the sessions: a loop script previews
+the next batch's prompt (`jazyk preview`, the exact prompt a session receives) and
+hands it to `claude -p --strict-mcp-config` with `jazyk mcp compile` as the only MCP
+server, one batch per call, up to a cap per project (2026-09-04 and 05; the ACP path,
+`jazyk compile --agent claude`, works too since MCP over HTTP landed, and takes more
+rounds per batch). Transcripts are the MCP traces under each project's `jazyk-out/trace/`
+in the session scratchpad (`self-<example>/`).
+
+- Converged on their own: f1 (5 batches, 2 to 4 minutes each, coverage 100 percent,
+  the planted confirmation-email contradiction filed with a two-option prompt, "the
+  system" read as the Shop, no invented states), sort (7 batches; one contradiction,
+  and it is genuine: the documented simple-case test expects unsorted output while the
+  pseudo-code sorts ascending), slides (10 batches, clean).
+- At full coverage with judgment goals left at the cap: f2 (every planted trap passes
+  from the graph: the twelve expected entities, one `ent:order`, no buyer, no SKU, no
+  flag or command minted, glossary and roadmap minted nothing, the 21 versus 30 day
+  deadline filed as a contradiction plus a second real one in the catalog page),
+  ledger (no derived grouping needed: the front door's listing sentence read as
+  containment, Orders, Checkout, Shipping, and Platform under Ledger), erp.
+- At the cap short of full coverage: org (90 percent, 36 entities, one Finance, one
+  Employee, no junk, Employee Handbook beside Employee), novel (81 percent: Ines Marlow
+  with alias Nessa across five documents and no Nessa entity, the chapter files never
+  entities, the two ledgers and the Marlow pair apart; three Lantern Room entities,
+  the titled-subject mistake the contract now forbids), saas (44 percent at batch 8:
+  one Backend holding API Server, Cache, Database, Queue; Frontend and Backend under
+  Trellis, the nested reading of the front door the fixture calls a failure and the
+  owner's open question).
+- Tool errors across the first 370 calls: one (Employee Handbook bounced as a variant
+  of Employee, the gate since refined), plus the previewed batch id every session's
+  first call tripped on (`b<n>-0` for the board's `b<n>-1`, since fixed). No nudges,
+  no stalls.
+- The cost that dominates a corpus under a strong model is the pairwise judgment:
+  saas held 479 goals at 30 percent coverage (358 pairs) and over 1100 at batch 19;
+  a pair session settled four pairs (org) to eight (f2) in six to twenty calls with
+  nothing loaded. Batches now pack a locality to the budget (four to eight pairs on
+  the org snapshot); the `pairs-per-entity` lever waits on a rerun.
+- Judgment calls the runs settled or exposed: Order folded into the Orders area as an
+  alias (the extraction skill now keeps the concept under the area; the gate folds
+  plurals for groupings only); the novel minted as an entity beside the bookshop named
+  after it (the contract's no-System rule now covers a titled subject).

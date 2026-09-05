@@ -3777,6 +3777,25 @@ impl ToolSession {
                         ),
                     ));
                 }
+                // The parent gate holds at staging like every other: the children
+                // are counted as this session's staged work leaves them (a staged
+                // move away frees the parent, a staged create under it binds it).
+                // Mirrors docs/compiler/tools.md#write-tools.
+                let children: Vec<String> = self
+                    .entities_after()
+                    .into_iter()
+                    .filter(|e| e != &rid && self.parent_of(e).as_deref() == Some(rid.as_str()))
+                    .collect();
+                if !children.is_empty() {
+                    return Err(ToolError::new(
+                        "still-a-parent",
+                        format!(
+                            "cannot delete {}; entities still name it as parent: {}; move them (update_entity with parent) or delete them first",
+                            rid,
+                            children.join(", ")
+                        ),
+                    ));
+                }
                 self.stage(Op::DeleteEntity { id: rid, reason })?;
                 Ok(json!({"deleted": true}))
             }
@@ -3795,6 +3814,34 @@ impl ToolSession {
                         "bad-merge",
                         "keep and absorb are the same entity".into(),
                     ));
+                }
+                // A merge never makes the survivor its own ancestor: the absorbed
+                // entity's children move under the survivor, so the survivor must not
+                // sit under the absorbed one, staged moves counted.
+                // Mirrors docs/compiler/tools.md#write-tools.
+                let mut chain = vec![keep.clone()];
+                let mut cur = keep.clone();
+                for _ in 0..64 {
+                    match self.parent_of(&cur) {
+                        Some(p) if p == absorb => {
+                            chain.push(p);
+                            return Err(ToolError::new(
+                                "bad-merge",
+                                format!(
+                                    "{} is contained in {} ({}); merging would make it its own ancestor. Keep the container, or move {} out first",
+                                    keep,
+                                    absorb,
+                                    chain.join(" > "),
+                                    keep
+                                ),
+                            ));
+                        }
+                        Some(p) => {
+                            chain.push(p.clone());
+                            cur = p;
+                        }
+                        None => break,
+                    }
                 }
                 self.stage(Op::MergeEntities {
                     keep: keep.clone(),
@@ -5989,6 +6036,93 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r["resolved"], true);
+    }
+
+    #[test]
+    // delete_entity's parent gate and merge_entities' ancestor gate hold when the
+    // call is staged, staged moves counted, so the reply never says done for a
+    // mutation the commit would skip. Mirrors docs/compiler/tools.md#write-tools.
+    #[test]
+    fn delete_and_merge_gates_hold_at_staging_with_staged_moves_counted() {
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:order".into(), plain("Order"));
+        // A parent cannot go while a child names it.
+        let err = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:cart", "reason": "noise"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "still-a-parent");
+        assert!(err.message.contains("ent:item"), "{}", err.message);
+        // A staged move of the child away frees the parent.
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:item", "parent": "ent:order"}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:cart", "reason": "noise"}),
+            )
+            .unwrap();
+        assert_eq!(v["deleted"], true);
+        // A staged create under an entity binds it.
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Line", "parent": "ent:order", "mention": {"section": "/shop/cart", "quote": "holds items"}}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:order", "reason": "noise"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "still-a-parent");
+        assert!(err.message.contains("ent:line"), "{}", err.message);
+
+        // Merging a container into something it contains would make the survivor
+        // its own ancestor; the other direction is fine.
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:sku".into(), under("Sku", "ent:item"));
+        let err = t
+            .dispatch(
+                "merge_entities",
+                &json!({"keep": "ent:sku", "absorb": "ent:cart", "reason": "same"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-merge");
+        assert!(
+            err.message.contains("ent:sku > ent:item > ent:cart"),
+            "{}",
+            err.message
+        );
+        // The staged parent counts: an item moved out from under the cart merges fine.
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:basket".into(), plain("Basket"));
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:item", "parent": "ent:basket"}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch(
+                "merge_entities",
+                &json!({"keep": "ent:item", "absorb": "ent:cart", "reason": "same"}),
+            )
+            .unwrap();
+        assert_eq!(v["kept"], "ent:item");
     }
 
     #[test]

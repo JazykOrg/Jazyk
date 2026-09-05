@@ -34,7 +34,9 @@ section's subheadings. A block whose info string names PlantUML (`plantuml`, `pu
 ([diagrams as input](./diagrams.md#diagrams-as-input)); any other fence is a
 `code-block`. The block's `raw` is the block with its fences. The parent keeps its whole
 body, the block included, so a quote locates in the section that states it and a change
-inside a block dirties the block and its parent both.
+inside a block dirties the block and its parent both. A `code-block` section derives no
+reconcile goal and owes no coverage mark of its own (the parent's session reads the
+block inside the body it covers); a `diagram` section does, as input of its own.
 
 List items and blockquotes stay inside their section's body: the kinds `list-item` and
 `blockquote` are reserved for a handler that produces them, and the Markdown handler

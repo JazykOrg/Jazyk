@@ -291,7 +291,10 @@ shape: 3 / 9 / 31 / 118 nodes per depth; fan-out 2-9: 14, 10-15: 2, over 15: 0
 
 ## Coverage
 
-Every section carries a coverage state in the store:
+Every section carries a coverage state in the store, except a `code-block` section,
+which owes no mark of its own: its parent keeps its whole body and the parent's mark
+covers the block. A `diagram` section is input parsed as prose and owes its mark like
+any section.
 
 - `unprocessed`: not yet reconciled.
 - `covered`: the model claimed it; its content is reflected in the graph.

@@ -306,8 +306,13 @@ fn build_goal(
     }
 }
 
-// A section with a body of its own: the heading line alone carries no content.
+// A section that owes coverage of its own: one with a body beyond its heading line,
+// and never a code block, whose parent's mark covers it (the parent keeps its whole
+// body). A diagram section owes its own. Mirrors docs/compiler/compilation.md#coverage.
 pub fn section_has_body(sec: &Section) -> bool {
+    if sec.kind == "code-block" {
+        return false;
+    }
     !sec.raw.lines().skip(1).all(|l| l.trim().is_empty())
 }
 
@@ -4898,6 +4903,18 @@ mod tests {
             node.hints
         );
         assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
+    }
+
+    // Mirrors docs/compiler/compilation.md#coverage: a code block follows its parent's
+    // coverage; a diagram owes its own.
+    #[test]
+    fn a_code_block_section_owes_no_coverage_of_its_own() {
+        let text = "# Doc\n\nprose\n\n```rust\nfn main() {}\n```\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n";
+        let sections = crate::md::parse_sections(text);
+        let block = sections.values().find(|s| s.kind == "code-block").expect("code-block");
+        assert!(!section_has_body(block));
+        let diagram = sections.values().find(|s| s.kind == "diagram").expect("diagram");
+        assert!(section_has_body(diagram));
     }
 
     fn grouping(id: &str, parent: Option<&str>, from: &[&str]) -> Op {

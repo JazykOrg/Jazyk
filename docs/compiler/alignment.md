@@ -100,7 +100,10 @@ A candidate scoring under `0.3` is discarded. The outcome per anchor is a reloca
   `split`, or `merged` section, and anchors of a `deleted` section with at least one
   candidate. The section itself is dirty by its hash, as always; the proposal concerns
   where the anchor belongs and whether its statement must be re-judged.
-- A homeless anchor with no candidate is a stale anchor on its old document, the same
+- A homeless anchor with no candidate is a stale anchor on its old document while that
+  section still exists; a section that is gone takes its anchors' requirements with it
+  at the commit's sweep ([the sweep](./graph.md#the-sweep)), and the prose that replaced
+  it restates them when it is reconciled. Otherwise it is the same
   contract as before alignment existed.
 
 Proposals persist in `status.yaml` under `alignment`, one block per target document,

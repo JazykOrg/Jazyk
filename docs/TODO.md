@@ -146,3 +146,12 @@ A read-only audit compared every doc area with the code that mirrors it and foun
   unknown flags are absorbed instead of exiting 2; several `via` values are documented
   but never produced, and `reparent-flip`, `flip-detection`, and `requirements` are
   produced but undocumented.
+
+## Pair judgment volume (2026-09-05)
+
+On `example-saas` at 30% coverage the board held 479 goals, 358 of them
+`rejudge-pair`, against 144 requirements and 36 entities; the pairwise judgments
+dominate a corpus by an order of magnitude over ingest. Candidates: a
+`pairs-per-entity` limit in the registry (the lexically closest pairs, the rest left
+to `review-entity`, which reads every statement anyway), and a batch-level verdict
+list so one session settles a level's pairs in one claim.

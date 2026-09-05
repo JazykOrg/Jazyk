@@ -4,6 +4,7 @@ pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod host;
+pub mod http;
 pub mod install;
 pub mod plan;
 pub mod policy;

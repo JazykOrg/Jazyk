@@ -424,6 +424,7 @@ impl McpServer {
         v
     }
 
+    // The stdio transport: line-delimited JSON-RPC until stdin ends.
     pub fn run(&self) {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
@@ -435,27 +436,51 @@ impl McpServer {
             let Ok(req) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
-            let method = req["method"].as_str().unwrap_or_default().to_string();
-            let id = req["id"].clone();
-            if id.is_null() {
+            let Some(resp) = self.dispatch(&req) else {
                 continue; // notification, no response
-            }
-            let result = self.handle(&method, &req["params"]);
-            let resp = match result {
-                Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
-                Err((code, msg)) => {
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
-                }
             };
             let mut out = stdout.lock();
             writeln!(out, "{}", resp).ok();
             out.flush().ok();
         }
+        self.finish();
+    }
+
+    // One JSON-RPC message in, its response out, whatever the transport carried it
+    // (the stdio loop above, or the HTTP serving in acp/http.rs). A notification (no
+    // id) gets no response. Mirrors docs/frontends/mcp.md#mcp-over-http.
+    pub fn dispatch(&self, req: &Value) -> Option<Value> {
+        let method = req["method"].as_str().unwrap_or_default().to_string();
+        let id = req["id"].clone();
+        if id.is_null() {
+            return None;
+        }
+        Some(match self.handle(&method, &req["params"]) {
+            Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
+            Err((code, msg)) => {
+                json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
+            }
+        })
+    }
+
+    // The serving's end, on any transport: an ephemeral serving with an open batch
+    // runs the implicit finish, and the transcript closes.
+    pub fn finish(&self) {
         if self.bridge.ephemeral {
             self.eof_finish();
         }
         self.trace
             .finish_transcript("done", &json!({"modes": self.modes}));
+    }
+
+    // A transport-level note in the transcript (a refused call, a bind), under the
+    // serving's label rather than a batch's.
+    pub fn note(&self, text: &str) {
+        self.trace.event(crate::session::TraceEvent::Note {
+            label: format!("mcp {}", self.modes.join(",")),
+            text: text.to_string(),
+            verbose: false,
+        });
     }
 
     fn caller(&self, task: &str, target: &str) -> crate::feedback::Caller {

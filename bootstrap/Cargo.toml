@@ -26,6 +26,8 @@ axum = { version = "0.8", features = ["ws"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures-util = "0.3"
 include_dir = "0.7"
+# The per-session bearer token of the MCP-over-HTTP serving (docs/frontends/mcp.md).
+getrandom = "0.3"
 open = "5"
 jsonc-parser = { version = "0.33.1", features = ["serde", "serde_json"] }
 # Diagram renderer (docs/compiler/diagrams.md): PlantUML reimplemented in Rust, Graphviz

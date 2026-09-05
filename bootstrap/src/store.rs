@@ -1594,18 +1594,27 @@ impl Store {
             if v.default {
                 continue;
             }
-            let mut gone = dead(&v.members);
-            gone.extend(dead(&v.collapse));
+            // `via` names the list the dead node sat in, the first of members,
+            // collapse, excluded that lost one. Mirrors docs/compiler/goals/retrace.md.
+            let excluded: Vec<String> = v.excluded.iter().map(|x| x.id.clone()).collect();
+            let lists = [
+                ("members", dead(&v.members)),
+                ("collapse", dead(&v.collapse)),
+                ("excluded", dead(&excluded)),
+            ];
+            let Some(via) = lists.iter().find(|(_, g)| !g.is_empty()).map(|(l, _)| *l) else {
+                continue;
+            };
+            let mut gone: Vec<String> = lists.iter().flat_map(|(_, g)| g.clone()).collect();
+            gone.sort();
             gone.dedup();
-            if !gone.is_empty() {
-                batch.push(
-                    mutation_of(&gone),
-                    CHANGE_VIEW_MEMBER_GONE,
-                    vid,
-                    "members",
-                    serde_json::json!({ "gone": gone }),
-                );
-            }
+            batch.push(
+                mutation_of(&gone),
+                CHANGE_VIEW_MEMBER_GONE,
+                vid,
+                via,
+                serde_json::json!({ "gone": gone }),
+            );
         }
         let from_of = |p: &Option<Provenance>| -> Vec<String> {
             match p {
@@ -3809,7 +3818,9 @@ impl Store {
             };
             batch.push(*m, kind, id, "fields", serde_json::Value::Null);
         }
-        // Instances: an instance touched, or the type of one.
+        // Instances: an instance touched (via the instance's own change), or the type
+        // of one changed, which reaches the instance through the type's attributes.
+        // Mirrors docs/compiler/goals/conform-instance.md#created-when.
         let types = crate::derive::instance_types(self);
         for (id, (m, via)) in &dirt.entities {
             if types.contains_key(id) {
@@ -3817,7 +3828,13 @@ impl Store {
             }
             for (inst, ty) in &types {
                 if ty == id {
-                    batch.push(*m, CHANGE_INSTANCE, inst, "edges", serde_json::Value::Null);
+                    batch.push(
+                        *m,
+                        CHANGE_INSTANCE,
+                        inst,
+                        "attributes",
+                        serde_json::json!({ "type": ty }),
+                    );
                 }
             }
         }
@@ -4737,34 +4754,40 @@ impl Store {
             }
         }
         self.deletion_ripple(&deleted, &mut batch);
-        // Level-triggered: a curated view whose member died by any path owes a retrace.
-        let dangling: Vec<(String, Vec<String>)> = self
+        // Level-triggered: a curated view whose member died by any path owes a retrace;
+        // `via` names the first list (members, collapse, excluded) holding a dead node.
+        let dangling: Vec<(String, &'static str, Vec<String>)> = self
             .graph
             .views
             .iter()
             .filter(|(_, v)| !v.default)
-            .map(|(id, v)| {
-                let gone: Vec<String> = v
-                    .members
-                    .iter()
-                    .chain(v.collapse.iter())
-                    .filter(|m| !self.node_exists(self.resolve_id(m)))
-                    .cloned()
-                    .collect();
-                (id.clone(), gone)
+            .filter_map(|(id, v)| {
+                let dead = |ids: Vec<&String>| -> Vec<String> {
+                    ids.into_iter()
+                        .filter(|m| !self.node_exists(self.resolve_id(m)))
+                        .cloned()
+                        .collect()
+                };
+                let lists = [
+                    ("members", dead(v.members.iter().collect())),
+                    ("collapse", dead(v.collapse.iter().collect())),
+                    ("excluded", dead(v.excluded.iter().map(|x| &x.id).collect())),
+                ];
+                let via = lists.iter().find(|(_, g)| !g.is_empty()).map(|(l, _)| *l)?;
+                let gone: Vec<String> = lists.iter().flat_map(|(_, g)| g.clone()).collect();
+                Some((id.clone(), via, gone))
             })
-            .filter(|(id, gone)| {
-                !gone.is_empty()
-                    && !self.status.has_change(CHANGE_VIEW_MEMBER_GONE, id)
+            .filter(|(id, _, _)| {
+                !self.status.has_change(CHANGE_VIEW_MEMBER_GONE, id)
                     && !batch.has(CHANGE_VIEW_MEMBER_GONE, id)
             })
             .collect();
-        for (id, gone) in dangling {
+        for (id, via, gone) in dangling {
             batch.push(
                 0,
                 CHANGE_VIEW_MEMBER_GONE,
                 &id,
-                "members",
+                via,
                 serde_json::json!({ "gone": gone }),
             );
             actions.push(format!(
@@ -5848,6 +5871,104 @@ mod tests {
 
     // Views: upsert by kind and title, curation clears default, deletes of a member
     // are allowed and noted, a default view refuses deletion, a bump raises the limit.
+    // `via` on a view-member-gone record names the list the dead node sat in, and a
+    // change on a type reaches its instances as `attributes`.
+    // Mirrors docs/compiler/reconciler.md#change-records.
+    #[test]
+    fn via_names_the_view_list_and_a_types_change_reaches_instances_as_attributes() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "t.md", "# T\nAna is a customer. The extra thing.\n");
+        let stated = |name: &str, quote: &str| Entity {
+            name: name.into(),
+            mentions: vec![mention("t.md", "/t", quote)],
+            ..Default::default()
+        };
+        let r = s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:customer".into(),
+                    entity: stated("Customer", "customer"),
+                },
+                Op::CreateEntity {
+                    id: "ent:ana".into(),
+                    entity: stated("Ana", "Ana"),
+                },
+                Op::CreateEntity {
+                    id: "ent:extra".into(),
+                    entity: stated("Extra", "extra"),
+                },
+                Op::CreateRequirement {
+                    id: "req:t-1".into(),
+                    requirement: Requirement {
+                        statement: "Ana is a Customer.".into(),
+                        entities: vec!["ent:ana".into(), "ent:customer".into()],
+                        edges: vec![ReqEdge {
+                            a: "ent:ana".into(),
+                            b: "ent:customer".into(),
+                            rel_type: Some("instantiation".into()),
+                            cardinality: None,
+                        }],
+                        source: Some(mention("t.md", "/t", "Ana is a customer")),
+                        ..Default::default()
+                    },
+                },
+                Op::CreateView {
+                    id: "view:class/zoo".into(),
+                    view: View {
+                        kind: "class".into(),
+                        title: "Zoo".into(),
+                        members: vec!["ent:customer".into()],
+                        collapse: vec!["ent:extra".into()],
+                        provenance: Some(derived(&["ent:customer"])),
+                        ..Default::default()
+                    },
+                },
+            ],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        let r = s.apply(
+            vec![Op::DeleteEntity {
+                id: "ent:extra".into(),
+                reason: "noise".into(),
+            }],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        let gone = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_VIEW_MEMBER_GONE && c.subject == "view:class/zoo")
+            .expect("view-member-gone");
+        assert_eq!(gone.via, "collapse");
+        assert_eq!(gone.detail["gone"], serde_json::json!(["ent:extra"]));
+        let r = s.apply(
+            vec![Op::UpdateEntity {
+                id: "ent:customer".into(),
+                name: None,
+                definition: Some("a person who buys".into()),
+                add_aliases: Vec::new(),
+                add_mention: None,
+                stereotype: None,
+                parent: None,
+                set_attributes: None,
+                add_attributes: Vec::new(),
+                provenance: None,
+            }],
+            &session(),
+        );
+        let inst = r
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_INSTANCE && c.subject == "ent:ana")
+            .expect("instance-changed on the instance");
+        assert_eq!(inst.via, "attributes");
+        assert_eq!(inst.detail["type"], "ent:customer");
+    }
+
     #[test]
     fn views_curate_delete_and_bump() {
         let mut s = Store {

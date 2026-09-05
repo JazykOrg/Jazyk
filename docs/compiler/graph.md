@@ -424,7 +424,8 @@ The kinds, who writes them, and the goal each feeds:
 | `prompt-unanswered` | a commit that files a prompt on a diagnostic | `answer` |
 | `provenance-pending` | a commit that lands a derived or decreed fact | `ratify` |
 | `threshold-crossed` | the limit counts at commit | `split-view`, `abstract-entity` |
-| `view-member-gone` | a delete that removes a curated view's member | `retrace` |
+| `reparent-flip` | a commit that moves a child back between the same two parents it moved between before (`via: parent`, `detail.between` naming the two); the sweep's dissolve counts as a move | nothing directly: [flip detection](./reconciler.md#flip-detection) at the build's tail reads it beside the journal's replay and parks the goal behind the second move |
+| `view-member-gone` | a delete that removes a curated view's member (`via` names the list: `members`, `collapse`, `excluded`) | `retrace` |
 | `edges-missing` | a commit that lands a multi-entity requirement without `edges` | `declare-edges` |
 | `lookalike` | the name index at commit (a cross-document score over the threshold) | `dedupe-candidates` |
 | `query-match` | a recompute in which a new node matches a curated view's query | `curate-view` |

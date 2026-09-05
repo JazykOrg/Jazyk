@@ -192,17 +192,23 @@ The record kinds and what derives from each:
 `via` names how dirtiness reached the subject. The set is closed here, and every goal
 page draws its values from it:
 
-- a stored reference: `section`, `quote`, `mentions`, `entities`, `edges`,
-  `transition`, `parent`, `members`, `excluded`, `collapse`, `from`, `subjects`,
-  `attributes` (an attribute's value, type, or provenance quote);
-- a change on the node itself: `fields` (an entity's own fields changed, or the entity
-  was created), `merge` (another entity was merged into it), `provenance` (a derived
-  or decreed fact landed);
+- a stored reference: `section` (a requirement created from, or a section record on,
+  that section), `quote` (a source quote that moved, changed, or stopped locating),
+  `mentions`, `entities`, `edges`, `parent`, `members`, `collapse`, `excluded` (the
+  list of a curated view a dead node sat in), `from`, `subjects` (a surviving
+  diagnostic subject), `requirements` (a retracted requirement left the entity's
+  set), `attributes` (an instance reached through its type's attributes);
+- a change on the node itself: `fields` (an entity's or requirement's own fields
+  changed, a transition or an attribute among them, or the node was created or
+  deleted by a commit), `merge` (another entity was merged into it), `provenance` (a
+  derived or decreed fact landed);
 - a computation: `alignment`, `ledger`, `limits`, `lookalike`, `query`,
-  `flow-placement`, `recompute` (a derived relationship added, removed, or retyped),
-  `sweep`, or the rule name of the check that wrote the record;
-- the tool that filed a `prompt-unanswered` record: `report_diagnostic`,
-  `update_diagnostic`, `record_generation`.
+  `flow-placement`, `flip-detection` (the check that parks a flipping pair or child),
+  `sweep` (a node the sweep deleted), or the rule name of the check that wrote the
+  record;
+- the path that filed a `prompt-unanswered` record: `report_diagnostic`,
+  `update_diagnostic`, `ratification` (the store filing a ratification proposal on a
+  derived or decreed fact), or the rule name of a check that files a prompt.
 
 The ledger goals share one record kind. The ledger comparison at derivation writes a
 `ledger-stale` record wherever the ledger and the graph disagree, `detail.goal` naming
@@ -464,8 +470,11 @@ referent, and the walk keeps one direction at a time:
 
 - Upward, transitively: every referent of the target, then every referent of those.
   For an entity that is its `parent` chain, its `mentions` sections and their `parents`
-  chains, and its `from` nodes. For a requirement it is its entities, their parents, and
-  its `from` nodes.
+  chains, the sections its quoted attributes point at, and its `from` nodes. For a
+  requirement it is its `entities`, the endpoints of its `edges`, its `transition`
+  subject, their parents, its `source` section and that section's `parents` chain, and
+  its `from` nodes. For a view it is its `members`, `collapse`, and `excluded` nodes
+  and its `from` nodes. For a section it is its `parents` chain and its document.
 - Downward, transitively: every referrer of the target, then every referrer of those.
   For an entity that is its descendants over `parent`, the requirements naming it or any
   descendant in `entities`, `edges`, or `transition`, the views listing any of them in

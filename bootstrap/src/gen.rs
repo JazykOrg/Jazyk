@@ -565,6 +565,62 @@ pub fn hash_files(gs: &GenSettings, files: &[String]) -> String {
     hash_hex(&acc)
 }
 
+// A deliverable-relative path as the ledger records it: forward slashes, no leading
+// `./`, no empty or `.` segments. An absolute path, or one that climbs out with
+// `..`, is rejected naming it: nothing the ledger records, strips, hashes, or
+// removes may reach outside the deliverable.
+// Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+pub fn confine_rel(path: &str) -> Result<String, String> {
+    let raw = path.trim().replace('\\', "/");
+    let drive = raw.as_bytes().get(1) == Some(&b':')
+        && raw
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic())
+            .unwrap_or(false);
+    if raw.starts_with('/') || drive {
+        return Err(format!(
+            "`{}` is an absolute path; every recorded path is relative to the deliverable directory",
+            path.trim()
+        ));
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in raw.split('/') {
+        match seg {
+            "" | "." => continue,
+            ".." => {
+                return Err(format!(
+                    "`{}` climbs out of the deliverable with `..`; every recorded path stays under it",
+                    path.trim()
+                ))
+            }
+            s => parts.push(s),
+        }
+    }
+    if parts.is_empty() {
+        return Err("a path is required, and `.` names the deliverable itself, not a file".into());
+    }
+    Ok(parts.join("/"))
+}
+
+// A working directory the same way, where `.` (or nothing) means the deliverable.
+pub fn confine_cwd(cwd: &str) -> Result<String, String> {
+    let c = cwd.trim();
+    if c.is_empty() || c == "." || c == "./" {
+        return Ok(".".into());
+    }
+    confine_rel(c)
+}
+
+// Every path a list names, confined, deduplicated in first-seen order.
+fn confine_list(paths: &[String]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for p in paths {
+        out.push(confine_rel(p)?);
+    }
+    Ok(dedup_keep_order(out))
+}
+
 fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::BTreeSet::new();
     files
@@ -861,9 +917,13 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
     }
 }
 
-// Entities that are generation work: facts moved, recorded files missing, or a bound
-// requirement is unimplemented (binding classified it as new functionality and its
-// test is the acceptance gate). Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
+// Entities that are generation work, the first reason that holds naming it: the
+// entry's facts moved (`changed`), a recorded file is gone from the deliverable
+// (`files-gone`), or a bound requirement is unimplemented (`unimplemented-bindings`:
+// binding classified it as new functionality and its test is the acceptance gate).
+// An entity with no entry is work through unimplemented rows only, so adopted code
+// whose rows all read verified is never generated over.
+// Mirrors docs/compiler/goals/generate.md#created-when.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = Vec::new();
@@ -884,19 +944,29 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                     .unwrap_or(false)
             })
             .collect();
-        let current = ledger.entities.get(&slug).map(|e| {
-            e.fact_hash == hash
-                && !e.files.is_empty()
-                && e.files.iter().all(|f| gs.deliverable.join(f).exists())
-        });
-        if current == Some(true) && unimplemented.is_empty() {
-            continue;
-        }
-        let (reason, changed) = if current == Some(true) {
-            ("unimplemented-bindings".to_string(), json!(unimplemented))
-        } else {
-            let (r, c) = change_diff(&ledger, &slug, &rids);
-            (r, json!(c))
+        let (reason, changed) = match ledger.entities.get(&slug) {
+            Some(e) if e.fact_hash != hash => {
+                let (r, c) = change_diff(&ledger, &slug, &rids);
+                (r, json!(c))
+            }
+            Some(e) => {
+                let gone: Vec<&String> = e
+                    .files
+                    .iter()
+                    .filter(|f| !gs.deliverable.join(f).exists())
+                    .collect();
+                if e.files.is_empty() || !gone.is_empty() {
+                    ("files-gone".to_string(), json!(gone))
+                } else if !unimplemented.is_empty() {
+                    ("unimplemented-bindings".to_string(), json!(unimplemented))
+                } else {
+                    continue;
+                }
+            }
+            None if !unimplemented.is_empty() => {
+                ("unimplemented-bindings".to_string(), json!(unimplemented))
+            }
+            None => continue,
         };
         out.push(json!({
             "entity": id,
@@ -905,6 +975,93 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         }));
     }
     out
+}
+
+// The generate goal's gate: record_generation landed for the entity with a factHash
+// equal to the live graph's and files that exist; with `require_run`, run_tests ran
+// afterwards too (no programmatic row of the entity is still never-run). Ok carries
+// the recorded file count. Err names what is missing and the call that lands it.
+// Mirrors docs/compiler/goals/generate.md#gate.
+pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Result<usize, String> {
+    let id = store.resolve_id(id).to_string();
+    if !store.graph.entities.contains_key(&id) {
+        return Err(format!("`{}` is not in the graph; nothing generates it", id));
+    }
+    let ledger = Ledger::load(&store.out);
+    let Some(e) = ledger.entities.get(&slug_of(&id)) else {
+        return Err(format!(
+            "no ledger entry for `{}`: record_generation has not landed; the gate is record_generation with the package's factHash, then run_tests",
+            id
+        ));
+    };
+    let live = fact_hash(store, &id);
+    if e.fact_hash != live {
+        return Err(format!(
+            "the record for `{}` carries factHash {} but the graph says {}: the facts moved since the package was built; begin_generation again and record_generation with the current factHash",
+            id, e.fact_hash, live
+        ));
+    }
+    let gone: Vec<&String> = e
+        .files
+        .iter()
+        .filter(|f| !gs.deliverable.join(f).is_file())
+        .collect();
+    if e.files.is_empty() || !gone.is_empty() {
+        return Err(format!(
+            "the record for `{}` lists files that do not exist under the deliverable ({}); write them, then record_generation again with every file the manifest names",
+            id,
+            if gone.is_empty() {
+                "no files at all".to_string()
+            } else {
+                gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
+            }
+        ));
+    }
+    if require_run {
+        let never_run: Vec<String> = reqs_of_sorted(store, &id)
+            .into_iter()
+            .filter(|rid| {
+                ledger
+                    .requirements
+                    .get(rid)
+                    .map(|row| {
+                        row.test.kind == "programmatic"
+                            && crate::verify::status_of(store, rid, row, gs)
+                                == ("unverified".to_string(), "never-run".to_string())
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        if !never_run.is_empty() {
+            return Err(format!(
+                "run_tests has not run since the record: {} never ran; call run_tests, then mark the goal",
+                never_run.join(", ")
+            ));
+        }
+    }
+    Ok(e.files.len())
+}
+
+// Why `jazyk gen` leaves an entity alone, for the person reading the trace: the
+// entity is current, a bind is still owed on it, or no row says generate.
+// Mirrors docs/consumers/gen.md#incremental-regeneration.
+pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
+    let owed = crate::bind::pending(store, gs)
+        .iter()
+        .filter(|p| p["entity"] == id)
+        .count();
+    if owed > 0 {
+        return format!(
+            "{} requirement(s) still owe a bind; binding classifies before generation",
+            owed
+        );
+    }
+    let ledger = Ledger::load(&store.out);
+    if ledger.entities.contains_key(&slug_of(id)) {
+        "unchanged".to_string()
+    } else {
+        "no ledger entry and no bound row reads unimplemented: its rows are verified or failing, so there is nothing to generate (`--force` generates it anyway)".to_string()
+    }
 }
 
 // The full package a worker needs for one task.
@@ -1166,37 +1323,33 @@ pub fn mark(
         return Err(format!("unknown entity `{}`", id));
     }
     let slug = slug_of(id);
-    // File lists are sets: dedup on write, preserving first-seen order.
-    let files: Vec<String> = dedup_keep_order(
-        manifest["files"]
-            .as_array()
+    // Every path the manifest names is confined before any side effect: a path that
+    // escapes the deliverable is rejected naming it, and file lists are sets
+    // (docs/consumers/gen.md#file-ownership-and-conventions).
+    let str_list = |v: &Value| -> Vec<String> {
+        v.as_array()
             .map(|a| {
                 a.iter()
                     .filter_map(|x| {
                         x.as_str()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
                             .map(String::from)
+                            .or_else(|| x["path"].as_str().map(String::from))
+                            .filter(|s| !s.trim().is_empty())
                     })
                     .collect()
             })
-            .unwrap_or_default(),
-    );
+            .unwrap_or_default()
+    };
+    let files: Vec<String> =
+        confine_list(&str_list(&manifest["files"])).map_err(|e| format!("files: {}", e))?;
     // Support files are the deliverable's, recorded once and rewritable by any later
     // task (docs/consumers/gen.md#file-ownership-and-conventions).
-    let support: Vec<String> = manifest["supportFiles"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| {
-                    x.as_str()
-                        .map(String::from)
-                        .or_else(|| x["path"].as_str().map(String::from))
-                        .filter(|s| !s.trim().is_empty())
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let support: Vec<String> = confine_list(&str_list(&manifest["supportFiles"]))
+        .map_err(|e| format!("supportFiles: {}", e))?;
+    let build_produces: Vec<String> = confine_list(&str_list(&manifest["build"]["produces"]))
+        .map_err(|e| format!("build.produces: {}", e))?;
+    let build_cwd = confine_cwd(manifest["build"]["cwd"].as_str().unwrap_or("."))
+        .map_err(|e| format!("build.cwd: {}", e))?;
 
     // Validate the invented choices before any side effect: the scope grades the
     // severity, and the tool layer stages one invented-choice diagnostic per entry
@@ -1204,30 +1357,98 @@ pub fn mark(
     let choices = parse_choices(store, manifest)?;
 
     // Validate the manifest's test rows before any side effect: a rejection must
-    // leave the deliverable untouched, or the retry sees files already stripped.
-    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    // leave the deliverable untouched, or the retry sees files already stripped. A
+    // row's artifact must exist, and a programmatic artifact must carry the declared
+    // name: the same shape gate record_binding applies.
+    // Mirrors docs/compiler/goals/generate.md#gate.
+    let mut rows: Vec<(String, TestRef, Vec<String>)> = Vec::new();
     if let Some(tests) = manifest["tests"].as_array() {
         for t in tests {
             // A row whose fields are all empty is a filled-in blank; drop it.
             if hollow(t) {
                 continue;
             }
-            let kind = t["kind"].as_str().unwrap_or("programmatic");
-            let rid = t["requirement"].as_str().unwrap_or("?");
+            let Some(rid) = t["requirement"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let rid = store.resolve_id(rid).to_string();
+            let Some(r) = store.graph.requirements.get(&rid) else {
+                return Err(format!("unknown requirement `{}` in manifest", rid));
+            };
+            let kind = t["kind"].as_str().unwrap_or("programmatic").trim().to_string();
+            if kind != "programmatic" && kind != "llm" {
+                return Err(format!(
+                    "test row for {} has kind `{}`; a test is `programmatic` (a command runs it) or `llm` (a judgment with a criteria file)",
+                    rid, kind
+                ));
+            }
+            let artifact_raw = t["artifact"].as_str().unwrap_or("").trim().to_string();
+            let run = t["run"].as_str().unwrap_or("").trim().to_string();
             if kind == "programmatic" {
-                if t["artifact"].as_str().unwrap_or("").trim().is_empty() {
+                if artifact_raw.is_empty() {
                     return Err(format!(
                         "test row for {} has an empty artifact; name the tests file the row's run command executes, or declare the row llm",
                         rid
                     ));
                 }
-                if t["run"].as_str().unwrap_or("").trim().is_empty() {
+                if run.is_empty() {
                     return Err(format!(
                         "test row for {} has an empty run command; record the exact command that runs only that test, or declare the row llm",
                         rid
                     ));
                 }
+            } else if artifact_raw.is_empty() {
+                return Err(format!(
+                    "test row for {} is llm but names no criteria file; write it (the package names its path under criteria/) and record that path as the artifact",
+                    rid
+                ));
             }
+            let artifact = confine_rel(&artifact_raw)
+                .map_err(|e| format!("test row for {}: artifact {}", rid, e))?;
+            let test = TestRef {
+                kind: kind.clone(),
+                label: t["label"].as_str().unwrap_or("test").to_string(),
+                artifact,
+                name: t["name"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(&test_name(&rid, &r.statement))
+                    .to_string(),
+                run,
+                cwd: confine_cwd(t["cwd"].as_str().unwrap_or("."))
+                    .map_err(|e| format!("test row for {}: cwd {}", rid, e))?,
+            };
+            let path = artifact_path(&store.out, gs, &test);
+            if !path.is_file() {
+                return Err(format!(
+                    "test row for {} names artifact `{}` but no such file exists under the deliverable{}; write it before recording, or fix the path",
+                    rid,
+                    test.artifact,
+                    if kind == "llm" { " or the out directory's gen/" } else { "" }
+                ));
+            }
+            if kind == "programmatic"
+                && !std::fs::read_to_string(&path)
+                    .map(|c| c.contains(&test.name))
+                    .unwrap_or(false)
+            {
+                return Err(format!(
+                    "test row for {} declares test `{}` but `{}` does not contain that name; name the test as it is written in the file, or declare the row llm",
+                    rid, test.name, test.artifact
+                ));
+            }
+            let row_files: Vec<String> = match confine_list(&str_list(&t["files"]))
+                .map_err(|e| format!("test row for {}: files {}", rid, e))?
+            {
+                v if v.is_empty() => files.clone(),
+                v => v,
+            };
+            rows.push((rid, test, row_files));
         }
     }
     // Strip marker lines from the manifest files and collect the sites they anchor.
@@ -1291,19 +1512,7 @@ pub fn mark(
             .filter(|r| !r.is_empty())
         {
             Some(run) => {
-                let mut produces: Vec<String> = manifest["build"]["produces"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| {
-                                x.as_str()
-                                    .map(str::trim)
-                                    .filter(|s| !s.is_empty())
-                                    .map(String::from)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let mut produces = build_produces.clone();
                 // A built medium names its artifact; a build that forgets to list it
                 // would pass its own check while producing nothing.
                 if let Some(m) = ledger.medium.as_ref().filter(|m| m.is_built()) {
@@ -1316,7 +1525,7 @@ pub fn mark(
                 }
                 ledger.build = Some(Build {
                     run: run.to_string(),
-                    cwd: manifest["build"]["cwd"].as_str().unwrap_or(".").to_string(),
+                    cwd: build_cwd.clone(),
                     produces,
                     last_run: None,
                 });
@@ -1339,6 +1548,13 @@ pub fn mark(
             ledger.support.push(path.clone());
         }
     }
+    // The previous record's file set, before it is overwritten: what this manifest
+    // omits is removed below (docs/consumers/gen.md#incremental-regeneration).
+    let prev_files: Vec<String> = ledger
+        .entities
+        .get(&slug)
+        .map(|e| e.files.clone())
+        .unwrap_or_default();
     ledger.entities.insert(
         slug.clone(),
         EntityGen {
@@ -1355,67 +1571,9 @@ pub fn mark(
     // the ledger, so generation never runs green over a contradiction silently.
     // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
     let mut contradicted: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if let Some(tests) = manifest["tests"].as_array() {
-        for t in tests {
-            // A hollow row or an empty requirement id is a filled-in blank.
-            if hollow(t) {
-                continue;
-            }
-            let Some(rid) = t["requirement"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let rid = store.resolve_id(rid).to_string();
-            let Some(r) = store.graph.requirements.get(&rid) else {
-                return Err(format!("unknown requirement `{}` in manifest", rid));
-            };
-            let test = TestRef {
-                kind: t["kind"].as_str().unwrap_or("programmatic").to_string(),
-                label: t["label"].as_str().unwrap_or("test").to_string(),
-                artifact: t["artifact"].as_str().unwrap_or_default().to_string(),
-                name: t["name"]
-                    .as_str()
-                    .unwrap_or(&test_name(&rid, &r.statement))
-                    .to_string(),
-                run: t["run"].as_str().unwrap_or_default().to_string(),
-                cwd: t["cwd"].as_str().unwrap_or(".").to_string(),
-            };
-            // A programmatic row without an artifact or a run command cannot execute;
-            // rejecting here names the fix, where a run-time failure names a path that
-            // explains nothing. Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
-            if test.kind == "programmatic" {
-                if test.artifact.trim().is_empty() {
-                    return Err(format!(
-                        "test row for {} has an empty artifact; name the tests file the row's run command executes, or declare the row llm",
-                        rid
-                    ));
-                }
-                if test.run.trim().is_empty() {
-                    return Err(format!(
-                        "test row for {} has an empty run command; record the exact command that runs only that test, or declare the row llm",
-                        rid
-                    ));
-                }
-            }
-            let row_files: Vec<String> = dedup_keep_order(
-                t["files"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| {
-                                x.as_str()
-                                    .map(str::trim)
-                                    .filter(|s| !s.is_empty())
-                                    .map(String::from)
-                            })
-                            .collect()
-                    })
-                    .filter(|v: &Vec<String>| !v.is_empty())
-                    .unwrap_or_else(|| files.clone()),
-            );
+    {
+        for (rid, test, row_files) in rows {
+            let r = &store.graph.requirements[&rid];
             let hashes = RowHashes {
                 requirement: hash_hex(&r.statement),
                 test: hash_file(&artifact_path(&store.out, gs, &test)),
@@ -1463,6 +1621,35 @@ pub fn mark(
             seeded += 1;
         }
     }
+    // A regeneration replaces the file set: files the previous record listed that
+    // this manifest omits are removed, snapshotted first, unless something else
+    // still claims them (another entity's record, the support list, a row's test
+    // artifact, the build's output). Whichever worker records, the deliverable
+    // never keeps a predecessor under an old name
+    // (docs/consumers/gen.md#incremental-regeneration).
+    let mut removed: Vec<String> = Vec::new();
+    let mut baselined: std::collections::HashSet<String> = Default::default();
+    for f in &prev_files {
+        let claimed = files.contains(f)
+            || ledger.support.contains(f)
+            || ledger
+                .entities
+                .iter()
+                .any(|(s, e)| s != &slug && e.files.contains(f))
+            || ledger.requirements.values().any(|r| &r.test.artifact == f)
+            || ledger
+                .build
+                .as_ref()
+                .map(|b| b.produces.contains(f))
+                .unwrap_or(false);
+        if claimed || !gs.deliverable.join(f).is_file() {
+            continue;
+        }
+        snapshot_baseline(&store.out, gs, f, &mut baselined);
+        if std::fs::remove_file(gs.deliverable.join(f)).is_ok() {
+            removed.push(f.clone());
+        }
+    }
     // The deliverable itself measures how much was invented: owned mass no
     // requirement claims, recorded on the entity's entry so the grade and the
     // measure read together. Mirrors docs/consumers/gen.md#the-unattached-remainder.
@@ -1475,6 +1662,12 @@ pub fn mark(
         "marked": id, "files": files.len(), "tests": seeded,
         "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio},
     });
+    if !removed.is_empty() {
+        reply["removed"] = json!(removed);
+        reply["removedNote"] = json!(
+            "files the previous record listed and this manifest omits were removed from the deliverable (their last content is under deliverable-baseline/ in the out directory)"
+        );
+    }
     if !choices.is_empty() {
         reply["choices"] = json!(choices.len());
     }
@@ -1947,10 +2140,10 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         );
     }
     for p in pending(store, gs) {
-        let reason = if p["reason"] == "unimplemented-bindings" {
-            json!("unimplemented")
-        } else {
-            json!("facts-changed")
+        let reason = match p["reason"].as_str() {
+            Some("unimplemented-bindings") => json!("unimplemented"),
+            Some("files-gone") => json!("files-gone"),
+            _ => json!("facts-changed"),
         };
         push(
             &mut index,
@@ -2409,27 +2602,43 @@ mod tests {
         std::fs::remove_dir_all(&out).ok();
     }
 
+    // An entity with no ledger entry is generation work through an unimplemented
+    // bound row only: binding classifies first, and adopted code whose rows read
+    // verified is never generated over. Mirrors docs/compiler/goals/generate.md#created-when.
     #[test]
     fn pending_diff_and_mark_lifecycle() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", std::process::id()));
         std::fs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
+        assert!(pending(&s, &gs).is_empty(), "unbound: bind first");
+        assert!(skip_reason(&s, &gs, "ent:cart").contains("owe a bind"));
+
+        // Binding finds nothing: the row reads unimplemented and the entity is work.
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("// req:shop-1\nfn {}() {{}}", name),
+        )
+        .ok();
+        let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
-        assert_eq!(p[0]["reason"], "new");
-        assert_eq!(p[0]["changed"][0], "req:shop-1 (added)");
+        assert_eq!(p[0]["reason"], "unimplemented-bindings");
+        assert_eq!(p[0]["changed"][0], "req:shop-1");
+
+        // Binding that found the code verified: adopted, nothing to generate.
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, "pass", None, &gs)
+            .unwrap();
+        assert!(pending(&s, &gs).is_empty(), "adopted code is not generation work");
+        assert!(skip_reason(&s, &gs, "ent:cart").contains("no ledger entry"));
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
 
         // A mark with a manifest whose files exist makes it disappear from pending and
         // seeds a verification row.
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
-        std::fs::write(
-            gs.deliverable.join("tests/cart.rs"),
-            "// req:shop-1\nfn t() {}",
-        )
-        .ok();
-        let name = test_name("req:shop-1", "The Cart shall hold items.");
         let manifest = serde_json::json!({
             "files": ["src/cart.rs", "tests/cart.rs"],
             "tests": [{
@@ -2441,6 +2650,7 @@ mod tests {
         let r = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
         assert_eq!(r["tests"], 1);
         assert!(pending(&s, &gs).is_empty());
+        assert_eq!(skip_reason(&s, &gs, "ent:cart"), "unchanged");
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.verdict, "none");
@@ -2448,6 +2658,16 @@ mod tests {
             row.hashes.requirement,
             hash_hex("The Cart shall hold items.")
         );
+
+        // A recorded file deleted by hand is generation work under its own name.
+        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        let p = pending(&s, &gs);
+        assert_eq!(p[0]["reason"], "files-gone");
+        assert_eq!(p[0]["changed"][0], "src/cart.rs");
+        let rec = ledger_stale_records(&s, &gs);
+        let g = rec.iter().find(|c| c.detail["goal"] == "generate").unwrap();
+        assert_eq!(g.detail["reason"], "files-gone");
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
 
         // A new requirement reappears as a precise diff.
         let mut s2 = s.clone();
@@ -2488,9 +2708,10 @@ mod tests {
         std::fs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
         std::fs::write(
             gs.deliverable.join("tests/cart.rs"),
-            "// req:shop-1\nfn t() {}",
+            format!("// req:shop-1\nfn {}() {{}}", name),
         )
         .ok();
         // A leftover row for a requirement the graph no longer holds.
@@ -2505,7 +2726,6 @@ mod tests {
         .unwrap();
         ledger.requirements.insert("req:gone-1".into(), gone);
         ledger.save(&out);
-        let name = test_name("req:shop-1", "The Cart shall hold items.");
         let manifest = serde_json::json!({
             "files": ["tests/cart.rs"],
             "tests": [{
@@ -2518,6 +2738,165 @@ mod tests {
         let ledger = Ledger::load(&out);
         assert!(!ledger.requirements.contains_key("req:gone-1"));
         assert!(ledger.requirements.contains_key("req:shop-1"));
+    }
+
+    // The generate gate is the ledger's word: no record, a stale factHash, or
+    // recorded files that are not there each bounce a done claim naming the repair;
+    // with run_tests required, a programmatic row never run bounces it too.
+    // Mirrors docs/compiler/goals/generate.md#gate.
+    #[test]
+    fn the_generate_gate_reads_the_landed_record() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-gate-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
+        assert!(err.contains("record_generation has not landed"), "{}", err);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        let manifest = json!({"files": ["src/cart.rs", "tests/cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+            "artifact": "tests/cart.rs", "name": name, "run": "true", "files": ["src/cart.rs"]}]});
+        mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
+        assert_eq!(gate(&s, &gs, "ent:cart", false).unwrap(), 2);
+        let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
+        assert!(err.contains("run_tests has not run") && err.contains("req:shop-1"), "{}", err);
+        crate::verify::run_selected(&s, &gs, &[]).unwrap();
+        gate(&s, &gs, "ent:cart", true).unwrap();
+        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
+        assert!(err.contains("do not exist") && err.contains("src/cart.rs"), "{}", err);
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        s.graph.entities.get_mut("ent:cart").unwrap().definition = Some("moved".into());
+        let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
+        assert!(err.contains("facts moved"), "{}", err);
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // Every path a manifest names is confined before any side effect: an absolute
+    // path or one climbing out with `..` is rejected naming it, and the rejected
+    // record strips no marker, writes no ledger, and removes nothing.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn manifest_paths_are_confined_to_the_deliverable() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-confine-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        // A file beside the deliverable that a climbing path could reach.
+        std::fs::write(out.join("secret.txt"), "// req:shop-1 hash:deadbeef\nkeep\n").unwrap();
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// req:shop-1 hash:deadbeef\nfn a() {}\n").unwrap();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        let row = json!({
+            "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+            "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
+        });
+        for (bad, field) in [
+            (json!({"files": ["src/cart.rs", "../secret.txt"], "tests": [row.clone()]}), "files"),
+            (json!({"files": ["/etc/passwd"], "tests": [row.clone()]}), "files"),
+            (json!({"files": ["src/cart.rs"], "supportFiles": ["../../x"], "tests": [row.clone()]}), "supportFiles"),
+            (json!({"files": ["src/cart.rs"], "tests": [{"requirement": "req:shop-1", "kind": "programmatic", "artifact": "../secret.txt", "name": name, "run": "x"}]}), "artifact"),
+            (json!({"files": ["src/cart.rs"], "tests": [row.clone()], "build": {"run": "make", "cwd": "..", "produces": []}}), "build.cwd"),
+        ] {
+            let err = mark(&s, "ent:cart", None, &bad, &gs).unwrap_err();
+            assert!(err.contains(field), "{}: {}", field, err);
+            assert!(!Ledger::path(&out).exists(), "a rejected record writes no ledger");
+        }
+        // No side effect reached either file: the markers are still there.
+        assert!(std::fs::read_to_string(out.join("secret.txt")).unwrap().contains("hash:"));
+        assert!(std::fs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap().contains("hash:"));
+        // The clean spellings are normalized on record.
+        let ok = json!({"files": ["./src/cart.rs", "src//cart.rs"], "tests": [row]});
+        mark(&s, "ent:cart", None, &ok, &gs).unwrap();
+        assert_eq!(Ledger::load(&out).entities["cart"].files, vec!["src/cart.rs".to_string()]);
+        assert_eq!(confine_rel("a\\b\\c.py").unwrap(), "a/b/c.py");
+        assert!(confine_rel("C:/x").is_err());
+        assert!(confine_rel(".").is_err());
+        assert_eq!(confine_cwd("").unwrap(), ".");
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // The record applies the artifact gate binding applies: a row whose artifact is
+    // not there, or a programmatic row whose artifact lacks the declared name, is
+    // rejected naming the row and the fix. Mirrors docs/compiler/goals/generate.md#gate.
+    #[test]
+    fn record_generation_rejects_a_test_its_artifact_does_not_carry() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (s, gs) = fixture(&out);
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        std::fs::write(gs.deliverable.join("cart.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), "fn something_else() {}\n").unwrap();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        let absent = json!({"files": ["cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "programmatic", "artifact": "tests/cart.rs",
+            "name": name, "run": format!("cargo test {}", name)}]});
+        let err = mark(&s, "ent:cart", None, &absent, &gs).unwrap_err();
+        assert!(err.contains("does not contain that name") && err.contains(&name), "{}", err);
+        let gone = json!({"files": ["cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "programmatic", "artifact": "tests/nope.rs",
+            "name": name, "run": format!("cargo test {}", name)}]});
+        let err = mark(&s, "ent:cart", None, &gone, &gs).unwrap_err();
+        assert!(err.contains("no such file"), "{}", err);
+        let no_criteria = json!({"files": ["cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "llm", "artifact": "criteria/req-shop-1.md", "name": name}]});
+        let err = mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap_err();
+        assert!(err.contains("gen/"), "{}", err);
+        assert!(mark(&s, "ent:cart", None, &json!({"files": ["cart.rs"], "tests": [{
+            "requirement": "req:shop-1", "kind": "oracle", "artifact": "x", "name": "y", "run": "z"}]}), &gs)
+            .unwrap_err()
+            .contains("`programmatic`"));
+        // The criteria file under the out directory satisfies an llm row.
+        std::fs::create_dir_all(out.join("gen/criteria")).unwrap();
+        std::fs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap();
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // A regeneration replaces the file set through the record itself, whichever
+    // worker records: what the previous record listed and this manifest omits is
+    // removed (snapshotted first), while a file another entity records, a support
+    // file, or a row's test artifact stays.
+    // Mirrors docs/consumers/gen.md#incremental-regeneration.
+    #[test]
+    fn a_record_removes_the_files_its_manifest_omits() {
+        let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", std::process::id()));
+        std::fs::remove_dir_all(&out).ok();
+        let (mut s, gs) = fixture(&out);
+        s.graph.entities.insert("ent:shelf".into(), Entity { name: "Shelf".into(), ..Default::default() });
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        for f in ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "Cargo.toml", "src/cart_v2.rs"] {
+            std::fs::write(gs.deliverable.join(f), format!("// {}\n", f)).unwrap();
+        }
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        let row = json!({
+            "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
+            "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
+        });
+        mark(&s, "ent:shelf", None, &json!({"files": ["src/shared.rs"], "tests": []}), &gs).unwrap();
+        mark(&s, "ent:cart", None, &json!({
+            "files": ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "tests/cart.rs"],
+            "supportFiles": ["Cargo.toml"], "tests": [row.clone()],
+        }), &gs).unwrap();
+        // The second record drops cart_old, shared (the other entity's too), and the
+        // support file from its list.
+        let r = mark(&s, "ent:cart", None, &json!({
+            "files": ["src/cart_v2.rs", "tests/cart.rs"], "tests": [row],
+        }), &gs).unwrap();
+        assert_eq!(r["removed"], json!(["src/cart.rs", "src/cart_old.rs"]), "{}", r);
+        assert!(!gs.deliverable.join("src/cart_old.rs").exists());
+        assert!(!gs.deliverable.join("src/cart.rs").exists());
+        assert!(gs.deliverable.join("src/shared.rs").exists(), "another entity records it");
+        assert!(gs.deliverable.join("Cargo.toml").exists(), "support files are the deliverable's");
+        assert!(gs.deliverable.join("tests/cart.rs").exists());
+        assert!(out.join("deliverable-baseline/src/cart_old.rs").exists(), "snapshotted before removal");
+        std::fs::remove_dir_all(&out).ok();
     }
 
     // Part before whole: a parent's children generate first, and a system's direct
@@ -2807,12 +3186,27 @@ mod tests {
         assert_eq!(bind.via, "ledger");
         assert_eq!(bind.detail["reason"], "unbound");
         assert!(bind.id.starts_with('c'), "{}", bind.id);
+        // Binding classifies first: no generate record while the requirement is
+        // unbound (docs/compiler/goals/generate.md#created-when).
+        assert!(
+            records.iter().all(|r| r.detail["goal"] != "generate"),
+            "{:?}",
+            records.iter().map(|r| r.detail.clone()).collect::<Vec<_>>()
+        );
+        // Bound and unimplemented: the entity is generation work under that reason.
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
+        let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
+        let records = ledger_stale_records(&s, &gs);
         let g = records
             .iter()
             .find(|r| r.detail["goal"] == "generate")
             .expect("a generate record");
         assert_eq!(g.subject, "ent:cart");
-        assert_eq!(g.detail["reason"], "facts-changed");
+        assert_eq!(g.detail["reason"], "unimplemented");
+        assert_eq!(g.detail["changed"][0], "req:shop-1");
         std::fs::remove_dir_all(&out).ok();
     }
 }
@@ -2896,7 +3290,7 @@ pub fn run_all(
                 skipped += 1;
                 trace.event(TraceEvent::GenEntitySkipped {
                     entity: id.clone(),
-                    reason: "unchanged".into(),
+                    reason: skip_reason(store, gs, id),
                 });
             } else {
                 ready.push(id.clone());
@@ -3017,32 +3411,12 @@ fn gen_session(
     if let Some(e) = report.failed {
         return ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect();
     }
-    let ledger = Ledger::load(&store.out);
+    // Success is the gate's word: the record landed with current facts and existing
+    // files. Whether run_tests ran is the verify goal's business here; a session that
+    // recorded and ended resolves the goal at the next derivation
+    // (docs/compiler/goals/generate.md#gate).
     ids.iter()
-        .map(|id| {
-            let hash = fact_hash(store, id);
-            let res = match ledger.entities.get(&slug_of(id)) {
-                Some(e)
-                    if e.fact_hash == hash
-                        && !e.files.is_empty()
-                        && e.files.iter().all(|f| gs.deliverable.join(f).exists()) =>
-                {
-                    Ok(e.files.len())
-                }
-                Some(e) if e.fact_hash != hash => Err(format!(
-                    "the session recorded factHash {} but the graph says {}; the goal package carries the current one",
-                    e.fact_hash, hash
-                )),
-                Some(_) => Err(
-                    "the session recorded files that do not exist under the deliverable".into(),
-                ),
-                None => Err(
-                    "the session ended without record_generation; nothing landed in the ledger"
-                        .into(),
-                ),
-            };
-            (id.clone(), res)
-        })
+        .map(|id| (id.clone(), gate(store, gs, id, false)))
         .collect()
 }
 
@@ -3846,23 +4220,9 @@ pub fn gen_one(
     if manifest_json["choices"].is_array() {
         manifest["choices"] = manifest_json["choices"].clone();
     }
+    // The record removes what the previous generation listed and this manifest omits
+    // (docs/consumers/gen.md#incremental-regeneration).
     crate::gen::mark(store, id, task["factHash"].as_str(), &manifest, gs)?;
-    // A regeneration replaces the file set: files the previous generation recorded
-    // that the new manifest no longer lists are removed, unless another entity also
-    // records them. Mirrors docs/consumers/gen.md#incremental-regeneration.
-    if let Some(prev) = ledger.entities.get(&own_slug) {
-        for f in &prev.files {
-            let kept = files.contains(f)
-                || ledger
-                    .entities
-                    .iter()
-                    .any(|(slug, e)| slug != &own_slug && e.files.contains(f));
-            if !kept {
-                snapshot_baseline(&store.out, gs, f, &mut baselined);
-                std::fs::remove_file(gs.deliverable.join(f)).ok();
-            }
-        }
-    }
     // Both built-in workers file and clear the graded invented-choice diagnostics:
     // the session path stages them through record_generation, and this pipeline path
     // commits them here, right after the record they grade.

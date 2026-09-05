@@ -17,6 +17,66 @@ pub fn instructions() -> String {
     include_str!("../../docs/compiler/goals/prompts/bind-contract.md").into()
 }
 
+// Why an existing row owes a bind, or None when it is current: the statement moved
+// under it, or nothing judges it any more (the artifact is gone from disk, or a
+// programmatic artifact lost the declared test name).
+// Mirrors docs/consumers/bind.md#when-binding-runs.
+fn bind_reason(
+    store: &Store,
+    gs: &GenSettings,
+    _rid: &str,
+    r: &crate::model::Requirement,
+    row: &ReqRow,
+) -> Option<&'static str> {
+    if hash_hex(&r.statement) != row.hashes.requirement {
+        return Some("requirement-changed");
+    }
+    let artifact = artifact_path(&store.out, gs, &row.test);
+    if !artifact.exists() {
+        return Some("artifact-gone");
+    }
+    if row.test.kind == "programmatic"
+        && !std::fs::read_to_string(&artifact)
+            .map(|c| !row.test.name.trim().is_empty() && c.contains(&row.test.name))
+            .unwrap_or(false)
+    {
+        return Some("artifact-gone");
+    }
+    None
+}
+
+// The bind goal's gate: a row recorded by record_binding and current (its requirement
+// hash equals the live statement hash, and its artifact exists and carries the
+// declared name). Err names what is missing and the call that lands it, so a
+// mark_goal_done claim without the row is bounced with the repair in hand.
+// Mirrors docs/compiler/goals/bind.md#gate.
+pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
+    let rid = store.resolve_id(rid).to_string();
+    let Some(r) = store.graph.requirements.get(&rid) else {
+        return Err(format!("`{}` is not in the graph; nothing binds it", rid));
+    };
+    let ledger = Ledger::load(&store.out);
+    let Some(row) = ledger.requirements.get(&rid) else {
+        return Err(format!(
+            "no ledger row for `{}`: record_binding has not landed; the gate is a current row recorded by record_binding",
+            rid
+        ));
+    };
+    match bind_reason(store, gs, &rid, r, row) {
+        None => Ok(()),
+        Some("requirement-changed") => Err(format!(
+            "the row for `{}` records statement hash {} but the live statement hashes {}: the statement moved since the row was recorded; begin_binding again and record_binding against the current package",
+            rid,
+            &row.hashes.requirement[..row.hashes.requirement.len().min(8)],
+            &hash_hex(&r.statement)[..8]
+        )),
+        Some(_) => Err(format!(
+            "the row for `{}` names test `{}` in `{}`, but that artifact is missing or does not contain the name; write the test (or bind to the existing one under its real name) and record_binding again",
+            rid, row.test.name, row.test.artifact
+        )),
+    }
+}
+
 // Requirements owing a bind, with a reason. Deterministic; no model.
 // Mirrors docs/consumers/bind.md#when-binding-runs.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
@@ -25,15 +85,10 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     for (rid, r) in &store.graph.requirements {
         let reason = match ledger.requirements.get(rid) {
             None => "unbound",
-            Some(row) => {
-                if hash_hex(&r.statement) != row.hashes.requirement {
-                    "requirement-changed"
-                } else if !artifact_path(&store.out, gs, &row.test).exists() {
-                    "artifact-gone"
-                } else {
-                    continue;
-                }
-            }
+            Some(row) => match bind_reason(store, gs, rid, r, row) {
+                Some(reason) => reason,
+                None => continue,
+            },
         };
         let entity = r
             .entities
@@ -72,7 +127,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     let conventions: Vec<Value> = ledger
         .requirements
         .values()
-        .map(|row| json!({"kind": row.test.kind, "artifact": row.test.artifact, "run": row.test.run}))
+        .map(|row| json!({"kind": row.test.kind, "artifact": row.test.artifact, "run": row.test.run, "files": row.files}))
         .take(5)
         .collect();
     let entity_files = ledger
@@ -80,17 +135,12 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         .get(&crate::gen::slug_of(&entity))
         .map(|e| e.files.clone())
         .unwrap_or_default();
-    let reason = ledger
-        .requirements
-        .get(&rid)
-        .map(|row| {
-            if hash_hex(&r.statement) != row.hashes.requirement {
-                "requirement-changed"
-            } else {
-                "artifact-gone"
-            }
-        })
-        .unwrap_or("unbound");
+    // The reason the row owes a bind; a current row begun anyway reads `current`,
+    // so the session knows it is re-binding by choice, not by the board's word.
+    let reason = match ledger.requirements.get(&rid) {
+        None => "unbound",
+        Some(row) => bind_reason(store, gs, &rid, r, row).unwrap_or("current"),
+    };
     Ok(json!({
         "requirement": rid,
         "entity": entity,
@@ -123,7 +173,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
 pub fn record(
     store: &Store,
     rid: &str,
-    files: &[String],
+    files_in: &[String],
     test: &Value,
     verdict: &str,
     evidence: Option<&str>,
@@ -144,9 +194,9 @@ pub fn record(
         return Err("test.kind must be `programmatic` or `llm`".into());
     }
     let (artifact, name, run) = (
-        test["artifact"].as_str().unwrap_or_default().to_string(),
-        test["name"].as_str().unwrap_or_default().to_string(),
-        test["run"].as_str().unwrap_or_default().to_string(),
+        test["artifact"].as_str().unwrap_or_default().trim().to_string(),
+        test["name"].as_str().unwrap_or_default().trim().to_string(),
+        test["run"].as_str().unwrap_or_default().trim().to_string(),
     );
     if artifact.is_empty() || name.is_empty() {
         return Err("test.artifact and test.name are required".into());
@@ -156,13 +206,16 @@ pub fn record(
             "a programmatic test needs test.run: the command whose exit code is the verdict".into(),
         );
     }
+    // Every path the binding names stays under the deliverable
+    // (docs/consumers/gen.md#file-ownership-and-conventions).
     let tref = TestRef {
         kind: kind.into(),
         label: test["label"].as_str().unwrap_or("bound").into(),
-        artifact,
+        artifact: crate::gen::confine_rel(&artifact).map_err(|e| format!("test.artifact: {}", e))?,
         name: name.clone(),
         run,
-        cwd: test["cwd"].as_str().unwrap_or(".").into(),
+        cwd: crate::gen::confine_cwd(test["cwd"].as_str().unwrap_or("."))
+            .map_err(|e| format!("test.cwd: {}", e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
     if !path.exists() {
@@ -183,15 +236,14 @@ pub fn record(
     // Implementing files must exist: a binding names what carries the requirement, and
     // a path that is not there carries nothing. An empty list is the honest record of
     // an unimplemented requirement.
-    let mut files: Vec<String> = files
-        .iter()
-        .map(|f| f.trim().to_string())
-        .filter(|f| !f.is_empty())
-        .collect();
+    let mut files: Vec<String> = Vec::new();
+    for f in files_in.iter().filter(|f| !f.trim().is_empty()) {
+        files.push(crate::gen::confine_rel(f).map_err(|e| format!("files: {}", e))?);
+    }
     files.sort();
     files.dedup();
     for f in &files {
-        if !gs.deliverable.join(f).exists() {
+        if !gs.deliverable.join(f).is_file() {
             return Err(format!("implementing file `{}` does not exist under the deliverable; an unimplemented requirement records an empty files list", f));
         }
     }
@@ -409,27 +461,12 @@ pub fn run_all(
             failures += 1;
             continue;
         }
-        let ledger = Ledger::load(&store.out);
-        let live = store
-            .graph
-            .requirements
-            .get(&rid)
-            .map(|r| hash_hex(&r.statement))
-            .unwrap_or_default();
-        match ledger.requirements.get(&rid) {
-            Some(row) if row.hashes.requirement == live => bound += 1,
-            Some(_) => {
-                trace.line(
-                    "bind",
-                    &format!("{} recorded a stale statement hash; still owed", rid),
-                );
-                failures += 1;
-            }
-            None => {
-                trace.line(
-                    "bind",
-                    &format!("{} ended without record_binding; still owed", rid),
-                );
+        // Success is the gate's word, the same check mark_goal_done faces
+        // (docs/compiler/goals/bind.md#gate).
+        match gate(store, gs, &rid) {
+            Ok(()) => bound += 1,
+            Err(e) => {
+                trace.line("bind", &format!("{} still owed: {}", rid, e));
                 failures += 1;
             }
         }
@@ -626,6 +663,77 @@ mod tests {
             .as_array()
             .map(|a| a.is_empty())
             .unwrap_or(false));
+    }
+
+    // Every path a binding names stays under the deliverable: a climbing or absolute
+    // implementing file or artifact is rejected naming it, and the ledger is untouched.
+    // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
+    #[test]
+    fn binding_paths_are_confined_to_the_deliverable() {
+        let s = tmp_store();
+        let gs = GenSettings {
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        std::fs::write(s.out.join("outside.sh"), "echo secret\n").unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        std::fs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 0\n", name),
+        )
+        .unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        let err = record(&s, "req:shop-1", &["../outside.sh".into()], &test, "pass", None, &gs)
+            .unwrap_err();
+        assert!(err.contains("files") && err.contains(".."), "{}", err);
+        let climbing = json!({"kind": "programmatic", "artifact": "../outside.sh", "name": "echo", "run": "sh ../outside.sh"});
+        let err = record(&s, "req:shop-1", &[], &climbing, "pass", None, &gs).unwrap_err();
+        assert!(err.contains("test.artifact"), "{}", err);
+        let absolute = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh", "cwd": "/tmp"});
+        let err = record(&s, "req:shop-1", &[], &absolute, "pass", None, &gs).unwrap_err();
+        assert!(err.contains("test.cwd"), "{}", err);
+        assert!(Ledger::load(&s.out).requirements.is_empty());
+        // The clean spelling normalizes.
+        let ok = json!({"kind": "programmatic", "artifact": "./tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        record(&s, "req:shop-1", &[], &ok, "fail", None, &gs).unwrap();
+        assert_eq!(
+            Ledger::load(&s.out).requirements["req:shop-1"].test.artifact,
+            "tests/shop.sh"
+        );
+    }
+
+    // The bind gate is the ledger's word: no row, a stale statement hash, or an
+    // artifact that lost the test each bounce a done claim naming the repair; a
+    // current row passes whatever its verdict. Mirrors docs/compiler/goals/bind.md#gate.
+    #[test]
+    fn the_bind_gate_reads_the_landed_row() {
+        let mut s = tmp_store();
+        let gs = GenSettings {
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("record_binding has not landed"), "{}", err);
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        record(&s, "req:shop-1", &[], &test, "fail", None, &gs).unwrap();
+        gate(&s, &gs, "req:shop-1").unwrap();
+        // The test renamed by hand: the row names a test that is not there.
+        std::fs::write(gs.deliverable.join("tests/shop.sh"), "# renamed\nexit 1\n").unwrap();
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("does not contain the name"), "{}", err);
+        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        gate(&s, &gs, "req:shop-1").unwrap();
+        // The statement reworded: the row judges a dropped sentence.
+        s.graph.requirements.get_mut("req:shop-1").unwrap().statement = "The shop shall list items, sorted.".into();
+        let err = gate(&s, &gs, "req:shop-1").unwrap_err();
+        assert!(err.contains("statement moved") && err.contains("begin_binding again"), "{}", err);
+        assert_eq!(task(&s, "req:shop-1", &gs).unwrap()["reason"], "requirement-changed");
     }
 
     #[test]

@@ -208,7 +208,7 @@ levels exist. What the pictures show:
   lifted), and, for the domain concepts left parentless, their stated types
   (`Order o-- "1..*" Product`, `Payment -- Order`, `Shipment -- Order`,
   `Shipment ..> Customer`). Orderly's element carries the drill-down link
-  `[[../component/orderly.svg]]` when its level view exists. When the root view
+  `[[../../docsgen/entities/orderly.md]]`, the entity's card, which holds the link to its level view. When the root view
   derives as `class/public`, the same members draw as classes with their attributes
   (`class Customer <<actor>>` with `email`, `class Product` with `name`, `price`,
   `category`).

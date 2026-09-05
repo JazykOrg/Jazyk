@@ -426,7 +426,8 @@ The kinds, who writes them, and the goal each feeds:
 | `prompt-unanswered` | a commit that files a prompt on a diagnostic | `answer` |
 | `provenance-pending` | a commit that lands a derived or decreed fact | `ratify` |
 | `threshold-crossed` | the limit counts at commit | `split-view`, `abstract-entity` |
-| `view-member-gone` | a delete that removes a curated view's member | `retrace` |
+| `reparent-flip` | a commit that moves a child back between the same two parents it moved between before (`via: parent`, `detail.between` naming the two); the sweep's dissolve counts as a move | nothing directly: [flip detection](./reconciler.md#flip-detection) at the build's tail reads it beside the journal's replay and parks the goal behind the second move |
+| `view-member-gone` | a delete that removes a curated view's member (`via` names the list: `members`, `collapse`, `excluded`) | `retrace` |
 | `edges-missing` | a commit that lands a multi-entity requirement without `edges` | `declare-edges` |
 | `lookalike` | the name index at commit (a cross-document score over the threshold) | `dedupe-candidates` |
 | `query-match` | a recompute in which a new node matches a curated view's query | `curate-view` |
@@ -503,6 +504,15 @@ commit, never delegated to the model. The GC goals are judgment: restructuring w
 harness derives and a session resolves. Both are named `gc` on every surface.
 
 ### The sweep
+
+The sweep runs behind every commit, whichever path committed: a session's `done`, a
+decree, a dual write, a ratification, an answer, a triage, a check run. It runs under
+the commit's lock, after the commit's own entry, and a build runs it once more after
+alignment, since the `edit` and `align` entries are no changeset. What it did lands as
+entries of its own (`gc` for deletions and dissolutions, `settle-diagnostics` for the
+settles below), each a generation; a sweep with nothing to do writes nothing. The
+commit's reply lists the sweep's actions, so a serving or a frontend can say what a
+commit swept. Nothing waits for the next build: the graph is honest between builds.
 
 - A requirement whose source section disappeared and was not re-anchored during
   reconcile is deleted by the store, journaled. An anchor named by a pending

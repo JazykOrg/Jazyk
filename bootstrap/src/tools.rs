@@ -211,16 +211,16 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "orphan_anchor",
-            description: "Leave one proposed anchor homeless: no candidate section states it any more. It stays a stale anchor for the extraction turn, which will delete it unless the document still states it.",
+            description: "Leave one proposed anchor homeless: no candidate section states it any more. While its old section still exists it stays a stale anchor there for the extraction turn, which will delete it unless the document still states it; an anchor whose section is gone is deleted by the sweep at commit.",
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
+            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations; none for a considered judgment recorded but not surfaced. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
             parameters: obj(
                 json!({
                     "rule": {"type": "string", "enum": REVIEW_RULES},
-                    "severity": {"type": "string", "enum": ["error", "warning", "info"]},
+                    "severity": {"type": "string", "enum": SEVERITIES},
                     "subjects": {"type": "array", "items": {"type": "string"}},
                     "message": {"type": "string"},
                     "reasoning": {"type": "string"},
@@ -248,7 +248,7 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(
                 json!({
                     "section": {"type": "string"},
-                    "state": {"type": "string", "enum": ["covered", "non-normative"]},
+                    "state": {"type": "string", "enum": SETTABLE_COVERAGE},
                     "note": {"type": "string"}
                 }),
                 &["section", "state"],
@@ -1486,6 +1486,24 @@ impl ToolSession {
                 return Err(ToolError::new(&v.rule, v.message));
             }
         }
+        // The ledger kinds' gates read the landed ledger, never the changeset: a
+        // claim on a bind, generate, or verify goal is validated against the row
+        // or record the goal page names, and the refusal carries the repair.
+        // Mirrors docs/compiler/goals/bind.md#gate, generate.md#gate, verify.md#gate.
+        let ledger = match gs.kind.as_str() {
+            "bind" => crate::bind::gate(&self.snapshot, &self.gen, &gs.target),
+            "generate" => {
+                crate::gen::gate(&self.snapshot, &self.gen, &gs.target, true).map(|_| ())
+            }
+            "verify" => crate::verify::gate(&self.snapshot, &self.gen, &gs.target),
+            _ => Ok(()),
+        };
+        if let Err(message) = ledger {
+            return Err(ToolError::new(
+                &format!("{}-gate", gs.kind),
+                format!("{}: {}", gs.goal, message),
+            ));
+        }
         // The fan-out variant's own level faces its count even when the changeset left
         // it alone. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
         if gs.kind == "abstract-entity" {
@@ -2340,7 +2358,48 @@ impl ToolSession {
                 ),
             ));
         }
-        Ok(self.gen.deliverable.join(rel))
+        // Symlinks resolve before the path is trusted: the deepest existing ancestor
+        // is canonicalized and must stay under the canonical deliverable, so a link
+        // inside the deliverable pointing outside is refused like `..`. The part that
+        // does not exist yet (a file about to be written) rides on the resolved
+        // ancestor. Mirrors docs/compiler/tools.md#generation-tools.
+        let root = self.deliverable_root();
+        let joined = root.join(rel);
+        let mut probe = joined.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        while !probe.exists() {
+            let Some(name) = probe.file_name().map(|n| n.to_os_string()) else {
+                break;
+            };
+            tail.push(name);
+            probe = probe
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| root.clone());
+        }
+        let mut resolved = probe.canonicalize().unwrap_or(probe);
+        if !resolved.starts_with(&root) {
+            return Err(ToolError::new(
+                "bad-path",
+                format!(
+                    "`{}` resolves outside the deliverable directory through a symlink; the deliverable is the sandbox",
+                    rel
+                ),
+            ));
+        }
+        for name in tail.into_iter().rev() {
+            resolved.push(name);
+        }
+        Ok(resolved)
+    }
+
+    // The deliverable directory with its own symlinks resolved, the prefix every
+    // sandboxed path must keep.
+    fn deliverable_root(&self) -> std::path::PathBuf {
+        self.gen
+            .deliverable
+            .canonicalize()
+            .unwrap_or_else(|_| self.gen.deliverable.clone())
     }
 
     fn file_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
@@ -2397,8 +2456,9 @@ impl ToolSession {
             }
             "list_files" => {
                 let rel = Self::opt_str(args, "path").unwrap_or_default();
+                let base = self.deliverable_root();
                 let root = if rel.is_empty() {
-                    self.gen.deliverable.clone()
+                    base.clone()
                 } else {
                     self.deliverable_path(&rel)?
                 };
@@ -2418,9 +2478,14 @@ impl ToolSession {
                         {
                             continue;
                         }
+                        // A link pointing out of the deliverable is not listed:
+                        // what cannot be read is not offered.
+                        if p.canonicalize().is_ok_and(|c| !c.starts_with(&base)) {
+                            continue;
+                        }
                         if p.is_dir() {
                             stack.push(p);
-                        } else if let Ok(r) = p.strip_prefix(&self.gen.deliverable) {
+                        } else if let Ok(r) = p.strip_prefix(&base) {
                             out.push(r.to_string_lossy().replace('\\', "/"));
                         }
                     }
@@ -3786,6 +3851,25 @@ impl ToolSession {
                         ),
                     ));
                 }
+                // The parent gate holds at staging like every other: the children
+                // are counted as this session's staged work leaves them (a staged
+                // move away frees the parent, a staged create under it binds it).
+                // Mirrors docs/compiler/tools.md#write-tools.
+                let children: Vec<String> = self
+                    .entities_after()
+                    .into_iter()
+                    .filter(|e| e != &rid && self.parent_of(e).as_deref() == Some(rid.as_str()))
+                    .collect();
+                if !children.is_empty() {
+                    return Err(ToolError::new(
+                        "still-a-parent",
+                        format!(
+                            "cannot delete {}; entities still name it as parent: {}; move them (update_entity with parent) or delete them first",
+                            rid,
+                            children.join(", ")
+                        ),
+                    ));
+                }
                 self.stage(Op::DeleteEntity { id: rid, reason })?;
                 Ok(json!({"deleted": true}))
             }
@@ -3804,6 +3888,34 @@ impl ToolSession {
                         "bad-merge",
                         "keep and absorb are the same entity".into(),
                     ));
+                }
+                // A merge never makes the survivor its own ancestor: the absorbed
+                // entity's children move under the survivor, so the survivor must not
+                // sit under the absorbed one, staged moves counted.
+                // Mirrors docs/compiler/tools.md#write-tools.
+                let mut chain = vec![keep.clone()];
+                let mut cur = keep.clone();
+                for _ in 0..64 {
+                    match self.parent_of(&cur) {
+                        Some(p) if p == absorb => {
+                            chain.push(p);
+                            return Err(ToolError::new(
+                                "bad-merge",
+                                format!(
+                                    "{} is contained in {} ({}); merging would make it its own ancestor. Keep the container, or move {} out first",
+                                    keep,
+                                    absorb,
+                                    chain.join(" > "),
+                                    keep
+                                ),
+                            ));
+                        }
+                        Some(p) => {
+                            chain.push(p.clone());
+                            cur = p;
+                        }
+                        None => break,
+                    }
                 }
                 self.stage(Op::MergeEntities {
                     keep: keep.clone(),
@@ -4466,12 +4578,13 @@ impl ToolSession {
                     ));
                 }
                 let severity = Self::str_arg(args, "severity")?;
-                if !["error", "warning", "info", "none"].contains(&severity.as_str()) {
+                if !SEVERITIES.contains(&severity.as_str()) {
                     return Err(ToolError::new(
                         "bad-severity",
                         format!(
-                            "severity `{}` must be error, warning, info, or none",
-                            severity
+                            "severity `{}` must be one of: {}",
+                            severity,
+                            SEVERITIES.join(", ")
                         ),
                     ));
                 }
@@ -4623,10 +4736,14 @@ impl ToolSession {
             "set_coverage" => {
                 let section = Self::str_arg(args, "section")?;
                 let state = Self::str_arg(args, "state")?;
-                if !["covered", "non-normative"].contains(&state.as_str()) {
+                if !SETTABLE_COVERAGE.contains(&state.as_str()) {
                     return Err(ToolError::new(
                         "bad-state",
-                        format!("state `{}` must be covered or non-normative", state),
+                        format!(
+                            "state `{}` must be one of: {}",
+                            state,
+                            SETTABLE_COVERAGE.join(", ")
+                        ),
                     ));
                 }
                 // A placeholder note counts as absent; weak models emit these literally.
@@ -5937,6 +6054,41 @@ mod tests {
     }
 
     #[test]
+    // The severity gate is the model's own list: `none` (a considered judgment
+    // recorded but not surfaced) passes, an invented level is refused naming the
+    // list. Mirrors docs/compiler/model/diagnostic.md#fields.
+    #[test]
+    fn severity_gate_is_the_diagnostic_models_list() {
+        let mut t = session();
+        let v = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "none",
+                        "subjects": ["ent:customer"], "message": "Considered, not surfaced."}),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        let err = t
+            .dispatch(
+                "report_diagnostic",
+                &json!({"rule": "ambiguity", "severity": "critical",
+                        "subjects": ["ent:customer"], "message": "Nope."}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-severity");
+        for s in SEVERITIES {
+            assert!(err.message.contains(s), "{}", err.message);
+        }
+        let err = t
+            .dispatch(
+                "set_coverage",
+                &json!({"section": "/shop/cart", "state": "unprocessed"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-state");
+    }
+
+    #[test]
     fn report_diagnostic_answers_with_the_id_and_reads_see_it() {
         // The model's own feedback: a bare {"reported": true} left a just-filed
         // finding unaddressable. The reply carries the id, a re-report answers
@@ -5998,6 +6150,93 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r["resolved"], true);
+    }
+
+    #[test]
+    // delete_entity's parent gate and merge_entities' ancestor gate hold when the
+    // call is staged, staged moves counted, so the reply never says done for a
+    // mutation the commit would skip. Mirrors docs/compiler/tools.md#write-tools.
+    #[test]
+    fn delete_and_merge_gates_hold_at_staging_with_staged_moves_counted() {
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:order".into(), plain("Order"));
+        // A parent cannot go while a child names it.
+        let err = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:cart", "reason": "noise"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "still-a-parent");
+        assert!(err.message.contains("ent:item"), "{}", err.message);
+        // A staged move of the child away frees the parent.
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:item", "parent": "ent:order"}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:cart", "reason": "noise"}),
+            )
+            .unwrap();
+        assert_eq!(v["deleted"], true);
+        // A staged create under an entity binds it.
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Line", "parent": "ent:order", "mention": {"section": "/shop/cart", "quote": "holds items"}}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "delete_entity",
+                &json!({"id": "ent:order", "reason": "noise"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "still-a-parent");
+        assert!(err.message.contains("ent:line"), "{}", err.message);
+
+        // Merging a container into something it contains would make the survivor
+        // its own ancestor; the other direction is fine.
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:sku".into(), under("Sku", "ent:item"));
+        let err = t
+            .dispatch(
+                "merge_entities",
+                &json!({"keep": "ent:sku", "absorb": "ent:cart", "reason": "same"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-merge");
+        assert!(
+            err.message.contains("ent:sku > ent:item > ent:cart"),
+            "{}",
+            err.message
+        );
+        // The staged parent counts: an item moved out from under the cart merges fine.
+        let mut t = session();
+        let ents = &mut t.snapshot.graph.entities;
+        ents.insert("ent:cart".into(), plain("Cart"));
+        ents.insert("ent:item".into(), under("Item", "ent:cart"));
+        ents.insert("ent:basket".into(), plain("Basket"));
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:item", "parent": "ent:basket"}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch(
+                "merge_entities",
+                &json!({"keep": "ent:item", "absorb": "ent:cart", "reason": "same"}),
+            )
+            .unwrap();
+        assert_eq!(v["kept"], "ent:item");
     }
 
     #[test]
@@ -7680,6 +7919,117 @@ mod tests {
             &json!({"goal": goal, "reason": "the section contradicts itself"}),
         )
         .unwrap();
+    }
+
+    // A claim on a ledger goal is validated against the ledger the goal page names:
+    // with no row or record landed, bind, generate, and verify claims are refused
+    // naming the call that lands one. Mirrors docs/compiler/tools.md#goal-tools.
+    #[test]
+    fn mark_goal_done_on_ledger_goals_reads_the_ledger() {
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-ledger-gate-{}-{}",
+            std::process::id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Store {
+            out: dir.clone(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "The Cart holds items.".into(),
+                entities: vec!["ent:cart".into()],
+                ..Default::default()
+            },
+        );
+        let goal = |kind: &str, target: &str| Goal {
+            id: format!("g:{}:{}", kind, target),
+            kind: kind.into(),
+            mandatory: true,
+            target: target.into(),
+            ..Default::default()
+        };
+        let goals = vec![
+            goal("bind", "req:t-1"),
+            goal("generate", "ent:cart"),
+            goal("verify", "req:t-1"),
+        ];
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        for (id, rule, repair) in [
+            ("g:bind:req:t-1", "bind-gate", "record_binding"),
+            ("g:generate:ent:cart", "generate-gate", "record_generation"),
+            ("g:verify:req:t-1", "verify-gate", "bind work"),
+        ] {
+            let err = t
+                .dispatch(
+                    "mark_goal_done",
+                    &json!({"goal": id, "justification": "Landed."}),
+                )
+                .unwrap_err();
+            assert_eq!(err.rule, rule);
+            assert!(err.message.contains(repair), "{}", err.message);
+            assert!(err.message.contains(id), "{}", err.message);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The file tools' sandbox holds after symlinks resolve: a link inside the
+    // deliverable pointing outside is refused like `..`, and is not listed.
+    // Mirrors docs/compiler/tools.md#generation-tools.
+    #[test]
+    fn deliverable_paths_resolve_symlinks_before_trusting_them() {
+        let base = std::env::temp_dir().join(format!(
+            "jazyk-sandbox-{}-{}",
+            std::process::id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
+        let deliverable = base.join("deliverable");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(deliverable.join("src")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(deliverable.join("src").join("ok.txt"), "fine\n").unwrap();
+        std::fs::write(outside.join("secret.txt"), "no\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, deliverable.join("link")).unwrap();
+        let mut t = session();
+        t.gen.deliverable = deliverable.clone();
+        let v = t
+            .dispatch("read_text_file", &json!({"path": "src/ok.txt"}))
+            .unwrap();
+        assert!(v["content"].as_str().unwrap_or_default().contains("fine"), "{}", v);
+        #[cfg(unix)]
+        {
+            let err = t
+                .dispatch("read_text_file", &json!({"path": "link/secret.txt"}))
+                .unwrap_err();
+            assert_eq!(err.rule, "bad-path");
+            assert!(err.message.contains("symlink"), "{}", err.message);
+            let err = t
+                .dispatch(
+                    "write_text_file",
+                    &json!({"path": "link/new.txt", "content": "x"}),
+                )
+                .unwrap_err();
+            assert_eq!(err.rule, "bad-path");
+            assert!(!outside.join("new.txt").exists());
+            let list = t.dispatch("list_files", &json!({})).unwrap();
+            let files: Vec<String> = list["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().to_string())
+                .collect();
+            assert!(files.contains(&"src/ok.txt".to_string()), "{:?}", files);
+            assert!(!files.iter().any(|f| f.starts_with("link")), "{:?}", files);
+        }
+        let err = t
+            .dispatch("read_text_file", &json!({"path": "../outside/secret.txt"}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-path");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     // The fan-out variant faces its level's count at mark_goal_done even when the

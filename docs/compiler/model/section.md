@@ -1,8 +1,8 @@
 # Section
 
-A section is a unit of document structure: a heading and its body, a list item, a code
-block, a blockquote, or a diagram. Sections form a tree per document. They carry no
-semantic meaning. All meaning lives in [entities](./entity.md),
+A section is a unit of document structure: a heading and its body, or a fenced block
+inside that body (a code block or a diagram). Sections form a tree per document. They
+carry no semantic meaning. All meaning lives in [entities](./entity.md),
 [requirements](./requirement.md), and [views](./view.md) extracted from section text, and
 in what derives from them.
 
@@ -11,21 +11,24 @@ Sections exist for three purposes:
 - Provenance. Entity mentions, requirement sources, and attribute quotes name a section,
   and their `quote` is located in the section's `raw` by whitespace-insensitive string
   search. See [provenance](../model.md#provenance).
-- Reconstruction. Concatenating `raw` in tree order rebuilds the document. See
-  [reconstruction](../parsing.md#reconstruction).
+- Reconstruction. Concatenating the `raw` of the heading kinds in tree order rebuilds
+  the document. See [reconstruction](../parsing.md#reconstruction).
 - Navigation. "Show the documentation around this entity" resolves to its sections.
 
 ## Fields
 
 As produced by [parsing](../parsing.md#section-tree):
 
-- `title`: the heading or item text.
+- `title`: the heading text, or a block's info string.
 - `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
   `diagram`. A `diagram` section holds a PlantUML block found in a source document. It is
-  input, parsed as prose. See [diagrams as input](../diagrams.md#diagrams-as-input).
+  input, parsed as prose. See [diagrams as input](../diagrams.md#diagrams-as-input). A
+  `code-block` section holds any other fenced block. Both are children of the section
+  whose body holds them; the Markdown handler produces no `list-item` or `blockquote`
+  ([section tree](../parsing.md#section-tree)).
 - `order`: position among siblings.
 - `parent`: the internal reference of the parent section. The root section has none.
-- `raw`: the verbatim source text.
+- `raw`: the verbatim source text. A block's `raw` repeats inside its parent's.
 - `hash`: a content hash of `raw`, the input to
   [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md).
 - `lines`: the line range in the source file, for editor integration.
@@ -36,8 +39,10 @@ Sections are stored per document under the graph store's `docs/` shard, not unde
 ## References
 
 A section reference joins the document path and the internal reference with `#`. The
-internal reference is the section's path inside the document, derived from heading slugs.
-E.g. `docs/cli.md#/cli/commands/compile`. See [references](../parsing.md#references).
+internal reference is the section's path inside the document, derived from heading slugs;
+a block's is its parent's followed by `/<kind>-<n>`. E.g.
+`docs/cli.md#/cli/commands/compile`, `docs/cli.md#/cli/commands/diagram-1`. See
+[references](../parsing.md#references).
 
 ## Coverage
 

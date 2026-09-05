@@ -77,7 +77,13 @@ is derived, never stored. `derive_goals` recomputes it from disk whenever it is
 consulted: at the start of a build, after every commit, on every `goals` call over
 [MCP](../frontends/mcp.md#compilation-over-mcp), and for the
 [GUI board](../frontends/gui.md#board). The inputs are the documents, the graph, the
-ledger, and the change records, parked list, and failed list in `status.yaml`. The graph
+ledger, and the change records, parked list, and failed list in `status.yaml`. A
+derivation outside a build (`jazyk status`, `preview`, `release`, `monitor`, the GUI
+board, a `goals` call) aligns the documents in memory and derives from that, so the
+board shows the goals the next build will open; it writes nothing. The `edit` and
+`align` entries, the section trees, and the records they carry are written by the
+build that aligns for real, or by the serving's `done` before its commit. A read-only
+command never moves the graph. The graph
 never stores goals, so it cannot grow with them.
 
 E.g.:
@@ -192,17 +198,23 @@ The record kinds and what derives from each:
 `via` names how dirtiness reached the subject. The set is closed here, and every goal
 page draws its values from it:
 
-- a stored reference: `section`, `quote`, `mentions`, `entities`, `edges`,
-  `transition`, `parent`, `members`, `excluded`, `collapse`, `from`, `subjects`,
-  `attributes` (an attribute's value, type, or provenance quote);
-- a change on the node itself: `fields` (an entity's own fields changed, or the entity
-  was created), `merge` (another entity was merged into it), `provenance` (a derived
-  or decreed fact landed);
+- a stored reference: `section` (a requirement created from, or a section record on,
+  that section), `quote` (a source quote that moved, changed, or stopped locating),
+  `mentions`, `entities`, `edges`, `parent`, `members`, `collapse`, `excluded` (the
+  list of a curated view a dead node sat in), `from`, `subjects` (a surviving
+  diagnostic subject), `requirements` (a retracted requirement left the entity's
+  set), `attributes` (an instance reached through its type's attributes);
+- a change on the node itself: `fields` (an entity's or requirement's own fields
+  changed, a transition or an attribute among them, or the node was created or
+  deleted by a commit), `merge` (another entity was merged into it), `provenance` (a
+  derived or decreed fact landed);
 - a computation: `alignment`, `ledger`, `limits`, `lookalike`, `query`,
-  `flow-placement`, `recompute` (a derived relationship added, removed, or retyped),
-  `sweep`, or the rule name of the check that wrote the record;
-- the tool that filed a `prompt-unanswered` record: `report_diagnostic`,
-  `update_diagnostic`, `record_generation`.
+  `flow-placement`, `flip-detection` (the check that parks a flipping pair or child),
+  `sweep` (a node the sweep deleted), or the rule name of the check that wrote the
+  record;
+- the path that filed a `prompt-unanswered` record: `report_diagnostic`,
+  `update_diagnostic`, `ratification` (the store filing a ratification proposal on a
+  derived or decreed fact), or the rule name of a check that files a prompt.
 
 The ledger goals share one record kind. The ledger comparison at derivation writes a
 `ledger-stale` record wherever the ledger and the graph disagree, `detail.goal` naming
@@ -464,8 +476,11 @@ referent, and the walk keeps one direction at a time:
 
 - Upward, transitively: every referent of the target, then every referent of those.
   For an entity that is its `parent` chain, its `mentions` sections and their `parents`
-  chains, and its `from` nodes. For a requirement it is its entities, their parents, and
-  its `from` nodes.
+  chains, the sections its quoted attributes point at, and its `from` nodes. For a
+  requirement it is its `entities`, the endpoints of its `edges`, its `transition`
+  subject, their parents, its `source` section and that section's `parents` chain, and
+  its `from` nodes. For a view it is its `members`, `collapse`, and `excluded` nodes
+  and its `from` nodes. For a section it is its `parents` chain and its document.
 - Downward, transitively: every referrer of the target, then every referrer of those.
   For an entity that is its descendants over `parent`, the requirements naming it or any
   descendant in `entities`, `edges`, or `transition`, the views listing any of them in
@@ -510,7 +525,13 @@ a batch from goals of one class and one tier that resolve to one
   ([grouping by component](../consumers/gen.md#grouping-by-component)). A flat graph
   has no groups, and the ledger goals batch per entity.
 
-The batch fills until the budget says stop. The skills of the batch's goal kinds render
+The batch fills until the budget says stop. A locality group is where a batch starts,
+not where it must end: the document and ledger localities are walls (two documents
+never share a batch, nor two component subtrees), but the node, view, and level
+localities of one class, tier, and executor pack on into the same batch, neighborhood
+after neighborhood in locality order, until the budget is spent. A corpus of hundreds
+of small pair judgments therefore runs as a few full sessions, never one session per
+shared entity. The skills of the batch's goal kinds render
 into the same session context budget (24000 chars, a
 [registry constant](./graph.md#limits)), so the registry's `pack` computes the batch's
 initially loaded set from the goals' hints under what the skill payloads leave; a goal

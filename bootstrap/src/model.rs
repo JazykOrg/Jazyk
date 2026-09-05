@@ -467,6 +467,18 @@ pub fn view_kind_slug(kind: &str) -> String {
     kind.replace('-', "")
 }
 
+// The severities a finding may carry; `none` is a considered judgment recorded but
+// not surfaced. Mirrors docs/compiler/model/diagnostic.md#fields.
+pub const SEVERITIES: [&str; 4] = ["error", "warning", "info", "none"];
+
+// The lifecycle states of a diagnostic. Mirrors docs/compiler/model/diagnostic.md#fields.
+pub const LIFECYCLES: [&str; 2] = ["open", "resolved"];
+
+// The triage states a human may set (absent is untriaged).
+// Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+pub const TRIAGES: [&str; 3] = ["acknowledged", "suppressed", "wontfix"];
+
+// A sticky judgment record. Mirrors docs/compiler/model/diagnostic.md.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub rule: String,
@@ -532,7 +544,25 @@ pub struct DiagnosticAnswer {
     pub status: String,
 }
 
+// The section kinds parsing produces. Mirrors docs/compiler/model/section.md#fields.
+pub const SECTION_KINDS: [&str; 7] = [
+    "preamble",
+    "root",
+    "heading",
+    "list-item",
+    "code-block",
+    "blockquote",
+    "diagram",
+];
+
+// The coverage states a section carries; `set_coverage` sets the last two.
+// Mirrors docs/compiler/model/section.md#coverage.
+pub const COVERAGE_STATES: [&str; 3] = ["unprocessed", "covered", "non-normative"];
+// The states a session may set: every state but the initial one.
+pub const SETTABLE_COVERAGE: [&str; 2] = ["covered", "non-normative"];
+
 // One section of a parsed document. `raw` is verbatim; `hash` is the content hash of raw.
+// Mirrors docs/compiler/model/section.md.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Section {
     pub title: String,
@@ -545,6 +575,7 @@ pub struct Section {
     pub lines: [usize; 2],
 }
 
+// A section's coverage mark. Mirrors docs/compiler/model/section.md#coverage.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coverage {
     pub state: String,

@@ -682,13 +682,21 @@ that pass, is exactly what verification is for.
 
 ## Incremental regeneration
 
-A rerun skips entities whose `factHash` is unchanged, so a docs edit regenerates only
-the entities it touched; a group session regenerates only the members whose facts moved
-([grouping by component](#grouping-by-component)). `--force` regenerates everything. A
-regeneration overwrites the entity's recorded file set: files the previous generation
-recorded that the new manifest omits are removed from the deliverable, so a test file
-under a new name does not leave its predecessor behind. Entity ids are stable
-([identifiers](../compiler/model.md#identifiers)):
+A rerun skips entities whose `factHash` is unchanged and whose recorded files still
+exist, so a docs edit regenerates only the entities it touched; a group session
+regenerates only the members whose facts moved
+([grouping by component](#grouping-by-component)). An entity with no ledger entry is
+generation work only through an `unimplemented` row
+([the generate goal](../compiler/goals/generate.md#created-when)), so adopted code whose
+rows all read `verified` is never regenerated over. `jazyk gen` names the reason for
+every entity it skips: unchanged, a bind still owed, or no row that says generate.
+`--force` regenerates everything. A regeneration overwrites the entity's recorded file
+set: files the previous generation recorded that the new manifest omits are removed
+from the deliverable (snapshotted first, see below), so a test file under a new name
+does not leave its predecessor behind. `record_generation` does the removal, whichever
+worker records, and names the removed files in its reply; a file another entity also
+records, a support file, or another row's test artifact is never removed. Entity ids
+are stable ([identifiers](../compiler/model.md#identifiers)):
 
 - A merged entity leaves a redirect ([mutations](../compiler/graph.md#mutations)); the
   generator follows it and folds the absorbed files into the survivor's.

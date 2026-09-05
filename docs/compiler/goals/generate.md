@@ -19,11 +19,15 @@ the [ledger](../../consumers/gen.md#the-ledger):
   stereotype, attributes, every referencing statement with its edges) differs from
   the live graph. `detail.changed` lists
   the requirement ids added, removed, or reworded since the last generation.
+- `files-gone`: the entity has a ledger entry whose facts match, but a file it records
+  is gone from the deliverable (deleted by hand). `detail.changed` lists the missing
+  files. The part has to be written again before its rows can be judged.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
   is `unimplemented` (the test fails and nothing implements it). The bound test is
   the acceptance gate; generation is the work that clears it.
 
-An entity with no ledger entry becomes generation work through `unimplemented` rows
+The reasons are checked in that order and the first that holds names the goal. An
+entity with no ledger entry becomes generation work through `unimplemented` rows
 only: [`bind`](./bind.md) classifies first, and an adopted entity whose rows all read
 `verified` derives nothing. An entity with no requirement derives nothing.
 `jazyk gen --force` regenerates the named entities against the recorded decision

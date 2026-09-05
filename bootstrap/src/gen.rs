@@ -861,9 +861,13 @@ fn change_diff(ledger: &Ledger, slug: &str, current: &[String]) -> (String, Vec<
     }
 }
 
-// Entities that are generation work: facts moved, recorded files missing, or a bound
-// requirement is unimplemented (binding classified it as new functionality and its
-// test is the acceptance gate). Mirrors docs/consumers/bind.md#generation-makes-bound-tests-pass.
+// Entities that are generation work, the first reason that holds naming it: the
+// entry's facts moved (`changed`), a recorded file is gone from the deliverable
+// (`files-gone`), or a bound requirement is unimplemented (`unimplemented-bindings`:
+// binding classified it as new functionality and its test is the acceptance gate).
+// An entity with no entry is work through unimplemented rows only, so adopted code
+// whose rows all read verified is never generated over.
+// Mirrors docs/compiler/goals/generate.md#created-when.
 pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
     let ledger = Ledger::load(&store.out);
     let mut out = Vec::new();
@@ -884,19 +888,29 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                     .unwrap_or(false)
             })
             .collect();
-        let current = ledger.entities.get(&slug).map(|e| {
-            e.fact_hash == hash
-                && !e.files.is_empty()
-                && e.files.iter().all(|f| gs.deliverable.join(f).exists())
-        });
-        if current == Some(true) && unimplemented.is_empty() {
-            continue;
-        }
-        let (reason, changed) = if current == Some(true) {
-            ("unimplemented-bindings".to_string(), json!(unimplemented))
-        } else {
-            let (r, c) = change_diff(&ledger, &slug, &rids);
-            (r, json!(c))
+        let (reason, changed) = match ledger.entities.get(&slug) {
+            Some(e) if e.fact_hash != hash => {
+                let (r, c) = change_diff(&ledger, &slug, &rids);
+                (r, json!(c))
+            }
+            Some(e) => {
+                let gone: Vec<&String> = e
+                    .files
+                    .iter()
+                    .filter(|f| !gs.deliverable.join(f).exists())
+                    .collect();
+                if e.files.is_empty() || !gone.is_empty() {
+                    ("files-gone".to_string(), json!(gone))
+                } else if !unimplemented.is_empty() {
+                    ("unimplemented-bindings".to_string(), json!(unimplemented))
+                } else {
+                    continue;
+                }
+            }
+            None if !unimplemented.is_empty() => {
+                ("unimplemented-bindings".to_string(), json!(unimplemented))
+            }
+            None => continue,
         };
         out.push(json!({
             "entity": id,
@@ -905,6 +919,28 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         }));
     }
     out
+}
+
+// Why `jazyk gen` leaves an entity alone, for the person reading the trace: the
+// entity is current, a bind is still owed on it, or no row says generate.
+// Mirrors docs/consumers/gen.md#incremental-regeneration.
+pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
+    let owed = crate::bind::pending(store, gs)
+        .iter()
+        .filter(|p| p["entity"] == id)
+        .count();
+    if owed > 0 {
+        return format!(
+            "{} requirement(s) still owe a bind; binding classifies before generation",
+            owed
+        );
+    }
+    let ledger = Ledger::load(&store.out);
+    if ledger.entities.contains_key(&slug_of(id)) {
+        "unchanged".to_string()
+    } else {
+        "no ledger entry and no bound row reads unimplemented: its rows are verified or failing, so there is nothing to generate (`--force` generates it anyway)".to_string()
+    }
 }
 
 // The full package a worker needs for one task.
@@ -1947,10 +1983,10 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         );
     }
     for p in pending(store, gs) {
-        let reason = if p["reason"] == "unimplemented-bindings" {
-            json!("unimplemented")
-        } else {
-            json!("facts-changed")
+        let reason = match p["reason"].as_str() {
+            Some("unimplemented-bindings") => json!("unimplemented"),
+            Some("files-gone") => json!("files-gone"),
+            _ => json!("facts-changed"),
         };
         push(
             &mut index,
@@ -2409,27 +2445,43 @@ mod tests {
         std::fs::remove_dir_all(&out).ok();
     }
 
+    // An entity with no ledger entry is generation work through an unimplemented
+    // bound row only: binding classifies first, and adopted code whose rows read
+    // verified is never generated over. Mirrors docs/compiler/goals/generate.md#created-when.
     #[test]
     fn pending_diff_and_mark_lifecycle() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", std::process::id()));
         std::fs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
+        assert!(pending(&s, &gs).is_empty(), "unbound: bind first");
+        assert!(skip_reason(&s, &gs, "ent:cart").contains("owe a bind"));
+
+        // Binding finds nothing: the row reads unimplemented and the entity is work.
+        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(
+            gs.deliverable.join("tests/cart.rs"),
+            format!("// req:shop-1\nfn {}() {{}}", name),
+        )
+        .ok();
+        let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
-        assert_eq!(p[0]["reason"], "new");
-        assert_eq!(p[0]["changed"][0], "req:shop-1 (added)");
+        assert_eq!(p[0]["reason"], "unimplemented-bindings");
+        assert_eq!(p[0]["changed"][0], "req:shop-1");
+
+        // Binding that found the code verified: adopted, nothing to generate.
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, "pass", None, &gs)
+            .unwrap();
+        assert!(pending(&s, &gs).is_empty(), "adopted code is not generation work");
+        assert!(skip_reason(&s, &gs, "ent:cart").contains("no ledger entry"));
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
 
         // A mark with a manifest whose files exist makes it disappear from pending and
         // seeds a verification row.
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
-        std::fs::write(
-            gs.deliverable.join("tests/cart.rs"),
-            "// req:shop-1\nfn t() {}",
-        )
-        .ok();
-        let name = test_name("req:shop-1", "The Cart shall hold items.");
         let manifest = serde_json::json!({
             "files": ["src/cart.rs", "tests/cart.rs"],
             "tests": [{
@@ -2441,6 +2493,7 @@ mod tests {
         let r = mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
         assert_eq!(r["tests"], 1);
         assert!(pending(&s, &gs).is_empty());
+        assert_eq!(skip_reason(&s, &gs, "ent:cart"), "unchanged");
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.verdict, "none");
@@ -2448,6 +2501,16 @@ mod tests {
             row.hashes.requirement,
             hash_hex("The Cart shall hold items.")
         );
+
+        // A recorded file deleted by hand is generation work under its own name.
+        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        let p = pending(&s, &gs);
+        assert_eq!(p[0]["reason"], "files-gone");
+        assert_eq!(p[0]["changed"][0], "src/cart.rs");
+        let rec = ledger_stale_records(&s, &gs);
+        let g = rec.iter().find(|c| c.detail["goal"] == "generate").unwrap();
+        assert_eq!(g.detail["reason"], "files-gone");
+        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
 
         // A new requirement reappears as a precise diff.
         let mut s2 = s.clone();
@@ -2807,12 +2870,27 @@ mod tests {
         assert_eq!(bind.via, "ledger");
         assert_eq!(bind.detail["reason"], "unbound");
         assert!(bind.id.starts_with('c'), "{}", bind.id);
+        // Binding classifies first: no generate record while the requirement is
+        // unbound (docs/compiler/goals/generate.md#created-when).
+        assert!(
+            records.iter().all(|r| r.detail["goal"] != "generate"),
+            "{:?}",
+            records.iter().map(|r| r.detail.clone()).collect::<Vec<_>>()
+        );
+        // Bound and unimplemented: the entity is generation work under that reason.
+        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        let name = test_name("req:shop-1", "The Cart shall hold items.");
+        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
+        let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
+        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
+        let records = ledger_stale_records(&s, &gs);
         let g = records
             .iter()
             .find(|r| r.detail["goal"] == "generate")
             .expect("a generate record");
         assert_eq!(g.subject, "ent:cart");
-        assert_eq!(g.detail["reason"], "facts-changed");
+        assert_eq!(g.detail["reason"], "unimplemented");
+        assert_eq!(g.detail["changed"][0], "req:shop-1");
         std::fs::remove_dir_all(&out).ok();
     }
 }
@@ -2896,7 +2974,7 @@ pub fn run_all(
                 skipped += 1;
                 trace.event(TraceEvent::GenEntitySkipped {
                     entity: id.clone(),
-                    reason: "unchanged".into(),
+                    reason: skip_reason(store, gs, id),
                 });
             } else {
                 ready.push(id.clone());

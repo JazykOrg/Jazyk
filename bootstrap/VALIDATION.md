@@ -488,7 +488,11 @@ transcript is in the session scratchpad (`snippet-f2-*.json`, `snippet-org-*.jso
   holds the real departments, and the near-duplicate gate folds no plurals, so
   "Departments" passed against `Department`. The abstraction skill now forbids a
   grouping named as the plural of a member or with a word another level uses for
-  stated children (`e96199d`); the gate's plural fold is open (`near_name`).
+  stated children (`e96199d`); the gate's plural fold is open (`near_name`). Loop 2
+  on the rebuilt binary, same snapshot: 10 rounds, Hiring pipeline again, and the
+  four moved under Ridgeline Outfitters with the Employee Handbook in one bundled
+  whole-part statement, the justification citing the skill's warning by name; root
+  10 → 2.
 - Two more findings from the same runs. Extraction invented stereotypes: f2's root
   ingest labeled seven domain concepts «component» and Product «entity» from one
   sentence that names them; the extraction skill now says a concept the section only
@@ -499,8 +503,9 @@ transcript is in the session scratchpad (`snippet-f2-*.json`, `snippet-org-*.jso
   of the five calls already carried the lookalike's department as `parent`, so a call
   whose `parent` is the lookalike could pass without the note (open).
 - Not measured: a converged verdict on either corpus (the snippets grade goals, not
-  builds), the remaining trap 5 sites, and the two skill fixes on a rerun (both landed
-  after the runs that exposed them).
+  builds), the remaining trap 5 sites, and the stereotype rule on a rerun (the one
+  ingest snippeted after it landed, f2's stock rules, minted no entity, so the rule
+  never came into play). The plural rule was measured (loop 2 above).
 
 Scorecard for the levels snippets: 6 of 6 fan-outs graded resolve to the documents'
 own names after the fixes (root, namesake, node form, API Server, data model, the org

@@ -258,7 +258,9 @@ The gates:
 - `upsert_entity` with a name variant of an existing entity in the same scope is
   rejected toward reuse plus an alias, unless a `note` says how they differ or
   `parent` names the lookalike itself (a child concept declared as such). A variant
-  is the same tokens up to a plural (`Departments` beside `Department`), a name of two
+  is the same tokens (a plural counts as the same only for a grouping, since an area
+  named `Orders` and the concept `Order` are two things; a grouping named
+  `Departments` beside a stated `Department` is a twin), a name of two
   or more tokens contained in the other (`Order Service` beside `Order Service API`),
   or a shorter name that is one specific token of an existing name (`Billing` beside
   `Billing Handler`). A compound that extends an existing single name is a different

@@ -2489,7 +2489,16 @@ impl ToolSession {
                 t.to_string()
             }
         };
-        let tokens = |s: &str| -> BTreeSet<String> { raw(s).iter().map(|t| fold(t)).collect() };
+        // The plural folds for a grouping only: an area named `Orders` and the
+        // concept `Order` are two things, a grouping `Departments` beside a stated
+        // `Department` is a twin.
+        let tokens = |s: &str| -> BTreeSet<String> {
+            if compound_passes {
+                raw(s)
+            } else {
+                raw(s).iter().map(|t| fold(t)).collect()
+            }
+        };
         let cand_raw = raw(name);
         let cand = tokens(name);
         if cand.is_empty() {
@@ -7278,8 +7287,12 @@ mod tests {
             }
             v
         };
-        let err = t.dispatch("upsert_entity", &call("Departments", None)).unwrap_err();
-        assert_eq!(err.rule, "near-duplicate");
+        // An entity named by the plural passes: the area and the thing are two concepts.
+        let r = t.dispatch("upsert_entity", &call("Departments", None));
+        assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
+        // A grouping named by the plural is a twin of the stated singular.
+        assert!(t.near_name("Employees", "public", false).is_some());
+        assert!(t.near_name("Employees", "public", true).is_none());
         let r = t.dispatch("upsert_entity", &call("Employee Handbook", None));
         assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
         let r = t.dispatch("upsert_entity", &call("Employee Badge", Some("ent:employee")));

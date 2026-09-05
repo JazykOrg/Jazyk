@@ -153,8 +153,17 @@ On `example-saas` at 30% coverage the board held 479 goals, 358 of them
 `rejudge-pair`, against 144 requirements and 36 entities; the pairwise judgments
 dominate a corpus by an order of magnitude over ingest. Measured under Claude Code:
 a pair session settles four pairs (org) to eight (f2) in six to twenty calls with
-nothing loaded, so the batch is far under the budget. First lever: fill a pair batch
-toward the context budget within its locality. Second: a `pairs-per-entity` limit in
+nothing loaded, so the batch is far under the budget. First lever, landed: a pair batch
+packs its locality to the context budget (four to eight pairs on the org snapshot;
+the org relaunch settles eight to twenty goals per batch). Measured after it on
+example-saas at 98 percent coverage: 418 requirements, 1336 pairs over 384
+requirements; each created requirement picks its best six, but a broad statement is
+picked by many (one sits in 40 pairs, another in 37; 150 requirements sit in more
+than six). The next lever is therefore a degree cap per requirement (a requirement
+takes part in at most eight open pairs, the highest scores first) with the deferred
+candidates re-deriving as pairs resolve, which needs the record semantics settled
+first: a created record clears when its goals resolve, so deferred pairs need their
+own standing. Second: a `pairs-per-entity` limit in
 the registry (the lexically closest pairs, the rest left to `review-entity`, which
 reads every statement anyway). Third: a batch-level verdict list so one claim settles
 a level's pairs.

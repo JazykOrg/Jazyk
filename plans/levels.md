@@ -37,9 +37,11 @@ level's flow yields to the level's fan-out, and the sequence limit counts what t
 level draws after lifting. The `f2` and `example-org` regressions passed on Ollama (six of six, eight of
 eight on the sites measured) and VALIDATION.md carries the numbers. Since 2026-09-05
 every example also compiles with Claude Code as the session model (one batch per
-`claude -p` call over `jazyk mcp compile`); f1, sort, and slides converged, the rest
-are mid-run, and the pairwise judgment volume they expose is the next harness change
-(`docs/TODO.md`). Written for a fresh session
+`claude -p` call over `jazyk mcp compile`); f1, sort, slides, and f2 converged, ledger
+and erp reached full coverage, org, novel, and saas ran to their caps with their traps
+passing from the graphs where judgment had run; pair batches now pack to the budget,
+and the pairwise volume that remains on a sixteen-document corpus is the next harness
+change (`docs/TODO.md`, with the measured spread). Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

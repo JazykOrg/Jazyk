@@ -396,7 +396,21 @@ impl McpServer {
                     ]);
                     t
                 }
-                "verify" => toolset("mcp-verify"),
+                "verify" => {
+                    let mut t = toolset("mcp-verify");
+                    // The read-only file tools for agents with no editor of their
+                    // own: a verify session reads and runs, never writes.
+                    // Mirrors docs/compiler/goals/verify.md#tools.
+                    if self.bridge.serve_files {
+                        t.extend(
+                            crate::tools::FILE_TOOLS
+                                .iter()
+                                .copied()
+                                .filter(|t| *t != "write_text_file"),
+                        );
+                    }
+                    t
+                }
                 // The chat serving: reads, every lifecycle, and the server-implemented
                 // chat tools; no raw write tools (docs/frontends/mcp.md#toolsets).
                 "chat" => {
@@ -1339,7 +1353,13 @@ impl McpServer {
                     .filter(|t| enabled.contains(&t.name))
                     .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
-                if self.modes.iter().any(|m| m == "compile") {
+                // The compilation lifecycle: the compile serving's own, and the chat
+                // serving carries it too (docs/compiler/tools.md#toolsets). The
+                // catalog's own `done` (the goal tools) yields to the lifecycle entry:
+                // a client that forwards the list as is (Claude Code) is refused by
+                // its API when a name repeats.
+                if self.modes.iter().any(|m| m == "compile" || m == "chat") {
+                    tools.retain(|t| !LIFECYCLE.contains(&t["name"].as_str().unwrap_or_default()));
                     tools.push(json!({
                         "name": "goals",
                         "description": "The goal board: every goal with its kind, class, readiness (ready, or the blocking reason as a sentence), gated and claimedBy, plus the batches the scheduler would form. Zero open goals carries the build verdict with its counts. Next: begin_goals.",
@@ -1478,6 +1498,10 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
                     }));
                 }
+                // One name, one tool, whatever the modes: the union of servings must
+                // not list a shared tool twice.
+                let mut seen: BTreeSet<String> = BTreeSet::new();
+                tools.retain(|t| seen.insert(t["name"].as_str().unwrap_or_default().to_string()));
                 Ok(json!({"tools": tools}))
             }
             "tools/call" => {
@@ -2518,6 +2542,105 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or_default().to_string())
             .collect()
+    }
+
+    fn bare_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("jazyk.toml"),
+            "[docs]\nglob = [\"docs/**/*.md\"]\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    // A verify serving for an agent with no editor of its own lists the read-only
+    // file tools and never the write. Mirrors docs/compiler/goals/verify.md#tools.
+    #[test]
+    fn verify_serving_lists_read_only_file_tools_when_serving_files() {
+        let dir = bare_dir("verify-files");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let serve = |serve_files: bool| {
+            McpServer::with_bridge(
+                project.clone(),
+                out.clone(),
+                vec!["verify".to_string()],
+                false,
+                BridgeFlags {
+                    serve_files,
+                    ..Default::default()
+                },
+            )
+        };
+        let with = tool_names(&serve(true));
+        for t in ["read_text_file", "list_files", "run_command", "run_tests"] {
+            assert!(with.iter().any(|n| n == t), "{} missing from {:?}", t, with);
+        }
+        assert!(!with.iter().any(|n| n == "write_text_file"), "{:?}", with);
+        let without = tool_names(&serve(false));
+        assert!(!without.iter().any(|n| n == "read_text_file"), "{:?}", without);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Every serving lists each tool name once: the catalog's `done` and the
+    // lifecycle's `done` are one entry, and a union of modes never repeats a shared
+    // tool. Claude Code forwards the list as is and its API refuses a repeated name.
+    #[test]
+    fn tool_listings_never_repeat_a_name() {
+        let dir = bare_dir("unique-names");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        for modes in [
+            vec!["compile"],
+            vec!["chat"],
+            vec!["compile", "chat"],
+            vec!["generate", "verify"],
+            vec!["benchmark"],
+            vec!["graph"],
+        ] {
+            let s = McpServer::with_bridge(
+                project.clone(),
+                out.clone(),
+                modes.iter().map(|m| m.to_string()).collect(),
+                false,
+                BridgeFlags {
+                    serve_files: true,
+                    only: Some("b1-1".into()),
+                    ..Default::default()
+                },
+            );
+            let names = tool_names(&s);
+            let unique: std::collections::BTreeSet<&String> = names.iter().collect();
+            assert_eq!(unique.len(), names.len(), "{:?}: {:?}", modes, names);
+            if modes.contains(&"compile") {
+                assert!(names.iter().any(|n| n == "done"), "{:?}", names);
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The chat serving carries the compilation lifecycle beside the ledger
+    // lifecycles. Mirrors docs/compiler/tools.md#toolsets.
+    #[test]
+    fn chat_serving_lists_the_compilation_lifecycle() {
+        let dir = bare_dir("chat-lifecycle");
+        let names = tool_names(&chat_server(&dir));
+        for t in [
+            "goals",
+            "begin_goals",
+            "done",
+            "abandon_goals",
+            "begin_binding",
+            "begin_generation",
+            "begin_verification",
+        ] {
+            assert!(names.iter().any(|n| n == t), "{} missing from {:?}", t, names);
+        }
+        assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // A chat dual write moves the prose and the graph in one changeset and absorbs

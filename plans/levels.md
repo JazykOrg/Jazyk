@@ -383,3 +383,13 @@ checks) before commit. Commit per stage on the `levels` branch, docs first.
   levels instead.
 - Whether the top level should default to a `component` view even when no
   stereotype is present (the owner's picture suggests yes).
+
+Evidence since (2026-09-05): under Claude Code the front door's listing sentence is
+read as containment on both example-ledger (Orders, Checkout, Shipping, Platform
+under Ledger, no derived grouping needed) and example-saas (Frontend and Backend
+under Trellis, User and Ops beside it); under the local model it is read as
+navigation and the groupings derive beside the stated system. example-saas's
+EXPECTED.md names the nested reading a failure, matching your picture of three boxes
+at the top; the nested reading gives one box more and one level deeper. The
+extraction skill still says navigation; whichever you choose, the skill sentence and
+the saas expectation change together.

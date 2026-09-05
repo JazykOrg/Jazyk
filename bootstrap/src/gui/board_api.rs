@@ -65,15 +65,22 @@ pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
             });
         }
     }
-    let batch = if target.is_empty() {
-        board.batches.first()
-    } else {
-        board.batches.iter().find(|b| {
-            b.id == target
-                || b.goals
-                    .iter()
-                    .any(|id| id == target || board.goal(id).is_some_and(|g| g.target == target))
-        })
+    // In compile: manual the pane opens before the release: a gated goal forms no
+    // batch yet, so the batch a release would form is derived as if released and
+    // marked `gated` (docs/frontends/gui.md#preview).
+    let mut gated = false;
+    let released_board;
+    let (board, batch) = match find_batch(&board, target) {
+        Some(b) => (&board, Some(b)),
+        None if !board.gated.is_empty() && control.compile == "manual" => {
+            let mut released = control.clone();
+            released.compile = "auto".into();
+            released_board = crate::board::Board::derive(&store, proj, &released);
+            let b = find_batch(&released_board, target);
+            gated = b.is_some();
+            (&released_board, b)
+        }
+        None => (&board, None),
     };
     let Some(batch) = batch else {
         let note = if target.is_empty() {
@@ -105,12 +112,30 @@ pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
         "batch": board.batch_json(batch),
         "prompt": prompt,
         "toolset": toolset,
+        "gated": gated,
     });
+    if gated {
+        v["note"] = json!("awaiting release: this is the batch the release forms");
+    }
     match executor {
         Ok(name) => v["executor"] = json!(name),
         Err(e) => v["executorError"] = json!(e),
     }
     v
+}
+
+// The batch a preview target names: the first ready one for an empty target,
+// else the batch whose id, goal id, or goal target matches.
+fn find_batch<'a>(board: &'a crate::board::Board, target: &str) -> Option<&'a crate::board::Batch> {
+    if target.is_empty() {
+        return board.batches.first();
+    }
+    board.batches.iter().find(|b| {
+        b.id == target
+            || b.goals
+                .iter()
+                .any(|id| id == target || board.goal(id).is_some_and(|g| g.target == target))
+    })
 }
 
 // The agent profile the batch's first goal resolves to, by the executor ladder.
@@ -267,6 +292,24 @@ mod tests {
         assert!(v["verdict"].is_string());
         assert!(v["summary"].as_str().unwrap().starts_with("compile:"));
         assert!(v["batches"].is_array());
+        std::fs::remove_dir_all(&proj.root).ok();
+    }
+
+    // In compile: manual, before any release, the goals a document opens are gated
+    // and form no batch; the preview still shows the batch the release would form,
+    // marked gated, so the compile click has a prompt to show
+    // (docs/frontends/gui.md#preview).
+    #[test]
+    fn preview_value_shows_the_gated_batch_before_a_release() {
+        let (proj, out) = temp_project("gated");
+        let mut control = crate::control::Control::load(&proj, &out);
+        control.compile = "manual".into();
+        control.save(&out);
+        let v = preview_value(&proj, &out, "");
+        assert_eq!(v["gated"], json!(true));
+        assert!(v["batch"]["id"].as_str().unwrap_or_default().starts_with('b'));
+        assert!(v["prompt"].as_str().expect("a prompt").contains("## Goals"));
+        assert!(v["note"].as_str().unwrap().contains("awaiting release"));
         std::fs::remove_dir_all(&proj.root).ok();
     }
 

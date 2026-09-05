@@ -512,7 +512,7 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
         _ => {
             return super::api::err(
                 StatusCode::BAD_REQUEST,
-                "kind must be compile, gen, verify, audit, or decompile",
+                "kind must be compile, gen, verify, audit, decompile, or benchmark",
             )
         }
     };
@@ -581,10 +581,12 @@ pub fn sweep_traces(out: &std::path::Path) {
 
 // Past jobs from the transcripts on disk, newest first: the meta line plus the
 // outcome line when the job finished (a missing outcome means it died mid-run).
+// Newest is by the start the metadata line records; the file's mtime only breaks
+// ties, since a copied or restored out directory gives every transcript one mtime.
 pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
     let dir = st.out.join("trace");
     let list = tokio::task::spawn_blocking(move || {
-        let mut items: Vec<(std::time::SystemTime, Value)> = Vec::new();
+        let mut items: Vec<((String, std::time::SystemTime), Value)> = Vec::new();
         let Ok(rd) = std::fs::read_dir(&dir) else {
             return Vec::new();
         };
@@ -621,8 +623,12 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
                 .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::UNIX_EPOCH);
+            let started = meta["meta"]["startedAt"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             items.push((
-                mtime,
+                (started, mtime),
                 serde_json::json!({
                     "stem": stem,
                     "meta": meta["meta"],

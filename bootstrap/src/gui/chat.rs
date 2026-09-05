@@ -255,7 +255,7 @@ pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) 
                         "pending": s.pending, "updates": updates}))
             .into_response()
         }
-        None => (StatusCode::NOT_FOUND, "no such session").into_response(),
+        None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id)),
     }
 }
 
@@ -270,14 +270,17 @@ pub async fn post_prompt(
     // Prompting a conversation restored from the store is how it resumes.
     st.chat.restore(&st.out);
     let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
-        return (StatusCode::NOT_FOUND, "no such session").into_response();
+        return super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id));
     };
     let text = body["text"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
-        return (StatusCode::BAD_REQUEST, "empty prompt").into_response();
+        return super::api::err(StatusCode::BAD_REQUEST, "text is required: the prompt to send");
     }
     if sess.lock().unwrap().state == "running" {
-        return (StatusCode::CONFLICT, "a turn is already running").into_response();
+        return super::api::err(
+            StatusCode::CONFLICT,
+            "a turn is already running; cancel it or wait for it to end",
+        );
     }
     // The user's side of the transcript.
     append(
@@ -377,7 +380,7 @@ pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Re
             }
             (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
         }
-        None => (StatusCode::NOT_FOUND, "no such session").into_response(),
+        None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id)),
     }
 }
 
@@ -402,10 +405,13 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
                         .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
                     (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
                 }
-                None => (StatusCode::CONFLICT, "no open agent session").into_response(),
+                None => super::api::err(
+                    StatusCode::CONFLICT,
+                    "no open agent session; prompt the conversation first",
+                ),
             }
         }
-        None => (StatusCode::NOT_FOUND, "no such session").into_response(),
+        None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", sid)),
     }
 }
 

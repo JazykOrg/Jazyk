@@ -2467,31 +2467,58 @@ impl ToolSession {
     // An existing or staged entity whose name tokens contain, or are contained by, the
     // candidate's tokens (same scope). "backend" vs "backend system" is one concept;
     // single generic tokens are exempt to keep "id" from matching "user id".
-    fn near_name(&self, name: &str, scope: &str) -> Option<(String, String)> {
-        let tokens = |s: &str| -> BTreeSet<String> {
+    // The name-variant rule. Mirrors docs/compiler/graph.md#validation-gates.
+    // `compound_passes`: a compound that extends an existing single name is a different
+    // concept for an entity (`Employee Handbook` beside `Employee`); for a grouping it
+    // is a lookalike of the area, which reuses it.
+    fn near_name(&self, name: &str, scope: &str, compound_passes: bool) -> Option<(String, String)> {
+        let raw = |s: &str| -> BTreeSet<String> {
             s.to_lowercase()
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|t| !t.is_empty())
                 .map(String::from)
                 .collect()
         };
+        // A plural folds to its singular so `Departments` meets `Department`.
+        let fold = |t: &str| -> String {
+            if t.len() > 4 && t.ends_with("ies") {
+                format!("{}y", &t[..t.len() - 3])
+            } else if t.len() > 3 && t.ends_with('s') && !t.ends_with("ss") {
+                t[..t.len() - 1].to_string()
+            } else {
+                t.to_string()
+            }
+        };
+        let tokens = |s: &str| -> BTreeSet<String> { raw(s).iter().map(|t| fold(t)).collect() };
+        let cand_raw = raw(name);
         let cand = tokens(name);
         if cand.is_empty() {
             return None;
         }
         let check = |ename: &str| -> bool {
+            if raw(ename) == cand_raw {
+                return false; // exact natural-key match is the upsert path, not a twin
+            }
             let ex = tokens(ename);
             if ex == cand {
-                return false; // exact natural-key match is the upsert path, not a twin
+                return true; // the same tokens up to a plural
             }
             let (small, big) = if ex.len() <= cand.len() {
                 (&ex, &cand)
             } else {
                 (&cand, &ex)
             };
-            // Containment of a multi-token name, or of a single specific (long) token.
-            small.is_subset(big)
-                && (small.len() > 1 || small.iter().next().map(|t| t.len() >= 5).unwrap_or(false))
+            if !small.is_subset(big) {
+                return false;
+            }
+            if small.len() > 1 {
+                return true; // a multi-token name contained in the other
+            }
+            // One token inside a longer name: a variant only when the candidate is
+            // the shorter one (`Billing` beside `Billing Handler`); a compound that
+            // extends an existing single name is a different concept.
+            (cand.len() == 1 || !compound_passes)
+                && small.iter().next().map(|t| t.len() >= 5).unwrap_or(false)
         };
         for (id, e) in &self.snapshot.graph.entities {
             if e.scope == scope && check(&e.name) {
@@ -3532,8 +3559,18 @@ impl ToolSession {
                 // always the same concept. Reuse it and record the wording as an alias
                 // instead of minting a twin; a note overrides when genuinely distinct.
                 // Mirrors docs/compiler/model/entity.md#what-is-an-entity.
+                // A child declared under its lookalike is a child concept, not a twin.
+                let parent_is_lookalike = |eid: &str| {
+                    args["parent"]
+                        .as_str()
+                        .map(|p| self.snapshot.resolve_id(p) == eid || p == eid)
+                        .unwrap_or(false)
+                };
                 if note.is_none() {
-                    if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
+                    if let Some((eid, ename)) = self
+                        .near_name(&name_arg, &scope, true)
+                        .filter(|(eid, _)| !parent_is_lookalike(eid))
+                    {
                         return Err(ToolError::new(
                             "near-duplicate",
                             format!(
@@ -3854,7 +3891,7 @@ impl ToolSession {
                         ),
                     ));
                 }
-                if let Some((eid, ename)) = self.near_name(&name_arg, &scope) {
+                if let Some((eid, ename)) = self.near_name(&name_arg, &scope, false) {
                     // A lookalike that is a peer of the members (a member of the
                     // same level) carries the area's word without being the area:
                     // the members never nest under it. Mirrors
@@ -7211,6 +7248,42 @@ mod tests {
         assert_eq!(n("Is it done? Yes! Done"), 3);
         assert_eq!(n("Ends with an id like ent:order. (Then a bracket.)"), 2);
         assert_eq!(n(""), 0);
+    }
+
+    // Mirrors docs/compiler/graph.md#validation-gates: a plural is a variant, a
+    // compound extending a single name is not, and a child declared under its
+    // lookalike passes without a note.
+    #[test]
+    fn name_variant_gate_folds_plurals_and_lets_compounds_and_declared_children_pass() {
+        let mut t = session();
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:employee".into(), plain("Employee"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:department".into(), plain("Department"));
+        let quote: String = t.snapshot.docs["shop.md"].sections["/shop/cart"]
+            .raw
+            .lines()
+            .find(|l| l.contains('.'))
+            .unwrap()
+            .trim()
+            .to_string();
+        let call = move |name: &str, parent: Option<&str>| {
+            let mut v = json!({"name": name, "definition": "d", "mention": {"section": "shop.md#/shop/cart", "quote": quote}});
+            if let Some(p) = parent {
+                v["parent"] = json!(p);
+            }
+            v
+        };
+        let err = t.dispatch("upsert_entity", &call("Departments", None)).unwrap_err();
+        assert_eq!(err.rule, "near-duplicate");
+        let r = t.dispatch("upsert_entity", &call("Employee Handbook", None));
+        assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
+        let r = t.dispatch("upsert_entity", &call("Employee Badge", Some("ent:employee")));
+        assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
     }
 
     #[test]

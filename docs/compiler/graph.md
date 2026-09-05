@@ -255,8 +255,14 @@ The gates:
   carries `reasoning`. A decree is rejected from a session.
 - An entity name that looks like syntax rather than a concept (a file path, a CLI flag,
   a markdown term) is rejected unless the call carries an explaining `note`.
-- `upsert_entity` with a name variant of an existing entity (token containment, same
-  scope) is rejected toward reuse plus an alias, unless a `note` says how they differ.
+- `upsert_entity` with a name variant of an existing entity in the same scope is
+  rejected toward reuse plus an alias, unless a `note` says how they differ or
+  `parent` names the lookalike itself (a child concept declared as such). A variant
+  is the same tokens up to a plural (`Departments` beside `Department`), a name of two
+  or more tokens contained in the other (`Order Service` beside `Order Service API`),
+  or a shorter name that is one specific token of an existing name (`Billing` beside
+  `Billing Handler`). A compound that extends an existing single name is a different
+  concept and passes (`Employee Handbook` beside `Employee`).
   See [entity](./model/entity.md#what-is-an-entity).
 - `stereotype` is free-form. No gate enumerates the allowed values; a stereotype is
   judgment recorded like any fact.

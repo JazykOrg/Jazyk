@@ -34,8 +34,12 @@ provenance flips to quote; retract moves the members back), three seams fixed on
 way; `example-saas` traps 4, 5, 7, and 8 pass after the member hints carry the
 listing section and the grouping gate tells a peer from an area; a split-view on a
 level's flow yields to the level's fan-out, and the sequence limit counts what the
-level draws after lifting. Running: the `f2` and `example-org` regressions and the
-VALIDATION.md numbers, then the dogfood, all as snippets. Written for a fresh session
+level draws after lifting. The `f2` and `example-org` regressions passed on Ollama (six of six, eight of
+eight on the sites measured) and VALIDATION.md carries the numbers. Since 2026-09-05
+every example also compiles with Claude Code as the session model (one batch per
+`claude -p` call over `jazyk mcp compile`); f1, sort, and slides converged, the rest
+are mid-run, and the pairwise judgment volume they expose is the next harness change
+(`docs/TODO.md`). Written for a fresh session
 with no prior context: read this file first, then work the stages. The owner's ask, verbatim in
 spirit: requirements stay per entity as they are today; entities summarize into
 higher-level entities, and those into higher still; each level gets its own

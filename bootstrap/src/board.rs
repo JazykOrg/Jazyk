@@ -945,9 +945,73 @@ impl Board {
             groups.entry(key).or_default().push(g);
         }
         let mut batches: Vec<Batch> = Vec::new();
+        // A locality is where a batch starts, not where it must end: the document
+        // and ledger localities are walls, the node, view, and level localities pack
+        // on into the same batch until the budget is spent.
+        // Mirrors docs/compiler/reconciler.md#batching.
+        let walled = |id: &str| {
+            self.goal(id).is_some_and(|g| {
+                matches!(
+                    g.kind.as_str(),
+                    "place-anchors" | "reconcile-section" | "bind" | "generate" | "verify"
+                )
+            })
+        };
+        // The skills of the batch's goal kinds render into the same context budget
+        // as the loaded set (sessions.md#budgets): the estimates fill what the skill
+        // payloads of the goals actually in the batch leave, never the union over
+        // the whole tier (a pair batch pays for judgment, not for the conformance
+        // skill of an instance goal it does not hold).
+        let skills_size = |names: &[&str]| -> usize {
+            names
+                .iter()
+                .filter_map(|n| {
+                    crate::session::SKILLS
+                        .iter()
+                        .find(|(k, _)| k == n)
+                        .map(|(_, p)| p.len())
+                })
+                .sum()
+        };
+        let budget_with = |names: &[&str]| -> usize {
+            limits::CONTEXT_BUDGET
+                .saturating_sub(skills_size(names))
+                .max(6_000)
+        };
         for ((class, tier, exec), members) in groups {
             let localities = self.localities(store, &members);
+            let mut current: Vec<String> = Vec::new();
+            let mut skills: Vec<&str> = Vec::new();
+            let mut label = String::new();
+            let mut size = 0usize;
+            let mut sections = 0usize;
+            let flush = |current: &mut Vec<String>,
+                         skills: &mut Vec<&str>,
+                         label: &mut String,
+                         batches: &mut Vec<Batch>| {
+                skills.clear();
+                if !current.is_empty() {
+                    batches.push(Batch {
+                        id: String::new(),
+                        class: if class == 0 {
+                            Class::Compile
+                        } else {
+                            Class::Gc
+                        },
+                        tier: if class == 0 { Some(tier) } else { None },
+                        goals: std::mem::take(current),
+                        executor: exec.clone(),
+                        locality: std::mem::take(label),
+                    });
+                }
+            };
             for (locality, mut ids) in localities {
+                let wall = ids.iter().any(|id| walled(id));
+                if wall {
+                    flush(&mut current, &mut skills, &mut label, &mut batches);
+                    size = 0;
+                    sections = 0;
+                }
                 // Parked goals first, pairs before entity reviews, sections in
                 // document order, deepest abstraction first.
                 ids.sort_by_key(|id| {
@@ -961,70 +1025,44 @@ impl Board {
                     };
                     (parked, order, id.clone())
                 });
-                // The skills of the batch's goal kinds render into the same
-                // context budget as the loaded set (sessions.md#budgets): the
-                // estimates fill what the skill payloads leave.
-                let mut skill_names: Vec<&str> = Vec::new();
-                for id in &ids {
-                    let g = self.goal(id).unwrap();
-                    for s in goals::skills_for(&g.kind, store, &g.target) {
-                        if !skill_names.contains(&s) {
-                            skill_names.push(s);
-                        }
-                    }
-                }
-                let skills_size: usize = skill_names
-                    .iter()
-                    .filter_map(|n| {
-                        crate::session::SKILLS
-                            .iter()
-                            .find(|(k, _)| k == n)
-                            .map(|(_, p)| p.len())
-                    })
-                    .sum();
-                let batch_budget = limits::CONTEXT_BUDGET
-                    .saturating_sub(skills_size)
-                    .max(6_000);
-                let mut current: Vec<String> = Vec::new();
-                let mut size = 0usize;
-                let mut sections = 0usize;
-                let flush = |current: &mut Vec<String>, batches: &mut Vec<Batch>| {
-                    if !current.is_empty() {
-                        batches.push(Batch {
-                            id: String::new(),
-                            class: if class == 0 {
-                                Class::Compile
-                            } else {
-                                Class::Gc
-                            },
-                            tier: if class == 0 { Some(tier) } else { None },
-                            goals: std::mem::take(current),
-                            executor: exec.clone(),
-                            locality: locality.clone(),
-                        });
-                    }
-                };
                 for id in ids {
                     let g = self.goal(&id).unwrap();
                     let cost = estimate(store, g);
                     let is_section = g.kind == "reconcile-section";
                     let max_sections =
                         (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
+                    let mut with_goal = skills.clone();
+                    for s in goals::skills_for(&g.kind, store, &g.target) {
+                        if !with_goal.contains(&s) {
+                            with_goal.push(s);
+                        }
+                    }
                     let over = !current.is_empty()
-                        && (size + cost > batch_budget || (is_section && sections >= max_sections));
+                        && (size + cost > budget_with(&with_goal)
+                            || (is_section && sections >= max_sections));
                     if over {
-                        flush(&mut current, &mut batches);
+                        flush(&mut current, &mut skills, &mut label, &mut batches);
                         size = 0;
                         sections = 0;
+                        with_goal = goals::skills_for(&g.kind, store, &g.target);
                     }
+                    if current.is_empty() {
+                        label = locality.clone();
+                    }
+                    skills = with_goal;
                     current.push(id);
                     size += cost;
                     if is_section {
                         sections += 1;
                     }
                 }
-                flush(&mut current, &mut batches);
+                if wall {
+                    flush(&mut current, &mut skills, &mut label, &mut batches);
+                    size = 0;
+                    sections = 0;
+                }
             }
+            flush(&mut current, &mut skills, &mut label, &mut batches);
         }
         // Compile tiers first, then GC with mandatory batches before optional ones;
         // within a tier, batches holding parked goals first, then document level and
@@ -2213,6 +2251,98 @@ pub(crate) mod tests {
         assert!(b.goal(&fan_out).is_none());
         let reason = b.readiness[&split].reason().unwrap_or_default().to_string();
         assert!(!reason.contains("fan-out first"), "{}", reason);
+    }
+
+    // Node localities pack on into one batch until the budget is spent: two pair
+    // judgments over disjoint entity neighborhoods ride one session, since a
+    // locality is where a batch starts, not where it must end.
+    // Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn pair_batches_fill_across_node_localities() {
+        let mut s = Store::default();
+        let text = "# T\n\nThe X serves the Y. The X also names the Y. The P serves the Q. The P also names the Q.\n";
+        let mut coverage = BTreeMap::new();
+        for r in ["/t"] {
+            coverage.insert(
+                r.to_string(),
+                Coverage {
+                    state: "covered".into(),
+                    note: None,
+                    claimed_by: Some("g1".into()),
+                },
+            );
+        }
+        s.docs.insert(
+            "t.md".into(),
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage,
+            },
+        );
+        let mention = |q: &str| crate::model::SourceRef {
+            doc: "t.md".into(),
+            section: "/t".into(),
+            quote: q.into(),
+        };
+        for (id, name) in [("ent:x", "X"), ("ent:y", "Y"), ("ent:p", "P"), ("ent:q", "Q")] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: name.into(),
+                    mentions: vec![mention(name)],
+                    ..Default::default()
+                },
+            );
+        }
+        let req = |statement: &str, ents: &[&str], quote: &str| Requirement {
+            statement: statement.into(),
+            entities: ents.iter().map(|e| e.to_string()).collect(),
+            source: Some(mention(quote)),
+            ..Default::default()
+        };
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            req("The X serves the Y.", &["ent:x", "ent:y"], "The X serves the Y."),
+        );
+        s.graph.requirements.insert(
+            "req:t-2".into(),
+            req("The X also names the Y.", &["ent:x", "ent:y"], "The X also names the Y."),
+        );
+        s.graph.requirements.insert(
+            "req:t-3".into(),
+            req("The P serves the Q.", &["ent:p", "ent:q"], "The P serves the Q."),
+        );
+        s.graph.requirements.insert(
+            "req:t-4".into(),
+            req("The P also names the Q.", &["ent:p", "ent:q"], "The P also names the Q."),
+        );
+        s.status.generation = 5;
+        for rid in ["req:t-1", "req:t-3"] {
+            record(
+                &mut s,
+                5,
+                store::CHANGE_REQ_REVISED,
+                rid,
+                "fields",
+                json!({}),
+            );
+        }
+        let b = derive(&s);
+        let pairs: Vec<&Goal> = b
+            .goals
+            .iter()
+            .filter(|g| g.kind == "rejudge-pair")
+            .collect();
+        assert_eq!(pairs.len(), 2, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        for g in &pairs {
+            assert!(b.is_ready(&g.id), "{:?}", b.readiness.get(&g.id));
+        }
+        // Two neighborhoods (x,y and p,q), one batch.
+        let localities = b.localities(&s, &pairs);
+        assert_eq!(localities.len(), 2, "{:?}", localities);
+        assert_eq!(b.batches.len(), 1, "{:?}", b.batches);
+        assert_eq!(b.batches[0].goals.len(), 2);
     }
 
     #[test]

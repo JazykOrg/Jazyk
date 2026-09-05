@@ -519,7 +519,13 @@ a batch from goals of one class and one tier that resolve to one
   ([grouping by component](../consumers/gen.md#grouping-by-component)). A flat graph
   has no groups, and the ledger goals batch per entity.
 
-The batch fills until the budget says stop. The skills of the batch's goal kinds render
+The batch fills until the budget says stop. A locality group is where a batch starts,
+not where it must end: the document and ledger localities are walls (two documents
+never share a batch, nor two component subtrees), but the node, view, and level
+localities of one class, tier, and executor pack on into the same batch, neighborhood
+after neighborhood in locality order, until the budget is spent. A corpus of hundreds
+of small pair judgments therefore runs as a few full sessions, never one session per
+shared entity. The skills of the batch's goal kinds render
 into the same session context budget (24000 chars, a
 [registry constant](./graph.md#limits)), so the registry's `pack` computes the batch's
 initially loaded set from the goals' hints under what the skill payloads leave; a goal

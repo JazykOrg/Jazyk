@@ -127,7 +127,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     let conventions: Vec<Value> = ledger
         .requirements
         .values()
-        .map(|row| json!({"kind": row.test.kind, "artifact": row.test.artifact, "run": row.test.run}))
+        .map(|row| json!({"kind": row.test.kind, "artifact": row.test.artifact, "run": row.test.run, "files": row.files}))
         .take(5)
         .collect();
     let entity_files = ledger

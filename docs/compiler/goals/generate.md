@@ -147,8 +147,11 @@ build                              the recorded build (reuse and extend, never a
 runCommands                        the established toolchain; reuse it
 changed                            requirement ids added, removed, or reworded
 generatedFiles                     other entities' files with what each holds; never write to them
+supportFiles                       the deliverable-wide files any session may rewrite
+buildEntry, buildError             the build's entry with its content; the standing failure, if any
 boundTests                         tests binding wrote; make them pass
-requirementGroups                  each requirement with its testName, statement, quote
+requirementGroups                  each requirement with its testName, statement, quote, openDiagnostics
+contradicted, mediumWarning        the disputed requirements; the medium's standing divergence
 context                            the entity's neighborhood (../context.md#rendering)
 ```
 

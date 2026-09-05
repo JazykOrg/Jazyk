@@ -125,13 +125,14 @@ interleave jazyk's package with its own file and shell work
    falsifiability, the naming scheme) and the package:
 
 ```text
-requirement, entity, reason        unbound | requirement-changed | artifact-gone
-statement, quote                   the statement and its verbatim source
+requirement, entity, reason        unbound | requirement-changed | artifact-gone (current: a re-bind by choice)
+statement, quote, factHash         the statement, its verbatim source, and its hash
 suggestedTestName                  req id plus statement hash prefix
-medium                             already decided; never re-decided
+medium, mediumWarning              already decided, never re-decided; its standing divergence, if any
 build                              the recorded build, when one exists
-testConventions                    recorded rows to imitate (runner, command style)
+testConventions                    recorded rows to imitate (runner, command style, the files they name)
 entityFiles                        the entity's recorded files: start the search here
+openDiagnostics                    the open error diagnostics disputing the statement
 context                            the requirement's neighborhood (../context.md#rendering)
 ```
 

@@ -57,13 +57,16 @@ export default function FilesHome() {
         <span>
           coverage <b>{s.coverage.covered}</b>/{s.coverage.total}
         </span>
-        <span>
-          {Object.entries(counts).map(([st, n]) => (
-            <span key={st} className={verifyClass(st)} style={{ marginRight: 8 }}>
-              {n} {st}
-            </span>
-          ))}
-        </span>
+        {Object.keys(counts).length > 0 && (
+          <Link to="/work/verify" style={{ textDecoration: 'none' }} title="verification by derived status">
+            <span className="muted">verification </span>
+            {Object.entries(counts).map(([st, n]) => (
+              <span key={st} className={verifyClass(st)} style={{ marginRight: 8 }}>
+                {n} {st}
+              </span>
+            ))}
+          </Link>
+        )}
       </div>
 
       <div className="grid2">

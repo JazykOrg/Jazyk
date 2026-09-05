@@ -16,6 +16,7 @@ import type { Entity, Graph, ViewDetail } from '../lib/api'
 import { levelChain } from '../lib/levels'
 import { useExplorer } from '../lib/explore'
 import { selectNodeParams } from '../lib/nav'
+import { pressable } from '../lib/a11y'
 import NodeLink from '../components/NodeLink'
 import DiagramSvg from '../components/DiagramSvg'
 import '../routes/map.css'
@@ -245,6 +246,7 @@ interface NodeData {
   h?: number
   t: 'ent' | 'doc' | 'req' | 'file'
   nonpublic?: number
+  stereotype?: string
   // The containing entity, applied only when it draws too (compound nesting).
   pref?: string
   parent?: string
@@ -357,6 +359,13 @@ export default function MapCenter() {
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<ScopeFilter>('all')
+  // The stereotype filter: '' draws every entity.
+  const [stereotype, setStereotype] = useState('')
+  const stereotypes = useMemo(() => {
+    const s = new Set<string>()
+    for (const e of Object.values(graph?.entities ?? {})) if (e.stereotype) s.add(e.stereotype)
+    return [...s].sort()
+  }, [graph])
   const [types, setTypes] = useState<Record<EdgeType, boolean>>(
     () => Object.fromEntries(EDGE_TYPES.map((t) => [t, t !== 'reference'])) as Record<EdgeType, boolean>,
   )
@@ -462,6 +471,7 @@ export default function MapCenter() {
         size: Math.round(16 + Math.sqrt(d) * 7),
         t: 'ent',
         nonpublic: nonPublic(ent) ? 1 : 0,
+        stereotype: ent.stereotype,
         pref,
       })
     }
@@ -575,6 +585,7 @@ export default function MapCenter() {
           if (!nodeTypes.entities) continue
           if (scope === 'public' && n.nonpublic) continue
           if (scope === 'non-public' && !n.nonpublic) continue
+          if (stereotype !== '' && n.stereotype !== stereotype) continue
           want.add(n.id)
         } else if (n.t === 'doc' && nodeTypes.docs) want.add(n.id)
         else if (n.t === 'req' && nodeTypes.requirements) want.add(n.id)
@@ -649,7 +660,7 @@ export default function MapCenter() {
       nodes.set(id, { ...n, parent })
     }
     return { nodes, edges }
-  }, [full, nodeTypes, types, scope, focusHops, selected, overlay])
+  }, [full, nodeTypes, types, scope, stereotype, focusHops, selected, overlay])
 
   // Create the canvas once; restyle on theme change; destroy on unmount.
   useEffect(() => {
@@ -816,6 +827,12 @@ export default function MapCenter() {
   const memberName = (id: string) =>
     overlay?.members.find((m) => m.id === id)?.name ?? graph?.entities[id]?.name ?? id
   const viewTitle = (id: string) => graph?.views[id]?.title ?? id
+  // Two views at one level often share a title (the use case and the sequence of
+  // one flow); the kind tells them apart on the chip.
+  const viewLabel = (id: string) => {
+    const v = graph?.views[id]
+    return v ? `${v.kind} · ${v.title}` : id
+  }
   // The member a level below belongs to, for the `Around` chips' labels.
   const memberOfLevel = (view: string) => overlay?.children.find((c) => c.view === view)?.member
   const structural = !!overlay && STRUCTURAL_KINDS.includes(overlay.kind)
@@ -860,11 +877,21 @@ export default function MapCenter() {
             </label>
           ))}
         </div>
-        <select value={scope} onChange={(e) => setScope(e.target.value as ScopeFilter)}>
+        <select value={scope} onChange={(e) => setScope(e.target.value as ScopeFilter)} title="entity scope">
           <option value="all">all scopes</option>
           <option value="public">public</option>
           <option value="non-public">non-public</option>
         </select>
+        {stereotypes.length > 0 && (
+          <select value={stereotype} onChange={(e) => setStereotype(e.target.value)} title="entity stereotype">
+            <option value="">all stereotypes</option>
+            {stereotypes.map((s) => (
+              <option key={s} value={s}>
+                «{s}»
+              </option>
+            ))}
+          </select>
+        )}
         <details className="map-edgetypes">
           <summary className="mono">edges</summary>
           <div className="map-types">
@@ -909,7 +936,7 @@ export default function MapCenter() {
                       {c.label}
                     </span>
                   ) : (
-                    <a className="map-crumb" title={`overlay ${c.levelView}`} onClick={() => openView(c.levelView!)}>
+                    <a className="map-crumb" title={`overlay ${c.levelView}`} {...pressable(() => openView(c.levelView!))}>
                       {c.label}
                     </a>
                   )}
@@ -957,20 +984,20 @@ export default function MapCenter() {
                 <a
                   className="map-level-chip"
                   title={`the level above: ${around.above}`}
-                  onClick={() => openView(around.above!)}
+                  {...pressable(() => openView(around.above!))}
                 >
                   ↑ {viewTitle(around.above)}
                 </a>
               )}
               {around.sameLevel.map((id) => (
-                <a key={id} className="map-level-chip" title={id} onClick={() => openView(id)}>
-                  {viewTitle(id)}
+                <a key={id} className="map-level-chip" title={`another view of this level: ${id}`} {...pressable(() => openView(id))}>
+                  {viewLabel(id)}
                 </a>
               ))}
               {around.below.map((id) => {
                 const member = memberOfLevel(id)
                 return (
-                  <a key={id} className="map-level-chip" title={`the level below: ${id}`} onClick={() => openView(id)}>
+                  <a key={id} className="map-level-chip" title={`the level below: ${id}`} {...pressable(() => openView(id))}>
                     {member ? memberName(member) : viewTitle(id)} ↓
                   </a>
                 )
@@ -990,9 +1017,15 @@ export default function MapCenter() {
         <div className="map-canvas" style={panelOverlay || showPicture ? { display: 'none' } : undefined}>
           <div className="map-cy" ref={boxRef} />
           {error ? (
-            <p className="error-inline map-empty">{String(error)}</p>
+            <p className="error-inline map-empty">{error.message}</p>
+          ) : !graph ? (
+            <p className="muted map-empty">loading the graph…</p>
           ) : empty ? (
             <p className="empty map-empty">No entities in the graph yet. Run a compile to populate it.</p>
+          ) : viewParam !== '' && viewQ.error ? (
+            <p className="error-inline map-empty">{viewQ.error.message}</p>
+          ) : viewParam !== '' && !overlay ? (
+            <p className="muted map-empty">resolving the view…</p>
           ) : null}
         </div>
       </div>

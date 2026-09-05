@@ -32,6 +32,46 @@
   border-left: 4px solid var(--accent);
 }
 
+/* Board cards (docs/frontends/gui.md#board): a resolved card turns green until
+   the build ends, a failed one red, and a card a session holds pulses while the
+   session streams. */
+.goal-card {
+  cursor: pointer;
+}
+
+/* The chips wrap under the target in a narrow column instead of clipping. */
+.goal-card .row {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.goal-card.goal-resolved {
+  border-color: var(--accent);
+}
+
+.goal-card.goal-failed {
+  border-color: var(--err);
+}
+
+.goal-card.goal-session {
+  animation: goal-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes goal-pulse {
+  0%,
+  100% {
+    border-color: var(--line);
+  }
+  50% {
+    border-color: var(--accent);
+  }
+}
+
+.goal-card .goal-err {
+  color: var(--err);
+  margin: 2px 0;
+}
+
 .trace-row .expand {
   border: none;
   background: none;

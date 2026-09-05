@@ -9,6 +9,8 @@ import { useQuery } from '@tanstack/react-query'
 import { entryLabel, get, post, put, verdictText, type Job, type JournalEntry, type TraceEvent } from '../lib/api'
 import { useDocs, useGenPending, useJournal, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
+import { pressable } from '../lib/a11y'
+import { useNodeHref } from '../lib/nav'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
 import '../routes/routes.css'
 
@@ -120,12 +122,16 @@ function labelOf(ev: TraceEvent): string | null {
 // of the same session. Events with no label (build notes) pool under "build".
 function groupTurns(events: Numbered[]): Turn[] {
   const out: Turn[] = []
-  const open = new Map<string, Turn>()
+  // The group each label is in: a finished session keeps its group, so the goal
+  // events the harness emits after sessionDone (the resolutions and the goals the
+  // commit opened) land under the session that produced them, never in a second
+  // "unfinished" group of the same name.
+  const current = new Map<string, Turn>()
   const groupFor = (label: string): Turn => {
-    const g = open.get(label)
+    const g = current.get(label)
     if (g) return g
     const fresh: Turn = { key: `${label}#${out.length}`, label, preRows: [], rounds: [] }
-    open.set(label, fresh)
+    current.set(label, fresh)
     out.push(fresh)
     return fresh
   }
@@ -134,7 +140,7 @@ function groupTurns(events: Numbered[]): Turn[] {
     const label = labelOf(ev) ?? 'build'
     if (ev.kind === 'sessionStart') {
       const fresh: Turn = { key: `${label}#${out.length}`, label, start: ev, preRows: [], rounds: [] }
-      open.set(label, fresh)
+      current.set(label, fresh)
       out.push(fresh)
       continue
     }
@@ -142,11 +148,9 @@ function groupTurns(events: Numbered[]): Turn[] {
     switch (ev.kind) {
       case 'sessionDone':
         g.done = ev
-        open.delete(label)
         break
       case 'sessionFailed':
         g.failed = ev
-        open.delete(label)
         break
       case 'llmRequest':
         g.rounds.push({ step: String(ev.step ?? ''), request: row, rows: [] })
@@ -557,9 +561,12 @@ function opCounts(mutations: Record<string, unknown>[]): [number, number, number
   return [a, u, d]
 }
 
-// The changesets the run committed: journal entries inside its generation span.
-function Changesets({ from, to }: { from: number; to: number }) {
+// The changesets the run committed: journal entries inside its generation span,
+// the release diff across it, and the whole-build report (the ripple rooted at
+// the run's first generation, in the inspector).
+function Changesets({ from, to, compile }: { from: number; to: number; compile: boolean }) {
   const journal = useJournal(500)
+  const reportHref = useNodeHref()
   if (to <= from) return null
   const entries = (journal.data?.entries ?? []).filter(
     (e) => e.generation > from && e.generation <= to,
@@ -574,6 +581,11 @@ function Changesets({ from, to }: { from: number; to: number }) {
         </span>
         {to > from + 1 && (
           <Link to={`/journal/diff?from=${from + 1}&to=${to}`}>release diff</Link>
+        )}
+        {compile && (
+          <Link to={reportHref(`g${from + 1}`)} title="the causality DAG, the cost, and the parked and failed goals">
+            build report
+          </Link>
         )}
       </div>
       {entries.map((e: JournalEntry) => {
@@ -673,13 +685,21 @@ function WorkersStrip() {
 function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const { data: s } = useStatus()
   const { data: docs } = useDocs()
+  const { data: workers } = useWorkers()
   const pending = useGenPending()
   const navigate = useNavigate()
   const jobs = useApp((a) => a.jobs)
+  const turns = useApp((a) => a.turns)
   const watchMode = useApp((a) => a.watchMode)
   const genMode = useApp((a) => a.genMode)
   const running = Object.values(jobs).find((j) => j.state === 'running')
   const queued = Object.values(jobs).filter((j) => j.state === 'queued').length
+  // The current batch and where it is: the running session's label and the section
+  // it reached, the same progress the files tree shows in place.
+  const runningTurn = Object.values(turns).find((t) => t.state === 'running')
+  const progress = runningTurn
+    ? ` · ${runningTurn.label}${runningTurn.active ? ` at ${runningTurn.active}` : ''}${runningTurn.sections.length > 0 ? ` (${runningTurn.touched.length}/${runningTurn.sections.length})` : ''}`
+    : ''
   const changedDocs = (docs?.docs ?? []).filter((d) => d.stale).length
   const genPending = pending.data?.pending.length ?? 0
   const boardCounts = s?.board
@@ -699,17 +719,21 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
       </button>
       <WorkersStrip />
       {running ? (
-        <span className="v-stale">
-          ▶ {running.kind.kind} running{queued > 0 ? ` (+${queued} queued)` : ''}
+        <span className="v-stale bar-state" title={`${running.kind.kind} running${progress}`}>
+          ▶ {running.kind.kind} running{progress}{queued > 0 ? ` (+${queued} queued)` : ''}
           <button
             style={{ marginLeft: 8 }}
             onClick={() => post(`/api/jobs/${running.id}/cancel`)}
+            title="stops at the next boundary; a model call in flight finishes first"
           >
             cancel
           </button>
         </span>
       ) : (
-        <span className="muted">
+        <span
+          className="muted bar-state"
+          title={`${verdictText(s?.verdict)}${boardCounts ? ` · ${boardCounts.open} open goals, ${boardCounts.blocked} blocked` : ''}`}
+        >
           {verdictText(s?.verdict)}
           {boardCounts && boardCounts.open > 0 ? ` · ${boardCounts.open} open goals` : ''}
           {boardCounts && boardCounts.blocked > 0 ? `, ${boardCounts.blocked} blocked` : ''}
@@ -730,9 +754,17 @@ function ControlBar({ open, setOpen }: { open: boolean; setOpen: (v: boolean) =>
             <option value="auto">auto</option>
           </select>
         </label>
-        <button disabled={!!running} onClick={compileClick} title={watchMode !== 'watch' ? 'opens the preview pane; its release button runs the build' : 'compile now'}>
+        <button
+          disabled={!!running}
+          onClick={compileClick}
+          title={
+            watchMode !== 'watch'
+              ? `opens the preview pane; its release button runs the build${changedDocs > 0 ? ` (${changedDocs} document${changedDocs === 1 ? '' : 's'} drifted from the graph)` : ''}`
+              : 'compile now'
+          }
+        >
           compile{changedDocs > 0 ? ` ${changedDocs}` : ''}
-          {boardCounts && boardCounts.gated > 0 ? ` (${boardCounts.gated} gated)` : ''} ▸
+          {(workers?.gated.compile ?? 0) > 0 ? ` (${workers!.gated.compile} gated)` : ''} ▸
         </button>
         <button
           disabled={!!running || genPending === 0}
@@ -871,7 +903,7 @@ export default function Activity() {
               <div
                 key={r.key}
                 className={`card ${sel && r.key === sel.key ? 'job-sel' : ''}`}
-                onClick={() => pick(r.key)}
+                {...pressable(() => pick(r.key))}
               >
                 <div className="row">
                   <b>{r.kind}</b>
@@ -915,7 +947,7 @@ export default function Activity() {
                   {sel.state === 'queued' && <span className="muted">queued, waiting its turn</span>}
                 </div>
                 {fromGen !== null && toGen !== null && (
-                  <Changesets from={fromGen} to={toGen} />
+                  <Changesets from={fromGen} to={toGen} compile={sel.kind === 'compile'} />
                 )}
                 {transcript.error && liveEvents.length === 0 && sel.state !== 'queued' && (
                   <p className="error-inline">{transcript.error.message}</p>

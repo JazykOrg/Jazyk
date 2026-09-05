@@ -1,7 +1,7 @@
 // The workbench shell: rail | sidebar | center + inspector, activity panel and
 // status bar below. Navigation swaps panes, never the page
 // (docs/frontends/gui.md#layout).
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from 'react-router'
 import StatusBar from './components/StatusBar'
 import CommandPalette from './components/CommandPalette'
@@ -37,7 +37,7 @@ const RAIL = [
   ['/graph', '⬡', 'graph'],
   ['/board', '▦', 'board'],
   ['/work', '⚒', 'work'],
-  ['/benchmarks', '⚖', 'bench'],
+  ['/benchmarks', '⚖', 'benchmarks'],
   ['/feedback', '⚑', 'feedback'],
   ['/settings', '⚙', 'settings'],
 ] as const
@@ -196,13 +196,20 @@ export default function App() {
   )
 }
 
-// The only transient surface: a one-line committed-changeset notice, itself a link.
+// The only transient surface: a one-line committed-changeset notice, itself a link
+// into the app (never a page load). It leaves on its own a few seconds later.
 function CommitNote() {
   const last = useApp((a) => a.lastCommit)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!last) return
+    const t = window.setTimeout(() => tick((n) => n + 1), 6100)
+    return () => window.clearTimeout(t)
+  }, [last])
   if (!last || Date.now() - last.at > 6000) return null
   return (
-    <a className="commit-note mono" href={`/journal/${last.generation}`}>
+    <Link className="commit-note mono" to={`/journal/${last.generation}`}>
       g{last.generation} committed →
-    </a>
+    </Link>
   )
 }

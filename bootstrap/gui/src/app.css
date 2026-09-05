@@ -99,6 +99,12 @@
   gap: 16px;
 }
 
+/* A one-line row inside a column ellipsizes instead of widening the column past
+   the pane. */
+.grid2 > * {
+  min-width: 0;
+}
+
 .filterbar {
   display: flex;
   gap: 8px;

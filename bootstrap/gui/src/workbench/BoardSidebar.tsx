@@ -21,7 +21,8 @@ export default function BoardSidebar() {
 
   return (
     <div className="wb-side-pad">
-      {!board.data && <p className="muted">loading…</p>}
+      {board.error && <p className="error-inline">{board.error.message}</p>}
+      {!board.data && !board.error && <p className="muted">loading…</p>}
       {board.data && (
         <>
           <p className="mono" title="the verdict line as jazyk compile prints it">
@@ -47,6 +48,15 @@ export default function BoardSidebar() {
                   </div>
                 ))}
               </div>
+              {kinds.length > 0 && (
+                <div className="muted mono" style={{ margin: '4px 0' }}>
+                  {kinds.map((k) => (
+                    <div key={k}>
+                      {c.by_kind[k]} {k}
+                    </div>
+                  ))}
+                </div>
+              )}
             </>
           )}
           <label className="muted" style={{ display: 'block', marginTop: 8 }}>
@@ -96,12 +106,20 @@ export default function BoardSidebar() {
               <p className="muted mono" style={{ margin: 0 }}>
                 {costs.sessions} sessions · {Math.round((costs.tokens ?? 0) / 1000)}k tok
               </p>
-              {Object.entries(costs.by_kind ?? {}).map(([k, line]) => (
+              {Object.entries(costs.by_class ?? {}).map(([k, line]) => (
                 <p key={k} className="muted mono" style={{ margin: 0, paddingLeft: 8 }}>
                   {k}: {line.sessions} · {Math.round(line.tokens / 1000)}k
                 </p>
               ))}
+              {Object.entries(costs.by_kind ?? {}).map(([k, line]) => (
+                <p key={k} className="muted mono" style={{ margin: 0, paddingLeft: 16 }}>
+                  {k}: {line.sessions} · {Math.round(line.tokens / 1000)}k
+                </p>
+              ))}
             </>
+          )}
+          {costs && (costs.sessions ?? 0) === 0 && (
+            <p className="muted" style={{ marginTop: 12 }}>no cost recorded for this build yet</p>
           )}
         </>
       )}

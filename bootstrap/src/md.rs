@@ -72,6 +72,23 @@ pub fn line_col(text: &str, byte: usize) -> (usize, usize) {
     (line, col)
 }
 
+// Whether the Markdown handler claims a file: by its extension, `.md` or `.markdown`.
+// A matched file no handler claims is `unsupported-format` territory.
+// Mirrors docs/compiler/parsing.md#format-handlers.
+pub fn supported_format(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"))
+        .unwrap_or(false)
+}
+
+// Read a document for its handler: the text, or why it cannot be read (unreadable, or
+// not valid UTF-8), the message a `parse-error` diagnostic carries.
+pub fn read_doc(path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
+    String::from_utf8(bytes).map_err(|e| format!("not valid UTF-8: {}", e.utf8_error()))
+}
+
 pub fn slug(s: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -462,6 +479,29 @@ mod tests {
         assert!(n["/"].raw.contains("Just prose"));
         // A blank-only file still yields no sections: empty-file check territory.
         assert!(parse_sections("\n\n").is_empty());
+    }
+
+    // A handler claims a file by its extension; a file it cannot read says why.
+    // Mirrors docs/compiler/parsing.md#format-handlers.
+    #[test]
+    fn handler_claims_markdown_extensions_and_reports_unreadable_files() {
+        use std::path::Path;
+        assert!(supported_format(Path::new("docs/a.md")));
+        assert!(supported_format(Path::new("docs/A.MARKDOWN")));
+        assert!(!supported_format(Path::new("docs/a.txt")));
+        assert!(!supported_format(Path::new("docs/README")));
+        let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.md");
+        std::fs::write(&good, "# T\nbody\n").unwrap();
+        assert_eq!(read_doc(&good).unwrap(), "# T\nbody\n");
+        let bad = dir.join("bad.md");
+        std::fs::write(&bad, b"# T\n\xff\xfe not utf-8\n").unwrap();
+        let err = read_doc(&bad).unwrap_err();
+        assert!(err.contains("not valid UTF-8"), "{}", err);
+        let missing = dir.join("missing.md");
+        assert!(read_doc(&missing).unwrap_err().contains("cannot read"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

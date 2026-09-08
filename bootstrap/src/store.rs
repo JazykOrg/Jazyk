@@ -200,8 +200,10 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 28] = [
+pub const CHECK_RULES: [&str; 30] = [
     "pinned-fact-drift",
+    "unsupported-format",
+    "parse-error",
     "empty-file",
     "broken-link",
     "uncovered-section",

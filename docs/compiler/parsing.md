@@ -11,10 +11,17 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 - Custom handlers per project are planned; Markdown is the only handler today. The
   configuration format is specified in
   [project settings](./project-settings.md).
-- A file matched by the docs glob with no handler yields an `unsupported-format`
-  diagnostic. A handler failure yields `parse-error`. An empty file yields `empty-file`,
-  raised by the [deterministic checks](./compilation.md#checks): with no sections there is
-  nothing for parsing to attach a diagnostic to.
+- A handler claims a file by its extension. A file matched by the docs glob that no
+  handler claims yields an `unsupported-format` diagnostic on the document and is not
+  parsed. A file its handler cannot read (not valid UTF-8, or unreadable) yields
+  `parse-error` on the document. Either file contributes no sections: it is absent from
+  the parse like a deleted document, so a stored record of it leaves the store the way a
+  removed document does, and the file is ingested as new once it reads. Both diagnostics
+  are filed by the [deterministic checks](./compilation.md#checks) at the end of every
+  build, on the document path, and resolve when the condition clears (the file reads
+  again, gains a handler, or leaves the glob). A no-op rebuild re-files nothing. An empty
+  file yields `empty-file` the same way: with no sections there is nothing for parsing to
+  attach a diagnostic to.
 
 ## Section tree
 

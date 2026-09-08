@@ -984,6 +984,10 @@ pub struct GoalScope {
     // Anchor ids a place-anchors goal must decide; place_anchor and orphan_anchor
     // accept no others, and the gate holds the session to every one.
     pub proposals: Vec<String>,
+    // The requirement count an abstract-entity goal splits (the caps variant), zero
+    // otherwise; the mutation budget grows by it, one move per grouped statement.
+    // Mirrors docs/compiler/sessions.md#budgets.
+    pub split_count: usize,
 }
 
 impl GoalScope {
@@ -1021,6 +1025,18 @@ impl GoalScope {
                 proposals.push(a);
             }
         }
+        let split_count = if g.kind == "abstract-entity" {
+            g.change["limits"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|l| l["limit"] == "requirements-per-entity")
+                .filter_map(|l| l["count"].as_u64())
+                .max()
+                .unwrap_or(0) as usize
+        } else {
+            0
+        };
         GoalScope {
             goal: g.id.clone(),
             kind: g.kind.clone(),
@@ -1030,6 +1046,7 @@ impl GoalScope {
             sections,
             stale_anchors: list("staleAnchors"),
             proposals,
+            split_count,
         }
     }
 }
@@ -1063,6 +1080,13 @@ impl WorkScope {
         let mut s = WorkScope::for_batch(&item.goal_id(), std::slice::from_ref(&goal));
         s.target = item.target.clone();
         s
+    }
+
+    // The staged-mutation budget the batch earns over the registry constant: a caps
+    // split stages one move per grouped statement, so a session holding one grows by
+    // the count it splits. Mirrors docs/compiler/sessions.md#budgets.
+    pub fn mutation_budget(&self) -> usize {
+        crate::limits::SESSION_MUTATIONS + self.goals.iter().map(|g| g.split_count).sum::<usize>()
     }
 
     // A serving surface with no open batch (mcp-write, mcp-read, chat).
@@ -1242,6 +1266,8 @@ impl ToolSession {
                 skills.pin(s);
             }
         }
+        // A caps split earns the moves it needs (docs/compiler/sessions.md#budgets).
+        let mutation_limit = mutation_limit.max(scope.mutation_budget());
         ToolSession {
             loaded: LoadedSet::new(default_budget),
             skills,
@@ -1505,10 +1531,16 @@ impl ToolSession {
             ));
         }
         // The fan-out variant's own level faces its count even when the changeset left
-        // it alone. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+        // it alone, and the caps variant's target faces its requirement count against
+        // the soft value. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate
+        // and #gate.
         if gs.kind == "abstract-entity" {
             if let Some(v) =
                 crate::goals::fan_out_goal_gate(&self.snapshot, &self.staged, &gs.target)
+            {
+                return Err(ToolError::new(&v.rule, v.message));
+            }
+            if let Some(v) = crate::goals::caps_goal_gate(&self.snapshot, &self.staged, &gs.target)
             {
                 return Err(ToolError::new(&v.rule, v.message));
             }
@@ -4099,14 +4131,36 @@ impl ToolSession {
                 let Some(rid) = self.canon_entity_id(&id) else {
                     return Err(self.unknown_entity_error(&id));
                 };
+                // An entity staged this session is not in the graph yet: the call
+                // withdraws it from the changeset, the create and every move onto it
+                // dropped, so a sub-entity found empty leaves nothing behind.
+                // Mirrors docs/compiler/tools.md#grouping-tools.
                 if self.staged_entities.contains_key(&rid) {
-                    return Err(ToolError::new(
-                        "staged-entity",
-                        format!(
-                            "{} is staged in this session and not yet in the graph; it lands at commit, so dissolve it in a later session or leave it out now",
-                            rid
-                        ),
-                    ));
+                    let before = self.staged.len();
+                    self.staged.retain(|op| match op {
+                        Op::CreateEntity { id, .. } => id != &rid,
+                        Op::UpdateEntity {
+                            id,
+                            parent: Some(p),
+                            ..
+                        } => id != &rid && p != &rid,
+                        Op::UpdateEntity { id, .. } => id != &rid,
+                        Op::UpdateRequirement {
+                            entities: Some(e), ..
+                        } => !e.iter().any(|x| x == &rid),
+                        Op::CreateRequirement { requirement, .. } => {
+                            !requirement.entities.iter().any(|x| x == &rid)
+                        }
+                        _ => true,
+                    });
+                    self.staged_entities.remove(&rid);
+                    self.staged_parents.retain(|_, p| p != &rid);
+                    return Ok(json!({
+                        "withdrawn": rid,
+                        "dropped": before - self.staged.len(),
+                        "reason": reason,
+                        "note": "the entity was staged this session and never landed; the create and every move onto it are out of the changeset",
+                    }));
                 }
                 if self.staged_dissolved(&rid) {
                     return Err(ToolError::new(
@@ -4371,6 +4425,62 @@ impl ToolSession {
                         None => None,
                     }
                 };
+                // Under an abstract-entity goal a re-point is a swap: the goal's target
+                // may leave the list for a sub-entity, and no other entity the
+                // statement names may be dropped. Mirrors
+                // docs/compiler/goals/abstract-entity.md#gate.
+                if let Some(new) = &entities {
+                    let splits: Vec<&str> = self
+                        .scope
+                        .goals
+                        .iter()
+                        .filter(|g| g.kind == "abstract-entity")
+                        .map(|g| g.target.as_str())
+                        .collect();
+                    let stored: Vec<String> = self
+                        .snapshot
+                        .graph
+                        .requirements
+                        .get(&id)
+                        .map(|r| {
+                            r.entities
+                                .iter()
+                                .map(|e| self.snapshot.resolve_id(e).to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let dropped: Vec<&String> = stored
+                        .iter()
+                        .filter(|e| !new.contains(e) && !splits.contains(&e.as_str()))
+                        .collect();
+                    if !splits.is_empty() && !dropped.is_empty() {
+                        let added: Vec<&String> = new.iter().filter(|e| !stored.contains(e)).collect();
+                        let mut send: Vec<String> = Vec::new();
+                        for e in &stored {
+                            if splits.contains(&e.as_str()) {
+                                for a in &added {
+                                    if !send.contains(a) {
+                                        send.push((*a).clone());
+                                    }
+                                }
+                                if added.is_empty() && !send.contains(e) {
+                                    send.push(e.clone());
+                                }
+                            } else if !send.contains(e) {
+                                send.push(e.clone());
+                            }
+                        }
+                        return Err(ToolError::new(
+                            "entities-dropped",
+                            format!(
+                                "{} would lose {}; a re-point under an abstract-entity goal swaps the target for the sub-entity and keeps every other entity the statement names: send entities [{}]",
+                                id,
+                                dropped.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+                                send.join(", ")
+                            ),
+                        ));
+                    }
+                }
                 // The entities the edges and the transition are checked against: the
                 // revised list, or the stored one.
                 let listed: Vec<String> = entities.clone().unwrap_or_else(|| {
@@ -8376,19 +8486,118 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "already-dissolved");
-        // A grouping staged this session is not in the graph yet.
+        // A grouping staged this session is not in the graph yet: the call withdraws
+        // it, the create and both moves dropped from the changeset.
+        let before = t.staged.len();
         t.dispatch(
             "group_entities",
             &json!({"name": "Compute", "definition": "Runs the handlers.", "members": ["ent:c0", "ent:c1"], "reasoning": "why"}),
         )
         .unwrap();
-        let err = t
+        assert_eq!(t.staged.len(), before + 3);
+        let r = t
             .dispatch(
                 "dissolve_entity",
                 &json!({"id": "ent:compute", "reason": "undo"}),
             )
+            .unwrap();
+        assert_eq!(r["withdrawn"], "ent:compute");
+        assert_eq!(r["dropped"], 3);
+        assert_eq!(t.staged.len(), before);
+        assert!(!t.staged_entities.contains_key("ent:compute"));
+    }
+
+    // A caps split session: a service over its requirement limit with two statements
+    // naming other entities beside it. Mirrors docs/compiler/goals/abstract-entity.md#gate.
+    fn caps_session() -> ToolSession {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:svc".into(), plain("Service"));
+        s.graph.entities.insert("ent:db".into(), plain("Database"));
+        s.graph.entities.insert("ent:session".into(), plain("Session"));
+        for (i, ents) in [
+            vec!["ent:svc", "ent:session", "ent:db"],
+            vec!["ent:svc", "ent:db"],
+        ]
+        .iter()
+        .enumerate()
+        {
+            s.graph.requirements.insert(
+                format!("req:svc-{}", i),
+                Requirement {
+                    statement: format!("The Service persists record {} in the Database.", i),
+                    entities: ents.iter().map(|e| e.to_string()).collect(),
+                    source: Some(SourceRef {
+                        doc: "svc.md".into(),
+                        section: "/svc".into(),
+                        quote: "persists".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        let goal = Goal {
+            id: "g:abstract-entity:ent:svc".into(),
+            kind: "abstract-entity".into(),
+            mandatory: true,
+            target: "ent:svc".into(),
+            change: json!({"limits": [{"limit": "requirements-per-entity", "count": 96, "soft": 50, "hard": 80, "level": "hard"}]}),
+            ..Default::default()
+        };
+        ToolSession::new(s, WorkScope::for_batch("b0-1", &[goal]), 64, 24_000)
+    }
+
+    // Mirrors docs/compiler/sessions.md#budgets: a caps split earns one move per
+    // grouped statement over the registry constant.
+    #[test]
+    fn caps_split_grows_the_mutation_budget_by_the_crossed_count() {
+        let t = caps_session();
+        assert_eq!(t.mutation_limit, 64 + 96);
+        assert_eq!(level_session().mutation_limit, 64);
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#gate: a re-point swaps the target
+    // for the sub-entity and keeps the other entities; a list that drops one is
+    // refused with the list to send.
+    #[test]
+    fn caps_repoint_is_a_swap_that_keeps_the_other_entities() {
+        let mut t = caps_session();
+        t.dispatch(
+            "upsert_entity",
+            &json!({"name": "Data Model", "parent": "ent:svc", "definition": "The Service's data model is the set of records it persists.", "provenance": {"derived": {"from": ["ent:svc", "req:svc-0"], "reasoning": "the data section"}}}),
+        )
+        .unwrap();
+        let err = t
+            .dispatch(
+                "update_requirement",
+                &json!({"id": "req:svc-0", "entities": ["ent:data-model"]}),
+            )
             .unwrap_err();
-        assert_eq!(err.rule, "staged-entity");
+        assert_eq!(err.rule, "entities-dropped");
+        assert!(
+            err.message.contains("send entities [ent:data-model, ent:session, ent:db]"),
+            "{}",
+            err.message
+        );
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:svc-0", "entities": ["ent:data-model", "ent:session", "ent:db"]}),
+        )
+        .unwrap();
+        // Keeping the target while adding the sub-entity drops nothing either.
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:svc-1", "entities": ["ent:svc", "ent:db", "ent:data-model"]}),
+        )
+        .unwrap();
+        // Withdrawing the sub-entity drops its create and both re-points.
+        let r = t
+            .dispatch(
+                "dissolve_entity",
+                &json!({"id": "ent:data-model", "reason": "not filled"}),
+            )
+            .unwrap();
+        assert_eq!(r["dropped"], 3);
+        assert!(t.staged.is_empty(), "{:?}", t.staged);
     }
 
     // A dissolve that lands a level past the fan-out threshold previews the goal it

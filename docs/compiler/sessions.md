@@ -378,7 +378,12 @@ Budgets are registry constants built into the binary, not settings
   several tool calls, so a trace's call count can exceed it. An external agent bounds
   its own loop, and the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
   [worker sessions](../frontends/acp.md#worker-sessions)) bounds them all.
-- Staged mutations per session: 64. Enforced by the tool serving.
+- Staged mutations per session: 64, raised for a session holding an
+  [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 64
+  plus that count: a split of ninety-six statements stages one move per grouped
+  statement, and a budget the split cannot fit fails every honest session (the first
+  caps split measured ran out at 64 with three sub-entities staged empty). Enforced by
+  the tool serving.
 - Context: 24000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).
 - High-water mark: 0.9 of the context budget. Past it, `load` and `expand` are refused

@@ -341,6 +341,19 @@ fn claimed_after(claimed: &Option<String>, generation: u64) -> bool {
 // Content tokens of a statement: normalized tokens minus stop words and the named
 // entities' own name tokens, crudely stemmed. The pair scorer's vocabulary.
 pub fn content_tokens(store: &Store, statement: &str, entities: &[String]) -> BTreeSet<String> {
+    content_token_words(store, statement, entities)
+        .into_iter()
+        .map(|(stemmed, _)| stemmed)
+        .collect()
+}
+
+// The content tokens of a statement in order, each stem paired with the word the
+// statement wrote, for a hint that shows a word and never a stem.
+pub fn content_token_words(
+    store: &Store,
+    statement: &str,
+    entities: &[String],
+) -> Vec<(String, String)> {
     const STOP: [&str; 30] = [
         "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or", "and",
         "if", "with", "by", "it", "its", "when", "then", "that", "which", "this", "system", "not",
@@ -359,8 +372,8 @@ pub fn content_tokens(store: &Store, statement: &str, entities: &[String]) -> BT
     store::normalize_statement(statement)
         .split(' ')
         .filter(|t| !t.is_empty() && !STOP.contains(t))
-        .map(stem)
-        .filter(|t| !name_toks.contains(t))
+        .map(|t| (stem(t), t.to_string()))
+        .filter(|(stemmed, _)| !name_toks.contains(stemmed))
         .collect()
 }
 
@@ -3549,15 +3562,42 @@ impl GoalKind for SplitView {
 pub struct AbstractEntity;
 
 // Candidate cohesion groups: content tokens recurring across at least three of the
-// entity's statements, with the section quoting most of them.
+// entity's statements, function words dropped, each shown as the word the statements
+// use most (never a stem), with the section quoting most of them.
+// Mirrors docs/compiler/goals/abstract-entity.md#hints.
 pub fn cohesion_groups(store: &Store, id: &str) -> Vec<(String, usize, String)> {
+    // Function words the pair scorer's stop list keeps (they carry weight between two
+    // statements) that name no concept a group could be about.
+    const FUNCTION: [&str; 72] = [
+        "every", "from", "must", "may", "can", "will", "does", "did", "has", "have", "had",
+        "into", "than", "more", "most", "one", "any", "some", "their", "they", "them",
+        "after", "before", "about", "over", "under", "other", "same", "also", "via",
+        "whenever", "while", "once", "per", "what", "who", "where", "how", "never", "always",
+        "between", "within", "without", "through", "until", "since", "both", "either",
+        "first", "last", "new", "such", "these", "those", "there", "here", "done", "make",
+        "made", "use", "used", "like", "unless", "because", "would", "should", "could",
+        "being", "been", "was", "were", "whose",
+    ];
     let reqs = store.requirements_referencing(id);
     let mut by_token: BTreeMap<String, Vec<&String>> = BTreeMap::new();
+    let mut words: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for rid in &reqs {
         let r = &store.graph.requirements[rid];
-        for t in content_tokens(store, &r.statement, &r.entities) {
-            if t.len() >= 4 {
-                by_token.entry(t).or_default().push(rid);
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for (stemmed, word) in content_token_words(store, &r.statement, &r.entities) {
+            if stemmed.len() < 4
+                || FUNCTION.contains(&stemmed.as_str())
+                || FUNCTION.contains(&word.as_str())
+            {
+                continue;
+            }
+            *words
+                .entry(stemmed.clone())
+                .or_default()
+                .entry(word)
+                .or_insert(0) += 1;
+            if seen.insert(stemmed.clone()) {
+                by_token.entry(stemmed).or_default().push(rid);
             }
         }
     }
@@ -3576,12 +3616,118 @@ pub fn cohesion_groups(store: &Store, id: &str) -> Vec<(String, usize, String)> 
                 .max_by_key(|(s, n)| (*n, std::cmp::Reverse(s.clone())))
                 .map(|(s, _)| s)
                 .unwrap_or_default();
-            (tok, rids.len(), section)
+            let word = words
+                .get(&tok)
+                .and_then(|w| {
+                    w.iter()
+                        .max_by_key(|(word, n)| (**n, std::cmp::Reverse((*word).clone())))
+                        .map(|(word, _)| word.clone())
+                })
+                .unwrap_or(tok);
+            (word, rids.len(), section)
         })
         .collect();
     groups.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     groups.truncate(6);
     groups
+}
+
+// The section that defines an entity, the ratification proposal's target: the root
+// section of a document headed with the entity's name, else the section among its
+// mentions quoting the most of its requirements, else its first mention (a front
+// door's list item names the entity without defining it). Mirrors
+// docs/compiler/goals/abstract-entity.md#hints.
+pub fn defining_section(store: &Store, id: &str) -> Option<(String, String)> {
+    let e = store.graph.entities.get(id)?;
+    let mut docs: Vec<&String> = e.mentions.iter().map(|m| &m.doc).collect();
+    docs.dedup();
+    for doc in docs {
+        let root = store.docs.get(doc).and_then(|d| {
+            d.sections
+                .iter()
+                .find(|(_, s)| s.kind == "root")
+                .map(|(path, s)| (path.clone(), s.title.clone()))
+        });
+        if let Some((path, title)) = root {
+            if title.trim().eq_ignore_ascii_case(e.name.trim()) {
+                return Some((doc.clone(), path));
+            }
+        }
+    }
+    let mut quoting: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for rid in store.requirements_referencing(id) {
+        if let Some(s) = &store.graph.requirements[&rid].source {
+            *quoting
+                .entry((s.doc.clone(), s.section.clone()))
+                .or_insert(0) += 1;
+        }
+    }
+    // Among the mention sections, the one quoting most; ties keep mention order.
+    e.mentions
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let key = (m.doc.clone(), m.section.clone());
+            let n = quoting.get(&key).copied().unwrap_or(0);
+            (n, std::cmp::Reverse(i), key)
+        })
+        .max()
+        .map(|(_, _, key)| key)
+}
+
+// The caps gate for one goal at mark_goal_done: the requirement count on the target
+// after the changeset is within the soft value in force (the record folds the
+// entity's own bump in). A split that only de-escalates is refused here, so the
+// session moves more detail or fails the goal with the reason. None when no
+// requirement record stands on the target. Mirrors
+// docs/compiler/goals/abstract-entity.md#gate.
+pub fn caps_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Violation> {
+    let rec = store.status.changes.iter().find(|c| {
+        c.kind == store::CHANGE_THRESHOLD_CROSSED
+            && c.subject == target
+            && c.detail["limit"] == "requirements-per-entity"
+    })?;
+    let soft = rec.detail["soft"].as_u64()?;
+    let hard = rec.detail["hard"].as_u64().unwrap_or(soft);
+    let names_target =
+        |entities: &[String]| entities.iter().any(|x| store.resolve_id(x) == target);
+    let mut referencing: BTreeSet<String> =
+        store.requirements_referencing(target).into_iter().collect();
+    for op in staged {
+        match op {
+            Op::UpdateRequirement {
+                id,
+                entities: Some(e),
+                ..
+            } => {
+                if names_target(e) {
+                    referencing.insert(id.clone());
+                } else {
+                    referencing.remove(id);
+                }
+            }
+            Op::CreateRequirement { id, requirement } => {
+                if names_target(&requirement.entities) {
+                    referencing.insert(id.clone());
+                }
+            }
+            Op::DeleteRequirement { id, .. } => {
+                referencing.remove(id);
+            }
+            _ => {}
+        }
+    }
+    let count = referencing.len() as u64;
+    if count <= soft {
+        return None;
+    }
+    Some(Violation::new(
+        "count-over-limit",
+        format!(
+            "{}: {} requirements after the changeset, over {} (requirements-per-entity, soft {}, hard {}); re-point more grouped statements to the sub-entities with update_requirement (id and entities only), or fail the goal with the reason (a decree on the entity's own limit when the count is honest)",
+            target, count, soft, soft, hard
+        ),
+    ))
 }
 
 // ---- the fan-out variant ----
@@ -4337,8 +4483,8 @@ impl GoalKind for AbstractEntity {
                         store.requirements_referencing(&cid).len()
                     ));
                 }
-                if let Some(m) = e.mentions.first() {
-                    let full = format!("{}#{}", m.doc, m.section);
+                if let Some((doc, section)) = defining_section(store, &id) {
+                    let full = format!("{}#{}", doc, section);
                     let too_large = store.graph.diagnostics.values().any(|d| {
                         d.lifecycle == "open"
                             && d.rule == "section-too-large"
@@ -4394,13 +4540,8 @@ impl GoalKind for AbstractEntity {
                 lines.push(format!("- {} stub", cid));
             }
             if caps {
-                if let Some(m) = store
-                    .graph
-                    .entities
-                    .get(&g.target)
-                    .and_then(|e| e.mentions.first())
-                {
-                    lines.push(format!("- {}#{} full", m.doc, m.section));
+                if let Some((doc, section)) = defining_section(store, &g.target) {
+                    lines.push(format!("- {}#{} full", doc, section));
                 }
             }
             if fan_out {
@@ -4689,6 +4830,187 @@ mod tests {
 
     fn fan_out_record(s: &mut Store, subject: &str, count: u64) {
         threshold_record(s, subject, limits::CHILDREN_PER_ENTITY, count);
+    }
+
+    // ---- the caps variant ----
+
+    fn statement(s: &mut Store, id: &str, text: &str, entities: &[&str], section: &str) {
+        s.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: text.into(),
+                entities: entities.iter().map(|e| e.to_string()).collect(),
+                source: Some(SourceRef {
+                    doc: "svc.md".into(),
+                    section: section.into(),
+                    quote: text.into(),
+                }),
+                ..Default::default()
+            },
+        );
+    }
+
+    // A service over a requirement record with soft 2 and hard 3, four statements on it.
+    fn caps_store() -> Store {
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:svc".into(), child("Service", None, "svc.md"));
+        for i in 1..=4 {
+            statement(
+                &mut s,
+                &format!("req:svc-{}", i),
+                &format!("The Service persists record {} in the database.", i),
+                &["ent:svc"],
+                "/svc/data",
+            );
+        }
+        s.status.changes.push(
+            ChangeRecord::new(7, 0, 0, store::CHANGE_THRESHOLD_CROSSED, "ent:svc", "limits")
+                .with_detail(json!({
+                    "limit": "requirements-per-entity", "count": 4, "soft": 2, "hard": 3,
+                    "level": "hard", "goal": "abstract-entity",
+                })),
+        );
+        s
+    }
+
+    fn repoint(id: &str, to: &str) -> Op {
+        Op::UpdateRequirement {
+            id: id.into(),
+            statement: None,
+            entities: Some(vec![to.into()]),
+            edges: None,
+            transition: None,
+            facets: None,
+            source: None,
+            provenance: None,
+        }
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#gate: the count after the
+    // changeset is within soft, so a split that only de-escalates is refused.
+    #[test]
+    fn caps_gate_refuses_a_count_still_over_soft_and_accepts_one_within() {
+        let s = caps_store();
+        let v = caps_goal_gate(&s, &[], "ent:svc").expect("four over soft two");
+        assert_eq!(v.rule, "count-over-limit");
+        assert!(v.message.contains("4 requirements after the changeset, over 2"));
+        let one = [repoint("req:svc-1", "ent:data")];
+        let v = caps_goal_gate(&s, &one, "ent:svc").expect("three is still over two");
+        assert!(v.message.contains("3 requirements"));
+        let two = [
+            repoint("req:svc-1", "ent:data"),
+            repoint("req:svc-2", "ent:data"),
+        ];
+        assert!(caps_goal_gate(&s, &two, "ent:svc").is_none());
+        // A record on another limit is not this gate's.
+        let mut other = Store::default();
+        other
+            .graph
+            .entities
+            .insert("ent:svc".into(), child("Service", None, "svc.md"));
+        fan_out_record(&mut other, "ent:svc", 12);
+        assert!(caps_goal_gate(&other, &[], "ent:svc").is_none());
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#hints: a group hint shows the
+    // word the statements use, and function words are never groups.
+    #[test]
+    fn cohesion_groups_drop_function_words_and_show_the_written_word() {
+        let mut s = Store::default();
+        s.graph
+            .entities
+            .insert("ent:svc".into(), child("Service", None, "svc.md"));
+        for (i, t) in [
+            "Every Service handler persists a session from the request.",
+            "Every Service handler persists an audit entry from the request.",
+            "Every Service handler persists an invoice from the queue.",
+        ]
+        .iter()
+        .enumerate()
+        {
+            statement(&mut s, &format!("req:svc-{}", i), t, &["ent:svc"], "/svc/data");
+        }
+        let groups = cohesion_groups(&s, "ent:svc");
+        let words: Vec<&str> = groups.iter().map(|(w, _, _)| w.as_str()).collect();
+        assert!(words.contains(&"persists"), "{:?}", words);
+        assert!(words.contains(&"handler"), "{:?}", words);
+        // "request" recurs in two statements only; "every" and "from" recur in three
+        // and are function words; "persist" is the stem, never shown.
+        assert!(
+            !words
+                .iter()
+                .any(|w| *w == "request" || *w == "every" || *w == "from" || *w == "persist"),
+            "{:?}",
+            words
+        );
+        let persists = groups.iter().find(|(w, _, _)| w == "persists").unwrap();
+        assert_eq!((persists.1, persists.2.as_str()), (3, "/svc/data"));
+    }
+
+    // Mirrors docs/compiler/goals/abstract-entity.md#hints: the defining section is
+    // the root of the document headed with the entity's name, never the front door's
+    // list item that mentions it first.
+    #[test]
+    fn defining_section_prefers_the_document_headed_with_the_name() {
+        let mut s = Store::default();
+        let mut e = child("API Server", None, "README.md");
+        e.mentions.push(SourceRef {
+            doc: "api-server.md".into(),
+            section: "/api-server/routing".into(),
+            quote: "API Server".into(),
+        });
+        s.graph.entities.insert("ent:api-server".into(), e);
+        let root = |title: &str| Section {
+            title: title.into(),
+            kind: "root".into(),
+            order: 0,
+            parent: None,
+            raw: String::new(),
+            hash: String::new(),
+            lines: [1, 1],
+        };
+        let mut readme = DocRecord::default();
+        readme.sections.insert("/trellis".into(), root("Trellis"));
+        s.docs.insert("README.md".into(), readme);
+        let mut api = DocRecord::default();
+        api.sections.insert("/api-server".into(), root("API Server"));
+        s.docs.insert("api-server.md".into(), api);
+        assert_eq!(
+            defining_section(&s, "ent:api-server"),
+            Some(("api-server.md".into(), "/api-server".into()))
+        );
+        // Without a namesake document, the mention section quoting most of its
+        // requirements; with nothing quoted, the first mention.
+        s.docs.clear();
+        assert_eq!(
+            defining_section(&s, "ent:api-server"),
+            Some(("README.md".into(), "/x".into()))
+        );
+        let quoted = |s: &mut Store, id: &str, doc: &str, section: &str| {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: "The API Server routes.".into(),
+                    entities: vec!["ent:api-server".into()],
+                    source: Some(SourceRef {
+                        doc: doc.into(),
+                        section: section.into(),
+                        quote: "routes".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+        };
+        quoted(&mut s, "req:a-1", "README.md", "/x");
+        quoted(&mut s, "req:a-2", "api-server.md", "/api-server/routing");
+        quoted(&mut s, "req:a-3", "api-server.md", "/api-server/routing");
+        quoted(&mut s, "req:a-4", "other.md", "/elsewhere");
+        assert_eq!(
+            defining_section(&s, "ent:api-server"),
+            Some(("api-server.md".into(), "/api-server/routing".into()))
+        );
     }
 
     // A backend with twelve children in two coupled groups plus stragglers, and a

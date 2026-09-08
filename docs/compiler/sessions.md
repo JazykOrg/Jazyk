@@ -209,8 +209,11 @@ of a target that is already loaded counts as a repeat whatever its `depth`: the 
 see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
 render is fresh. `done`, `mark_goal_done`, and
-`mark_goal_failed` are exempt; repairing a rejected claim legitimately repeats it. The
-guard lives in the serving, not in any agent, so every agent gets the same contract.
+`mark_goal_failed` are exempt; repairing a rejected claim legitimately repeats it.
+`settle_pairs` is exempt as a whole and counts its accepted entries instead: an entry
+re-sent verbatim after it was accepted is marked on the second send and refused on the
+third, while a rejected entry can be repaired and re-sent. The guard lives in the
+serving, not in any agent, so every agent gets the same contract.
 
 A refusal is not an invalid call: the call was well-formed, the model is stuck. It never
 feeds the abort streak, because aborting discards staged work and a stuck model usually
@@ -313,7 +316,10 @@ Every goal in the batch ends in one of three states, and the session says which.
   carried it). The journal records the resolution with its justification
   (`resolved_goals`), [`jazyk ripple`](../frontends/cli.md#jazyk-ripple) shows it beside
   each step, and the [board](../frontends/gui.md#board) shows it on the card. An
-  accepted claim emits a `goal` trace event.
+  accepted claim emits a `goal` trace event. A `rejudge-pair` batch also sees
+  `settle_pairs`, one claim for several pairs: each entry is validated like a
+  `mark_goal_done` claim and records one resolution with its own justification
+  ([goal tools](./tools.md#goal-tools)).
 - `mark_goal_failed({goal, reason})` is always accepted. A goal that cannot honestly be
   accomplished (documents too deeply contradictory, a target that stopped making
   sense, a repair the tools cannot express) must be failable, or the board fills with

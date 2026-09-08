@@ -165,5 +165,8 @@ candidates re-deriving as pairs resolve, which needs the record semantics settle
 first: a created record clears when its goals resolve, so deferred pairs need their
 own standing. Second: a `pairs-per-entity` limit in
 the registry (the lexically closest pairs, the rest left to `review-entity`, which
-reads every statement anyway). Third: a batch-level verdict list so one claim settles
-a level's pairs.
+reads every statement anyway). Third, landed: `settle_pairs`, a batch-level verdict
+list so one claim settles a batch's pairs, one entry per goal under the single calls'
+gates ([goal tools](./compiler/tools.md#goal-tools)); measured under Claude Code on
+the saas snapshot, a six-pair batch went from one claim per pair to one
+`settle_pairs` call plus `done`.

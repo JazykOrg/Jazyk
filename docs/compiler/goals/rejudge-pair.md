@@ -126,6 +126,14 @@ subjects exist, a prompt's `old_text` locates in the section it names, a
 `delete_requirement` carries a reason. Staging nothing is the common correct outcome:
 every pair consistent, one `mark_goal_done` each, `done` with a one-line summary.
 
+A batch of pairs settles in one call: `settle_pairs({verdicts: [{goal, verdict,
+justification, ...}]})` takes one entry per goal (`consistent`, `duplicate`,
+`contradiction`, or `resolved`), stages the diagnostic the verdict carries or resolves
+the pair's open one, and marks each goal done under this same gate, the justification
+and evidence recorded per goal. An entry the gate refuses is reported with the rule
+and the repair while the other entries land
+([goal tools](../tools.md#goal-tools)).
+
 The gate verifies completeness, not correctness: it checks that a verdict with a
 justification exists per pair; it cannot know a `consistent` verdict is true. Verdict
 quality is the skill's demand and a benchmarking concern
@@ -163,8 +171,9 @@ contradiction means the two cannot both hold, filed with severity `error` when n
 reading lets both hold and `warning` otherwise, with one `edit` option per side when
 the repair is enumerable; consistent means both can hold and state different facts;
 different behavior for one subject contradicts, it does not duplicate; resolve a lapsed
-diagnostic and refile one naming a dead subject; when in doubt keep both and file. Then
-the change in one line, the gate in one line, and the hints.
+diagnostic and refile one naming a dead subject; when in doubt keep both and file;
+several verdicts go in one `settle_pairs` call. Then the change in one line, the gate
+in one line, and the hints.
 
 The `judgment` skill is active from the first round: the three verdicts, the review
 asymmetry, prompts, findings, severity, verdict quality
@@ -209,6 +218,13 @@ The `rejudge-pair` toolset ([toolsets](../tools.md#toolsets)):
   `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`.
 - The [goal tools](../tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
   `load_skill`, `done`.
+- `settle_pairs({verdicts: [{goal, verdict, justification, severity?, message?,
+  reasoning?, prompt?}]})`: the batch claim, one entry per pair. `consistent` marks
+  the goal done; `duplicate` files `duplicate-requirement` and marks;
+  `contradiction` files `contradiction` with the entry's `severity`, `message`, and
+  `prompt` and marks; `resolved` resolves the pair's open diagnostic and marks. The
+  session prefers it when it holds several verdicts; `mark_goal_done` still serves a
+  single pair and the same-document delete.
 - `update_requirement({id, statement?, ...})`: repair a statement that drifted from its
   quote before judging. A call that only changes the `statement` passes `id` and
   `statement`; `section` and `quote` re-anchor the provenance and are for a quote that

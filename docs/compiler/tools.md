@@ -293,6 +293,33 @@ clear or keep change records; they are not graph mutations
   the call that lands it. `evidence` carries what the gate reads for kinds
   that ask for it, e.g. a verdict per neighbor for
   [`rejudge-pair`](./goals/rejudge-pair.md). A goal outside the batch is rejected.
+- `settle_pairs({verdicts: [{goal, verdict, justification, severity?, message?,
+  reasoning?, prompt?}]})`: one claim for several `rejudge-pair` goals, served in the
+  [`rejudge-pair`](./goals/rejudge-pair.md#tools) slice only. Each entry is one
+  pair's verdict and does what the single calls it stands for would do, under the
+  same gates:
+  - `consistent`: stages nothing, marks the goal done with the justification.
+  - `duplicate`: stages a `duplicate-requirement` diagnostic on the pair (severity
+    `info`, `message` when given, else a line saying both are kept), then marks. The
+    same-document delete stays on `delete_requirement` plus `mark_goal_done`: a
+    delete deserves its own call and reason.
+  - `contradiction`: stages a `contradiction` diagnostic on the pair with the entry's
+    `severity` (`error` or `warning`, required), `message` (required), `reasoning`,
+    and `prompt`, then marks.
+  - `resolved`: resolves every open `contradiction` or `duplicate-requirement`
+    diagnostic naming both sides, the justification as the reason, then marks. A
+    pair with no such diagnostic is refused (`no-pair-diagnostic`); a refile after a
+    resolve is a `report_diagnostic` call.
+
+  The reply lists one result per entry, in order: the goal, the verdict, and the
+  diagnostic id it staged or resolved, or the violated rule and the repair. An entry
+  the gate refuses stops nothing: the other entries land, and a refused entry leaves
+  nothing staged. Nothing outside the batch's own goals is accepted, and a goal of
+  another kind is refused (`wrong-kind`). Each accepted entry records one resolution
+  with its own justification and evidence, so the journal's `resolved_goals`, the
+  `goal` trace events, and `jazyk explain` keep one entry per goal, as with
+  `mark_goal_done`. The repeated-call guard counts per accepted entry
+  ([repeated calls](./sessions.md#repeated-calls)).
 - `mark_goal_failed({goal, reason})`: always accepted. A goal that cannot be
   accomplished (documents too deeply contradictory, a target that no longer makes
   sense) must be failable, or the board fills with dishonestly resolved goals. A failed
@@ -629,7 +656,8 @@ Compile goals:
   judgment goals judge.
 - [`rejudge-pair`](./goals/rejudge-pair.md): `update_requirement`,
   `delete_requirement`, `report_diagnostic` (`contradiction`,
-  `duplicate-requirement`), `resolve_diagnostic`.
+  `duplicate-requirement`), `resolve_diagnostic`, and the batch claim
+  `settle_pairs` ([goal tools](#goal-tools)).
 - [`review-entity`](./goals/review-entity.md): `update_entity`, `merge_entities`,
   `update_requirement` (a review adds missing `edges` when requirements tie entities
   structurally), `delete_requirement`, `report_diagnostic`, `resolve_diagnostic`.

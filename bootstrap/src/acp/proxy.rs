@@ -926,6 +926,12 @@ fn call_title(name: &str, input: &str) -> String {
         // payload. Mirrors docs/frontends/acp.md#slash-commands.
         "mark_goal_done" => format!("resolved {}", s("goal")),
         "mark_goal_failed" => format!("failed {}", s("goal")),
+        // The batch claim is one row titled by its count; the goal events behind it
+        // stay one per pair.
+        "settle_pairs" => {
+            let n = args["verdicts"].as_array().map(Vec::len).unwrap_or(0);
+            format!("settled {} pair{}", n, if n == 1 { "" } else { "s" })
+        }
         "edit_doc_prose" => format!("edit {}", s("doc")),
         _ => name.replace('_', " "),
     }

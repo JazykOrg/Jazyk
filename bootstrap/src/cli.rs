@@ -1452,6 +1452,7 @@ pub(crate) fn status_report(
             "optional": counts.optional,
             "ready": counts.ready,
             "gated": counts.gated,
+            "waiting": board.waiting.len(),
         },
         "coverage": {"percent": pct, "covered": covered, "total": total},
         "diagnostics": by_sev,
@@ -1474,8 +1475,18 @@ pub(crate) fn render_status(r: &serde_json::Value) -> String {
     s.push_str(&format!("verdict: {}\n", r["verdict"].as_str().unwrap_or("")));
     let b = &r["board"];
     s.push_str(&format!(
-        "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional\n",
-        b["open"], b["compile"], b["gc"], b["blocked"], b["parked"], b["failed"], b["optional"]
+        "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional{}\n",
+        b["open"],
+        b["compile"],
+        b["gc"],
+        b["blocked"],
+        b["parked"],
+        b["failed"],
+        b["optional"],
+        match b["waiting"].as_u64().unwrap_or(0) {
+            0 => String::new(),
+            n => format!(", {} pair(s) waiting under the cap", n),
+        }
     ));
     let c = &r["coverage"];
     s.push_str(&format!(
@@ -1701,6 +1712,17 @@ pub(crate) fn preview_text(
             .map(|g| (*g).clone())
     });
     let Some(goal) = goal else {
+        // A pair the degree cap holds back has no session yet; say so instead of
+        // a prompt. Mirrors docs/frontends/cli.md#jazyk-explain.
+        if let Some(w) = board.waiting_pair(target) {
+            return Err(format!(
+                "jazyk: g:rejudge-pair:{} waits under the cap (score {}; {} hold(s) {} open pairs); no session runs for it until a slot frees",
+                w.target,
+                w.score,
+                w.full.join(" and "),
+                crate::limits::PAIRS_PER_REQUIREMENT_CAP
+            ));
+        }
         return Err(format!(
             "jazyk: no goal on `{}`; `jazyk explain` lists the board, `jazyk explain {}` what a change there would open",
             target, target

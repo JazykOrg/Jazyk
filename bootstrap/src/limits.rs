@@ -99,6 +99,14 @@ pub const VIEW_LIMITS: [&str; 5] = [
     "instances-per-object-view",
 ];
 
+// The pair degree cap: the most open rejudge-pair goals one requirement takes part
+// in at once, the count a pair session settles. Pinned pairs never wait; the rest
+// open by score as slots free. No soft and hard, no resolving goal, so it is a
+// constant beside the budgets and not a row of the table.
+// Mirrors docs/compiler/reconciler.md#pairs and graph.md#budgets-and-thresholds.
+pub const PAIRS_PER_REQUIREMENT: &str = "pairs-per-requirement";
+pub const PAIRS_PER_REQUIREMENT_CAP: usize = 8;
+
 // Session budgets. Mirrors docs/compiler/sessions.md#budgets.
 pub const SESSION_ROUNDS: u32 = 24;
 // The embedded agent's flat runaway stop, in model round-trips (one may carry

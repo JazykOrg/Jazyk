@@ -983,7 +983,25 @@ impl Store {
         write_yaml(&path, &entry);
     }
 
-    // Resolving a goal clears the records it stood on. Persists at once.
+    // Resolving a goal clears the records it stood on, except the created and revised
+    // records a pair stands on: those keep their other candidates, the commit marked
+    // the partner judged, and the sweep clears them when none remains.
+    // Mirrors docs/compiler/graph.md#change-records.
+    pub fn clear_resolved(&mut self, ids: &[String]) {
+        let ids: Vec<String> = ids
+            .iter()
+            .filter(|id| {
+                !self.status.changes.iter().any(|c| {
+                    c.id == **id
+                        && matches!(c.kind.as_str(), CHANGE_REQ_CREATED | CHANGE_REQ_REVISED)
+                })
+            })
+            .cloned()
+            .collect();
+        self.clear_changes(&ids);
+    }
+
+    // Clear the named records. Persists at once.
     pub fn clear_changes(&mut self, ids: &[String]) {
         if ids.is_empty() {
             return;
@@ -1361,6 +1379,17 @@ impl Store {
     // entity, scored by overlapping content tokens, at least two shared, best six.
     // The rejudge-pair locality. Mirrors docs/compiler/reconciler.md#pairs.
     pub fn requirement_neighbors(&self, rid: &str) -> Vec<String> {
+        self.requirement_neighbors_scored(rid)
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect()
+    }
+
+    // The neighbor set with each neighbor's score, best first. The score is
+    // symmetric (shared tokens, shared entities, the transition and intro boosts
+    // read the same from either side), so a pair scores the same whichever side
+    // derived it. Mirrors docs/compiler/reconciler.md#pairs.
+    pub fn requirement_neighbors_scored(&self, rid: &str) -> Vec<(usize, String)> {
         let Some(req) = self.graph.requirements.get(rid) else {
             return Vec::new();
         };
@@ -1456,8 +1485,28 @@ impl Store {
         scored
             .into_iter()
             .take(6)
-            .map(|(_, id)| id.clone())
+            .map(|(score, id)| (score, id.clone()))
             .collect()
+    }
+
+    // A created or revised record's candidates: the requirement's neighbors and
+    // sticky partners minus the partners `detail.judged` lists, each with its score
+    // (a sticky partner outside the neighbor set scores zero; it is pinned anyway).
+    // Mirrors docs/compiler/reconciler.md#pairs.
+    pub fn pair_review_candidates(&self, rec: &ChangeRecord) -> Vec<(String, usize)> {
+        let judged = rec.judged();
+        let mut out: Vec<(String, usize)> = self
+            .requirement_neighbors_scored(&rec.subject)
+            .into_iter()
+            .map(|(score, id)| (id, score))
+            .collect();
+        for partner in self.pair_review_neighbors(&rec.subject) {
+            if !out.iter().any(|(id, _)| *id == partner) {
+                out.push((partner, 0));
+            }
+        }
+        out.retain(|(id, _)| !judged.contains(id));
+        out
     }
 
     // The pair set: computed neighbors plus sticky partners. Open contradiction and
@@ -1646,6 +1695,30 @@ impl Store {
         }
     }
 
+    // Append the partner to `detail.judged` on both sides' created and revised
+    // records for every resolved rejudge-pair goal. A goal of another kind, or one
+    // whose target is no pair, marks nothing.
+    fn mark_pairs_judged(&mut self, resolved: &[Resolved]) {
+        for r in resolved {
+            let Some(target) = r.goal.strip_prefix("g:rejudge-pair:") else {
+                continue;
+            };
+            let Some((a, b)) = crate::goals::pair_members(target) else {
+                continue;
+            };
+            for c in self.status.changes.iter_mut() {
+                if c.kind != CHANGE_REQ_CREATED && c.kind != CHANGE_REQ_REVISED {
+                    continue;
+                }
+                if c.subject == a {
+                    c.add_judged(b);
+                } else if c.subject == b {
+                    c.add_judged(a);
+                }
+            }
+        }
+    }
+
     // Drop records whose evidence lapsed or whose subject no longer exists (the trail
     // kinds excepted). Mirrors docs/compiler/reconciler.md#change-records.
     fn prune_records(&mut self) {
@@ -1678,6 +1751,13 @@ impl Store {
         };
         match c.kind.as_str() {
             CHANGE_SECTION_DIRTY => section_exists(&c.subject),
+            // A created or revised record stands while a candidate pair remains
+            // (neighbors and sticky partners minus the judged partners), open or
+            // waiting under the cap. Mirrors docs/compiler/reconciler.md#pairs.
+            CHANGE_REQ_CREATED | CHANGE_REQ_REVISED => {
+                self.graph.requirements.contains_key(&c.subject)
+                    && !self.pair_review_candidates(c).is_empty()
+            }
             CHANGE_ANCHOR_STALE => c.detail["anchors"]
                 .as_array()
                 .map(|a| {
@@ -3994,6 +4074,13 @@ impl Store {
         }
         self.status.spent.rounds += commit.rounds as u64;
         self.status.spent.tokens += commit.tokens;
+        // An accepted pair verdict marks the partner judged on every created or
+        // revised record of either side that stood before this commit; the records
+        // this commit lands start with an empty list, so a side repaired in the
+        // same session derives the pair again with the new cause. The prune then
+        // clears a record with no candidate left.
+        // Mirrors docs/compiler/graph.md#change-records.
+        self.mark_pairs_judged(&commit.resolved);
         self.prune_records();
         let changes = self.commit_records(batch);
         let mut mutations: Vec<serde_json::Value> = applied
@@ -5362,12 +5449,15 @@ mod tests {
         assert_eq!(entry.resolved_goals.len(), 1);
         assert_eq!(entry.opened_goals[0].goal, "g:review-entity:ent:cart");
         assert_eq!(entry.rounds, 2);
-        // Clearing by id, persisted.
+        // The created record fed no pair (the requirement has no neighbor), so the
+        // sweep behind the second commit cleared it; the entity record stood until
+        // cleared by id, persisted. Mirrors docs/compiler/reconciler.md#pairs.
+        assert!(!s.status.has_change(CHANGE_REQ_CREATED, "req:t-1"));
         let ids = s.status.change_ids(&[CHANGE_ENTITY], "ent:cart");
+        assert_eq!(ids.len(), 1);
         s.clear_changes(&ids);
         assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"));
-        assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:t-1"));
-        assert_eq!(Store::load(&s.out).status.changes.len(), 1);
+        assert_eq!(Store::load(&s.out).status.changes.len(), 0);
     }
 
     // The natural key: name plus scope, and parent when supplied. Two same-named
@@ -8418,10 +8508,16 @@ mod tests {
         );
         assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:t-3"));
         assert_eq!(s.status.reevaluate, vec!["req:t-2".to_string()]);
-        // A substantive quote change is a revision owed a pair judgment; the flagged
-        // anchor is recorded stale on its new section.
+        // A substantive quote change is a revision owed a pair judgment: the commit
+        // records it, and the sweep behind it clears the record at once because
+        // req:t-2 has no candidate pair (docs/compiler/reconciler.md#pairs). The
+        // flagged anchor is recorded stale on its new section.
         assert!(report.changed_requirements.contains("req:t-2"));
-        assert!(s.status.has_change(CHANGE_REQ_REVISED, "req:t-2"));
+        assert!(report
+            .changes
+            .iter()
+            .any(|c| c.kind == CHANGE_REQ_REVISED && c.subject == "req:t-2"));
+        assert!(!s.status.has_change(CHANGE_REQ_REVISED, "req:t-2"));
         let stale = s
             .status
             .changes
@@ -8565,5 +8661,90 @@ mod tests {
             all,
             proposed
         );
+    }
+
+    // (b) and (d) of the pair degree cap: an accepted verdict marks the partner
+    // judged on both sides' records at the commit, the slot it frees opens the next
+    // waiting pair by score, a created record stands while its pair waits, and it
+    // clears at the sweep when no candidate remains.
+    // Mirrors docs/compiler/reconciler.md#pairs and graph.md#change-records.
+    #[test]
+    fn resolving_a_pair_marks_judged_and_opens_the_next_waiting_pair() {
+        let mut s = crate::goals::tests::fanned_store();
+        s.out = own_dir("paircap");
+        let pair = |p: &str| format!("g:rejudge-pair:{}", crate::goals::pair_target("req:hub", p));
+        let plan = crate::goals::pair_plan(&s);
+        assert!(plan.waiting.contains_key(&pair("req:p08")));
+        // An unrelated commit: the sweep keeps every record, the waiting pair's
+        // record among them.
+        s.apply(vec![], &Commit::store("checks"));
+        assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:p08"));
+        assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:p12"));
+        // The session resolves the hub against req:p12 (score 4, opened first).
+        let mut commit = Commit::session(vec![pair("req:p12")], 3, 0);
+        commit.resolved.push(Resolved {
+            goal: pair("req:p12"),
+            justification: "consistent: different obligations".into(),
+            evidence: serde_json::json!({"verdict": "consistent"}),
+        });
+        let report = s.apply(vec![], &commit);
+        assert_eq!(report.generation, 7);
+        // req:p12's record listed the hub as its only candidate: judged, then swept.
+        assert!(!s.status.has_change(CHANGE_REQ_CREATED, "req:p12"));
+        // The hub has no record of its own; nothing to mark there. Every other
+        // partner's record stands untouched, req:p08's among them.
+        assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:p08"));
+        assert!(s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind == CHANGE_REQ_CREATED)
+            .all(|c| c.judged().is_empty()));
+        // The slot opens the next waiting pair by score, then target: req:p08.
+        let plan = crate::goals::pair_plan(&s);
+        assert!(plan.open.iter().any(|g| g.id == pair("req:p08")), "{:?}", plan.open.iter().map(|g| &g.id).collect::<Vec<_>>());
+        assert!(plan.open.iter().all(|g| g.id != pair("req:p12")));
+        assert_eq!(plan.waiting.len(), 3);
+        assert!(plan.waiting.contains_key(&pair("req:p09")));
+        // The journal entry carries the resolution and the persisted status agrees.
+        let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g7.yaml")).unwrap();
+        assert_eq!(entry.resolved_goals.len(), 1);
+        assert!(!Store::load(&s.out).status.has_change(CHANGE_REQ_CREATED, "req:p12"));
+        // A record with two candidates keeps standing after one is judged: give the
+        // hub a record, resolve it against req:p01, and the hub's record lists the
+        // partner while the other candidates keep it alive.
+        let mut batch = RecordBatch::new(8);
+        batch.push(0, CHANGE_REQ_REVISED, "req:hub", "fields", serde_json::Value::Null);
+        for r in batch.records() {
+            s.status.record_change(r.clone());
+        }
+        let mut commit = Commit::session(vec![pair("req:p01")], 3, 0);
+        commit.resolved.push(Resolved {
+            goal: pair("req:p01"),
+            justification: "consistent".into(),
+            evidence: serde_json::json!({"verdict": "consistent"}),
+        });
+        s.apply(vec![], &commit);
+        let hub = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == CHANGE_REQ_REVISED && c.subject == "req:hub")
+            .expect("the hub's record stands on its other candidates");
+        assert_eq!(hub.judged(), vec!["req:p01".to_string()]);
+        assert!(!s.status.has_change(CHANGE_REQ_CREATED, "req:p01"));
+        let plan = crate::goals::pair_plan(&s);
+        assert!(plan.open.iter().all(|g| g.id != pair("req:p01")));
+        // A failed pair marks nothing judged.
+        let mut commit = Commit::session(vec![pair("req:p02")], 3, 0);
+        commit.resolved.clear();
+        s.apply(vec![], &commit);
+        assert!(s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.subject == "req:p02")
+            .is_some_and(|c| c.judged().is_empty()));
+        std::fs::remove_dir_all(&s.out).ok();
     }
 }

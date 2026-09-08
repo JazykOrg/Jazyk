@@ -461,6 +461,9 @@ pub struct Board {
     // Mirrors docs/compiler/reconciler.md#gc-gating.
     view_levels: BTreeMap<String, String>,
     records: BTreeMap<String, Vec<String>>,
+    // The pairs the degree cap holds back, by goal id: they derive no goal until a
+    // slot frees. Mirrors docs/compiler/reconciler.md#pairs.
+    pub waiting: BTreeMap<String, goals::WaitingPair>,
 }
 
 // The level a view belongs to: a lifted flow view's level, or the target whose
@@ -490,9 +493,14 @@ impl Board {
     // computes the same board from the same disk state.
     pub fn derive(store: &Store, proj: &Project, control: &Control) -> Board {
         let gen = GenSettings::resolve(proj);
+        // The pair plan is computed once: its open goals stand in for the kind's
+        // derivation, its waiting pairs ride on the board.
+        let pairs = goals::pair_plan(store);
         let mut goals: Vec<Goal> = REGISTRY
             .iter()
+            .filter(|k| k.kind() != "rejudge-pair")
             .flat_map(|k| k.derive_goals(store, &gen))
+            .chain(pairs.open)
             .collect();
         goals.sort_by(|a, b| a.id.cmp(&b.id));
         goals.dedup_by(|a, b| a.id == b.id);
@@ -685,6 +693,7 @@ impl Board {
             cone_blockers,
             view_levels,
             records,
+            waiting: pairs.waiting,
         };
 
         // Readiness per kind, then the control plane: a release gate and a lease both
@@ -810,6 +819,44 @@ impl Board {
         self.records.get(goal_id).cloned().unwrap_or_default()
     }
 
+    // The pair waiting under the degree cap for a goal id or a pair target.
+    pub fn waiting_pair(&self, id_or_target: &str) -> Option<&goals::WaitingPair> {
+        let id = if id_or_target.starts_with("g:rejudge-pair:") {
+            id_or_target.to_string()
+        } else {
+            goals::goal_id("rejudge-pair", id_or_target)
+        };
+        self.waiting.get(&id)
+    }
+
+    // One line for a waiting pair: that it waits, its score, the full side.
+    fn explain_waiting(&self, store: &Store, w: &goals::WaitingPair) -> String {
+        let mut s = format!(
+            "g:rejudge-pair:{}  rejudge-pair, compile, mandatory, waiting under the cap\n",
+            w.target
+        );
+        s.push_str(&format!(
+            "  waits:  score {}; {} hold(s) {} open pairs ({})\n",
+            w.score,
+            w.full.join(" and "),
+            crate::limits::PAIRS_PER_REQUIREMENT_CAP,
+            crate::limits::PAIRS_PER_REQUIREMENT
+        ));
+        s.push_str(&format!(
+            "  cause:  g{} mutation {} via {}\n",
+            w.cause.generation, w.cause.mutation, w.cause.via
+        ));
+        if let Some((a, b)) = goals::pair_members(&w.target) {
+            for c in store.status.changes.iter().filter(|c| {
+                goals::record_kinds("rejudge-pair").contains(&c.kind.as_str())
+                    && (c.subject == a || c.subject == b)
+            }) {
+                s.push_str(&format!("  record: {}\n", c.id));
+            }
+        }
+        s
+    }
+
     pub fn is_ready(&self, goal_id: &str) -> bool {
         self.readiness.get(goal_id).is_some_and(|r| r.is_ready())
             && !self.gated.contains(goal_id)
@@ -929,6 +976,12 @@ impl Board {
         }
         if c.blocked > 0 {
             s.push_str(&format!(", {} blocked", c.blocked));
+        }
+        if !self.waiting.is_empty() {
+            s.push_str(&format!(
+                ", {} pair(s) waiting under the cap",
+                self.waiting.len()
+            ));
         }
         s
     }
@@ -1267,6 +1320,9 @@ impl Board {
                 s.push_str(&format!("  hints:  {}\n", g.hints.join("; ")));
             }
             return Some(s);
+        }
+        if let Some(w) = self.waiting_pair(target) {
+            return Some(self.explain_waiting(store, w));
         }
         if !target_exists(store, target) {
             return None;

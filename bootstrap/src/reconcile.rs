@@ -2174,7 +2174,23 @@ pub fn compile_with(
             .collect();
         for id in &batch.goals {
             let still_open = board.open(id);
-            if !still_open || resolved_in_journal.contains_key(id) {
+            let resolved = resolved_in_journal.contains_key(id);
+            // A pair the commit sent back to waiting under the cap is unresolved,
+            // not gone: its records stand and it opens again when a slot frees.
+            // Mirrors docs/compiler/reconciler.md#pairs.
+            if !still_open && !resolved && board.waiting.contains_key(id) {
+                trace.event(TraceEvent::Goal {
+                    label: batch.id.clone(),
+                    goal: id.clone(),
+                    event: "waiting".into(),
+                    cause: None,
+                    justification: None,
+                    reason: Some("sent back to waiting under the pair degree cap".into()),
+                });
+                *attempts.entry(id.clone()).or_insert(0) += 1;
+                continue;
+            }
+            if !still_open || resolved {
                 let justification = resolved_in_journal
                     .get(id)
                     .cloned()
@@ -2189,7 +2205,7 @@ pub fn compile_with(
                 });
                 let ids = before.records_of(id);
                 if !ids.is_empty() {
-                    store.clear_changes(&ids);
+                    store.clear_resolved(&ids);
                 }
                 // Resolving a parked goal clears its entry with its record; the
                 // tail only adds and replaces. Mirrors docs/compiler/reconciler.md#parked-and-failed.

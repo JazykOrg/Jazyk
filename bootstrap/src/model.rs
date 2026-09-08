@@ -831,6 +831,34 @@ impl ChangeRecord {
         self
     }
 
+    // The partners a requirement-created or requirement-revised record has been
+    // judged against: `detail.judged`, empty when the record carries none.
+    // Mirrors docs/compiler/graph.md#change-records.
+    pub fn judged(&self) -> Vec<String> {
+        self.detail["judged"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    // Append a judged partner to `detail.judged`, once. A null detail becomes an
+    // object holding only the list.
+    pub fn add_judged(&mut self, partner: &str) {
+        let mut judged = self.judged();
+        if judged.iter().any(|j| j == partner) {
+            return;
+        }
+        judged.push(partner.to_string());
+        if !self.detail.is_object() {
+            self.detail = serde_json::json!({});
+        }
+        self.detail["judged"] = serde_json::Value::from(judged);
+    }
+
     pub fn cause(&self) -> Cause {
         Cause {
             generation: self.generation,

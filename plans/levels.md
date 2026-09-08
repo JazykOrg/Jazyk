@@ -395,3 +395,11 @@ EXPECTED.md names the nested reading a failure, matching your picture of three b
 at the top; the nested reading gives one box more and one level deeper. The
 extraction skill still says navigation; whichever you choose, the skill sentence and
 the saas expectation change together.
+
+Decided (2026-09-08): the flat reading. A whole is minted and composition recorded
+only when the lead-in states containment ("consists of", "is made up of", "has four
+parts", "the sub-systems are"); a lead-in that lists what the documents describe or
+what appears in them leaves the items as parentless peers. The extraction skill states
+the rule and the saas expectation names the lead-in as the planted trap. The ledger
+front door ("Its concerns are described in") reads flat under the rule too; a stated
+"Ledger consists of" would nest it.

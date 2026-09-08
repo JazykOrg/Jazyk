@@ -28,7 +28,9 @@ Four parentless entities, all stated by README.md and their own pages:
 Borderline: Trellis, the product name. README.md names it as the name of the product,
 never as a subject that contains anything. Acceptable unminted, or as a parentless
 entity with no children. Wrong: Trellis as a root containing Frontend and Backend, which
-no sentence states, and which turns the three-box top diagram into a two-box one.
+no sentence states, and which turns the three-box top diagram into a two-box one. The
+lead-in "Three things appear in every description of the product:" is the planted
+reading trap: it lists, it does not contain (the extraction skill's containment rule).
 
 The root is at four, under the soft threshold of nine. No `fan-out` goal derives on
 `scope:public` and no root grouping is minted (trap 3).

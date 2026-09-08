@@ -598,3 +598,22 @@ now the nesting itself and draws no arrow. Left as observed: the fcose layout le
 compound boxes overlap on a graph of thirty entities (Orders over Checkout, Shipping
 inside the Checkout area), a layout-parameter question, not a data one. VS Code hover
 and type definition were verified over stdio only, not by hand.
+
+### example-novel under Claude Code, the judgment traps (2026-09-08)
+
+Resumed from 86 percent coverage with twenty batches over `jazyk mcp compile`, then
+graded on a copy whose checks ran against a dead endpoint (no model call): coverage
+100 percent, 350 goals open (315 pairs, 40 of them waiting under the cap). Trap 3
+passes: both transitions out of `acquaintance` stand, the state machine check files
+`nondeterministic-transition` on the pair and the session had already filed a
+`contradiction` beside it, neither transition dropped. Trap 4 passes the second way:
+the research notes' hidden rule ("three days to produce, so Theo's report cannot
+exist before chapter 3") is extracted as two requirements and the section is covered.
+Trap 2 failed at extraction: "Theo is 36 when he arrives and has been moving from job
+to job for twelve years" yielded one requirement carrying the twelve years and no
+age, so the contradiction with "Age 34" never had a pair. The extraction skill now
+states that a sentence carrying two facts joined by "and" yields one requirement per
+fact; a short loop on a copy (one word changed after the trap sentence to dirty the
+section, then three batches: anchors, the section, the pair) extracted the age and
+filed the contradiction naming both ages. Still open on the copy: the three Lantern
+Room entities await their eleven `dedupe-candidates` goals.

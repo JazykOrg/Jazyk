@@ -633,7 +633,8 @@ Session budgets (24 rounds, 8 per section, as batch sizing; the embedded agent's
 stop of 48 model round-trips; 64 mutations; 24000 characters of loaded context), the
 build cap (3 × derived goals + 8 sessions), the
 document quality thresholds (6000 characters per section, 40 sections per document), and
-the alignment thresholds (move 0.5, split 0.6) are registry constants too, not settings.
+the alignment thresholds (move 0.5, split 0.6) and the alignment candidate cap
+(`alignment-candidates`, three per anchor) are registry constants too, not settings.
 See [budgets](./sessions.md#budgets).
 
 ## Concurrency

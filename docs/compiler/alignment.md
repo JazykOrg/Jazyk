@@ -71,7 +71,8 @@ Each phase consumes its matches. A section is matched at most once.
 
 The result is one operation per section: `unchanged`, `edited`, `moved`, `split`,
 `merged`, `deleted`, or `added`, each with its similarity where one applies. The two
-thresholds are registry constants ([limits](./graph.md#limits)), not settings.
+thresholds and the candidate cap below are registry constants
+([budgets and thresholds](./graph.md#budgets-and-thresholds)), not settings.
 
 ### Anchor relocation
 
@@ -88,8 +89,10 @@ it is placed. For every anchor in an old section that is not `unchanged`:
   longest common subsequence with the quote's tokens, scored as that length over the
   quote's length, with the matched window recorded as `nearest`.
 
-A candidate scoring under `0.3` is discarded. The outcome per anchor is a relocation
-(`anchor`, `from`, `to`, `quoteLocates`, `similarity`, `nearest`) or `homeless`.
+A candidate scoring under `0.3` is discarded. Candidates are ordered by descending
+similarity and capped at three per anchor (`alignment-candidates`), the ones the
+session will see. The outcome per anchor is a relocation (`anchor`, `from`, `to`,
+`quoteLocates`, `similarity`, `nearest`) or `homeless`.
 
 ### What applies and what is proposed
 

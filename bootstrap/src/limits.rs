@@ -125,6 +125,9 @@ pub const MAX_DOC_SECTIONS: usize = 40;
 // Alignment thresholds. Mirrors docs/compiler/alignment.md.
 pub const ALIGN_MOVE_SIMILARITY: f64 = 0.5;
 pub const ALIGN_SPLIT_COVERAGE: f64 = 0.6;
+// The candidates kept per relocated anchor, by descending similarity: what the
+// place-anchors session sees (`alignment-candidates`).
+pub const ALIGN_CANDIDATES: usize = 3;
 
 #[cfg(test)]
 mod tests {

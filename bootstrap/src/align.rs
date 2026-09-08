@@ -29,7 +29,6 @@ const PART_FLOOR: f64 = 0.3;
 // The least a further part must add to the whole's coverage to count: the guard that
 // keeps a moved section with a loosely similar neighbor from reading as a split.
 const PART_MARGIN: f64 = 0.2;
-const MAX_CANDIDATES: usize = 3;
 const EXCERPT_CONTEXT: usize = 3;
 
 // A full section reference: document path plus internal reference.
@@ -655,7 +654,7 @@ pub fn align(
                     .unwrap()
                     .then(a.full.cmp(&b.full))
             });
-            cands.truncate(MAX_CANDIDATES);
+            cands.truncate(crate::limits::ALIGN_CANDIDATES);
             if cands.is_empty() {
                 plan.homeless.push((anchor, o.full.clone()));
                 continue;

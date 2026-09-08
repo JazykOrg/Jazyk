@@ -164,7 +164,10 @@ derivation, and the [checks](./compilation.md#checks).
   and whose `cause` is the earliest of them.
 - Resolving a goal clears its records: the commit that carries an accepted
   `mark_goal_done` deletes them, and the goal is gone. A goal whose record is gone is
-  gone.
+  gone. One exception: a `requirement-created` or `requirement-revised` record feeds
+  one pair per candidate, so resolving a pair marks the partner judged in the record's
+  `detail.judged` on both sides, and the record clears when no candidate remains
+  ([pairs](#pairs)).
 - The sweep at commit drops records whose subject does not exist, except the trail
   kinds (`section-removed`, `requirement-deleted`, `entity-deleted`), whose subject is
   the dead node by design.
@@ -267,7 +270,42 @@ computed deterministically:
 
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed
 requirement also pairs with every partner such a diagnostic ties it to, so editing one
-side of a known pair always re-judges the other. Deletion propagates the same way: a
+side of a known pair always re-judges the other. A record's candidates are its
+requirement's neighbors and sticky partners minus the partners its `detail.judged`
+lists. Resolving a pair appends the partner to `detail.judged` on every
+`requirement-created` and `requirement-revised` record of either side, so the pair does
+not derive again from the other side's record; the record stands while a candidate
+remains and clears at the sweep when none does. A goal that leaves the board without a
+resolution (a pair waiting under the cap below, a side deleted by another goal) marks
+nothing judged. A new record on the requirement (revised in substance again) starts
+with an empty `judged` list, so every candidate derives again with the new cause.
+
+The degree is capped. Each changed requirement picks six, but a broad statement is
+picked by many (on a sixteen-document corpus one requirement sat in forty pairs and a
+hundred and fifty sat in more than six, 1336 pairs over 418 requirements), and a pair
+session settles about eight. A requirement takes part in at most
+`pairs-per-requirement` open pair goals at once, 8 in the
+[registry](./graph.md#budgets-and-thresholds): the count a pair session settles, so one
+requirement's open pairs fit one session in its locality, with room beside its own six
+picks for the pairs that picked it. The derivation places the pairs in one
+deterministic order and a pair opens when both sides have a slot:
+
+- Pinned pairs go first, in target order, and never wait: a pair an open
+  `contradiction` or `duplicate-requirement` diagnostic ties (sticky), a pair a
+  `node-deleted` record derives for a surviving diagnostic subject, a parked pair, a
+  failed pair. A failed pair holds no slot: it is not open.
+- The rest follow by score, highest first, ties by target. The score is the neighbor
+  score above, the same from either side. A pair whose side already holds
+  `pairs-per-requirement` open pairs waits; it is no goal until a slot frees, and its
+  records stand.
+- A re-derivation after a commit opens the best waiting pairs into the slots the
+  resolved ones freed. A commit that brings higher-scoring candidates to a saturated
+  side can send an open pair back to waiting; nothing is lost, its record stands, and
+  the loop treats the vanished goal as unresolved.
+
+The hints on an open pair carry the score and, per side, how many of its pairs wait.
+The cap bounds the open board and orders the judgments by lexical closeness; it never
+drops a candidate. Deletion propagates the same way: a
 `node-deleted` record on a surviving subject of an open judged diagnostic derives a
 `rejudge-pair` goal for it, and that open diagnostic alone is reason enough. The session
 sees the deleted subject marked and either resolves the diagnostic or refiles it against
@@ -278,12 +316,14 @@ stranded diagnostic the same way, so a store deleted into a stranded state by ha
 heals at the next build.
 
 A changed requirement with no neighbor, no sticky partner, and no open diagnostic
-naming it derives no pair goal. A pair is one goal, `g:rejudge-pair:req:a~req:b`,
-carried by the smaller id: judging A against B is judging B against A, so two changed
-requirements that neighbor each other derive one goal, not two. The reach is lexical by
-design: a contradiction expressible only through concrete example values shares no
-tokens with its opposite and derives no pair. `review-entity` is the net for those; it
-sees the entity's whole statement set.
+naming it derives no pair goal, and its record clears at the next sweep. A pair is one
+goal, `g:rejudge-pair:req:a~req:b`, carried by the smaller id: judging A against B is
+judging B against A, so two changed requirements that neighbor each other derive one
+goal, not two. The reach is lexical by design: a contradiction expressible only through
+concrete example values shares no tokens with its opposite and derives no pair.
+`review-entity` is the net for those; it sees the entity's whole statement set. A pair
+waiting under the cap is not one of those: it opens later, and the review waits for it
+like any open pair.
 
 ### Fan-out
 

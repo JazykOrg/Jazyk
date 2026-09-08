@@ -697,7 +697,7 @@ definitions:
         description: Position among siblings
       parent:
         type: string
-        description: Internal reference of the parent. Absent on the root section
+        description: Internal reference of the parent. Absent on the preamble, the root (the first heading), and a later top-level heading
       raw:
         type: string
         description: Verbatim source text

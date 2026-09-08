@@ -294,7 +294,9 @@ shape: 3 / 9 / 31 / 118 nodes per depth; fan-out 2-9: 14, 10-15: 2, over 15: 0
 Every section carries a coverage state in the store, except a `code-block` section,
 which owes no mark of its own: its parent keeps its whole body and the parent's mark
 covers the block. A `diagram` section is input parsed as prose and owes its mark like
-any section.
+any section. A section owes a mark when it has a body of its own: a heading section's
+body is its text after the heading line, a `preamble`'s body is its whole text
+([section tree](./parsing.md#section-tree)), so a one-line preamble owes its mark.
 
 - `unprocessed`: not yet reconciled.
 - `covered`: the model claimed it; its content is reflected in the graph.

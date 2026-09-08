@@ -27,7 +27,9 @@ As produced by [parsing](../parsing.md#section-tree):
   whose body holds them; the Markdown handler produces no `list-item` or `blockquote`
   ([section tree](../parsing.md#section-tree)).
 - `order`: position among siblings.
-- `parent`: the internal reference of the parent section. The root section has none.
+- `parent`: the internal reference of the parent section. The preamble, the root (the
+  document's first heading, whatever its level), and a later top-level heading have
+  none ([section tree](../parsing.md#section-tree)).
 - `raw`: the verbatim source text. A block's `raw` repeats inside its parent's.
 - `hash`: a content hash of `raw`, the input to
   [section diffing](../parsing.md#section-diffing) and [alignment](../alignment.md).

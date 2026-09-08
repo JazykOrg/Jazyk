@@ -22,9 +22,18 @@ A section is a heading and its body, or a fenced block inside that body: a code 
 or a diagram. Sections form a tree per document.
 
 Content before the first heading, and a document with no headings at all, forms a
-`preamble` section referenced `/`, with no title and no parent. No prose is invisible
-to extraction because of where it sits. A file of only blank lines yields no sections
-(that is [`empty-file`](./compilation.md#checks) territory).
+`preamble` section referenced `/`, with no title and no parent. Its whole text is its
+body: it owes [coverage](./compilation.md#coverage) and derives a `reconcile-section`
+goal like any heading section with a body. No prose is invisible to extraction because
+of where it sits. A file of only blank lines yields no sections (that is
+[`empty-file`](./compilation.md#checks) territory).
+
+The first heading of a document, whatever its level, is the `root` section: the section
+that names the document. The document's title is its title, and a bare document name
+given to `read_section` reads it ([read tools](./tools.md#read-tools)). Every other
+heading is a `heading`. Headings nest by level under the nearest shallower heading
+before them; a heading with no shallower heading before it (the root, and any later
+heading at the top level) has no parent. The preamble is never a parent of a heading.
 
 A fenced block (three or more backticks or tildes, closed by a fence of the same
 character at least as long, or running to the end of its section when unclosed) is a
@@ -49,7 +58,8 @@ Each section carries:
 - `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
   `diagram`.
 - `order`: position among siblings.
-- `parent`: the internal reference of the parent. The root section has none.
+- `parent`: the internal reference of the parent. The preamble, the root, and a later
+  top-level heading have none.
 - `raw`: the verbatim source text. Concatenating the `raw` of the heading kinds
   (`preamble`, `root`, `heading`) in tree order reconstructs the document; the block
   kinds repeat text their parent already holds.

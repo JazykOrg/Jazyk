@@ -1147,6 +1147,9 @@ fn run_case_turn(
         None => WorkScope::from_item(item),
     };
     let prompt = crate::session::preview(&snapshot, std::slice::from_ref(&goal));
+    // The session holds what its prompt lists, as a build session does
+    // (docs/benchmark/benchmark.md#runs): the same seeding `begin_goals` applies.
+    let (loaded, skills) = crate::session::initial_loaded(&snapshot, std::slice::from_ref(&goal));
     let names = toolset(&item.task);
     let tools: Vec<GenericTool> = catalog()
         .iter()
@@ -1165,6 +1168,8 @@ fn run_case_turn(
             crate::limits::CONTEXT_BUDGET,
         );
         s.gen = gs.clone();
+        s.loaded = loaded;
+        s.skills = skills;
         s.caller = crate::feedback::Caller {
             source: "benchmark".into(),
             target: item.target.clone(),

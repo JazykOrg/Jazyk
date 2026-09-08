@@ -98,9 +98,13 @@ entities were never grouped is resolved by the same split.
 Sub-entities with `parent`, detail moved, docs proposals staged, count within the limit.
 At `mark_goal_done` the harness checks over the staged state:
 
-- The crossed count is within the limit's soft value, or the entity's bump. A split that
-  only de-escalates commits its work at `done` but does not resolve the goal: the goal
-  stays open, optional, and the session continues or fails it with the reason.
+- The crossed count is within the limit's soft value, or the entity's bump
+  (`count-over-limit` otherwise, the refusal naming the count and both honest exits).
+  A split that only de-escalates commits its work at `done` but does not resolve the
+  goal: the goal stays open, optional, and the session moves more grouped statements
+  or fails it with the reason (the remaining statements are about the whole, so the
+  count is honest and the entity's own limit is the bump to recommend); the staged
+  split commits either way.
 - Every entity staged with `parent` under the target (directly, or under an intermediate
   parent staged in the same session) carries derived provenance: `from` naming the
   target and the requirements or children moved under it, `reasoning` the cohesion it

@@ -3724,7 +3724,7 @@ pub fn caps_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Viol
     Some(Violation::new(
         "count-over-limit",
         format!(
-            "{}: {} requirements after the changeset, over {} (requirements-per-entity, soft {}, hard {}); re-point more grouped statements to the sub-entities with update_requirement (id and entities only), or fail the goal with the reason (a decree on the entity's own limit when the count is honest)",
+            "{}: {} requirements after the changeset, over {} (requirements-per-entity, soft {}, hard {}); two honest exits, and the staged split commits at done either way: re-point more grouped statements to the sub-entities with update_requirement (id and entities only) when a documented noun holds them, or mark_goal_failed now with the reason that the remaining statements are about the whole, recommending a bump of the entity's own limit to the count",
             target, count, soft, soft, hard
         ),
     ))

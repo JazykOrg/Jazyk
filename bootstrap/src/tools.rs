@@ -444,6 +444,27 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "settle_pairs",
+            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
+            parameters: obj(
+                json!({"verdicts": {"type": "array", "minItems": 1, "items": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {"type": "string"},
+                        "verdict": {"type": "string", "enum": PAIR_VERDICTS},
+                        "justification": {"type": "string"},
+                        "severity": {"type": "string", "enum": SEVERITIES},
+                        "message": {"type": "string"},
+                        "reasoning": {"type": "string"},
+                        "prompt": prompt_schema()
+                    },
+                    "required": ["goal", "verdict", "justification"],
+                    "additionalProperties": false
+                }}}),
+                &["verdicts"],
+            ),
+        },
+        ToolDef {
             name: "mark_goal_failed",
             description: "Record that one goal of the batch cannot honestly be accomplished, with a one or two sentence reason. Always accepted; a failed mandatory goal blocks convergence, a failed optional goal is recorded and stands.",
             parameters: obj(
@@ -477,6 +498,11 @@ pub const READ_TOOLS: [&str; 9] = [
 ];
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
+// The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
+// only. Mirrors docs/compiler/tools.md#goal-tools.
+pub const PAIR_SETTLE_TOOL: &str = "settle_pairs";
+// The verdicts one settle_pairs entry may carry. Mirrors docs/compiler/goals/rejudge-pair.md#gate.
+pub const PAIR_VERDICTS: [&str; 4] = ["consistent", "duplicate", "contradiction", "resolved"];
 pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
 pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
 pub const VERIFY_TOOLS: [&str; 4] = [
@@ -600,6 +626,7 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
                 "resolve_diagnostic",
                 "place_anchor",
                 "orphan_anchor",
+                PAIR_SETTLE_TOOL,
             ]);
             v.extend(VIEW_TOOLS);
             v.extend(GOAL_TOOLS);
@@ -1647,6 +1674,241 @@ impl ToolSession {
             .map(|g| g.goal.as_str())
             .collect();
         Ok(json!({"marked": goal, "open": open}))
+    }
+
+    // The batch claim of a pair session: one entry per rejudge-pair goal, each doing
+    // what the single calls it stands for would do (stage the diagnostic the verdict
+    // carries or resolve the pair's open one, then mark the goal done) under the
+    // same gates. A refused entry is reported in place, leaves nothing staged, and
+    // stops none of the others. Mirrors docs/compiler/tools.md#goal-tools.
+    fn settle_pairs(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let Some(entries) = args["verdicts"].as_array().filter(|a| !a.is_empty()) else {
+            return Err(ToolError::new(
+                "bad-args",
+                "verdicts takes a non-empty list of {goal, verdict, justification, ...} entries, one per rejudge-pair goal of the batch".into(),
+            ));
+        };
+        let mut results = Vec::new();
+        let mut settled = Vec::new();
+        for entry in entries {
+            let goal = entry["goal"].as_str().unwrap_or_default().to_string();
+            // The guard counts accepted entries: a verbatim re-send of an accepted
+            // entry is marked on the second and refused on the third, while a
+            // rejected entry can be repaired and re-sent.
+            // Mirrors docs/compiler/sessions.md#repeated-calls.
+            let key = format!("{}|{}", PAIR_SETTLE_TOOL, entry);
+            if self.repeats.get(&key).copied().unwrap_or(0) >= 2 {
+                results.push(json!({"goal": goal, "error": {
+                    "rule": "repeated-call",
+                    "message": format!("this entry for `{}` was already accepted twice with identical arguments; its verdict stands, act on it", goal),
+                }}));
+                continue;
+            }
+            match self.settle_one(entry) {
+                Ok(mut r) => {
+                    let seen = {
+                        let c = self.repeats.entry(key).or_insert(0);
+                        *c += 1;
+                        *c
+                    };
+                    if seen == 2 {
+                        r["repeat"] = json!("this entry was already accepted with identical arguments; its verdict stands");
+                    }
+                    settled.push(goal);
+                    results.push(r);
+                }
+                Err(e) => results.push(json!({"goal": goal, "error": {"rule": e.rule, "message": e.message}})),
+            }
+        }
+        let open: Vec<&str> = self
+            .scope
+            .goals
+            .iter()
+            .filter(|g| !self.outcomes.contains_key(&g.goal))
+            .map(|g| g.goal.as_str())
+            .collect();
+        Ok(json!({"results": results, "settled": settled, "open": open}))
+    }
+
+    // One settle_pairs entry. Everything that can be refused without staging is
+    // checked first; a refusal after staging rolls the entry's own work back, so a
+    // reported error never leaves a half-landed verdict.
+    fn settle_one(&mut self, entry: &Value) -> Result<Value, ToolError> {
+        let goal = Self::str_arg(entry, "goal")?;
+        let Some(gs) = self.scope.goal(&goal).cloned() else {
+            return Err(ToolError::new(
+                "unknown-goal",
+                format!(
+                    "`{}` is not a goal of this batch ({}); only goals in the batch can be settled",
+                    goal,
+                    self.scope.goal_ids().join(", ")
+                ),
+            ));
+        };
+        if gs.kind != "rejudge-pair" {
+            return Err(ToolError::new(
+                "wrong-kind",
+                format!(
+                    "`{}` is a {} goal; settle_pairs takes rejudge-pair goals only, mark the others with mark_goal_done",
+                    goal, gs.kind
+                ),
+            ));
+        }
+        let Some((a, b)) = crate::goals::pair_members(&gs.target) else {
+            return Err(ToolError::new(
+                "bad-target",
+                format!("`{}` names no pair", goal),
+            ));
+        };
+        let (a, b) = (a.to_string(), b.to_string());
+        let verdict = Self::str_arg(entry, "verdict")?;
+        if !PAIR_VERDICTS.contains(&verdict.as_str()) {
+            return Err(ToolError::new(
+                "bad-verdict",
+                format!(
+                    "verdict `{}` for {} must be one of: {}",
+                    verdict,
+                    goal,
+                    PAIR_VERDICTS.join(", ")
+                ),
+            ));
+        }
+        let justification = Self::str_arg(entry, "justification")?;
+        let sentences = Self::sentence_count(&justification);
+        if sentences > 2 {
+            return Err(ToolError::new(
+                "bad-justification",
+                format!(
+                    "the justification for {} is {} sentences; one or two saying why the verdict holds, never an essay",
+                    goal, sentences
+                ),
+            ));
+        }
+        // The arguments a filing verdict needs, checked before anything stages.
+        if verdict == "contradiction" {
+            match Self::opt_str(entry, "severity").as_deref() {
+                None => {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        format!("a contradiction entry for {} carries severity (error when no reading lets both hold, warning otherwise)", goal),
+                    ));
+                }
+                Some("error") | Some("warning") => {}
+                Some(other) => {
+                    return Err(ToolError::new(
+                        "bad-severity",
+                        format!("severity `{}` for {}: a contradiction is error when no reading lets both hold, warning otherwise", other, goal),
+                    ));
+                }
+            }
+            if Self::opt_str(entry, "message").is_none() {
+                return Err(ToolError::new(
+                    "bad-args",
+                    format!("a contradiction entry for {} carries message quoting the conflicting claims", goal),
+                ));
+            }
+        }
+        // The open pair diagnostics a resolved verdict settles: recorded or staged
+        // this session, not already resolved in the changeset.
+        let pair_diags: Vec<String> = if verdict == "resolved" {
+            let names_pair = |d: &Diagnostic| {
+                d.lifecycle == "open"
+                    && (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                    && d.subjects.iter().any(|s| *s == a)
+                    && d.subjects.iter().any(|s| *s == b)
+            };
+            let resolved_here: BTreeSet<&str> = self
+                .staged
+                .iter()
+                .filter_map(|o| match o {
+                    Op::ResolveDiagnostic { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let mut ids: Vec<String> = self
+                .snapshot
+                .graph
+                .diagnostics
+                .iter()
+                .chain(self.staged_diags.iter())
+                .filter(|(id, d)| names_pair(d) && !resolved_here.contains(id.as_str()))
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.sort();
+            ids.dedup();
+            if ids.is_empty() {
+                return Err(ToolError::new(
+                    "no-pair-diagnostic",
+                    format!(
+                        "no open contradiction or duplicate-requirement diagnostic names both {} and {}; a pair with nothing to resolve takes verdict consistent",
+                        a, b
+                    ),
+                ));
+            }
+            ids
+        } else {
+            Vec::new()
+        };
+        // Stage what the verdict carries, rolling the entry's own work back when
+        // the claim behind it is refused.
+        let staged_before = self.staged.len();
+        let diags_before = self.staged_diags.clone();
+        let outcome = (|| -> Result<Value, ToolError> {
+            let mut result = json!({"goal": goal, "verdict": verdict});
+            let evidence = match verdict.as_str() {
+                "consistent" => json!({"verdict": "consistent"}),
+                "duplicate" => {
+                    let filed = self.dispatch_inner(
+                        "report_diagnostic",
+                        &json!({
+                            "rule": "duplicate-requirement",
+                            "severity": Self::opt_str(entry, "severity").unwrap_or_else(|| "info".into()),
+                            "subjects": [a, b],
+                            "message": Self::opt_str(entry, "message").unwrap_or_else(|| format!("{} and {} state the same obligation from different documents; both are kept.", a, b)),
+                            "reasoning": Self::opt_str(entry, "reasoning").unwrap_or_else(|| justification.clone()),
+                        }),
+                    )?;
+                    result["diagnostic"] = filed["id"].clone();
+                    json!({"verdict": "duplicate", "carried_by": filed["id"]})
+                }
+                "contradiction" => {
+                    let mut call = json!({
+                        "rule": "contradiction",
+                        "severity": entry["severity"],
+                        "subjects": [a, b],
+                        "message": entry["message"],
+                        "reasoning": Self::opt_str(entry, "reasoning").unwrap_or_else(|| justification.clone()),
+                    });
+                    if !entry["prompt"].is_null() {
+                        call["prompt"] = entry["prompt"].clone();
+                    }
+                    let filed = self.dispatch_inner("report_diagnostic", &call)?;
+                    result["diagnostic"] = filed["id"].clone();
+                    json!({"verdict": "contradiction", "carried_by": filed["id"]})
+                }
+                _ => {
+                    for id in &pair_diags {
+                        self.dispatch_inner(
+                            "resolve_diagnostic",
+                            &json!({"id": id, "reason": justification}),
+                        )?;
+                    }
+                    result["resolved"] = json!(pair_diags);
+                    json!({"verdict": "consistent", "resolved": pair_diags})
+                }
+            };
+            self.mark_goal_done(&json!({
+                "goal": goal,
+                "justification": justification,
+                "evidence": evidence,
+            }))?;
+            Ok(result)
+        })();
+        if outcome.is_err() {
+            self.staged.truncate(staged_before);
+            self.staged_diags = diags_before;
+        }
+        outcome
     }
 
     // The author a decree records: the MCP client when one is known, else the user.
@@ -3182,8 +3444,12 @@ impl ToolSession {
         // answers with a repeat marker, the third is refused. done, mark_goal_done,
         // and mark_goal_failed are exempt: repairing a rejected claim legitimately
         // repeats it. A load of an already loaded target counts as a repeat whatever
-        // its depth. Mirrors docs/compiler/sessions.md#repeated-calls.
-        let exempt = matches!(name, "done" | "mark_goal_done" | "mark_goal_failed");
+        // its depth. settle_pairs is exempt as a whole and guards per entry.
+        // Mirrors docs/compiler/sessions.md#repeated-calls.
+        let exempt = matches!(
+            name,
+            "done" | "mark_goal_done" | "mark_goal_failed" | PAIR_SETTLE_TOOL
+        );
         if !exempt {
             let key = if name == "load" {
                 format!("load|{}", args["target"].as_str().unwrap_or_default())
@@ -3367,6 +3633,7 @@ impl ToolSession {
                 Ok(reply)
             }
             "mark_goal_done" => self.mark_goal_done(args),
+            PAIR_SETTLE_TOOL => self.settle_pairs(args),
             "mark_goal_failed" => {
                 let goal = Self::str_arg(args, "goal")?;
                 if self.scope.goal(&goal).is_none() {
@@ -7564,6 +7831,201 @@ mod tests {
         }
         assert!(toolset("curate-view").contains(&"update_view"));
         assert!(!toolset("no-such-task").contains(&"mark_goal_done"));
+    }
+
+    // The batch claim rides in the pair slice only, and the compile serving lists it
+    // so an MCP client sees it. Mirrors docs/compiler/tools.md#toolsets.
+    #[test]
+    fn settle_pairs_is_in_the_pair_toolset_only() {
+        assert!(toolset("rejudge-pair").contains(&PAIR_SETTLE_TOOL));
+        assert!(toolset("review-requirement").contains(&PAIR_SETTLE_TOOL));
+        assert!(toolset("mcp-compile").contains(&PAIR_SETTLE_TOOL));
+        for kind in ["reconcile-section", "review-entity", "abstract-entity", "mcp-read"] {
+            assert!(
+                !toolset(kind).contains(&PAIR_SETTLE_TOOL),
+                "{} should not serve settle_pairs",
+                kind
+            );
+        }
+        assert!(catalog().iter().any(|t| t.name == PAIR_SETTLE_TOOL));
+        assert!(toolset_for_kinds(&["rejudge-pair", "review-entity"]).contains(&PAIR_SETTLE_TOOL));
+    }
+
+    // A pair batch over three requirements: a~b, a~c, and b~c, with a reconcile
+    // goal beside them for the wrong-kind case.
+    fn pair_session() -> ToolSession {
+        let mut s = Store::default();
+        for (id, statement) in [
+            ("req:a", "The Cart shall hold items until checkout."),
+            ("req:b", "The Cart shall show its item count."),
+            ("req:c", "The Cart shall drop its items after one hour."),
+        ] {
+            s.graph.requirements.insert(
+                id.into(),
+                quoted_req(statement, &["ent:cart"], statement),
+            );
+        }
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        let pair = |a: &str, b: &str| Goal {
+            id: format!("g:rejudge-pair:{}~{}", a, b),
+            kind: "rejudge-pair".into(),
+            mandatory: true,
+            target: format!("{}~{}", a, b),
+            ..Default::default()
+        };
+        let goals = vec![
+            pair("req:a", "req:b"),
+            pair("req:a", "req:c"),
+            pair("req:b", "req:c"),
+            Goal {
+                id: "g:reconcile-section:shop.md#/shop".into(),
+                kind: "reconcile-section".into(),
+                mandatory: true,
+                target: "shop.md#/shop".into(),
+                ..Default::default()
+            },
+        ];
+        ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000)
+    }
+
+    // One call settles a batch: a consistent entry and a contradiction entry land
+    // (one resolution each, one diagnostic staged), the entry whose gate refuses it
+    // is reported in place with the rule and leaves nothing staged.
+    // Mirrors docs/compiler/tools.md#goal-tools.
+    #[test]
+    fn settle_pairs_lands_the_accepted_entries_and_reports_the_refused_one() {
+        let mut t = pair_session();
+        let v = t
+            .dispatch(
+                PAIR_SETTLE_TOOL,
+                &json!({"verdicts": [
+                    {"goal": "g:rejudge-pair:req:a~req:b", "verdict": "consistent",
+                     "justification": "Holding items and showing a count are different facts."},
+                    {"goal": "g:rejudge-pair:req:a~req:c", "verdict": "contradiction",
+                     "severity": "error", "message": "held until checkout versus dropped after one hour",
+                     "justification": "Both cannot hold: one keeps items until checkout, the other drops them after an hour."},
+                    {"goal": "g:rejudge-pair:req:b~req:c", "verdict": "resolved",
+                     "justification": "The old finding lapsed."}
+                ]}),
+            )
+            .unwrap();
+        let results = v["results"].as_array().unwrap();
+        assert_eq!(results.len(), 3, "{}", v);
+        assert_eq!(results[0]["verdict"], "consistent");
+        assert!(results[0]["error"].is_null(), "{}", results[0]);
+        assert_eq!(results[1]["verdict"], "contradiction");
+        assert_eq!(results[1]["diagnostic"], "diag:contradiction-1", "{}", results[1]);
+        assert_eq!(results[2]["error"]["rule"], "no-pair-diagnostic", "{}", results[2]);
+        assert_eq!(
+            v["settled"],
+            json!(["g:rejudge-pair:req:a~req:b", "g:rejudge-pair:req:a~req:c"])
+        );
+        let open = v["open"].as_array().unwrap();
+        assert!(open.iter().any(|g| g == "g:rejudge-pair:req:b~req:c"), "{}", v);
+        // One resolution per goal with its own justification and evidence, as the
+        // journal records them; one diagnostic staged for the contradiction.
+        let commit = t.commit(1, 0);
+        assert_eq!(commit.resolved.len(), 2);
+        let by_goal: BTreeMap<&str, &Resolved> =
+            commit.resolved.iter().map(|r| (r.goal.as_str(), r)).collect();
+        assert_eq!(
+            by_goal["g:rejudge-pair:req:a~req:b"].evidence,
+            json!({"verdict": "consistent"})
+        );
+        assert_eq!(
+            by_goal["g:rejudge-pair:req:a~req:c"].evidence["carried_by"],
+            "diag:contradiction-1"
+        );
+        assert!(by_goal["g:rejudge-pair:req:a~req:c"]
+            .justification
+            .starts_with("Both cannot hold"));
+        assert_eq!(t.staged.len(), 1);
+        assert!(matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
+            if diagnostic.rule == "contradiction" && diagnostic.severity == "error"
+            && diagnostic.subjects == vec!["req:a".to_string(), "req:c".to_string()]));
+        // A mutating reply previews and re-renders the status like any write.
+        assert!(v["status"].is_string(), "{}", v);
+    }
+
+    // The other verdicts and the refusals: duplicate files and marks, resolved
+    // settles the pair's open diagnostic, a goal of another kind and a goal outside
+    // the batch are refused by name, a contradiction without its message is refused
+    // before anything stages, and the guard counts accepted entries.
+    #[test]
+    fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
+        let mut t = pair_session();
+        t.snapshot.graph.diagnostics.insert(
+            "diag:contradiction-7".into(),
+            Diagnostic {
+                rule: "contradiction".into(),
+                severity: "warning".into(),
+                subjects: vec!["req:b".into(), "req:c".into()],
+                message: "old finding".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let v = t
+            .dispatch(
+                PAIR_SETTLE_TOOL,
+                &json!({"verdicts": [
+                    {"goal": "g:rejudge-pair:req:a~req:b", "verdict": "duplicate",
+                     "justification": "The same obligation stated twice."},
+                    {"goal": "g:rejudge-pair:req:b~req:c", "verdict": "resolved",
+                     "justification": "The count and the timeout no longer conflict."},
+                    {"goal": "g:reconcile-section:shop.md#/shop", "verdict": "consistent",
+                     "justification": "Not a pair."},
+                    {"goal": "g:rejudge-pair:req:x~req:y", "verdict": "consistent",
+                     "justification": "Not in the batch."},
+                    {"goal": "g:rejudge-pair:req:a~req:c", "verdict": "contradiction",
+                     "severity": "error", "justification": "No message given."},
+                    {"goal": "g:rejudge-pair:req:a~req:c", "verdict": "contradiction",
+                     "severity": "info", "message": "x", "justification": "Wrong severity."}
+                ]}),
+            )
+            .unwrap();
+        let r = v["results"].as_array().unwrap();
+        assert_eq!(r[0]["diagnostic"], "diag:duplicate-requirement-1", "{}", r[0]);
+        assert_eq!(r[1]["resolved"], json!(["diag:contradiction-7"]), "{}", r[1]);
+        assert_eq!(r[2]["error"]["rule"], "wrong-kind", "{}", r[2]);
+        assert_eq!(r[3]["error"]["rule"], "unknown-goal", "{}", r[3]);
+        assert_eq!(r[4]["error"]["rule"], "bad-args", "{}", r[4]);
+        assert!(r[4]["error"]["message"].as_str().unwrap().contains("message"));
+        assert_eq!(r[5]["error"]["rule"], "bad-severity", "{}", r[5]);
+        // Two staged ops: the duplicate filing and the resolve; the refused
+        // contradiction staged nothing.
+        assert_eq!(t.staged.len(), 2, "{:?}", t.staged);
+        assert!(matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
+            if diagnostic.rule == "duplicate-requirement" && diagnostic.severity == "info"));
+        assert!(matches!(&t.staged[1], Op::ResolveDiagnostic { id, .. } if id == "diag:contradiction-7"));
+        // The duplicate resolution carries the diagnostic that carried it.
+        let commit = t.commit(1, 0);
+        assert_eq!(commit.resolved.len(), 2);
+        // A verbatim re-send of an accepted entry is marked, then refused; the
+        // re-report answers with the same id and stages an update, never a second finding.
+        let again = json!({"verdicts": [
+            {"goal": "g:rejudge-pair:req:a~req:b", "verdict": "duplicate",
+             "justification": "The same obligation stated twice."}
+        ]});
+        let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
+        assert!(v["results"][0]["repeat"].is_string(), "{}", v);
+        assert_eq!(v["results"][0]["diagnostic"], "diag:duplicate-requirement-1");
+        let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
+        assert_eq!(v["results"][0]["error"]["rule"], "repeated-call", "{}", v);
+        assert!(v["settled"].as_array().unwrap().is_empty());
+        // The whole call is exempt from the call-level guard: the same list sent
+        // three times is never refused as a call.
+        assert!(t.dispatch(PAIR_SETTLE_TOOL, &again).is_ok());
+        // An empty list is a bad call.
+        let err = t
+            .dispatch(PAIR_SETTLE_TOOL, &json!({"verdicts": []}))
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-args");
     }
 
     fn align_session() -> ToolSession {

@@ -475,7 +475,9 @@ A build command streams the work at full fidelity, not just its boundaries:
   collide with the build's in the client's tool-call table.
 - A `mark_goal_done` call flows as a row titled by the goal (`resolved
   g:reconcile-section:docs/orders.md#/orders/holds`) with the justification as its
-  output; `mark_goal_failed` the same, titled `failed`, with the reason.
+  output; `mark_goal_failed` the same, titled `failed`, with the reason. A
+  `settle_pairs` call is one row titled by its count (`settled 6 pairs`) with the
+  per-entry results as its output; the `goal` events behind it stay one per pair.
 - The lifecycle calls (`begin_goals`, `done`) get no row: the person asked for the
   build, so its machinery is not news. What the `done` call says lands where it
   belongs: the closing line carries the model's own summary of what it did.

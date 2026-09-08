@@ -877,6 +877,86 @@ definitions:
         type: object
         description: Kind-specific evidence the gate reads, e.g. a verdict per neighbor for rejudge-pair
     additionalProperties: false
+  settlePairs:
+    description: >-
+      Request payload of settle_pairs. One entry per rejudge-pair goal of the batch;
+      each runs the gates of the single calls it stands for, and a refused entry
+      leaves nothing staged while the others land
+    type: object
+    required:
+      - verdicts
+    properties:
+      verdicts:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required:
+            - goal
+            - verdict
+            - justification
+          properties:
+            goal:
+              $ref: 'graph.json#/definitions/goalId'
+            verdict:
+              type: string
+              enum:
+                - consistent
+                - duplicate
+                - contradiction
+                - resolved
+            justification:
+              type: string
+              description: One or two sentences of why the verdict holds
+            severity:
+              $ref: 'graph.json#/definitions/severity'
+              description: Required for contradiction (error or warning); info for duplicate
+            message:
+              type: string
+              description: Required for contradiction; optional for duplicate
+            reasoning:
+              type: string
+            prompt:
+              $ref: 'graph.json#/definitions/diagnosticPrompt'
+          additionalProperties: false
+    additionalProperties: false
+  settlePairsResponse:
+    description: One result per entry, in order, plus the goals still open in the batch
+    type: object
+    required:
+      - results
+      - settled
+      - open
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          required:
+            - goal
+          properties:
+            goal:
+              $ref: 'graph.json#/definitions/goalId'
+            verdict:
+              type: string
+            diagnostic:
+              type: string
+              description: The diagnostic id the entry staged
+            resolved:
+              type: array
+              items:
+                type: string
+              description: The diagnostic ids the entry resolved
+            error:
+              $ref: '#/definitions/toolError'
+      settled:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/goalId'
+      open:
+        type: array
+        items:
+          $ref: 'graph.json#/definitions/goalId'
   markGoalFailed:
     description: Request payload of mark_goal_failed. Always accepted
     type: object

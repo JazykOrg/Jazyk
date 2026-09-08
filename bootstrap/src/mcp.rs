@@ -2832,6 +2832,7 @@ mod tests {
             "delete_view",
             "mark_goal_done",
             "mark_goal_failed",
+            "settle_pairs",
             "load_skill",
             "load",
             "unload",

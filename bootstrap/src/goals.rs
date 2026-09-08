@@ -1271,6 +1271,7 @@ impl GoalKind for RejudgePair {
             "delete_requirement",
             "report_diagnostic",
             "resolve_diagnostic",
+            crate::tools::PAIR_SETTLE_TOOL,
         ]
     }
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {

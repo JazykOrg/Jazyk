@@ -554,7 +554,14 @@ in the session scratchpad (`self-<example>/`).
   saas held 479 goals at 30 percent coverage (358 pairs) and over 1100 at batch 19;
   a pair session settled four pairs (org) to eight (f2) in six to twenty calls with
   nothing loaded. Batches now pack a locality to the budget (four to eight pairs on
-  the org snapshot); the `pairs-per-entity` lever waits on a rerun.
+  the org snapshot); the `pairs-per-entity` lever waits on a rerun. The batch claim
+  `settle_pairs` (2026-09-08) collapses the per-pair calls: one pair batch of the
+  saas snapshot (six pairs on `req:api-server-10`, generation 29) run under Claude
+  Code over `jazyk mcp compile` spent three calls in all, `begin_goals`, one
+  `settle_pairs` carrying the six verdicts, `done`, in 36 seconds; every entry was
+  accepted and the journal records six resolutions with their own justifications,
+  where the per-pair pattern spent one `mark_goal_done` per pair plus a
+  `report_diagnostic` per finding.
 - Judgment calls the runs settled or exposed: Order folded into the Orders area as an
   alias (the extraction skill now keeps the concept under the area; the gate folds
   plurals for groupings only); the novel minted as an entity beside the bookshop named

@@ -41,10 +41,16 @@ Each phase consumes its matches. A section is matched at most once.
    `unchanged`. New reference → `moved`. When several candidates share an identity,
    the pairing prefers the same document, then the same parent, then the nearest
    sibling `order`, so two identical sections that both moved pair one to one.
-2. Same reference. An old and a new section with the same document and reference but
-   a different identity → `edited`, with the similarity recorded. A renamed parent
-   heading is this case for the parent (its title changed) and an exact move for each
-   child.
+2. Same place. An old and a new section with the same document and reference but a
+   different identity → `edited`, with the similarity recorded. A heading renamed in
+   place is `edited` too: an old and a new section in the same document with the same
+   parent (or a parent that itself renamed in this pass), the same `order`, the same
+   whitespace-collapsed body, and a different title. Its reference changed with its
+   slug, so the pair is recorded as a rename, and the anchors under the old reference
+   follow it mechanically ([what applies](#what-applies-and-what-is-proposed)). A
+   renamed parent heading is this case for the parent (its title changed) and an exact
+   move for each child. A section with a new title and a new body at the same place
+   is not a rename; it falls through to the fuzzy phase.
 3. Fuzzy, over what remains. Splits and merges come first because they are one-sided
    containments, and a half would otherwise pair with its whole as a move:
    - `split`: one old section whose shingles are covered at or above the split
@@ -92,6 +98,13 @@ A candidate scoring under `0.3` is discarded. The outcome per anchor is a reloca
   carries to the new reference, and nothing is dirty. The rewrites are journaled as one
   `align` entry per build. An `unchanged` section keeps its coverage the same way, so
   a heading level change or a trailing blank line dirties nothing.
+- A rename applies mechanically too: the anchors under the old reference are rewritten
+  to the new one and the rewrite is journaled in the same `align` entry. The body is
+  unchanged, so every quote in it still locates and no proposal is made; a quote taken
+  from the heading line itself no longer locates and surfaces as a stale anchor on the
+  renamed section. The section is dirty (`section-dirty`, outcome `edited`), and its
+  coverage is not carried: the `reconcile-section` session that reads the new heading
+  marks it again.
 - An anchor whose quote still locates under its own reference has not moved, whatever
   happened around it (an `edited` section, or the half of a `split` that kept its
   heading): no proposal, and the dirty section's ingest sees it as an extracted

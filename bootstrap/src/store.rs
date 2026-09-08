@@ -4203,7 +4203,18 @@ impl Store {
             }
             self.rewrite_section_refs(from, to);
         }
-        let moved_from: BTreeSet<&Full> = plan.exact_moves.iter().map(|(f, _)| f).collect();
+        // A rename carries its anchors the same way and its coverage not at all: the
+        // section is dirty as an edit and the session that reads the new heading marks
+        // it again. Mirrors docs/compiler/alignment.md#what-applies-and-what-is-proposed.
+        for (from, to) in &plan.renames {
+            self.rewrite_section_refs(from, to);
+        }
+        let moved_from: BTreeSet<&Full> = plan
+            .exact_moves
+            .iter()
+            .chain(plan.renames.iter())
+            .map(|(f, _)| f)
+            .collect();
         let moved_to: BTreeSet<&Full> = plan.exact_moves.iter().map(|(_, t)| t).collect();
         // Anchors the model will place are not stale: keyed by id plus old location,
         // since an entity can hold several mentions.
@@ -4448,8 +4459,10 @@ impl Store {
             self.commit_records(batch);
         }
 
-        // Mechanical moves and the proposals left pending: one align entry per build.
-        if !plan.exact_moves.is_empty() || !plan.proposals.is_empty() {
+        // Mechanical moves and renames, and the proposals left pending: one align entry
+        // per build.
+        if !plan.exact_moves.is_empty() || !plan.renames.is_empty() || !plan.proposals.is_empty()
+        {
             self.status.generation += 1;
             let build = format!("g{}", self.status.generation);
             let mut mutations: Vec<serde_json::Value> = plan
@@ -4457,6 +4470,9 @@ impl Store {
                 .iter()
                 .map(|(f, t)| serde_json::json!({"op": "move", "from": f.render(), "to": t.render()}))
                 .collect();
+            mutations.extend(plan.renames.iter().map(|(f, t)| {
+                serde_json::json!({"op": "rename", "from": f.render(), "to": t.render()})
+            }));
             mutations.extend(plan.proposals.iter().map(|p| {
                 serde_json::json!({"op": "propose", "anchor": p.anchor, "from": p.from,
                     "candidates": p.candidates.iter().map(|c| c.section.clone()).collect::<Vec<_>>()})
@@ -8521,6 +8537,85 @@ mod tests {
         assert_eq!(entry.kind, "align");
         assert!(entry.batch.is_empty());
         assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");
+    }
+
+    // A heading renamed in place is an edit: its anchors follow the new reference
+    // without a proposal, its coverage does not, the section is dirty, and the align
+    // entry records the rename. Mirrors docs/compiler/alignment.md#what-applies-and-what-is-proposed.
+    #[test]
+    fn renamed_heading_carries_anchors_and_dirties_the_section() {
+        let mut s = Store {
+            out: own_dir("align-rename"),
+            ..Default::default()
+        };
+        let v1 = format!("# T\nintro\n\n## Cart\n{}\n", CART);
+        let mut parsed = BTreeMap::new();
+        parsed.insert(
+            "t.md".to_string(),
+            (hash_hex(&v1), crate::md::parse_sections(&v1)),
+        );
+        s.sync_docs(&parsed);
+        s.graph.entities.insert("ent:a".into(), entity("A"));
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            req_at("t.md", "/t/cart", "Items stay until checkout."),
+        );
+        s.docs.get_mut("t.md").unwrap().coverage.insert(
+            "/t/cart".into(),
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
+        let gen_before = s.status.generation;
+        let v2 = format!("# T\nintro\n\n## Basket\n{}\n", CART);
+        let mut parsed2 = BTreeMap::new();
+        parsed2.insert(
+            "t.md".to_string(),
+            (hash_hex(&v2), crate::md::parse_sections(&v2)),
+        );
+        let d2 = s.sync_docs(&parsed2);
+        assert_eq!(d2.len(), 1, "{:?}", d2);
+        assert_eq!(d2[0].dirty_sections, vec!["/t/basket".to_string()]);
+        assert!(d2[0].stale_anchors.is_empty(), "{:?}", d2[0].stale_anchors);
+        assert_eq!(
+            s.graph.requirements["req:t-1"]
+                .source
+                .as_ref()
+                .unwrap()
+                .section,
+            "/t/basket"
+        );
+        assert!(!s.docs["t.md"].coverage.contains_key("/t/basket"));
+        assert!(!s.docs["t.md"].coverage.contains_key("/t/cart"));
+        assert!(s.status.alignment.is_empty(), "{:?}", s.status.alignment);
+        // The edit entry dirties the renamed section only; the align entry records
+        // the rename, no section-removed record for the old reference.
+        assert_eq!(s.status.generation, gen_before + 2);
+        let edit: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", gen_before + 1)),
+        )
+        .unwrap();
+        assert_eq!(edit.kind, "edit");
+        assert_eq!(edit.dirtied, vec!["t.md#/t/basket".to_string()]);
+        let entry: JournalEntry = yaml_to(
+            &s.out
+                .join("journal")
+                .join(format!("g{}.yaml", gen_before + 2)),
+        )
+        .unwrap();
+        assert_eq!(entry.kind, "align");
+        assert_eq!(entry.mutations[0]["op"], "rename");
+        assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");
+        assert_eq!(entry.mutations[0]["to"], "t.md#/t/basket");
+        assert!(!s
+            .status
+            .changes
+            .iter()
+            .any(|c| c.kind == CHANGE_SECTION_REMOVED));
     }
 
     // An entity mention whose quote stopped locating in a changed section is a stale

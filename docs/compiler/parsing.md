@@ -92,7 +92,10 @@ Each section carries:
 On every build, the parser's output is matched against the stored tree of every document
 by [alignment](./alignment.md). Three outcomes:
 
-- a section whose title or body changed (whitespace-insensitively) is dirty,
+- a section whose title or body changed (whitespace-insensitively) is dirty. A heading
+  renamed in place (same body, same position) is this case: its reference follows its
+  slug, so its anchors are carried to the new reference mechanically, and the section
+  is dirty,
 - a section with the same title and body under a new reference (in any document)
   moved: stored references on entity mentions and requirement sources are rewritten
   mechanically, and nothing is marked dirty,

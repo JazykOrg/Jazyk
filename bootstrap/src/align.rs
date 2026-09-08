@@ -634,8 +634,10 @@ pub fn align(
                 pool.extend(js.iter().map(|j| &new_pool[*j]));
             }
             pool.extend(new_pool.iter().filter(|n| n.full.doc == o.full.doc));
-            // Elsewhere, only a verbatim hit counts: a fuzzy window in an unrelated
-            // document is noise, and scoring every section of every document is not.
+            // Elsewhere, only a quote hit counts (whitespace-insensitive, like every
+            // location): a fuzzy window in an unrelated document is noise, and scoring
+            // every section of every document against every anchor is a cost with no
+            // signal behind it. Mirrors docs/compiler/alignment.md#anchor-relocation.
             pool.extend(
                 all_new
                     .iter()
@@ -1102,6 +1104,45 @@ mod tests {
         assert_eq!(moved[0].to, vec!["b.md#/b/cart"]);
         assert_eq!(plan.proposals[0].candidates[0].section, "b.md#/b/cart");
         assert_eq!(target_doc(&plan.proposals[0]), "b.md");
+    }
+
+    // The cross-document quote search locates whitespace-insensitively, like every
+    // location: a quote rewrapped across lines in another file is a candidate with
+    // `quoteLocates: true`. A fuzzy window in another document never is.
+    // Mirrors docs/compiler/alignment.md#anchor-relocation.
+    #[test]
+    fn cross_document_quote_search_is_whitespace_insensitive_and_never_fuzzy() {
+        let before = docs(&[
+            ("a.md", &format!("# A\n\n## Cart\n{}\n", BODY_A)),
+            ("b.md", "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\n"),
+        ]);
+        let after = docs(&[
+            ("a.md", "# A\n\nnothing left here about carts.\n"),
+            (
+                "b.md",
+                "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\nItems\n  stay until\ncheckout.\nItems remain until payment.\n",
+            ),
+        ]);
+        let g = graph_with(&[
+            ("req:1", "a.md", "/a/cart", "Items stay until checkout."),
+            ("req:2", "a.md", "/a/cart", "Items remain until checkout."),
+        ]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert_eq!(op(&plan, "deleted").len(), 1, "{:?}", plan.ops);
+        let p1 = plan
+            .proposals
+            .iter()
+            .find(|p| p.anchor == "req:1")
+            .expect("the rewrapped quote locates in b.md");
+        assert_eq!(p1.candidates.len(), 1, "{:?}", p1.candidates);
+        assert_eq!(p1.candidates[0].section, "b.md#/b/notes");
+        assert!(p1.candidates[0].quote_locates);
+        assert_eq!(p1.candidates[0].similarity, 1.0);
+        // req:2 has only a fuzzy window in b.md (3 of 4 tokens): not a candidate there.
+        assert!(plan.proposals.iter().all(|p| p.anchor != "req:2"));
+        assert!(plan
+            .homeless
+            .contains(&("req:2".to_string(), Full::new("a.md", "/a/cart"))));
     }
 
     #[test]

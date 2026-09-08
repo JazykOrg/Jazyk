@@ -84,10 +84,16 @@ it is placed. For every anchor in an old section that is not `unchanged`:
 - locate the quote (whitespace-insensitive, as every [gate](./graph.md#validation-gates)
   does) in the matched new section or sections; a hit is a candidate with
   `quoteLocates: true`,
-- otherwise in every other new section of the same document, then in every document,
+- otherwise in every other new section of the same document, then in every document.
+  The search is whitespace-insensitive everywhere: a quote rewrapped across lines in
+  another file still locates,
 - otherwise take the best fuzzy window: the candidate section whose tokens hold the
   longest common subsequence with the quote's tokens, scored as that length over the
-  quote's length, with the matched window recorded as `nearest`.
+  quote's length, with the matched window recorded as `nearest`. Fuzzy windows are
+  taken over the matched sections and the old section's own document only. In any
+  other document only a quote hit counts: a fuzzy window in an unrelated document is
+  noise, and scoring every section of every document against every anchor is a cost
+  with no signal behind it.
 
 A candidate scoring under `0.3` is discarded. Candidates are ordered by descending
 similarity and capped at three per anchor (`alignment-candidates`), the ones the

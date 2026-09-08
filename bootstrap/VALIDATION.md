@@ -617,3 +617,23 @@ fact; a short loop on a copy (one word changed after the trap sentence to dirty 
 section, then three batches: anchors, the section, the pair) extracted the age and
 filed the contradiction naming both ages. Still open on the copy: the three Lantern
 Room entities await their eleven `dedupe-candidates` goals.
+
+### The dogfood under the cap (2026-09-08)
+
+Resumed on `docs/` (98 documents, 639 sections) with Claude Code over `jazyk mcp
+compile`, the generate release withheld, the pair cap and `settle_pairs` in the
+binary. Twenty-one batches landed in 88 minutes (mean 4.2 minutes, longest 7.3) before
+the session limit cut the run; thirty-nine further attempts failed in two seconds each.
+Every landed batch was `reconcile-section` (108 goals previewed, two `place-anchors`):
+coverage went from 24 to 47 sections of 639, the board from 1248 open goals to 2323
+(2308 compile, 747 pairs waiting under the cap beside the open ones, 217 of the 245
+parked by the earlier quota death still queued for their documents' turn). The rate is
+the finding: a section batch carries two or three sections at the context budget, so
+ingest alone needs some five hundred batches at this shape, and the pairs each
+landed section opens outgrow the sessions that settle them. The walk holds at this
+size: `jazyk docsgen` writes 114 entity cards and 205 diagram pages in seconds. Two
+shape defects show on the index: the model set scopes the documents never name as
+bounded contexts (`Jazyk`, `compiler`, `Benchmark` beside `benchmark`, `public`), so
+the index opens with five top levels, two of them case variants of one word; and the
+public root holds 25 direct children, over the hard fan-out, its regrouping blocked
+behind the compile goals in its cone.

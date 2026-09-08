@@ -174,3 +174,15 @@ pairs, one entry per goal under the single calls' gates
 saas snapshot, a six-pair batch went from one claim per pair to one `settle_pairs`
 call plus `done`. Next: a `pairs-per-entity` limit in the registry (the lexically
 closest pairs, the rest left to `review-entity`, which reads every statement anyway).
+
+## The dogfood's rate (2026-09-08)
+
+Measured on `docs/` under Claude Code with the pair cap: a `reconcile-section` batch
+carries two or three sections and lands in about four minutes; 639 sections need some
+five hundred such batches, and each landed section opens pairs faster than a pair
+session settles them (2323 open goals at 47 sections covered). Levers, in order: a
+section batch packed by section size instead of a flat estimate (a short section costs
+little; a batch should hold ten of them); scopes gated like names (a scope the
+documents never name as a bounded context is refused, and a case variant of an
+existing scope folds into it; the run minted `Benchmark` beside `benchmark` and
+`Jazyk` beside `public`); the `pairs-per-entity` limit from the pair volume entry.

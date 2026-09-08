@@ -564,7 +564,10 @@ one.
   - A requirement to the document its source anchors in.
   - A requirement to the deliverable files whose ledger sites implement it.
 - Containment: an entity's children draw nested inside it
-  ([containment](../compiler/model/entity.md#containment)). A parent collapses to one
+  ([containment](../compiler/model/entity.md#containment)). A relationship between an
+  entity and one of its drawn ancestors (the composition that put it there) is the
+  nesting itself and draws no arrow; it reappears as an arrow only when the two are
+  not nested, e.g. with the parent hidden by the filter. A parent collapses to one
   node showing its child count. With the children hidden, every relationship touching
   a hidden descendant lifts to the parent: one arrow per direction and type, promoted
   to the strongest type in the group, with a count label

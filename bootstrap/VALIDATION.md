@@ -559,3 +559,24 @@ in the session scratchpad (`self-<example>/`).
   alias (the extraction skill now keeps the concept under the area; the gate folds
   plurals for groupings only); the novel minted as an entity beside the bookshop named
   after it (the contract's no-System rule now covers a titled subject).
+
+### The walk through the GUI (2026-09-08)
+
+The walk exercised by hand in the browser on `example-ledger` (`jazyk gui`, driven
+through Chrome): the explorer's tree opens the Checkout card with its breadcrumb
+(Public, Checkout), the flows it takes part in, its inside structure, lifted
+relationships, siblings, children, and the requirements beneath; the editor underlines
+every entity mention and its hover shows the card in short (stereotype, sentence,
+breadcrumb, the level view, the card and level links, the diagnostics on it); the
+preview renders the document with headings; the generated card page for Checkout
+embeds the in-context diagram (`component/public`) and the inside diagram
+(`class/checkout`) inline with every box a live link, and the diagram page lists the
+level, the drawn members with their links down, and the arrows around. Following the
+Order box from the Checkout card lands on the Order card with its own breadcrumb
+(Public, Orders, Order). One defect surfaced and fixed: the map drew the composition
+between a parent and a child nested inside it as a loop around the compound box (the
+Checkout box carried four); a relationship between an entity and its drawn ancestor is
+now the nesting itself and draws no arrow. Left as observed: the fcose layout lets
+compound boxes overlap on a graph of thirty entities (Orders over Checkout, Shipping
+inside the Checkout area), a layout-parameter question, not a data one. VS Code hover
+and type definition were verified over stdio only, not by hand.

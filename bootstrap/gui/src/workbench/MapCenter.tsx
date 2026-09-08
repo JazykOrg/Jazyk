@@ -267,6 +267,24 @@ interface EdgeData {
 
 const base = (p: string) => p.split('/').pop() ?? p
 
+// A relationship between an entity and one of its drawn ancestors is the nesting
+// itself (docs/frontends/gui.md#graph, containment): the compound box already says
+// it, and cytoscape would draw the arrow as a loop around the box.
+function dropNestedArrows(nodes: Map<string, NodeData>, edges: Map<string, EdgeData>) {
+  const nests = (inner: string, outer: string): boolean => {
+    let at = nodes.get(inner)?.parent
+    for (let i = 0; at && i < 64; i++) {
+      if (at === outer) return true
+      at = nodes.get(at)?.parent
+    }
+    return false
+  }
+  for (const [id, e] of edges) {
+    if (!(EDGE_TYPES as readonly string[]).includes(e.type)) continue
+    if (nests(e.source, e.target) || nests(e.target, e.source)) edges.delete(id)
+  }
+}
+
 const STRUCTURAL_KINDS = ['class', 'object', 'package', 'component', 'composite', 'deployment']
 
 // Flow kinds draw as ordered steps with the participants as lanes, one step per
@@ -551,6 +569,7 @@ export default function MapCenter() {
           label: a.lifted ? `${a.type}: ${a.count}` : undefined,
         })
       })
+      dropNestedArrows(nodes, edges)
       return { nodes, edges }
     }
     const want = new Set<string>()
@@ -659,6 +678,7 @@ export default function MapCenter() {
       const parent = n.pref && want.has(n.pref) ? n.pref : undefined
       nodes.set(id, { ...n, parent })
     }
+    dropNestedArrows(nodes, edges)
     return { nodes, edges }
   }, [full, nodeTypes, types, scope, stereotype, focusHops, selected, overlay])
 

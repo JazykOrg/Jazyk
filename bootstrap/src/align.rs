@@ -29,7 +29,6 @@ const PART_FLOOR: f64 = 0.3;
 // The least a further part must add to the whole's coverage to count: the guard that
 // keeps a moved section with a loosely similar neighbor from reading as a split.
 const PART_MARGIN: f64 = 0.2;
-const MAX_CANDIDATES: usize = 3;
 const EXCERPT_CONTEXT: usize = 3;
 
 // A full section reference: document path plus internal reference.
@@ -58,6 +57,9 @@ pub struct AlignPlan {
     pub ops: Vec<SectionOp>,
     // Byte-identical sections under a new reference: applied without a model.
     pub exact_moves: Vec<(Full, Full)>,
+    // Headings renamed in place (same body, same position, new title): the anchors
+    // follow the new reference without a model, the section is dirty as an edit.
+    pub renames: Vec<(Full, Full)>,
     // New sections whose reference and hash are unchanged.
     pub unchanged: BTreeSet<Full>,
     // Anchors the model must place.
@@ -73,6 +75,8 @@ struct Print {
     // the raw hash it survives a heading level change and trailing blank lines, which
     // move no statement.
     identity: String,
+    // The whitespace-collapsed body alone: what a rename in place keeps.
+    body: String,
     parent: Option<String>,
     order: usize,
     slug: String,
@@ -142,11 +146,8 @@ fn print(full: Full, sec: &Section) -> Print {
     let (words, tokens) = tokenize(&body);
     let shingles = shingles(&tokens);
     let normalized = sec.raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let identity = format!(
-        "{}\n{}",
-        sec.title.trim(),
-        body.split_whitespace().collect::<Vec<_>>().join(" ")
-    );
+    let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let identity = format!("{}\n{}", sec.title.trim(), collapsed);
     Print {
         slug: full
             .section
@@ -156,6 +157,7 @@ fn print(full: Full, sec: &Section) -> Print {
             .to_string(),
         full,
         identity,
+        body: collapsed,
         parent: sec.parent.clone(),
         order: sec.order,
         words,
@@ -388,9 +390,18 @@ pub fn align(
         }
     }
 
-    // Phase 2: identity. Same reference, different hash: edited in place. The new
-    // section stays available as a split or merge target.
-    let mut edited_new: BTreeSet<usize> = BTreeSet::new();
+    // Phase 2: same place. Same reference, different identity: edited in place. The new
+    // section stays available as a split or merge target. A heading renamed in place
+    // (same document, same parent, same order, same body, a new title) is an edit
+    // too: its reference followed its slug, so the pair is recorded as a rename and
+    // the anchors follow mechanically. Old sections come parent before child, so a
+    // parent's rename is known when its children are compared (`carried`).
+    // Mirrors docs/compiler/alignment.md#phases.
+    let mut carried: BTreeMap<Full, Full> = plan
+        .exact_moves
+        .iter()
+        .map(|(f, t)| (f.clone(), t.clone()))
+        .collect();
     for (i, o) in old_pool.iter().enumerate() {
         if !old_free[i] {
             continue;
@@ -398,9 +409,29 @@ pub fn align(
         if let Some(j) = new_pool.iter().position(|n| n.full == o.full) {
             old_free[i] = false;
             new_free[j] = false;
-            edited_new.insert(j);
             let sim = dice(&o.shingles, &new_pool[j].shingles);
             matched_old.insert(i, ("edited".into(), vec![j], sim));
+            continue;
+        }
+        let old_parent = o
+            .parent
+            .as_ref()
+            .map(|p| Full::new(&o.full.doc, p))
+            .map(|p| carried.get(&p).cloned().unwrap_or(p));
+        let renamed = new_pool.iter().enumerate().position(|(j, n)| {
+            new_free[j]
+                && n.full.doc == o.full.doc
+                && n.order == o.order
+                && n.body == o.body
+                && n.parent.as_ref().map(|p| Full::new(&n.full.doc, p)) == old_parent
+        });
+        if let Some(j) = renamed {
+            old_free[i] = false;
+            new_free[j] = false;
+            matched_old.insert(i, ("renamed".into(), vec![j], 1.0));
+            carried.insert(o.full.clone(), new_pool[j].full.clone());
+            plan.renames
+                .push((o.full.clone(), new_pool[j].full.clone()));
         }
     }
 
@@ -537,10 +568,10 @@ pub fn align(
             continue;
         }
         plan.ops.push(SectionOp {
-            op: if op == "moved-exact" {
-                "moved".into()
-            } else {
-                op.clone()
+            op: match op.as_str() {
+                "moved-exact" => "moved".into(),
+                "renamed" => "edited".into(),
+                _ => op.clone(),
             },
             from: vec![old_pool[*i].full.render()],
             to: js.iter().map(|j| new_pool[*j].full.render()).collect(),
@@ -582,7 +613,10 @@ pub fn align(
             continue;
         }
         let matched = matched_old.get(&i);
-        if matches!(matched, Some((op, _, _)) if op == "moved-exact") {
+        // An exact move or a rename carried its anchors already: the body is the same,
+        // so every quote in it locates under the new reference. A quote from the old
+        // heading line surfaces as a stale anchor on the renamed section instead.
+        if matches!(matched, Some((op, _, _)) if op == "moved-exact" || op == "renamed") {
             continue;
         }
         for (anchor, quote) in anchors_in(graph, &o.full) {
@@ -600,8 +634,10 @@ pub fn align(
                 pool.extend(js.iter().map(|j| &new_pool[*j]));
             }
             pool.extend(new_pool.iter().filter(|n| n.full.doc == o.full.doc));
-            // Elsewhere, only a verbatim hit counts: a fuzzy window in an unrelated
-            // document is noise, and scoring every section of every document is not.
+            // Elsewhere, only a quote hit counts (whitespace-insensitive, like every
+            // location): a fuzzy window in an unrelated document is noise, and scoring
+            // every section of every document against every anchor is a cost with no
+            // signal behind it. Mirrors docs/compiler/alignment.md#anchor-relocation.
             pool.extend(
                 all_new
                     .iter()
@@ -620,7 +656,7 @@ pub fn align(
                     .unwrap()
                     .then(a.full.cmp(&b.full))
             });
-            cands.truncate(MAX_CANDIDATES);
+            cands.truncate(crate::limits::ALIGN_CANDIDATES);
             if cands.is_empty() {
                 plan.homeless.push((anchor, o.full.clone()));
                 continue;
@@ -820,6 +856,160 @@ mod tests {
         assert!(plan.proposals.is_empty());
     }
 
+    // A heading renamed in place (same body, same position) is an edit whose anchors
+    // follow the new reference mechanically: no proposal, the pair recorded as a
+    // rename, the op `edited`. Mirrors docs/compiler/alignment.md#phases.
+    #[test]
+    fn rename_in_place_is_an_edit_with_anchors_carried() {
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Basket\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let g = graph_with(&[
+            ("req:1", "a.md", "/t/cart", "Items stay until checkout."),
+            (
+                "req:2",
+                "a.md",
+                "/t/cart",
+                "A cart may hold up to fifty items at once.",
+            ),
+        ]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert_eq!(
+            plan.renames,
+            vec![(Full::new("a.md", "/t/cart"), Full::new("a.md", "/t/basket"))]
+        );
+        assert!(plan.exact_moves.is_empty());
+        assert!(plan.proposals.is_empty(), "{:?}", plan.proposals);
+        assert!(plan.homeless.is_empty());
+        let edited = op(&plan, "edited");
+        assert_eq!(edited.len(), 1, "{:?}", plan.ops);
+        assert_eq!(edited[0].from, vec!["a.md#/t/cart"]);
+        assert_eq!(edited[0].to, vec!["a.md#/t/basket"]);
+        assert!(op(&plan, "moved").is_empty() && op(&plan, "added").is_empty());
+        assert!(plan.unchanged.contains(&Full::new("a.md", "/t/orders")));
+    }
+
+    // Nested renames: the root and a child heading renamed together. The child's
+    // parent is the renamed root, known from the pass over its parent first; the
+    // grandchild, untouched, is an exact move under the new path.
+    #[test]
+    fn nested_renames_carry_the_children() {
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Group\nintro\n\n### Cart\n{}\n", BODY_A),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!("# U\n\n## Bunch\nintro\n\n### Cart\n{}\n", BODY_A),
+        )]);
+        let g = graph_with(&[(
+            "req:1",
+            "a.md",
+            "/t/group/cart",
+            "Items stay until checkout.",
+        )]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert_eq!(
+            plan.renames,
+            vec![
+                (Full::new("a.md", "/t"), Full::new("a.md", "/u")),
+                (Full::new("a.md", "/t/group"), Full::new("a.md", "/u/bunch")),
+            ]
+        );
+        assert_eq!(
+            plan.exact_moves,
+            vec![(
+                Full::new("a.md", "/t/group/cart"),
+                Full::new("a.md", "/u/bunch/cart")
+            )]
+        );
+        assert!(plan.proposals.is_empty(), "{:?}", plan.proposals);
+        assert_eq!(op(&plan, "edited").len(), 2, "{:?}", plan.ops);
+    }
+
+    // The same heading and body at a different position is a move, exact and
+    // mechanical: the anchor's reference is rewritten and nothing is dirty.
+    #[test]
+    fn move_unchanged_is_an_exact_move() {
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!(
+                "# T\n\n## Orders\n{}\n\n### Cart\n{}\n",
+                BODY_B, BODY_A
+            ),
+        )]);
+        let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert_eq!(
+            plan.exact_moves,
+            vec![(
+                Full::new("a.md", "/t/cart"),
+                Full::new("a.md", "/t/orders/cart")
+            )]
+        );
+        assert!(plan.renames.is_empty());
+        assert!(plan.proposals.is_empty(), "{:?}", plan.proposals);
+        let moved = op(&plan, "moved");
+        assert_eq!(moved.len(), 1, "{:?}", plan.ops);
+        assert_eq!(moved[0].similarity, Some(1.0));
+        assert!(op(&plan, "edited").is_empty());
+    }
+
+    // A new title at a new position with the same body is neither an exact move nor
+    // a rename in place: the fuzzy phase pairs it as a move, and the anchors are
+    // proposals whose quotes locate in the target.
+    #[test]
+    fn rename_and_move_is_a_fuzzy_move_with_proposals() {
+        let before = docs(&[(
+            "a.md",
+            &format!("# T\n\n## Cart\n{}\n\n## Orders\n{}\n", BODY_A, BODY_B),
+        )]);
+        let after = docs(&[(
+            "a.md",
+            &format!(
+                "# T\n\n## Orders\n{}\n\n### Basket\n{}\n",
+                BODY_B, BODY_A
+            ),
+        )]);
+        let g = graph_with(&[("req:1", "a.md", "/t/cart", "Items stay until checkout.")]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert!(plan.exact_moves.is_empty());
+        assert!(plan.renames.is_empty());
+        let moved = op(&plan, "moved");
+        assert_eq!(moved.len(), 1, "{:?}", plan.ops);
+        assert_eq!(moved[0].to, vec!["a.md#/t/orders/basket"]);
+        assert_eq!(plan.proposals.len(), 1);
+        assert_eq!(plan.proposals[0].anchor, "req:1");
+        assert_eq!(plan.proposals[0].candidates[0].section, "a.md#/t/orders/basket");
+        assert!(plan.proposals[0].candidates[0].quote_locates);
+    }
+
+    // A new title and a new body at the same place is not a rename: it falls through
+    // to the fuzzy phase and, unrelated, reads as a deletion plus an addition.
+    #[test]
+    fn replaced_section_at_the_same_place_is_not_a_rename() {
+        let before = docs(&[("a.md", &format!("# T\n\n## Cart\n{}\n", BODY_A))]);
+        let after = docs(&[("a.md", &format!("# T\n\n## Orders\n{}\n", BODY_B))]);
+        let plan = align(
+            &stored(&before),
+            &after,
+            &Graph::default(),
+            &Thresholds::default(),
+        );
+        assert!(plan.renames.is_empty());
+        assert_eq!(op(&plan, "deleted").len(), 1, "{:?}", plan.ops);
+        assert_eq!(op(&plan, "added").len(), 1, "{:?}", plan.ops);
+    }
+
     #[test]
     fn split_sends_each_anchor_to_its_half() {
         let before = docs(&[("a.md", &format!("# T\n\n## Both\n{}\n{}\n", BODY_A, BODY_B))]);
@@ -914,6 +1104,45 @@ mod tests {
         assert_eq!(moved[0].to, vec!["b.md#/b/cart"]);
         assert_eq!(plan.proposals[0].candidates[0].section, "b.md#/b/cart");
         assert_eq!(target_doc(&plan.proposals[0]), "b.md");
+    }
+
+    // The cross-document quote search locates whitespace-insensitively, like every
+    // location: a quote rewrapped across lines in another file is a candidate with
+    // `quoteLocates: true`. A fuzzy window in another document never is.
+    // Mirrors docs/compiler/alignment.md#anchor-relocation.
+    #[test]
+    fn cross_document_quote_search_is_whitespace_insensitive_and_never_fuzzy() {
+        let before = docs(&[
+            ("a.md", &format!("# A\n\n## Cart\n{}\n", BODY_A)),
+            ("b.md", "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\n"),
+        ]);
+        let after = docs(&[
+            ("a.md", "# A\n\nnothing left here about carts.\n"),
+            (
+                "b.md",
+                "# B\n\n## Notes\nShipping rules and delivery windows are listed by region.\nItems\n  stay until\ncheckout.\nItems remain until payment.\n",
+            ),
+        ]);
+        let g = graph_with(&[
+            ("req:1", "a.md", "/a/cart", "Items stay until checkout."),
+            ("req:2", "a.md", "/a/cart", "Items remain until checkout."),
+        ]);
+        let plan = align(&stored(&before), &after, &g, &Thresholds::default());
+        assert_eq!(op(&plan, "deleted").len(), 1, "{:?}", plan.ops);
+        let p1 = plan
+            .proposals
+            .iter()
+            .find(|p| p.anchor == "req:1")
+            .expect("the rewrapped quote locates in b.md");
+        assert_eq!(p1.candidates.len(), 1, "{:?}", p1.candidates);
+        assert_eq!(p1.candidates[0].section, "b.md#/b/notes");
+        assert!(p1.candidates[0].quote_locates);
+        assert_eq!(p1.candidates[0].similarity, 1.0);
+        // req:2 has only a fuzzy window in b.md (3 of 4 tokens): not a candidate there.
+        assert!(plan.proposals.iter().all(|p| p.anchor != "req:2"));
+        assert!(plan
+            .homeless
+            .contains(&("req:2".to_string(), Full::new("a.md", "/a/cart"))));
     }
 
     #[test]

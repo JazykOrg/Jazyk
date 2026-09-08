@@ -11,10 +11,17 @@ downstream works on sections in the [graph store](./graph.md#storage-layout).
 - Custom handlers per project are planned; Markdown is the only handler today. The
   configuration format is specified in
   [project settings](./project-settings.md).
-- A file matched by the docs glob with no handler yields an `unsupported-format`
-  diagnostic. A handler failure yields `parse-error`. An empty file yields `empty-file`,
-  raised by the [deterministic checks](./compilation.md#checks): with no sections there is
-  nothing for parsing to attach a diagnostic to.
+- A handler claims a file by its extension. A file matched by the docs glob that no
+  handler claims yields an `unsupported-format` diagnostic on the document and is not
+  parsed. A file its handler cannot read (not valid UTF-8, or unreadable) yields
+  `parse-error` on the document. Either file contributes no sections: it is absent from
+  the parse like a deleted document, so a stored record of it leaves the store the way a
+  removed document does, and the file is ingested as new once it reads. Both diagnostics
+  are filed by the [deterministic checks](./compilation.md#checks) at the end of every
+  build, on the document path, and resolve when the condition clears (the file reads
+  again, gains a handler, or leaves the glob). A no-op rebuild re-files nothing. An empty
+  file yields `empty-file` the same way: with no sections there is nothing for parsing to
+  attach a diagnostic to.
 
 ## Section tree
 
@@ -22,9 +29,18 @@ A section is a heading and its body, or a fenced block inside that body: a code 
 or a diagram. Sections form a tree per document.
 
 Content before the first heading, and a document with no headings at all, forms a
-`preamble` section referenced `/`, with no title and no parent. No prose is invisible
-to extraction because of where it sits. A file of only blank lines yields no sections
-(that is [`empty-file`](./compilation.md#checks) territory).
+`preamble` section referenced `/`, with no title and no parent. Its whole text is its
+body: it owes [coverage](./compilation.md#coverage) and derives a `reconcile-section`
+goal like any heading section with a body. No prose is invisible to extraction because
+of where it sits. A file of only blank lines yields no sections (that is
+[`empty-file`](./compilation.md#checks) territory).
+
+The first heading of a document, whatever its level, is the `root` section: the section
+that names the document. The document's title is its title, and a bare document name
+given to `read_section` reads it ([read tools](./tools.md#read-tools)). Every other
+heading is a `heading`. Headings nest by level under the nearest shallower heading
+before them; a heading with no shallower heading before it (the root, and any later
+heading at the top level) has no parent. The preamble is never a parent of a heading.
 
 A fenced block (three or more backticks or tildes, closed by a fence of the same
 character at least as long, or running to the end of its section when unclosed) is a
@@ -49,7 +65,8 @@ Each section carries:
 - `kind`: `preamble`, `root`, `heading`, `list-item`, `code-block`, `blockquote`, or
   `diagram`.
 - `order`: position among siblings.
-- `parent`: the internal reference of the parent. The root section has none.
+- `parent`: the internal reference of the parent. The preamble, the root, and a later
+  top-level heading have none.
 - `raw`: the verbatim source text. Concatenating the `raw` of the heading kinds
   (`preamble`, `root`, `heading`) in tree order reconstructs the document; the block
   kinds repeat text their parent already holds.
@@ -75,7 +92,10 @@ Each section carries:
 On every build, the parser's output is matched against the stored tree of every document
 by [alignment](./alignment.md). Three outcomes:
 
-- a section whose title or body changed (whitespace-insensitively) is dirty,
+- a section whose title or body changed (whitespace-insensitively) is dirty. A heading
+  renamed in place (same body, same position) is this case: its reference follows its
+  slug, so its anchors are carried to the new reference mechanically, and the section
+  is dirty,
 - a section with the same title and body under a new reference (in any document)
   moved: stored references on entity mentions and requirement sources are rewritten
   mechanically, and nothing is marked dirty,

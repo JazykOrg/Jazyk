@@ -148,8 +148,8 @@ answer:
 
 | Source | Rule | Severity | What it catches |
 | --- | --- | --- | --- |
-| [parsing](../parsing.md#format-handlers) | `unsupported-format` | warning | a matched file with no format handler |
-| parsing | `parse-error` | error | a format handler failed on the file |
+| [parsing](../parsing.md#format-handlers), filed by the checks | `unsupported-format` | warning | a matched file with no format handler for its extension |
+| parsing, filed by the checks | `parse-error` | error | a matched file its format handler cannot read (not valid UTF-8, or unreadable) |
 | [coverage](../compilation.md#coverage) | `uncovered-section` | warning | a section with a body of its own still `unprocessed` after the build |
 | coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | [`rejudge-pair`](../goals/rejudge-pair.md), [`review-entity`](../goals/review-entity.md) sessions | `contradiction` | warning or error | requirements on an entity that cannot all hold |

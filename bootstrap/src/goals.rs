@@ -309,11 +309,17 @@ fn build_goal(
 // A section that owes coverage of its own: one with a body beyond its heading line,
 // and never a code block, whose parent's mark covers it (the parent keeps its whole
 // body). A diagram section owes its own. Mirrors docs/compiler/compilation.md#coverage.
+// Whether a section owes a coverage mark and a reconcile goal: it has a body of its
+// own. A heading section's body is its text after the heading line, a diagram's the
+// block inside its fence, a preamble's its whole text (it has no heading line, so a
+// one-line preamble owes its mark). A code block follows its parent's mark.
+// Mirrors docs/compiler/compilation.md#coverage.
 pub fn section_has_body(sec: &Section) -> bool {
     if sec.kind == "code-block" {
         return false;
     }
-    !sec.raw.lines().skip(1).all(|l| l.trim().is_empty())
+    let skip = if sec.kind == "preamble" { 0 } else { 1 };
+    !sec.raw.lines().skip(skip).all(|l| l.trim().is_empty())
 }
 
 fn str_list(v: &Value) -> Vec<String> {
@@ -4916,6 +4922,13 @@ mod tests {
         assert!(!section_has_body(block));
         let diagram = sections.values().find(|s| s.kind == "diagram").expect("diagram");
         assert!(section_has_body(diagram));
+        // A preamble's whole text is its body: one line of prose before the first
+        // heading owes its mark; a heading alone owes none.
+        let sections = crate::md::parse_sections("The system shall respond.\n\n# Doc\n");
+        assert_eq!(sections["/"].kind, "preamble");
+        assert!(section_has_body(&sections["/"]));
+        assert_eq!(sections["/doc"].kind, "root");
+        assert!(!section_has_body(&sections["/doc"]));
     }
 
     fn grouping(id: &str, parent: Option<&str>, from: &[&str]) -> Op {

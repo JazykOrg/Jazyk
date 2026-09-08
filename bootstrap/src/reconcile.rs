@@ -62,7 +62,18 @@ fn finding(rule: &str, subject: &str, severity: &str, message: String) -> Findin
     )
 }
 
+// A matched file's document path: relative to the project root, `/`-separated.
+fn doc_path(proj: &Project, f: &std::path::Path) -> String {
+    match f.strip_prefix(&proj.root) {
+        Ok(r) => r.to_string_lossy().replace('\\', "/"),
+        Err(_) => f.to_string_lossy().replace('\\', "/"),
+    }
+}
+
 // Parse every matched document. Returns (doc -> (content hash, sections), doc -> links).
+// A matched file no handler claims, or one its handler cannot read, contributes no
+// sections: the checks file `unsupported-format` or `parse-error` on it
+// (`format_checks`). Mirrors docs/compiler/parsing.md#format-handlers.
 pub fn parse_all(
     proj: &Project,
 ) -> (
@@ -72,17 +83,48 @@ pub fn parse_all(
     let mut parsed = BTreeMap::new();
     let mut links = BTreeMap::new();
     for f in proj.doc_files() {
-        let rel = match f.strip_prefix(&proj.root) {
-            Ok(r) => r.to_string_lossy().replace('\\', "/"),
-            Err(_) => f.to_string_lossy().replace('\\', "/"),
-        };
-        let Ok(text) = std::fs::read_to_string(&f) else {
+        if !md::supported_format(&f) {
+            continue;
+        }
+        let Ok(text) = md::read_doc(&f) else {
             continue;
         };
+        let rel = doc_path(proj, &f);
         links.insert(rel.clone(), md::doc_links(&text, &rel));
         parsed.insert(rel, (hash_hex(&text), md::parse_sections(&text)));
     }
     (parsed, links)
+}
+
+// Format findings over the matched files: `unsupported-format` for a file no handler
+// claims by its extension, `parse-error` for a file its handler cannot read. Both name
+// the document path; the file contributed no sections and schedules no session. Filed
+// and resolved like every check finding, so a no-op rebuild re-files nothing.
+// Mirrors docs/compiler/parsing.md#format-handlers.
+fn format_checks(proj: &Project) -> Vec<Finding> {
+    let mut f = Vec::new();
+    for path in proj.doc_files() {
+        let rel = doc_path(proj, &path);
+        if !md::supported_format(&path) {
+            f.push(finding(
+                "unsupported-format",
+                &rel,
+                "warning",
+                format!(
+                    "{} is matched by the docs glob but no format handler claims its extension",
+                    rel
+                ),
+            ));
+        } else if let Err(e) = md::read_doc(&path) {
+            f.push(finding(
+                "parse-error",
+                &rel,
+                "error",
+                format!("{} cannot be parsed: {}", rel, e),
+            ));
+        }
+    }
+    f
 }
 
 // A non-normative claim over text that still reads as obligations. Deliberately cheap
@@ -451,7 +493,7 @@ fn flow_placement(store: &Store) -> Vec<(Finding, Option<String>, Vec<String>, S
 
 // The deterministic checks over the whole graph. Mirrors docs/compiler/compilation.md#checks.
 pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
-    let mut f: Vec<Finding> = Vec::new();
+    let mut f: Vec<Finding> = format_checks(proj);
     // File-level document quality: an empty file schedules no session and a link only
     // feeds levels, so neither problem ever reaches a model.
     for (doc, rec) in &store.docs {
@@ -3047,6 +3089,65 @@ mod tests {
         assert!(hits
             .iter()
             .all(|(_, subj, sev, _, _)| sev == "warning" && *subj != ["full.md"]));
+    }
+
+    // A matched file no handler claims is `unsupported-format`; one its handler cannot
+    // read is `parse-error`; neither reaches the parse. Filed on the document path and
+    // re-derived identically on every run, so the check reconciliation keeps one
+    // diagnostic each and resolves it once the condition clears.
+    // Mirrors docs/compiler/parsing.md#format-handlers.
+    #[test]
+    fn unsupported_format_and_parse_error_are_filed_and_resolve() {
+        let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
+        std::fs::write(dir.join("docs/notes.txt"), "plain notes\n").unwrap();
+        std::fs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
+        let proj = Project {
+            root: dir.clone(),
+            out: dir.join("jazyk-out"),
+            docs_glob: vec!["docs/**/*".to_string()],
+            ..Default::default()
+        };
+        let (parsed, _) = parse_all(&proj);
+        assert_eq!(parsed.keys().collect::<Vec<_>>(), vec!["docs/good.md"]);
+        let f = checks(&Store::default(), &proj);
+        let unsupported = rules_for(&f, "unsupported-format");
+        assert_eq!(unsupported.len(), 1, "{:?}", unsupported);
+        assert_eq!(unsupported[0].1, ["docs/notes.txt"]);
+        assert_eq!(unsupported[0].2, "warning");
+        let errors = rules_for(&f, "parse-error");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert_eq!(errors[0].1, ["docs/bad.md"]);
+        assert_eq!(errors[0].2, "error");
+        assert!(errors[0].3.contains("not valid UTF-8"), "{}", errors[0].3);
+
+        // Sticky and idempotent: two runs keep one diagnostic per finding; fixing the
+        // file resolves it.
+        let mut s = Store {
+            out: proj.out.clone(),
+            ..Default::default()
+        };
+        s.reconcile_check_diags(checks(&s, &proj));
+        s.reconcile_check_diags(checks(&s, &proj));
+        let open = |s: &Store, rule: &str| {
+            s.graph
+                .diagnostics
+                .values()
+                .filter(|d| d.rule == rule && d.lifecycle == "open")
+                .count()
+        };
+        assert_eq!(open(&s, "unsupported-format"), 1);
+        assert_eq!(open(&s, "parse-error"), 1);
+        assert_eq!(s.graph.diagnostics.len(), 2);
+        std::fs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
+        std::fs::remove_file(dir.join("docs/notes.txt")).unwrap();
+        s.reconcile_check_diags(checks(&s, &proj));
+        assert_eq!(open(&s, "unsupported-format"), 0);
+        assert_eq!(open(&s, "parse-error"), 0);
+        assert!(s.graph.diagnostics.values().all(|d| d.lifecycle == "resolved"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

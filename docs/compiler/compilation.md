@@ -174,6 +174,11 @@ Every check run journals a `checks` entry under its own generation.
   entity, both quote-anchored. The same sentence extracted twice in one section is a
   warning (keep one); the same fact restated across documents is an info (both kept).
   Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment.
+- Format, over the files the docs glob matches: `unsupported-format` (a file no
+  [format handler](./parsing.md#format-handlers) claims by its extension),
+  `parse-error` (a file its handler cannot read, not valid UTF-8 or unreadable, the
+  error in the message). Both name the document path; the file contributes no sections
+  and schedules no session.
 - Document quality, prose problems a human can fix, surfaced where the human writes
   ([LSP](../frontends/lsp.md) shows them inline): `section-too-large` (a body over 6000
   chars), `doc-too-large` (over 40 sections), `empty-file` (a matched file with no
@@ -294,7 +299,9 @@ shape: 3 / 9 / 31 / 118 nodes per depth; fan-out 2-9: 14, 10-15: 2, over 15: 0
 Every section carries a coverage state in the store, except a `code-block` section,
 which owes no mark of its own: its parent keeps its whole body and the parent's mark
 covers the block. A `diagram` section is input parsed as prose and owes its mark like
-any section.
+any section. A section owes a mark when it has a body of its own: a heading section's
+body is its text after the heading line, a `preamble`'s body is its whole text
+([section tree](./parsing.md#section-tree)), so a one-line preamble owes its mark.
 
 - `unprocessed`: not yet reconciled.
 - `covered`: the model claimed it; its content is reflected in the graph.

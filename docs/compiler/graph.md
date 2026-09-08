@@ -408,6 +408,19 @@ its `change` from exactly one record.
 - A newer record of the same kind on the same subject supersedes the older one, and the
   goal's `change` follows it. Resolving a goal clears the records it stood on; a failed or
   parked goal keeps its record, so the goal derives again next build with its state.
+- `requirement-created` and `requirement-revised` records feed one pair per candidate
+  and clear differently: `detail.judged` lists the partner requirements already judged
+  against the subject. An accepted `mark_goal_done` on `g:rejudge-pair:req:a~req:b`
+  appends `req:b` to `judged` on every created or revised record of `req:a` and
+  `req:a` on every such record of `req:b`, at the commit that carries the claim; the
+  records stay. A record's candidates are its requirement's neighbors and sticky
+  partners minus `judged` ([pairs](./reconciler.md#pairs)); the sweep clears the record
+  when no candidate remains, and a pair that leaves the board unresolved (waiting under
+  the cap, a side deleted) marks nothing judged. A newer record on the same
+  requirement supersedes the older one with an empty `judged`, so every candidate
+  derives again with the new cause. E.g. `detail: {fields: [statement], judged:
+  [req:payment-9]}` on `req:orders-6` derives no pair with `req:payment-9` until
+  `req:orders-6` changes again.
 
 The kinds, who writes them, and the goal each feeds:
 
@@ -417,7 +430,7 @@ The kinds, who writes them, and the goal each feeds:
 | `section-removed` | the `edit` entry of a build | the sweep, in the same build; the record clears when the sweep has run |
 | `anchor-stale` | the `align` entry (a quote that stops locating) or a `reevaluate` placement | `reconcile-section` |
 | `alignment-pending` | the `align` entry (a proposal a document owes a decision on) | `place-anchors` |
-| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement | `rejudge-pair` per neighbor (`bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
+| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
 | `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |
 | `entity-changed` | a commit that changes an entity's fact set | `review-entity` |
 | `node-deleted` | a delete or the sweep, one record per live node that still referenced the dead one (`via` names the edge) | `retrace` (a view, an instance, a derived fact); `rejudge-pair` (a surviving diagnostic subject) |
@@ -636,6 +649,11 @@ document quality thresholds (6000 characters per section, 40 sections per docume
 the alignment thresholds (move 0.5, split 0.6) and the alignment candidate cap
 (`alignment-candidates`, three per anchor) are registry constants too, not settings.
 See [budgets](./sessions.md#budgets).
+
+The pair degree cap is a registry constant of the same kind: `pairs-per-requirement`
+is 8, the most open `rejudge-pair` goals one requirement takes part in at once, the
+rest waiting by score ([pairs](./reconciler.md#pairs)). It has no soft and hard
+thresholds and no goal resolves it, so it is not a row of the table above.
 
 ## Concurrency
 

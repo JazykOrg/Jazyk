@@ -878,13 +878,14 @@ impl McpServer {
         if generation.is_none() {
             reply["generation"] = json!(s.status.generation);
         }
-        // A resolution clears the change records its goal stood on, mutations or not.
+        // A resolution clears the change records its goal stood on, mutations or not
+        // (a pair's created and revised records stay for their other candidates).
         if !resolved_ids.is_empty() {
             let clear: Vec<String> = resolved_ids
                 .iter()
                 .flat_map(|id| o.records.get(id).cloned().unwrap_or_default())
                 .collect();
-            s.clear_changes(&clear);
+            s.clear_resolved(&clear);
             reply["resolved"] = json!(resolved_ids);
         }
         // Failed goals persist by id with their change payloads, so they survive

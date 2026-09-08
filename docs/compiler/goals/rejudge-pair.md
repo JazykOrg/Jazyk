@@ -42,9 +42,14 @@ Three sources derive the goal ([pairs](../reconciler.md#pairs)):
 A changed requirement with no neighbor, no sticky partner, and no open diagnostic
 naming it derives no pair goal. Two changed requirements that are each other's
 neighbors are one goal: judging A against B is judging B against A. One
-`requirement-*` record feeds up to six goals, so it clears when the last of them
-resolves; until then its `detail.judged` lists the neighbors already judged, and a
-re-derivation skips them.
+`requirement-*` record feeds one pair per candidate (its neighbors and sticky
+partners); resolving a pair appends the partner to `detail.judged` on the records of
+both sides, a re-derivation skips the judged partners, and the record clears at the
+sweep when no candidate remains. A requirement takes part in at most
+`pairs-per-requirement` (8) open pairs at once: pinned pairs (sticky, a dead
+diagnostic subject, parked, failed) open first, the rest by score, and a pair whose
+side is full waits, no goal until a slot frees; a waiting pair marks nothing judged
+([pairs](../reconciler.md#pairs)).
 
 E.g.:
 
@@ -150,6 +155,9 @@ Computed by the harness and rendered under the goal block:
 - Why the pair exists: `revised req:orders-6 (statement, quote); shares ent:order and
   tokens hold, expire`, or `sticky: diag:contradiction-3`, or
   `req:payment-9 (deleted in g413: duplicate); diag:contradiction-3 names it`.
+- The pair's score (the neighbor score, [pairs](../reconciler.md#pairs)) and, per
+  side, how many of its pairs wait under the cap: `score 4; req:orders-6: 3 pair(s)
+  waiting, req:payment-9: none waiting`.
 - Whether the two quote the same document: same document, delete the worse-sourced
   duplicate; different documents, keep both and file `duplicate-requirement`.
 - The open diagnostics naming either side, with `(deleted)` on dead subjects.

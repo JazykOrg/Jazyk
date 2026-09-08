@@ -562,6 +562,17 @@ in the session scratchpad (`self-<example>/`).
   accepted and the journal records six resolutions with their own justifications,
   where the per-pair pattern spent one `mark_goal_done` per pair plus a
   `report_diagnostic` per finding.
+- Pair volume under the degree cap (2026-09-08, `pairs-per-requirement` at 8,
+  docs/compiler/reconciler.md#pairs): on the saas snapshot at 98 percent coverage
+  (418 requirements, generation 29) the board derived with no LLM call holds 880
+  open pairs where it held 1336, with 456 waiting under the cap and none dropped
+  (the before and after id sets differ by exactly the waiting set). The top
+  requirement's open degree fell from 40 to 8 (`req:collaboration-2`: 8 open, 32
+  waiting, its best-scoring partners first); 74 requirements sit at the cap and none
+  above it; the board line went from 1398 open goals to 942. `jazyk explain` on a
+  waiting pair names the full side and its records, `preview` says no session runs
+  for it yet. Derivation cost: `jazyk status` on the snapshot takes 0.68 seconds
+  where it took 0.59, the plan scoring every candidate once per derivation.
 - Judgment calls the runs settled or exposed: Order folded into the Orders area as an
   alias (the extraction skill now keeps the concept under the area; the gate folds
   plurals for groupings only); the novel minted as an entity beside the bookshop named

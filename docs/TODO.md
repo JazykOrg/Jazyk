@@ -159,14 +159,18 @@ the org relaunch settles eight to twenty goals per batch). Measured after it on
 example-saas at 98 percent coverage: 418 requirements, 1336 pairs over 384
 requirements; each created requirement picks its best six, but a broad statement is
 picked by many (one sits in 40 pairs, another in 37; 150 requirements sit in more
-than six). The next lever is therefore a degree cap per requirement (a requirement
-takes part in at most eight open pairs, the highest scores first) with the deferred
-candidates re-deriving as pairs resolve, which needs the record semantics settled
-first: a created record clears when its goals resolve, so deferred pairs need their
-own standing. Second: a `pairs-per-entity` limit in
-the registry (the lexically closest pairs, the rest left to `review-entity`, which
-reads every statement anyway). Third, landed: `settle_pairs`, a batch-level verdict
-list so one claim settles a batch's pairs, one entry per goal under the single calls'
-gates ([goal tools](./compiler/tools.md#goal-tools)); measured under Claude Code on
-the saas snapshot, a six-pair batch went from one claim per pair to one
-`settle_pairs` call plus `done`.
+than six). Second lever, landed: the degree cap
+([pairs](./compiler/reconciler.md#pairs)), `pairs-per-requirement` at 8, pinned
+pairs first and the rest by score, the waiting pairs standing on their records
+(`detail.judged` on the created and revised records, the record cleared at the
+sweep when no candidate remains). Measured on the same snapshot with no LLM call
+(`jazyk status`, generation 29): the board holds 880 open pairs where it held 1336,
+456 wait under the cap and none is lost, the top requirement's open degree is 8
+where it was 40 (`req:collaboration-2`: 8 open, 32 waiting), 74 requirements sit at
+the cap and none above it, 381 requirements hold an open pair where 384 did. Third,
+landed: `settle_pairs`, a batch-level verdict list so one claim settles a batch's
+pairs, one entry per goal under the single calls' gates
+([goal tools](./compiler/tools.md#goal-tools)); measured under Claude Code on the
+saas snapshot, a six-pair batch went from one claim per pair to one `settle_pairs`
+call plus `done`. Next: a `pairs-per-entity` limit in the registry (the lexically
+closest pairs, the rest left to `review-entity`, which reads every statement anyway).

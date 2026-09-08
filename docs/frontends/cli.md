@@ -278,9 +278,10 @@ order:
 - the store `version` and the generation counter,
 - the last verdict with its counts,
 - the board counts: open goals by class (compile, GC), blocked, parked,
-  failed, optional advised. The board is derived from disk the same way `compile`
-  derives it, so on a tree with pending edits `status` shows the goals the next build
-  will run,
+  failed, optional advised, and the pairs waiting under the degree cap when any do
+  ([pairs](../compiler/reconciler.md#pairs)). The board is derived from disk the same
+  way `compile` derives it, so on a tree with pending edits `status` shows the goals
+  the next build will run,
 - [coverage](../compiler/compilation.md#coverage) percentage,
 - open diagnostics by severity,
 - the medium warning, when the ledger's medium and the recorded run commands disagree
@@ -377,6 +378,10 @@ g:retrace:view:usecase/holds  retrace, compile, mandatory, open
   hints:  load view:usecase/holds; skill flow-views
 ```
 
+- For a pair waiting under the degree cap ([pairs](../compiler/reconciler.md#pairs)),
+  named by its goal id or its target: that it waits, its score, which side holds
+  `pairs-per-requirement` open pairs, and the records it stands on. `preview` on such
+  a pair prints the same line and no prompt, since no session runs for it yet.
 - For a target (a node id, a section reference, a document path): the cone of goals a
   change to it would open, walking the stored references and the computed derivations
   from it, each with the kind, the target, and the edge it is reached through, plus

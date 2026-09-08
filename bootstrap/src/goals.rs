@@ -1075,6 +1075,302 @@ fn shared_entity(store: &Store, a: &Requirement, b: &Requirement) -> Option<Stri
         .map(String::from)
 }
 
+// A pair the cap holds back: it derives no goal until a slot frees on the full side.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaitingPair {
+    pub target: String,
+    pub score: usize,
+    // The side or sides holding `pairs-per-requirement` open pairs.
+    pub full: Vec<String>,
+    pub cause: Cause,
+}
+
+// The pair board: the open pair goals and the pairs waiting under the cap.
+#[derive(Debug, Default)]
+pub struct PairPlan {
+    pub open: Vec<Goal>,
+    pub waiting: BTreeMap<String, WaitingPair>,
+}
+
+impl PairPlan {
+    // The waiting pair for a goal id or a pair target.
+    pub fn waiting_for(&self, id_or_target: &str) -> Option<&WaitingPair> {
+        let id = if id_or_target.starts_with("g:rejudge-pair:") {
+            id_or_target.to_string()
+        } else {
+            goal_id("rejudge-pair", id_or_target)
+        };
+        self.waiting.get(&id)
+    }
+}
+
+// Every candidate pair from the created, revised, and node-deleted records, placed
+// in one deterministic order and opened while both sides have a slot: pinned pairs
+// first (sticky, a dead diagnostic subject, parked, failed; a failed pair holds no
+// slot), then by score, highest first, ties by target. The rest wait and derive no
+// goal. Mirrors docs/compiler/reconciler.md#pairs.
+pub fn pair_plan(store: &Store) -> PairPlan {
+    struct PairWork {
+        change: Value,
+        cause: Cause,
+        hints: Vec<String>,
+        score: usize,
+        pinned: bool,
+    }
+    let mut pairs: BTreeMap<String, PairWork> = BTreeMap::new();
+    for rec in records_of(
+        store,
+        &[store::CHANGE_REQ_CREATED, store::CHANGE_REQ_REVISED],
+    ) {
+        let rid = &rec.subject;
+        let Some(req) = store.graph.requirements.get(rid) else {
+            continue;
+        };
+        for (nbr, score) in store.pair_review_candidates(rec) {
+            let Some(other) = store.graph.requirements.get(&nbr) else {
+                continue;
+            };
+            let target = pair_target(rid, &nbr);
+            let shared_ent = shared_entity(store, req, other);
+            let tokens: Vec<String> = content_tokens(store, &req.statement, &req.entities)
+                .intersection(&content_tokens(store, &other.statement, &other.entities))
+                .cloned()
+                .collect();
+            let sticky: Vec<String> = open_diags_naming(store, &[rid, &nbr])
+                .into_iter()
+                .filter(|(_, d)| {
+                    (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                        && d.subjects.iter().any(|s| s == rid)
+                        && d.subjects.iter().any(|s| s == &nbr)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            let verb = if rec.kind == store::CHANGE_REQ_CREATED {
+                "created"
+            } else {
+                "revised"
+            };
+            let change = json!({
+                verb: rid,
+                "fields": rec.detail["fields"],
+                "shared": {"entity": shared_ent, "tokens": tokens},
+                "sticky": sticky,
+            });
+            let cause = Cause {
+                generation: rec.generation,
+                mutation: rec.mutation,
+                via: "entities".into(),
+            };
+            let same_doc = match (req.source.as_ref(), other.source.as_ref()) {
+                (Some(a), Some(b)) => a.doc == b.doc,
+                _ => false,
+            };
+            let mut hints = vec![format!(
+                "{} {} in g{}{}{}",
+                verb,
+                rid,
+                rec.generation,
+                shared_ent
+                    .as_ref()
+                    .map(|e| format!("; shares {}", e))
+                    .unwrap_or_default(),
+                if tokens.is_empty() {
+                    String::new()
+                } else {
+                    format!(" and tokens {}", tokens.join(", "))
+                }
+            )];
+            if !sticky.is_empty() {
+                hints.push(format!("sticky: {}", sticky.join(", ")));
+            }
+            hints.push(format!(
+                "same document: {}",
+                if same_doc {
+                    "yes (delete the worse-sourced duplicate)"
+                } else {
+                    "no (keep both and file duplicate-requirement)"
+                }
+            ));
+            let diags = open_diags_naming(store, &[rid, &nbr]);
+            if diags.is_empty() {
+                hints.push("no open diagnostic on the pair".into());
+            } else {
+                for (id, d) in diags {
+                    hints.push(format!(
+                        "open {} ({}, {}): {}",
+                        id,
+                        d.rule,
+                        d.severity,
+                        truncate(&d.message, 100)
+                    ));
+                }
+            }
+            hints.push(format!("load {}; load {}", rid, nbr));
+            hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
+            let pinned = !sticky.is_empty();
+            match pairs.get_mut(&target) {
+                // The same pair from the other side: the earliest cause names the
+                // goal, the score is the same from either side, a sticky tie pins.
+                Some(p) => {
+                    p.score = p.score.max(score);
+                    p.pinned |= pinned;
+                    if (cause.generation, cause.mutation) < (p.cause.generation, p.cause.mutation)
+                    {
+                        p.change = change;
+                        p.cause = cause;
+                        p.hints = hints;
+                    }
+                }
+                None => {
+                    pairs.insert(
+                        target,
+                        PairWork {
+                            change,
+                            cause,
+                            hints,
+                            score,
+                            pinned,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    // A surviving subject of an open pair diagnostic whose partner died.
+    for rec in records_of(store, &[store::CHANGE_NODE_DELETED]) {
+        if rec.via != "subjects" || !rec.subject.starts_with("req:") {
+            continue;
+        }
+        if !store.graph.requirements.contains_key(&rec.subject) {
+            continue;
+        }
+        let deleted = str_list(&rec.detail["deleted"]);
+        let Some(dead) = deleted.first() else {
+            continue;
+        };
+        let did = rec.detail["diagnostic"].as_str().unwrap_or("").to_string();
+        if !store
+            .graph
+            .diagnostics
+            .get(&did)
+            .is_some_and(|d| d.lifecycle == "open")
+        {
+            continue;
+        }
+        let target = pair_target(&rec.subject, dead);
+        if let Some(p) = pairs.get_mut(&target) {
+            p.pinned = true;
+            continue;
+        }
+        let hints = vec![
+            format!(
+                "{} (deleted in g{}); {} names it",
+                dead, rec.generation, did
+            ),
+            format!("load {}", rec.subject),
+            "skill judgment; resolve_diagnostic when the finding died with the requirement, report_diagnostic to refile it".into(),
+        ];
+        pairs.insert(
+            target,
+            PairWork {
+                change: json!({"deleted": deleted, "diagnostic": did, "survivor": rec.subject}),
+                cause: rec.cause(),
+                hints,
+                score: 0,
+                pinned: true,
+            },
+        );
+    }
+    // A parked or failed pair is pinned: it stays on the board with its state. A
+    // failed pair holds no slot. Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    let parked: BTreeSet<&str> = store
+        .status
+        .parked
+        .iter()
+        .filter(|g| g.kind == "rejudge-pair")
+        .map(|g| g.target.as_str())
+        .collect();
+    let failed: BTreeSet<&str> = store
+        .status
+        .failed
+        .iter()
+        .filter(|f| f.goal.kind == "rejudge-pair")
+        .map(|f| f.goal.target.as_str())
+        .collect();
+    for (target, p) in pairs.iter_mut() {
+        if parked.contains(target.as_str()) || failed.contains(target.as_str()) {
+            p.pinned = true;
+        }
+    }
+
+    // The order: pinned by target, then score descending, ties by target.
+    let mut order: Vec<(&String, &PairWork)> = pairs.iter().collect();
+    order.sort_by(|(ta, a), (tb, b)| {
+        b.pinned
+            .cmp(&a.pinned)
+            .then_with(|| {
+                if a.pinned {
+                    std::cmp::Ordering::Equal
+                } else {
+                    b.score.cmp(&a.score)
+                }
+            })
+            .then_with(|| ta.cmp(tb))
+    });
+    let cap = limits::PAIRS_PER_REQUIREMENT_CAP;
+    let mut degree: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut opened: Vec<&String> = Vec::new();
+    let mut waiting: BTreeMap<String, WaitingPair> = BTreeMap::new();
+    let mut waiting_by_side: BTreeMap<String, usize> = BTreeMap::new();
+    for (target, p) in order {
+        let Some((a, b)) = pair_members(target) else {
+            continue;
+        };
+        let full: Vec<String> = [a, b]
+            .iter()
+            .filter(|s| degree.get(**s).copied().unwrap_or(0) >= cap)
+            .map(|s| s.to_string())
+            .collect();
+        if p.pinned || full.is_empty() {
+            opened.push(target);
+            if !failed.contains(target.as_str()) {
+                *degree.entry(a).or_insert(0) += 1;
+                *degree.entry(b).or_insert(0) += 1;
+            }
+        } else {
+            for s in [a, b] {
+                *waiting_by_side.entry(s.to_string()).or_insert(0) += 1;
+            }
+            waiting.insert(
+                goal_id("rejudge-pair", target),
+                WaitingPair {
+                    target: target.clone(),
+                    score: p.score,
+                    full,
+                    cause: p.cause.clone(),
+                },
+            );
+        }
+    }
+    let kind = &RejudgePair;
+    let open = opened
+        .into_iter()
+        .map(|target| {
+            let p = &pairs[target];
+            let mut hints = p.hints.clone();
+            if let Some((a, b)) = pair_members(target) {
+                let side = |s: &str| match waiting_by_side.get(s).copied().unwrap_or(0) {
+                    0 => format!("{}: none waiting", s),
+                    n => format!("{}: {} pair(s) waiting", s, n),
+                };
+                hints.push(format!("score {}; {}, {}", p.score, side(a), side(b)));
+            }
+            build_goal(kind, target, true, p.change.clone(), Some(p.cause.clone()), hints)
+        })
+        .collect();
+    PairPlan { open, waiting }
+}
+
 impl GoalKind for RejudgePair {
     fn kind(&self) -> &'static str {
         "rejudge-pair"
@@ -1086,168 +1382,7 @@ impl GoalKind for RejudgePair {
         "pair"
     }
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
-        struct PairWork {
-            change: Value,
-            cause: Cause,
-            hints: Vec<String>,
-        }
-        let mut pairs: BTreeMap<String, PairWork> = BTreeMap::new();
-        for rec in records_of(
-            store,
-            &[store::CHANGE_REQ_CREATED, store::CHANGE_REQ_REVISED],
-        ) {
-            let rid = &rec.subject;
-            let Some(req) = store.graph.requirements.get(rid) else {
-                continue;
-            };
-            let judged = str_list(&rec.detail["judged"]);
-            for nbr in store.pair_review_neighbors(rid) {
-                if judged.contains(&nbr) {
-                    continue;
-                }
-                let Some(other) = store.graph.requirements.get(&nbr) else {
-                    continue;
-                };
-                let target = pair_target(rid, &nbr);
-                let shared_ent = shared_entity(store, req, other);
-                let tokens: Vec<String> = content_tokens(store, &req.statement, &req.entities)
-                    .intersection(&content_tokens(store, &other.statement, &other.entities))
-                    .cloned()
-                    .collect();
-                let sticky: Vec<String> = open_diags_naming(store, &[rid, &nbr])
-                    .into_iter()
-                    .filter(|(_, d)| {
-                        (d.rule == "contradiction" || d.rule == "duplicate-requirement")
-                            && d.subjects.iter().any(|s| s == rid)
-                            && d.subjects.iter().any(|s| s == &nbr)
-                    })
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                let verb = if rec.kind == store::CHANGE_REQ_CREATED {
-                    "created"
-                } else {
-                    "revised"
-                };
-                let change = json!({
-                    verb: rid,
-                    "fields": rec.detail["fields"],
-                    "shared": {"entity": shared_ent, "tokens": tokens},
-                    "sticky": sticky,
-                });
-                let cause = Cause {
-                    generation: rec.generation,
-                    mutation: rec.mutation,
-                    via: "entities".into(),
-                };
-                let same_doc = match (req.source.as_ref(), other.source.as_ref()) {
-                    (Some(a), Some(b)) => a.doc == b.doc,
-                    _ => false,
-                };
-                let mut hints = vec![format!(
-                    "{} {} in g{}{}{}",
-                    verb,
-                    rid,
-                    rec.generation,
-                    shared_ent
-                        .as_ref()
-                        .map(|e| format!("; shares {}", e))
-                        .unwrap_or_default(),
-                    if tokens.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" and tokens {}", tokens.join(", "))
-                    }
-                )];
-                if !sticky.is_empty() {
-                    hints.push(format!("sticky: {}", sticky.join(", ")));
-                }
-                hints.push(format!(
-                    "same document: {}",
-                    if same_doc {
-                        "yes (delete the worse-sourced duplicate)"
-                    } else {
-                        "no (keep both and file duplicate-requirement)"
-                    }
-                ));
-                let diags = open_diags_naming(store, &[rid, &nbr]);
-                if diags.is_empty() {
-                    hints.push("no open diagnostic on the pair".into());
-                } else {
-                    for (id, d) in diags {
-                        hints.push(format!(
-                            "open {} ({}, {}): {}",
-                            id,
-                            d.rule,
-                            d.severity,
-                            truncate(&d.message, 100)
-                        ));
-                    }
-                }
-                hints.push(format!("load {}; load {}", rid, nbr));
-                hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
-                match pairs.get_mut(&target) {
-                    Some(p)
-                        if (p.cause.generation, p.cause.mutation)
-                            <= (cause.generation, cause.mutation) => {}
-                    _ => {
-                        pairs.insert(
-                            target,
-                            PairWork {
-                                change,
-                                cause,
-                                hints,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        // A surviving subject of an open pair diagnostic whose partner died.
-        for rec in records_of(store, &[store::CHANGE_NODE_DELETED]) {
-            if rec.via != "subjects" || !rec.subject.starts_with("req:") {
-                continue;
-            }
-            if !store.graph.requirements.contains_key(&rec.subject) {
-                continue;
-            }
-            let deleted = str_list(&rec.detail["deleted"]);
-            let Some(dead) = deleted.first() else {
-                continue;
-            };
-            let did = rec.detail["diagnostic"].as_str().unwrap_or("").to_string();
-            if !store
-                .graph
-                .diagnostics
-                .get(&did)
-                .is_some_and(|d| d.lifecycle == "open")
-            {
-                continue;
-            }
-            let target = pair_target(&rec.subject, dead);
-            if pairs.contains_key(&target) {
-                continue;
-            }
-            let hints = vec![
-                format!(
-                    "{} (deleted in g{}); {} names it",
-                    dead, rec.generation, did
-                ),
-                format!("load {}", rec.subject),
-                "skill judgment; resolve_diagnostic when the finding died with the requirement, report_diagnostic to refile it".into(),
-            ];
-            pairs.insert(
-                target,
-                PairWork {
-                    change: json!({"deleted": deleted, "diagnostic": did, "survivor": rec.subject}),
-                    cause: rec.cause(),
-                    hints,
-                },
-            );
-        }
-        pairs
-            .into_iter()
-            .map(|(target, p)| build_goal(self, &target, true, p.change, Some(p.cause), p.hints))
-            .collect()
+        pair_plan(store).open
     }
     fn ready(&self, _goal: &Goal, board: &Board) -> Ready {
         tier2_ready(board)
@@ -4544,7 +4679,7 @@ impl GoalKind for AbstractEntity {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -5263,5 +5398,219 @@ mod tests {
         let v = fan_out_gates(&s, &staged);
         assert_eq!(rules(&v), vec!["fan-out-over-limit"], "{:?}", v);
         assert!(v[0].message.starts_with("ent:backend: 12 children"));
+    }
+
+    // ---- the pair degree cap ----
+
+    // One broad statement picked by twelve created requirements. Every partner
+    // shares the Gateway entity and two content tokens with the hub (`reject` and
+    // one word of its own from the hub's list) and only `reject` with the other
+    // partners, so the hub is each partner's sole neighbor: twelve pairs on one
+    // requirement, eleven at score 3 and `req:p12` at score 4.
+    pub(crate) const HUB_WORDS: [&str; 12] = [
+        "expired", "logs", "alerts", "counts", "throttles", "audits", "blocks", "signs",
+        "rotates", "caches", "purges", "reports",
+    ];
+
+    pub(crate) fn fanned_store() -> Store {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:gw".into(),
+            Entity {
+                name: "Gateway".into(),
+                ..Default::default()
+            },
+        );
+        let req = |statement: &str| Requirement {
+            statement: statement.into(),
+            entities: vec!["ent:gw".into()],
+            ..Default::default()
+        };
+        s.graph.requirements.insert(
+            "req:hub".into(),
+            req("The gateway rejects expired tokens, logs each refusal, alerts operators, counts failures, throttles clients, audits sessions, blocks replays, signs receipts, rotates keys, caches verdicts, purges stale entries, and reports metrics."),
+        );
+        for (i, w) in HUB_WORDS.iter().enumerate() {
+            let id = format!("req:p{:02}", i + 1);
+            let statement = if i + 1 == 12 {
+                "The gateway rejects reports and metrics.".to_string()
+            } else {
+                format!("The gateway rejects {}.", w)
+            };
+            s.graph.requirements.insert(id.clone(), req(&statement));
+            let mut batch = store::RecordBatch::new(5);
+            batch.push(0, store::CHANGE_REQ_CREATED, &id, "section", Value::Null);
+            for r in batch.records() {
+                s.status.record_change(r.clone());
+            }
+        }
+        s.status.generation = 5;
+        s
+    }
+
+    fn pair_id(p: &str) -> String {
+        goal_id("rejudge-pair", &pair_target("req:hub", p))
+    }
+
+    // (a) Twelve partners open eight and wait four: the best score first, then by
+    // target; the hub's open degree is the cap; the hints carry the score and the
+    // waiting count per side. Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn a_requirement_picked_by_twelve_opens_eight_and_waits_four() {
+        let s = fanned_store();
+        let plan = pair_plan(&s);
+        let open: Vec<&str> = plan.open.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(open.len(), limits::PAIRS_PER_REQUIREMENT_CAP, "{:?}", open);
+        assert_eq!(plan.waiting.len(), 4, "{:?}", plan.waiting.keys().collect::<Vec<_>>());
+        // The score-4 pair opens ahead of the score-3 ones whatever its id says.
+        assert!(open.contains(&pair_id("req:p12").as_str()), "{:?}", open);
+        for p in ["req:p01", "req:p07"] {
+            assert!(open.contains(&pair_id(p).as_str()), "{:?}", open);
+        }
+        for p in ["req:p08", "req:p09", "req:p10", "req:p11"] {
+            let w = plan.waiting.get(&pair_id(p)).unwrap_or_else(|| panic!("{} waits", p));
+            assert_eq!(w.score, 3);
+            assert_eq!(w.full, vec!["req:hub".to_string()]);
+            assert_eq!(w.cause.generation, 5);
+        }
+        let degree = plan
+            .open
+            .iter()
+            .filter(|g| pair_members(&g.target).is_some_and(|(a, b)| a == "req:hub" || b == "req:hub"))
+            .count();
+        assert_eq!(degree, limits::PAIRS_PER_REQUIREMENT_CAP);
+        let g = plan.open.iter().find(|g| g.id == pair_id("req:p01")).unwrap();
+        assert!(
+            g.hints
+                .iter()
+                .any(|h| h == "score 3; req:hub: 4 pair(s) waiting, req:p01: none waiting"),
+            "{:?}",
+            g.hints
+        );
+        let g12 = plan.open.iter().find(|g| g.id == pair_id("req:p12")).unwrap();
+        assert!(g12.hints.iter().any(|h| h.starts_with("score 4;")), "{:?}", g12.hints);
+        // The board lists the waiting pairs and explains one; none of them is a goal.
+        let b = crate::board::Board::derive(
+            &s,
+            &crate::board::tests::project_for(&s),
+            &crate::board::tests::control_auto(),
+        );
+        assert_eq!(b.waiting.len(), 4);
+        assert!(b.goal(&pair_id("req:p08")).is_none());
+        assert!(b.waiting_pair("req:hub~req:p08").is_some());
+        let text = b.explain(&s, &pair_id("req:p08")).expect("explains a waiting pair");
+        assert!(text.contains("waiting under the cap"), "{}", text);
+        assert!(text.contains("req:hub hold(s) 8 open pairs"), "{}", text);
+        assert!(b.summary_line().contains("4 pair(s) waiting under the cap"));
+    }
+
+    // (c) A pinned pair opens even when its side is saturated: an open contradiction
+    // ties the hub to req:p11, which would otherwise wait, and the slot it takes
+    // sends req:p07 to waiting instead. Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn a_pinned_pair_opens_on_a_saturated_side() {
+        let mut s = fanned_store();
+        s.graph.diagnostics.insert(
+            "diag:contradiction-1".into(),
+            Diagnostic {
+                rule: "contradiction".into(),
+                severity: "error".into(),
+                subjects: vec!["req:hub".into(), "req:p11".into()],
+                message: "cannot both hold".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let plan = pair_plan(&s);
+        let open: Vec<&str> = plan.open.iter().map(|g| g.id.as_str()).collect();
+        assert!(open.contains(&pair_id("req:p11").as_str()), "{:?}", open);
+        assert!(open.contains(&pair_id("req:p12").as_str()), "{:?}", open);
+        assert_eq!(open.len(), limits::PAIRS_PER_REQUIREMENT_CAP, "{:?}", open);
+        assert!(plan.waiting.contains_key(&pair_id("req:p07")));
+        assert!(!plan.waiting.contains_key(&pair_id("req:p11")));
+        // A failed pair is pinned too and holds no slot: failing req:p08's pair
+        // keeps it on the board without costing req:p07 its slot back.
+        s.status.failed.push(FailedGoal {
+            goal: plan
+                .open
+                .iter()
+                .find(|g| g.id == pair_id("req:p01"))
+                .cloned()
+                .map(|mut g| {
+                    g.id = pair_id("req:p08");
+                    g.target = pair_target("req:hub", "req:p08");
+                    g
+                })
+                .unwrap(),
+            reason: "undecidable".into(),
+        });
+        let plan = pair_plan(&s);
+        let open: Vec<&str> = plan.open.iter().map(|g| g.id.as_str()).collect();
+        assert!(open.contains(&pair_id("req:p08").as_str()), "{:?}", open);
+        assert_eq!(open.len(), limits::PAIRS_PER_REQUIREMENT_CAP + 1, "{:?}", open);
+        assert!(plan.waiting.contains_key(&pair_id("req:p07")), "{:?}", plan.waiting.keys());
+    }
+
+    // (e) A judged partner derives no pair from the record that lists it; a new
+    // record on the same requirement starts with an empty `judged`, so the pair
+    // derives again with the new cause. Mirrors docs/compiler/graph.md#change-records.
+    #[test]
+    fn a_re_revised_requirement_starts_with_an_empty_judged_list() {
+        let mut s = fanned_store();
+        for c in s.status.changes.iter_mut().filter(|c| c.subject == "req:p01") {
+            c.add_judged("req:hub");
+            c.add_judged("req:hub");
+            assert_eq!(c.judged(), vec!["req:hub".to_string()]);
+        }
+        let plan = pair_plan(&s);
+        assert!(plan.open.iter().all(|g| g.id != pair_id("req:p01")));
+        assert!(!plan.waiting.contains_key(&pair_id("req:p01")));
+        // The slot freed opens the next pair by score and target.
+        assert!(plan.open.iter().any(|g| g.id == pair_id("req:p08")));
+        // Revised again: the new record supersedes nothing of the created kind but
+        // carries an empty list, and the pair derives from it with the new cause.
+        let mut batch = store::RecordBatch::new(6);
+        batch.push(0, store::CHANGE_REQ_REVISED, "req:p01", "fields", Value::Null);
+        for r in batch.records() {
+            s.status.record_change(r.clone());
+        }
+        let revised = s
+            .status
+            .changes
+            .iter()
+            .find(|c| c.kind == store::CHANGE_REQ_REVISED && c.subject == "req:p01")
+            .unwrap();
+        assert!(revised.judged().is_empty());
+        let plan = pair_plan(&s);
+        let g = plan
+            .open
+            .iter()
+            .find(|g| g.id == pair_id("req:p01"))
+            .expect("the pair derives again");
+        assert_eq!(g.cause.as_ref().map(|c| c.generation), Some(6));
+        assert_eq!(g.change["revised"], "req:p01");
+        // A second revision supersedes the first record; its list is empty again.
+        for c in s.status.changes.iter_mut().filter(|c| c.subject == "req:p01") {
+            c.add_judged("req:hub");
+        }
+        let mut batch = store::RecordBatch::new(7);
+        batch.push(0, store::CHANGE_REQ_REVISED, "req:p01", "fields", Value::Null);
+        for r in batch.records() {
+            s.status.record_change(r.clone());
+        }
+        let revised: Vec<&ChangeRecord> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.kind == store::CHANGE_REQ_REVISED && c.subject == "req:p01")
+            .collect();
+        assert_eq!(revised.len(), 1);
+        assert_eq!(revised[0].generation, 7);
+        assert!(revised[0].judged().is_empty());
     }
 }

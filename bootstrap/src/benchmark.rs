@@ -605,14 +605,25 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             if let Some(s) = arg["subject"].as_str() {
                 wanted.push(s.to_string());
             }
+            // A diagnostic names a subject directly, or through a requirement whose
+            // entities include it: a contradiction filed on two requirements of one
+            // entity is on that entity. Mirrors docs/benchmark/cases.md#checks.
+            let names = |d: &crate::model::Diagnostic, want: &str| {
+                let want = store.resolve_id(want);
+                d.subjects.iter().any(|s| {
+                    let s = store.resolve_id(s);
+                    s == want
+                        || store
+                            .graph
+                            .requirements
+                            .get(s)
+                            .is_some_and(|r| r.entities.iter().any(|e| store.resolve_id(e) == want))
+                })
+            };
             let found = store.graph.diagnostics.values().any(|d| {
                 d.lifecycle == "open"
                     && d.rule == rule
-                    && wanted.iter().all(|want| {
-                        d.subjects
-                            .iter()
-                            .any(|s| store.resolve_id(s) == store.resolve_id(want))
-                    })
+                    && wanted.iter().all(|want| names(d, want))
             });
             (!found).then(|| {
                 format!(
@@ -1128,7 +1139,7 @@ fn run_case_turn(
     llm: &Llm,
     snapshot: Store,
     item: &crate::model::WorkItem,
-    _lint: &crate::project::Linting,
+    lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
     transcript: Option<&std::path::Path>,
     // A snippet runs a goal the board derived, change and hints intact; a case
@@ -1146,7 +1157,8 @@ fn run_case_turn(
         Some(g) => WorkScope::for_batch(&format!("snippet-{}", g.id), std::slice::from_ref(g)),
         None => WorkScope::from_item(item),
     };
-    let prompt = crate::session::preview(&snapshot, std::slice::from_ref(&goal));
+    // The case's own lint rules ride on the project block (docs/benchmark/cases.md).
+    let prompt = crate::session::preview_with(&snapshot, std::slice::from_ref(&goal), lint);
     // The session holds what its prompt lists, as a build session does
     // (docs/benchmark/benchmark.md#runs): the same seeding `begin_goals` applies.
     let (loaded, skills) = crate::session::initial_loaded(&snapshot, std::slice::from_ref(&goal));

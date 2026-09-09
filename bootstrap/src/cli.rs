@@ -1595,7 +1595,7 @@ pub fn run_preview(args: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(&[], opts);
     let (store, control, board) = board_from_disk(&proj, &out);
     let target = args.first().map(String::as_str).unwrap_or("").trim();
-    match preview_text(&store, &control, &board, target) {
+    match preview_text(&store, &control, &board, target, &proj.linting) {
         Ok(text) => {
             print!("{}", text);
             0
@@ -1636,9 +1636,11 @@ fn batch_prompt(
     control: &crate::control::Control,
     goals: &[crate::model::Goal],
     batch_id: &str,
+    lint: &crate::project::Linting,
 ) -> String {
     let (loaded, skills) = crate::session::initial_loaded(store, goals);
-    let mut pb = crate::session::ProjectBlock::compute(store, goals, &control.compile);
+    let mut pb =
+        crate::session::ProjectBlock::compute(store, goals, &control.compile).with_lint(lint);
     pb.batch = batch_id.to_string();
     crate::session::session_prompt(store, goals, &loaded, &skills, &pb)
 }
@@ -1650,6 +1652,7 @@ pub(crate) fn preview_text(
     control: &crate::control::Control,
     board: &crate::board::Board,
     target: &str,
+    lint: &crate::project::Linting,
 ) -> Result<String, String> {
     if target.is_empty() {
         // The batch the scheduler would claim next.
@@ -1669,6 +1672,7 @@ pub(crate) fn preview_text(
             control,
             &batch_goals(board, batch),
             &batch.id,
+            lint,
         ));
     }
     // A batch id, as the board lists them.
@@ -1678,6 +1682,7 @@ pub(crate) fn preview_text(
             control,
             &batch_goals(board, batch),
             &batch.id,
+            lint,
         ));
     }
     // A goal id, or a target with goals on it: a node id, a section reference, or a
@@ -1741,6 +1746,7 @@ pub(crate) fn preview_text(
             control,
             &batch_goals(board, batch),
             &batch.id,
+            lint,
         ));
     }
     let reason = match board.readiness.get(&goal.id) {
@@ -1758,7 +1764,13 @@ pub(crate) fn preview_text(
         "not ready: {} (the batch id {} below is a placeholder until the scheduler forms its batch)\n{}",
         reason,
         placeholder,
-        batch_prompt(store, control, std::slice::from_ref(&goal), &placeholder)
+        batch_prompt(
+            store,
+            control,
+            std::slice::from_ref(&goal),
+            &placeholder,
+            lint
+        )
     ))
 }
 
@@ -2364,7 +2376,8 @@ mod tests {
         let batch = board.batches.first().expect("a ready batch").clone();
         assert!(!batch.id.ends_with("-0"), "batches number from 1: {}", batch.id);
 
-        let text = preview_text(&store, &control, &board, "").unwrap();
+        let lint = crate::project::Linting::default();
+        let text = preview_text(&store, &control, &board, "", &lint).unwrap();
         let proto = text
             .lines()
             .find(|l| l.starts_with("PROTOCOL"))
@@ -2374,11 +2387,14 @@ mod tests {
         // The mode is the control plane's, never a constant.
         assert!(text.contains("auto mode"), "{}", text);
 
-        assert_eq!(preview_text(&store, &control, &board, &batch.id).unwrap(), text);
-        let by_doc = preview_text(&store, &control, &board, "docs/a.md").unwrap();
+        assert_eq!(
+            preview_text(&store, &control, &board, &batch.id, &lint).unwrap(),
+            text
+        );
+        let by_doc = preview_text(&store, &control, &board, "docs/a.md", &lint).unwrap();
         assert!(by_doc.contains(&batch.id), "{}", by_doc);
-        assert!(preview_text(&store, &control, &board, "b0-99").is_err());
-        assert!(preview_text(&store, &control, &board, "ent:ghost").is_err());
+        assert!(preview_text(&store, &control, &board, "b0-99", &lint).is_err());
+        assert!(preview_text(&store, &control, &board, "ent:ghost", &lint).is_err());
         std::fs::remove_dir_all(proj.root).ok();
     }
 

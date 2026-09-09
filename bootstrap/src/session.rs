@@ -895,6 +895,9 @@ pub struct ProjectBlock {
     pub blocked: usize,
     // The batch id: names the session and the protocol line's {target}.
     pub batch: String,
+    // The project's lint rules with their severities, so a `lint` diagnostic names a
+    // rule the model has read. Mirrors docs/compiler/sessions.md#the-prompt.
+    pub lint: crate::project::Linting,
 }
 
 impl ProjectBlock {
@@ -919,7 +922,15 @@ impl ProjectBlock {
             elsewhere: total.saturating_sub(here),
             blocked,
             batch: format!("b{}-0", store.status.generation),
+            lint: Default::default(),
         }
+    }
+
+    // The project's lint rules ride on the block. Mirrors
+    // docs/compiler/sessions.md#the-prompt.
+    pub fn with_lint(mut self, lint: &crate::project::Linting) -> ProjectBlock {
+        self.lint = lint.clone();
+        self
     }
 
     fn render(&self) -> String {
@@ -942,6 +953,16 @@ impl ProjectBlock {
             "- board: {} goal(s) in this session; {} elsewhere; {} blocked on human answers\n",
             self.here, self.elsewhere, self.blocked
         ));
+        let rules: Vec<String> = self
+            .lint
+            .warnings
+            .iter()
+            .map(|r| format!("warning: {}", r))
+            .chain(self.lint.errors.iter().map(|r| format!("error: {}", r)))
+            .collect();
+        if !rules.is_empty() {
+            s.push_str(&format!("- lint: {}\n", rules.join("; ")));
+        }
         s
     }
 }
@@ -1169,8 +1190,13 @@ fn resolves(store: &Store, target: &str) -> bool {
 // same code, no LLM call, nothing written. `jazyk preview` and the GUI use it.
 // Mirrors docs/compiler/sessions.md#preview.
 pub fn preview(store: &Store, batch: &[Goal]) -> String {
+    preview_with(store, batch, &Default::default())
+}
+
+// The same preview with the project's lint rules on the project block.
+pub fn preview_with(store: &Store, batch: &[Goal], lint: &crate::project::Linting) -> String {
     let (loaded, skills) = initial_loaded(store, batch);
-    let pb = ProjectBlock::compute(store, batch, "auto");
+    let pb = ProjectBlock::compute(store, batch, "auto").with_lint(lint);
     session_prompt(store, batch, &loaded, &skills, &pb)
 }
 
@@ -1264,6 +1290,30 @@ mod tests {
 
     // The initially loaded set obeys the high-water ceiling on the normal path.
     // Mirrors docs/compiler/context.md#policy.
+    // Mirrors docs/compiler/sessions.md#the-prompt: the project block carries the
+    // lint rules with their severities, and nothing when the project declares none.
+    #[test]
+    fn project_block_carries_the_lint_rules() {
+        let s = Store::default();
+        let bare = ProjectBlock::compute(&s, &[], "auto").render();
+        assert!(!bare.contains("- lint:"), "{}", bare);
+        let lint = crate::project::Linting {
+            warnings: vec!["An em dash appears in prose.".into()],
+            errors: vec!["A TODO marker appears in prose.".into()],
+        };
+        let with = ProjectBlock::compute(&s, &[], "auto")
+            .with_lint(&lint)
+            .render();
+        assert!(
+            with.contains(
+                "- lint: warning: An em dash appears in prose.; error: A TODO marker appears in prose.\n"
+            ),
+            "{}",
+            with
+        );
+        assert!(preview_with(&s, &[], &lint).contains("- lint: warning: An em dash"));
+    }
+
     #[test]
     fn initial_loaded_stays_under_the_high_water_mark() {
         let s = fixture();

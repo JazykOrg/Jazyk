@@ -149,8 +149,9 @@ Computed by the harness and rendered under the goal block:
   level view of the entity when it has children and of the level it sits in, so a
   review reads the drawing without guessing view ids
   ([level views](../model/view.md#level-views)).
-- The project's lint rules, restated with their severities
-  ([linting](../project-settings.md#linting)).
+- The project's lint rules with their severities, on the `## Project` block's `lint`
+  line ([the prompt](../sessions.md#the-prompt),
+  [linting](../project-settings.md#linting)).
 - The requirement count against `requirements-per-entity` when past the soft limit,
   as information only: splitting is [`abstract-entity`](./abstract-entity.md) work,
   ready once this review resolves ([the limits registry](../graph.md#limits)).

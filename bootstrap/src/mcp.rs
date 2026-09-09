@@ -677,7 +677,8 @@ impl McpServer {
         // session. The first batch of a serving ships the agent contract and the
         // skills in full; later batches elide what the agent already saw.
         let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
-        let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile);
+        let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
+            .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
         let full = args["full"].as_bool() == Some(true);
         let (include_contract, skip_skills) = {
@@ -1077,7 +1078,11 @@ impl McpServer {
             _ => {
                 let goal = item.to_goal(crate::model::GoalState::Open);
                 reply["instructions"] =
-                    json!(crate::session::preview(&store, std::slice::from_ref(&goal)));
+                    json!(crate::session::preview_with(
+                        &store,
+                        std::slice::from_ref(&goal),
+                        &case.lint
+                    ));
                 if case.task_type == "generate-entity" {
                     reply["deliverableDir"] = json!(gs.deliverable.to_string_lossy());
                     reply["note"] = json!("write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open");

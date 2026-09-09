@@ -100,7 +100,9 @@ Graph checks:
   bounds.
 - `diagnosticExists {rule, subject?, subjects?}`: an open diagnostic with the rule
   exists; with `subject`, its subjects include it; with `subjects`, its subjects
-  include every listed id.
+  include every listed id. A subject is included when the diagnostic names it or names
+  a requirement whose `entities` include it: a contradiction filed on two requirements
+  of one entity is on that entity, the shape the judgment doctrine asks for.
 - `diagnosticAbsent {rule}`: no open diagnostic with the rule exists.
 - `coverageSet {section, state}`: the section's coverage state equals `state`.
 

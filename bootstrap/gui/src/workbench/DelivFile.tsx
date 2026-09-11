@@ -20,10 +20,12 @@ import { classHighlighter } from '@lezer/highlight'
 import { languages } from '@codemirror/language-data'
 import { MergeView } from '@codemirror/merge'
 import { get, type DelivOwners } from '../lib/api'
-import { useDelivBaseline, useMatrix } from '../lib/queries'
+import { useDelivBaseline, useMatrix, useProject } from '../lib/queries'
 import { useInspector } from '../lib/nav'
 import { lineMarks } from '../lib/diff'
+import MarkdownView from '../components/MarkdownView'
 import '../routes/routes.css'
+import '../components/markdown.css'
 
 // A resolved site from the ledger: located against the current text (line is null
 // when lost), never parsed out of the file itself.
@@ -272,7 +274,13 @@ export default function DelivFile() {
   const [searchParams, setSearchParams] = useSearchParams()
   const matrix = useMatrix()
   const { openNode } = useInspector()
+  const projectQ = useProject()
   const [diffMode, setDiffMode] = useState(false)
+  // A markdown deliverable opens rendered; `source` swaps the viewer in
+  // (docs/frontends/gui.md#deliverable-viewer).
+  const markdown = /\.md$/i.test(filePath)
+  const [source, setSource] = useState(false)
+  useEffect(() => setSource(false), [filePath])
   const rows = matrix.data?.rows ?? {}
   const statusOf = useMemo(() => {
     return (id: string) => rows[id]?.status ?? 'unverified'
@@ -346,6 +354,15 @@ export default function DelivFile() {
         <span className="mono">{open.path}</span>
         <span className="muted">read-only</span>
         <div className="ide-topbar-right row">
+          {markdown && (
+            <button
+              className={source ? 'btn-on' : ''}
+              title={source ? 'back to the rendered page' : 'the markdown as written, with its sites'}
+              onClick={() => setSource((v) => !v)}
+            >
+              source
+            </button>
+          )}
           <button
             className={diffMode ? 'btn-on' : ''}
             disabled={baseline === null}
@@ -360,24 +377,28 @@ export default function DelivFile() {
           </button>
         </div>
       </div>
-      <ReadOnlyCode
-        path={open.path}
-        text={open.text ?? ''}
-        baseline={baseline}
-        diffMode={diffMode && baseline !== null}
-        sites={open.sites ?? []}
-        status={statusOf}
-        onOpenNode={(id) => {
-          // Keep ?site= out of the way so the inspector's site links re-fire.
-          if (searchParams.get('site')) {
-            const next = new URLSearchParams(searchParams)
-            next.delete('site')
-            setSearchParams(next, { replace: true })
-          }
-          openNode(id)
-        }}
-        revealRef={revealRef}
-      />
+      {markdown && !source && !diffMode && projectQ.data ? (
+        <MarkdownView text={open.text ?? ''} baseAbs={`${projectQ.data.deliverable}/${open.path}`} />
+      ) : (
+        <ReadOnlyCode
+          path={open.path}
+          text={open.text ?? ''}
+          baseline={baseline}
+          diffMode={diffMode && baseline !== null}
+          sites={open.sites ?? []}
+          status={statusOf}
+          onOpenNode={(id) => {
+            // Keep ?site= out of the way so the inspector's site links re-fire.
+            if (searchParams.get('site')) {
+              const next = new URLSearchParams(searchParams)
+              next.delete('site')
+              setSearchParams(next, { replace: true })
+            }
+            openNode(id)
+          }}
+          revealRef={revealRef}
+        />
+      )}
     </>
   )
 }

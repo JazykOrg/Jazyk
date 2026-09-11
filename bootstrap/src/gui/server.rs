@@ -1,6 +1,9 @@
 // Router assembly, session-token check, bind with port fallback, graceful shutdown.
 use super::state::SharedState;
-use super::{api, assets, chat, deliverable, diff, docs, events, jobs, lsp_ws};
+use super::{
+    api, assets, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
+    outfiles, views_api,
+};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
@@ -44,7 +47,17 @@ pub fn router(st: SharedState) -> Router {
         .route("/project", get(api::project))
         .route("/status", get(api::status))
         .route("/graph", get(api::graph))
+        .route("/board", get(board_api::board))
+        .route("/preview", get(board_api::preview))
+        .route("/explain", get(board_api::explain))
+        .route("/ripple", get(board_api::ripple))
+        .route("/views", get(views_api::views))
+        .route("/views/{id}", get(views_api::view))
+        .route("/views/{id}/page", get(card_api::view_page_handler))
+        .route("/tree", get(views_api::tree))
+        .route("/facts/{id}/edit", post(facts::edit_fact))
         .route("/entities/{id}", get(api::entity))
+        .route("/entities/{id}/card", get(card_api::entity_card_handler))
         .route("/requirements/{id}", get(api::requirement))
         .route("/search", get(api::search))
         .route("/context", get(api::context))
@@ -59,15 +72,23 @@ pub fn router(st: SharedState) -> Router {
         .route("/questions", get(api::questions))
         .route("/questions/{id}/answer", post(api::answer_question))
         .route("/docs", get(api::docs))
-        .route("/docs/content", get(api::doc_content).put(docs::doc_write).delete(docs::doc_delete))
+        .route(
+            "/docs/content",
+            get(api::doc_content)
+                .put(docs::doc_write)
+                .delete(docs::doc_delete),
+        )
         .route("/docs/baseline", get(api::doc_baseline))
         .route("/docs/rename", post(docs::doc_rename))
         .route("/gen/pending", get(api::gen_pending))
-        .route("/gen/task/{id}", get(api::gen_task))
+        .route("/gen/package/{id}", get(api::gen_package))
         .route("/verify/pending", get(api::verify_pending))
         .route("/verify/matrix", get(api::verify_matrix))
         .route("/docsgen/{slug}", get(api::docsgen))
-        .route("/chat/sessions", get(chat::list_sessions).post(chat::post_session))
+        .route(
+            "/chat/sessions",
+            get(chat::list_sessions).post(chat::post_session),
+        )
         .route("/chat/sessions/{id}", get(chat::get_session))
         .route("/chat/sessions/{id}/prompt", post(chat::post_prompt))
         .route("/chat/sessions/{id}/cancel", post(chat::cancel))
@@ -78,6 +99,8 @@ pub fn router(st: SharedState) -> Router {
         .route("/deliverable", get(deliverable::listing))
         .route("/deliverable/file", get(deliverable::file))
         .route("/deliverable/baseline", get(deliverable::baseline))
+        .route("/out/file", get(outfiles::file))
+        .route("/out/list", get(outfiles::list))
         .route("/trace", get(jobs::list_traces))
         .route("/trace/{stem}", get(jobs::get_trace))
         .route("/trace/{stem}/{n}", get(jobs::get_trace_event))

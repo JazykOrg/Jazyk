@@ -1,7 +1,9 @@
 $schema: http://json-schema.org/draft-07/schema#
 $id: https://jazyk.org/schemas/project-settings.json
 title: Jazyk Project Settings
-description: Schema for the jazyk.toml project configuration file
+description: >-
+  Schema for the jazyk.toml project configuration file. Limits and budgets are not
+  settings: they are built into the binary as the limits registry
 type: object
 properties:
   redirect:
@@ -9,18 +11,6 @@ properties:
     description: >-
       Delegate discovery to a nested project directory holding the real jazyk.toml.
       A redirecting file contains only this key. Redirects do not chain
-  gen:
-    type: object
-    description: Generation workflow settings
-    properties:
-      deliverable:
-        type: string
-        description: >-
-          Directory the end product is generated into, resolved relative to the project
-          root. Defaults to '.', the project root itself. Excluded from doc input except
-          where the docs glob whitelists it. The project file never states what
-          the deliverable is; the medium is a fact the documents state
-    additionalProperties: false
   docs:
     type: object
     description: Configuration for documentation processing
@@ -48,6 +38,7 @@ properties:
             path:
               type: string
               description: Path to the handler implementation
+          additionalProperties: false
       linting:
         type: object
         description: Linting rules for documentation
@@ -55,8 +46,8 @@ properties:
           rules:
             type: object
             description: >-
-              Plain-English rules grouped by the severity they produce. Evaluated during
-              review turns and checks
+              Plain-English rules grouped by the severity they produce. Evaluated by
+              review-entity sessions and by the checks; findings are lint diagnostics
             properties:
               warnings:
                 type: array
@@ -69,12 +60,14 @@ properties:
                 items:
                   type: string
             additionalProperties: false
+        additionalProperties: false
+    additionalProperties: false
   llm:
     type: object
     description: >-
-      LLM backend, an OpenAI-compatible chat completions endpoint. Resolved per field:
-      CLI flag, then environment variable, then global config, then this table, then
-      built-in default
+      LLM backend for the embedded agent, an OpenAI-compatible chat completions
+      endpoint. Resolved per field: CLI flag, then environment variable, then this
+      table, then global config, then built-in default
     properties:
       base_url:
         type: string
@@ -92,6 +85,7 @@ properties:
         type: number
         description: Sampling temperature
         default: 0
+    additionalProperties: false
   acp:
     type: object
     description: >-
@@ -101,8 +95,8 @@ properties:
       agent:
         type: string
         description: >-
-          Name of the agent profile to use. 'embedded' is built in and runs
-          'jazyk agent'
+          Name of the agent profile to use for every session an executor override does
+          not claim. 'embedded' is built in and runs 'jazyk agent'
         default: embedded
       agents:
         type: object
@@ -129,56 +123,107 @@ properties:
             serve_files:
               type: boolean
               description: >-
-                Serve file and command tools into the agent's sessions, for agents
-                that bring no editor of their own
+                Serve file and command tools into the agent's generation sessions, for
+                agents that bring no editor of their own
               default: false
           additionalProperties: false
     additionalProperties: false
+  executors:
+    type: object
+    description: >-
+      Executor overrides per goal kind or goal class. A key is a session-running goal
+      kind or a class (compile, gc); a value is an ACP profile name. Resolved per
+      batch: the --agent flag, then JAZYK_ACP_AGENT, then the kind's key, then the
+      class's key (project table over global config for each), then the acp agent
+    propertyNames:
+      type: string
+      enum:
+        - compile
+        - gc
+        - place-anchors
+        - reconcile-section
+        - rejudge-pair
+        - review-entity
+        - retrace
+        - conform-instance
+        - bind
+        - generate
+        - verify
+        - declare-edges
+        - dedupe-candidates
+        - curate-view
+        - split-view
+        - abstract-entity
+    additionalProperties:
+      type: string
+      description: A profile name, 'embedded' or one of acp.agents
   roots:
     type: object
-    description: Root documents. They seed reconciler scheduling and anchor reachability checks
+    description: Root documents. They seed readiness (link levels, roots first) and anchor the reachability check
     properties:
       files:
         type: array
         description: Glob patterns matching the root documents, matched like docs.glob
         items:
           type: string
-  limits:
-    type: object
-    description: Turn and build budgets
-    properties:
-      turn_rounds:
-        type: integer
-        description: Maximum message rounds per turn
-        minimum: 1
-        default: 12
-      turn_mutations:
-        type: integer
-        description: Maximum staged mutations per turn
-        minimum: 1
-        default: 64
-      context_budget:
-        type: integer
-        description: Maximum context pack size in characters
-        minimum: 1
-        default: 24000
-      build_turn_factor:
-        type: integer
-        description: >-
-          Per-build turn cap factor. The cap is build_turn_factor times the number of
-          dirty documents plus touched entities
-        minimum: 1
-        default: 3
-      align_move_similarity:
-        type: number
-        description: Shingle similarity at or above which alignment pairs two sections as a move
-        minimum: 0
-        maximum: 1
-        default: 0.5
-      align_split_coverage:
-        type: number
-        description: Share of an old section two or more new sections must cover for a split or merge
-        minimum: 0
-        maximum: 1
-        default: 0.6
     additionalProperties: false
+  gen:
+    type: object
+    description: Generation workflow settings
+    properties:
+      deliverable:
+        type: string
+        description: >-
+          Directory the end product is generated into, resolved relative to the project
+          root. Defaults to '.', the project root itself. Excluded from doc input except
+          where the docs glob whitelists it. The project file never states what
+          the deliverable is; the medium is a fact the documents state
+        default: '.'
+      worker:
+        type: string
+        description: >-
+          The built-in generation worker. 'agentic' runs each generate goal as a session
+          with file and command tools; 'pipeline' keeps the fixed file-reply sequence
+        enum:
+          - agentic
+          - pipeline
+        default: agentic
+      code:
+        type: array
+        description: >-
+          Glob patterns, relative to the deliverable, scoping which files count as
+          implementation for the unclaimed report and decompilation. Default: every
+          file under the deliverable minus the standard exclusions
+        items:
+          type: string
+    additionalProperties: false
+  workflow:
+    type: object
+    description: >-
+      Defaults for the control plane. The live values sit in control.yaml in the out
+      directory
+    properties:
+      compile:
+        type: string
+        description: manual gates compilation behind a release; auto lets a watcher act as changes land
+        enum:
+          - manual
+          - auto
+        default: manual
+      generate:
+        type: string
+        description: manual gates generation behind a release; auto lets a watcher act as changes land
+        enum:
+          - manual
+          - auto
+        default: manual
+      worker:
+        type: string
+        description: Who acts on a GUI release
+        enum:
+          - internal
+          - agent
+          - any
+        default: any
+    additionalProperties: false
+additionalProperties: false

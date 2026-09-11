@@ -1,18 +1,22 @@
 // The workbench shell: rail | sidebar | center + inspector, activity panel and
 // status bar below. Navigation swaps panes, never the page
 // (docs/frontends/gui.md#layout).
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from 'react-router'
 import StatusBar from './components/StatusBar'
 import CommandPalette from './components/CommandPalette'
 import ConnectionGuard from './components/ConnectionGuard'
 import { useApp } from './lib/store'
 import { useInspector } from './lib/nav'
+import { ExploreHistory } from './lib/explore'
 import Explorer from './workbench/Explorer'
 import GraphSidebar from './workbench/GraphSidebar'
+import BoardSidebar from './workbench/BoardSidebar'
+import Board from './routes/Board'
 import WorkSidebar from './workbench/WorkSidebar'
 import DocEditor from './workbench/DocEditor'
 import DelivFile from './workbench/DelivFile'
+import OutFile from './workbench/OutFile'
 import MapCenter from './workbench/MapCenter'
 import Inspector from './workbench/Inspector'
 import Activity from './workbench/Activity'
@@ -31,14 +35,16 @@ import './workbench/workbench.css'
 const RAIL = [
   ['/files', '▤', 'files'],
   ['/graph', '⬡', 'graph'],
+  ['/board', '▦', 'board'],
   ['/work', '⚒', 'work'],
-  ['/benchmarks', '⚖', 'bench'],
+  ['/benchmarks', '⚖', 'benchmarks'],
   ['/feedback', '⚑', 'feedback'],
   ['/settings', '⚙', 'settings'],
 ] as const
 
 function railMode(pathname: string): string {
   if (pathname.startsWith('/graph')) return '/graph'
+  if (pathname.startsWith('/board')) return '/board'
   if (pathname.startsWith('/work')) return '/work'
   if (pathname.startsWith('/benchmarks')) return '/benchmarks'
   if (pathname.startsWith('/feedback')) return '/feedback'
@@ -106,6 +112,7 @@ export default function App() {
         <aside className="wb-side">
           {mode === '/files' && <Explorer />}
           {mode === '/graph' && <GraphSidebar />}
+          {mode === '/board' && <BoardSidebar />}
           {mode === '/work' && <WorkSidebar />}
           {mode === '/benchmarks' && (
             <div className="wb-side-pad muted">
@@ -151,7 +158,9 @@ export default function App() {
                 <Route path="/files" element={<Scroll><FilesHome /></Scroll>} />
                 <Route path="/files/docs/*" element={<DocEditor />} />
                 <Route path="/files/deliverable/*" element={<DelivFile />} />
+                <Route path="/files/out/*" element={<OutFile />} />
                 <Route path="/graph" element={<MapCenter />} />
+                <Route path="/board" element={<Scroll><Board /></Scroll>} />
                 <Route path="/work" element={<Scroll><Work /></Scroll>} />
                 <Route path="/work/gen/:id" element={<Scroll><GenTask /></Scroll>} />
                 <Route path="/work/verify" element={<Scroll><VerifyMatrix /></Scroll>} />
@@ -182,17 +191,25 @@ export default function App() {
       <CommandPalette />
       <CommitNote />
       <ConnectionGuard />
+      <ExploreHistory />
     </>
   )
 }
 
-// The only transient surface: a one-line committed-changeset notice, itself a link.
+// The only transient surface: a one-line committed-changeset notice, itself a link
+// into the app (never a page load). It leaves on its own a few seconds later.
 function CommitNote() {
   const last = useApp((a) => a.lastCommit)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!last) return
+    const t = window.setTimeout(() => tick((n) => n + 1), 6100)
+    return () => window.clearTimeout(t)
+  }, [last])
   if (!last || Date.now() - last.at > 6000) return null
   return (
-    <a className="commit-note mono" href={`/journal/${last.generation}`}>
+    <Link className="commit-note mono" to={`/journal/${last.generation}`}>
       g{last.generation} committed →
-    </a>
+    </Link>
   )
 }

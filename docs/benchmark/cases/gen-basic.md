@@ -1,6 +1,6 @@
 # gen-basic
 
-Grades the generation turn end to end: the model gets a fixture graph (one entity,
+Grades the generation session end to end: the model gets a fixture graph (one entity,
 three requirements naming a small shell deliverable) and an empty temp deliverable. It
 must write the product and its tests with the file tools, record an honest manifest,
 and produce falsifiable tests. The falsifiability check is the heart: the harness runs
@@ -15,8 +15,8 @@ description: Generate a small shell deliverable with an honest manifest and fals
 tier: generation
 par:
   rounds: 10
-task:
-  type: generate-entity
+goal:
+  kind: generate
   target: ent:greeter
 given:
   docs:
@@ -36,19 +36,19 @@ given:
             quote: The Greeter is a POSIX shell script named hello.sh.
     requirements:
       req:greeter-1:
-        ears: The Greeter shall be a POSIX shell script named hello.sh.
+        statement: The Greeter shall be a POSIX shell script named hello.sh.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter
           quote: The Greeter is a POSIX shell script named hello.sh.
       req:greeter-2:
-        ears: The Greeter shall print exactly `Hello, Jazyk!` to stdout and exit 0.
+        statement: The Greeter shall print exactly `Hello, Jazyk!` to stdout and exit 0.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter
           quote: Running it prints exactly
       req:greeter-3:
-        ears: When run with `-q`, the Greeter shall print nothing and exit 0.
+        statement: When run with `-q`, the Greeter shall print nothing and exit 0.
         entities: [ent:greeter]
         source:
           section: docs/greeter.md#/greeter

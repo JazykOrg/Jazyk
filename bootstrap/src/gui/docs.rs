@@ -87,9 +87,14 @@ pub async fn doc_write(
     Json(body): Json<DocWrite>,
 ) -> Response {
     let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
-        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
+        return err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid document path {}", p.path),
+        );
     };
-    let on_disk = std::fs::read_to_string(&abs).ok().map(|t| crate::model::hash_hex(&t));
+    let on_disk = std::fs::read_to_string(&abs)
+        .ok()
+        .map(|t| crate::model::hash_hex(&t));
     if on_disk != body.base_hash {
         return (
             StatusCode::CONFLICT,
@@ -102,11 +107,17 @@ pub async fn doc_write(
     }
     if let Some(parent) = abs.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot create {}: {}", parent.display(), e));
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("cannot create {}: {}", parent.display(), e),
+            );
         }
     }
     if let Err(e) = std::fs::write(&abs, &body.text) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot write {}: {}", p.path, e));
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("cannot write {}: {}", p.path, e),
+        );
     }
     Json(json!({ "path": p.path, "hash": crate::model::hash_hex(&body.text) })).into_response()
 }
@@ -121,10 +132,16 @@ pub struct DocRename {
 // and the reconciler rewrites references mechanically.
 pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRename>) -> Response {
     let Some(from) = safe_doc_path(&st.proj(), &body.from) else {
-        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.from));
+        return err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid document path {}", body.from),
+        );
     };
     let Some(to) = safe_doc_path(&st.proj(), &body.to) else {
-        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", body.to));
+        return err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid document path {}", body.to),
+        );
     };
     if !from.exists() {
         return err(StatusCode::NOT_FOUND, format!("no document {}", body.from));
@@ -134,11 +151,17 @@ pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRenam
     }
     if let Some(parent) = to.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot create {}: {}", parent.display(), e));
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("cannot create {}: {}", parent.display(), e),
+            );
         }
     }
     if let Err(e) = std::fs::rename(&from, &to) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot rename: {}", e));
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("cannot rename: {}", e),
+        );
     }
     Json(json!({ "from": body.from, "to": body.to })).into_response()
 }
@@ -147,13 +170,19 @@ pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRenam
 // disappearance and garbage collection removes what nothing mentions anymore.
 pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>) -> Response {
     let Some(abs) = safe_doc_path(&st.proj(), &p.path) else {
-        return err(StatusCode::BAD_REQUEST, format!("invalid document path {}", p.path));
+        return err(
+            StatusCode::BAD_REQUEST,
+            format!("invalid document path {}", p.path),
+        );
     };
     if !abs.exists() {
         return err(StatusCode::NOT_FOUND, format!("no document {}", p.path));
     }
     if let Err(e) = std::fs::remove_file(&abs) {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, format!("cannot delete {}: {}", p.path, e));
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("cannot delete {}: {}", p.path, e),
+        );
     }
     Json(json!({ "deleted": p.path })).into_response()
 }
@@ -202,8 +231,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlinked_parent_never_escapes() {
-        let dir = std::env::temp_dir().join(format!("jazyk-gui-symlink-test-{}", std::process::id()));
-        let outside = std::env::temp_dir().join(format!("jazyk-gui-outside-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-gui-symlink-test-{}", std::process::id()));
+        let outside =
+            std::env::temp_dir().join(format!("jazyk-gui-outside-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::remove_dir_all(&outside).ok();
         std::fs::create_dir_all(&dir).unwrap();

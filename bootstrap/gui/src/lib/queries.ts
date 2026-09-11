@@ -3,17 +3,26 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import {
   get,
   getOr404,
+  getText,
   type BenchmarkModels,
   type BenchmarkTable,
+  type BoardData,
   type Deliverable,
   type DocInfo,
   type DocRecord,
+  type EntityCardData,
   type FeedbackEntry,
   type Graph,
   type JournalEntry,
+  type OutFileInfo,
+  type PreviewData,
   type Project,
   type Status,
+  type TreeData,
   type VerifyRow,
+  type ViewDetail,
+  type ViewInfo,
+  type ViewPageData,
 } from './api'
 
 const opts = { placeholderData: keepPreviousData, staleTime: 5_000 }
@@ -26,6 +35,65 @@ export const useProject = () =>
 
 export const useGraph = () =>
   useQuery({ queryKey: ['graph'], queryFn: () => get<Graph>('/api/graph'), ...opts })
+
+// The goal board as the reconciler derives it (docs/frontends/gui.md#board).
+export const useBoard = () =>
+  useQuery({ queryKey: ['board'], queryFn: () => get<BoardData>('/api/board'), ...opts })
+
+export const useViews = () =>
+  useQuery({ queryKey: ['views'], queryFn: () => get<{ views: ViewInfo[] }>('/api/views'), ...opts })
+
+// One view resolved for drawing: members, lifted arrows, steps, the machine, the
+// picture. `detail` expands every member that many levels down, the arrows lifted
+// to the wider set (docs/frontends/gui.md#explore).
+export const useView = (id: string, detail = 0) =>
+  useQuery({
+    queryKey: ['views', id, detail],
+    queryFn: () => get<ViewDetail>(`/api/views/${encodeURIComponent(id)}${detail > 0 ? `?detail=${detail}` : ''}`),
+    enabled: id !== '',
+    ...opts,
+  })
+
+// The walk: one small card per entity and one page per diagram, from the shared
+// model (docs/frontends/gui.md#explore).
+export const useEntityCard = (id: string) =>
+  useQuery({
+    queryKey: ['card', id],
+    queryFn: () => getOr404<EntityCardData>(`/api/entities/${encodeURIComponent(id)}/card`),
+    enabled: id.startsWith('ent:'),
+    ...opts,
+  })
+
+export const useViewPage = (id: string) =>
+  useQuery({
+    queryKey: ['page', id],
+    queryFn: () => getOr404<ViewPageData>(`/api/views/${encodeURIComponent(id)}/page`),
+    enabled: id !== '',
+    ...opts,
+  })
+
+// The containment tree with each node's level view ids (docs/frontends/gui.md#graph).
+export const useTree = () =>
+  useQuery({ queryKey: ['tree'], queryFn: () => get<TreeData>('/api/tree'), ...opts })
+
+// The next session's prompt; target '' previews the first ready batch.
+export const usePreview = (target: string, enabled = true) =>
+  useQuery({
+    queryKey: ['preview', target],
+    queryFn: () => get<PreviewData>(`/api/preview${target ? `?goal=${encodeURIComponent(target)}` : ''}`),
+    enabled,
+    ...opts,
+  })
+
+export const useExplain = (target: string) =>
+  useQuery({
+    queryKey: ['explain', target],
+    queryFn: () => getOr404<{ target: string; text: string; goal?: Record<string, unknown> }>(
+      `/api/explain?target=${encodeURIComponent(target)}`,
+    ),
+    enabled: target !== '',
+    ...opts,
+  })
 
 export const useDocs = () =>
   useQuery({ queryKey: ['docs'], queryFn: () => get<{ docs: DocInfo[] }>('/api/docs'), ...opts })
@@ -101,6 +169,24 @@ export const useNode = (id: string) =>
 export const useDeliverable = () =>
   useQuery({ queryKey: ['deliverable'], queryFn: () => get<Deliverable>('/api/deliverable'), ...opts })
 
+// The files under one directory of the out directory, recursively
+// (docs/frontends/gui.md#api, the out directory). Refetched when a build commits.
+export const useOutList = (dir: string) =>
+  useQuery({
+    queryKey: ['out', 'list', dir],
+    queryFn: () => get<{ files: OutFileInfo[] }>(`/api/out/list?path=${encodeURIComponent(dir)}`),
+    ...opts,
+  })
+
+// One text file under the out directory.
+export const useOutText = (path: string) =>
+  useQuery({
+    queryKey: ['out', 'file', path],
+    queryFn: () => getText(`/api/out/file?path=${encodeURIComponent(path)}`),
+    enabled: path !== '',
+    staleTime: 5_000,
+  })
+
 // The last reconciled text; null when the document never reconciled.
 export const useDocBaseline = (path: string) =>
   useQuery({
@@ -120,12 +206,14 @@ export const useDelivBaseline = (path: string) =>
     ...opts,
   })
 
-export const useContextPack = (target: string) =>
+// What `load` renders for a target, with its expansion handles.
+export const useContextPack = (target: string, depth = 1) =>
   useQuery({
-    queryKey: ['node', 'context', target],
+    queryKey: ['node', 'context', target, depth],
     queryFn: () =>
-      get<{ pack: string; handles: { handle: string; description: string }[] }>(
-        `/api/context?target=${encodeURIComponent(target)}`,
+      get<{ target: string; pack: string; handles: string[] }>(
+        `/api/context?target=${encodeURIComponent(target)}&depth=${depth}`,
       ),
+    enabled: target !== '',
     ...opts,
   })

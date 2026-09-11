@@ -1,0 +1,1 @@
+PROTOCOL: the `jazyk` tools carry this batch, {target}. First call `begin_goals` with {"batch": "{target}"} (its reply only confirms; this serving is scoped to the batch). Stage findings with the write tools. Finish with `done` and a one-line summary; if `done` is rejected, repair exactly what the error names and call it again. Do exactly this one batch, then stop.

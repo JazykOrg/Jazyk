@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // A worker file older than this (seconds since its heartbeat) is stale and swept.
@@ -120,7 +123,9 @@ pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
                 .strip_prefix(&proj.root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            std::fs::read_to_string(f).ok().map(|t| (rel, crate::model::hash_hex(&t)))
+            std::fs::read_to_string(f)
+                .ok()
+                .map(|t| (rel, crate::model::hash_hex(&t)))
         })
         .collect()
 }
@@ -164,7 +169,10 @@ pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
         heartbeat_at: now(),
         task: String::new(),
     };
-    let h = WorkerHandle { out: out.to_path_buf(), worker };
+    let h = WorkerHandle {
+        out: out.to_path_buf(),
+        worker,
+    };
     h.write();
     h
 }
@@ -173,7 +181,11 @@ impl WorkerHandle {
     fn write(&self) {
         std::fs::create_dir_all(workers_dir(&self.out)).ok();
         if let Ok(text) = serde_norway::to_string(&self.worker) {
-            std::fs::write(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id)), text).ok();
+            std::fs::write(
+                workers_dir(&self.out).join(format!("{}.yaml", self.worker.id)),
+                text,
+            )
+            .ok();
         }
     }
 
@@ -206,9 +218,13 @@ impl Drop for WorkerHandle {
 // side effect: dead sessions disappear instead of haunting the panel.
 pub fn workers(out: &Path) -> Vec<Worker> {
     let mut v = Vec::new();
-    let Ok(entries) = std::fs::read_dir(workers_dir(out)) else { return v };
+    let Ok(entries) = std::fs::read_dir(workers_dir(out)) else {
+        return v;
+    };
     for e in entries.flatten() {
-        let Ok(text) = std::fs::read_to_string(e.path()) else { continue };
+        let Ok(text) = std::fs::read_to_string(e.path()) else {
+            continue;
+        };
         let Ok(w) = serde_norway::from_str::<Worker>(&text) else {
             std::fs::remove_file(e.path()).ok();
             continue;
@@ -232,20 +248,60 @@ pub struct Lease {
     pub worker: String,
     pub claimed_at: u64,
     pub expires_at: u64,
+    // The goal ids a batch lease holds, so the board renders claimedBy per goal.
+    // Mirrors docs/compiler/control-plane.md#workers-and-leases.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goals: Vec<String>,
 }
 
 fn leases_dir(out: &Path) -> PathBuf {
     out.join("leases")
 }
 
+// Injective file-name encoding for lease ids: alphanumerics, `-`, and `.` stand as
+// they are; everything else (`:`, `/`, `%` included) percent-encodes, so two distinct
+// ids never share a file.
+pub(crate) fn encode_lease_id(task: &str) -> String {
+    let mut s = String::with_capacity(task.len());
+    for b in task.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' => s.push(b as char),
+            _ => s.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    s
+}
+
+pub(crate) fn decode_lease_id(safe: &str) -> Option<String> {
+    let mut out: Vec<u8> = Vec::with_capacity(safe.len());
+    let bytes = safe.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = safe.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 fn lease_file(out: &Path, task: &str) -> PathBuf {
-    let safe: String = task.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
-    leases_dir(out).join(format!("{}.yaml", safe))
+    leases_dir(out).join(format!("{}.yaml", encode_lease_id(task)))
 }
 
 // Claim a task. Create-new semantics decide the winner; an expired lease is
 // reclaimable. Err carries the live holder.
 pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
+    claim_goals(out, task, worker, &[])
+}
+
+// Claim a goal batch: the lease names the goals it holds, so the board shows
+// claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
     std::fs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
     if let Some(l) = read_lease(&path) {
@@ -256,16 +312,28 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
         }
         std::fs::remove_file(&path).ok();
     }
-    let lease = Lease { task: task.to_string(), worker: worker.to_string(), claimed_at: now(), expires_at: now() + LEASE_TTL_SECS };
+    let lease = Lease {
+        task: task.to_string(),
+        worker: worker.to_string(),
+        claimed_at: now(),
+        expires_at: now() + LEASE_TTL_SECS,
+        goals: goals.to_vec(),
+    };
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
-    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
         Ok(mut f) => {
             use std::io::Write;
             f.write_all(text.as_bytes()).ok();
             Ok(())
         }
         // Lost the race to another claimant between the check and the create.
-        Err(_) => Err(read_lease(&path).map(|l| l.worker).unwrap_or_else(|| "another worker".into())),
+        Err(_) => Err(read_lease(&path)
+            .map(|l| l.worker)
+            .unwrap_or_else(|| "another worker".into())),
     }
 }
 
@@ -290,7 +358,9 @@ fn read_lease(path: &Path) -> Option<Lease> {
 // The live leases by task. Expired files are swept.
 pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
     let mut m = BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(leases_dir(out)) else { return m };
+    let Ok(entries) = std::fs::read_dir(leases_dir(out)) else {
+        return m;
+    };
     for e in entries.flatten() {
         let Some(l) = read_lease(&e.path()) else {
             std::fs::remove_file(e.path()).ok();
@@ -322,10 +392,17 @@ pub struct BuildGuard {
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
     let held = task_leases(out);
     if let Some((task, l)) = held.iter().next() {
-        return Err(format!("worker `{}` holds task `{}`; wait for it to finish or abandon", l.worker, task));
+        return Err(format!(
+            "worker `{}` holds task `{}`; wait for it to finish or abandon",
+            l.worker, task
+        ));
     }
-    claim(out, BUILD_LEASE, &format!("internal-{}", std::process::id()))
-        .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
+    claim(
+        out,
+        BUILD_LEASE,
+        &format!("internal-{}", std::process::id()),
+    )
+    .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (out2, stop2) = (out.to_path_buf(), stop.clone());
@@ -338,7 +415,10 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             refresh_lease(&out2, BUILD_LEASE);
         }
     });
-    Ok(BuildGuard { out: out.to_path_buf(), stop })
+    Ok(BuildGuard {
+        out: out.to_path_buf(),
+        stop,
+    })
 }
 
 impl Drop for BuildGuard {
@@ -377,7 +457,34 @@ mod tests {
         assert_eq!(claim(&out, "docs/a.md", "w2"), Err("w1".to_string()));
         release_lease(&out, "docs/a.md");
         assert!(claim(&out, "docs/a.md", "w2").is_ok());
-        assert_eq!(task_leases(&out).get("docs/a.md").map(|l| l.worker.clone()), Some("w2".into()));
+        assert_eq!(
+            task_leases(&out).get("docs/a.md").map(|l| l.worker.clone()),
+            Some("w2".into())
+        );
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    // The lease file name is injective: a goal id with `:` and `/` round-trips, and
+    // two ids that differ only in those characters never share a file.
+    #[test]
+    fn lease_file_names_round_trip_goal_ids() {
+        let id = "g:reconcile-section:docs/orders.md#/orders/holds";
+        let safe = encode_lease_id(id);
+        assert!(!safe.contains(':') && !safe.contains('/') && !safe.contains('#'));
+        assert_eq!(decode_lease_id(&safe).as_deref(), Some(id));
+        let colon = encode_lease_id("a:b");
+        let slash = encode_lease_id("a/b");
+        let under = encode_lease_id("a_b");
+        assert_ne!(colon, slash);
+        assert_ne!(colon, under);
+        assert_ne!(slash, under);
+        // A claimed batch lease names its goals and reads back through leases().
+        let out = tmp();
+        claim_goals(&out, "b3-1", "w1", &[id.to_string()]).unwrap();
+        let all = leases(&out);
+        assert_eq!(all["b3-1"].goals, vec![id.to_string()]);
+        release_lease(&out, "b3-1");
+        assert!(leases(&out).is_empty());
         std::fs::remove_dir_all(&out).ok();
     }
 

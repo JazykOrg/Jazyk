@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Jazyk compilation</title>
-  <meta name="description" content="How Jazyk compiles: a deterministic reconciler computes what changed, bounded LLM turns bring the semantic graph in line with it, and deterministic checks close the loop." />
+  <meta name="description" content="How Jazyk compiles: a deterministic reconciler derives goals from what changed, bounded LLM sessions resolve them behind gates, garbage collection restructures settled neighborhoods, and deterministic checks close the loop." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -22,7 +22,8 @@
       </a>
       <div class="flex items-center gap-6 text-sm">
         <a href="/compilation/" class="text-brand">Compilation</a>
-        <a href="/artifact/" class="hover:text-brand">Graph</a>
+        <a href="/levels/" class="hover:text-brand">Levels</a>
+        <a href="/graph/" class="hover:text-brand">Graph</a>
         <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
       </div>
     </nav>
@@ -35,13 +36,14 @@
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-12">
-      <p class="text-slate-600">A build compares the two and schedules work until they agree. Everything that must never be wrong is deterministic code; the model is invoked only inside bounded turns, behind validation gates. The first build is not a special case: it reconciles against an empty graph. A rebuild with nothing changed makes zero LLM calls.</p>
+      <p class="text-slate-600">A build compares the two and derives goals until they agree. Everything that must never be wrong is deterministic code; the model is invoked only inside bounded sessions, behind validation gates. The first build is not a special case: it reconciles against an empty graph. A rebuild with nothing changed derives zero goals and makes zero LLM calls.</p>
 
-      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>parse all docs → diff section trees → dirty set
-  → ingest wave   (reconcile-doc turns, root first, then levels in parallel)
-  → review wave   (review-entity turns)
-  → checks        (deterministic lint, coverage, reachability)
-  → fixed point reached, or budget exhausted with work parked</code></pre>
+      <pre class="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>parse the documents → diff section trees → dirty set
+  → derive the goal board  (from the docs, the graph, the ledger, the change records)
+  → compile sessions       (highest ready tier first: alignment, ingest, judgment)
+  → GC bursts              (a settled cone at a time: edges, duplicates, views, levels)
+  → checks                 (coverage, reachability, provenance, level shape, ...)
+  → converged, or incomplete with the work parked and named</code></pre>
     </section>
 
     <section class="mx-auto max-w-3xl px-6 pb-12">
@@ -53,7 +55,7 @@
             <span class="font-semibold text-slate-900">Parse</span>
             <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">Each document becomes a section tree with verbatim text and per-section content hashes.</p>
+          <p class="mt-2 text-sm text-slate-600">Each document becomes a section tree with verbatim text and per-section content hashes. A PlantUML block in a document is input too, parsed as a diagram section.</p>
         </li>
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
@@ -62,40 +64,85 @@
           </div>
           <p class="mt-2 text-sm text-slate-600">The section diff is the sole source of staleness. Changed and removed sections are dirty; a section that merely moved has its anchors rewritten mechanically and stays clean. The model never decides what is stale.</p>
         </li>
-        <li class="rounded-lg border-2 border-brand bg-brand/5 p-5">
+        <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
-            <span class="font-semibold text-slate-900">Ingest turns</span>
-            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
+            <span class="font-semibold text-slate-900">Derive goals</span>
+            <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">One turn per dirty document. The model reads the dirty sections, searches the graph before creating any entity, records requirements with verbatim quotes, and marks each section covered or non-normative. Mutations are staged, validated one by one, and committed atomically when the turn finishes.</p>
+          <p class="mt-2 text-sm text-slate-600">The board is never stored: it is derived from the documents, the graph, and the change records earlier commits left behind. A goal is one kind on one target, <span class="font-mono">g:reconcile-section:docs/checkout.md#/checkout</span>, with the committed mutation that opened it as its cause. Compile goals bring the graph in line with the documents; GC goals restructure it once a limit is crossed, optional past the soft threshold and mandatory past the hard one. Readiness tiers order the compile goals, and a GC goal is ready only when no compile goal is open in its target's cone.</p>
         </li>
         <li class="rounded-lg border-2 border-brand bg-brand/5 p-5">
           <div class="flex items-baseline gap-3">
-            <span class="font-semibold text-slate-900">Review turns</span>
+            <span class="font-semibold text-slate-900">Compile sessions</span>
             <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">One turn per entity whose facts changed. The model judges whether the requirements form a coherent whole, merges lookalike duplicates, refreshes the definition, and records contradictions and ambiguities as diagnostics.</p>
+          <p class="mt-2 text-sm text-slate-600">One session per batch of ready goals, grouped by locality and filled to a context budget. The prompt is assembled from fixed payload files, never authored per goal. The model loads the graph explicitly, reads the dirty sections, searches before creating any entity, records requirements with verbatim quotes, declares edges, marks each section covered or non-normative, and justifies each goal it marks done. Mutations are staged, validated one by one, and committed atomically when the session finishes.</p>
+        </li>
+        <li class="rounded-lg border-2 border-brand bg-brand/5 p-5">
+          <div class="flex items-baseline gap-3">
+            <span class="font-semibold text-slate-900">Judgment and GC</span>
+            <span class="ml-auto rounded bg-brand/10 px-2 py-0.5 text-xs text-brand">LLM</span>
+          </div>
+          <p class="mt-2 text-sm text-slate-600">A mutation opens the goals that judge it: a pair of requirements to re-judge for contradiction or duplication, an entity to review as a whole. When a neighborhood settles, GC bursts restructure it: declare the edges a statement implies, merge lookalikes, curate or split an over-limit view, and group a level whose children crossed the limit. The model names and judges; the harness counts.</p>
         </li>
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
             <span class="font-semibold text-slate-900">Checks</span>
             <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">Whole-graph lint: sections left unprocessed, entities no requirement references, unreachable entities, quotes that no longer locate, and coverage claims that dodge normative text.</p>
+          <p class="mt-2 text-sm text-slate-600">Whole-graph lint: sections left unprocessed, unreachable entities, quotes that no longer locate, coverage claims that dodge normative text, containment and conformance, state machines, and the level shape: every node with children has its level view, none is over the hard fan-out, and no grouping has fewer than two members.</p>
         </li>
         <li class="rounded-lg border border-slate-200 p-5">
           <div class="flex items-baseline gap-3">
             <span class="font-semibold text-slate-900">Fixed point</span>
             <span class="ml-auto rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">deterministic</span>
           </div>
-          <p class="mt-2 text-sm text-slate-600">The build converges when a full wave proposes zero mutations and the checks pass. Work that exhausts its budget parks with a diagnostic; the next build resumes it first. Nothing fails silently.</p>
+          <p class="mt-2 text-sm text-slate-600">The build converges when no mandatory goal is open or failed and the checks are clean. Goals that block on a human (a contradiction to answer, a proposal to ratify) ride beside the verdict as a count. Work that exhausts its budget parks with the reason; the next build resumes it first. Nothing fails silently.</p>
         </li>
       </ol>
     </section>
 
+    <section class="mx-auto max-w-3xl px-6 pb-12">
+      <h2 class="text-2xl font-bold text-slate-900">A GC burst, as it runs</h2>
+      <p class="mt-3 text-slate-600">A limit is a registry constant, never a project setting. When one flat glossary states eleven concepts under Checkout, the harness opens a fan-out goal on it and computes which children belong together from the requirements that mention them and the relationships between them; the model names the groupings from the documents, or declines with a reason when the level is genuinely flat. The session's changeset as the journal recorded it, condensed to one of the three groupings:</p>
+      <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code># jazyk-out/journal/g20.yaml
+batch:
+- g:abstract-entity:ent:checkout
+mutations:
+- op: create_entity
+  id: ent:funds
+  entity:
+    name: Funds
+    definition: 'Funds gathers the balances and methods a customer spends
+      at Checkout: the Gift Card, the Loyalty Point, and the Payment Method.'
+    parent: ent:checkout
+    provenance:
+      derived:
+        from: [ent:gift-card, ent:loyalty-point, ent:payment-method]
+        reasoning: The documents name a payment cluster of the gift card,
+          the loyalty point, and the payment method; each is a balance or
+          method a customer spends at Checkout, so a reader would recognize
+          them as one area. The name "Payment" is taken by a different
+          concept (ent:payment, which settles an Invoice and is not a child
+          of Checkout), so this area is named "Funds". ...
+- op: update_entity
+  id: ent:gift-card
+  parent: ent:funds
+  prior: {parent: ent:checkout}
+...
+resolved_goals:
+- goal: g:abstract-entity:ent:checkout
+  justification: Checkout's 11 direct children are grouped into three
+    derived groupings under it ... reducing the level to 5 children (≤9).
+    The harness files a ratification proposal per derived grouping; Address
+    and Receipt stay ungrouped as they share no nameable noun.
+rounds: 7</code></pre>
+      <p class="mt-4 text-slate-600">Each grouping carries a proposal for the sentence the documents should gain; the owner accepts it into the document or retracts it. <a href="/levels/" class="text-brand hover:underline">The levels page</a> walks the result.</p>
+    </section>
+
     <section class="mx-auto max-w-3xl px-6 pb-20">
       <h2 class="text-2xl font-bold text-slate-900">Gates, not hope</h2>
-      <p class="mt-3 text-slate-600">Every mutation the model stages is validated by the graph store. A rejection names the rule and how to repair the call, because the caller is a model that will read it and try again:</p>
+      <p class="mt-3 text-slate-600">Every mutation the model stages is validated at staging. A rejection names the rule and how to repair the call, because the caller is a model that will read it and try again:</p>
       <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-5 text-sm leading-relaxed text-slate-700"><code>✗ unknown-id: unknown entity id `ent:Product`; nearest existing:
   ent:product; use one of those, or create it with upsert_entity first
 
@@ -103,8 +150,11 @@
   concepts. If it truly is one, repeat the call with a note explaining why
 
 ✗ quote-not-found: quote not found in docs/admin.md#/admin-cli/rules;
-  copy the sentence verbatim from the section</code></pre>
-      <p class="mt-4 text-slate-600">Identity never depends on the model. Ids are minted by the store at creation and never change; creates key on the entity's name, so a retried or parallel create lands on the existing node instead of duplicating it.</p>
+  copy the sentence verbatim from the section
+
+✗ stated-entity: dissolve_entity on an entity a document states;
+  revise the documents instead</code></pre>
+      <p class="mt-4 text-slate-600">Identity never depends on the model. Ids are minted by the store at creation and never change; creates key on the entity's name, so a retried create lands on the existing node instead of duplicating it. A merge leaves a redirect, a dissolved grouping leaves a tombstone, and anything holding the old id still resolves.</p>
     </section>
   </main>
 

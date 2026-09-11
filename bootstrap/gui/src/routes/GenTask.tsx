@@ -8,8 +8,9 @@ import './routes.css'
 
 interface TaskReq {
   id: string
-  ears: string
+  statement: string
   quote: string
+  provenance?: string
   testName: string
   hash: string
   criteriaPath: string
@@ -32,8 +33,8 @@ export default function GenTask() {
   const jobs = useApp((a) => a.jobs)
   const busy = Object.values(jobs).some((j) => j.state === 'running' || j.state === 'queued')
   const q = useQuery({
-    queryKey: ['pending', 'task', id],
-    queryFn: () => get<TaskPackage>(`/api/gen/task/${encodeURIComponent(id)}`),
+    queryKey: ['pending', 'package', id],
+    queryFn: () => get<TaskPackage>(`/api/gen/package/${encodeURIComponent(id)}`),
     enabled: id.length > 0,
   })
 
@@ -74,7 +75,7 @@ export default function GenTask() {
           <p className="muted mono" style={{ margin: '0 0 4px' }}>group {gi + 1}</p>
           {group.map((r) => (
             <p key={r.id} style={{ margin: '2px 0' }}>
-              <NodeLink id={r.id} /> {r.ears}{' '}
+              <NodeLink id={r.id} /> {r.statement}{' '}
               <span className="muted mono">→ {r.testName}</span>
             </p>
           ))}

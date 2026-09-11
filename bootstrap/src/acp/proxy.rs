@@ -34,6 +34,11 @@ struct ProxyState {
     routes: Mutex<std::collections::HashMap<String, String>>,
     // Behind a lock because `/model` retunes it without a restart.
     llm: Mutex<crate::llm::Llm>,
+    // True while this proxy runs a build itself: the build's narrated trace owns the
+    // plan, and the board watcher stays quiet. Mirrors docs/frontends/acp.md#plans.
+    building: std::sync::atomic::AtomicBool,
+    // The last plan pushed or recorded, so the watcher republishes only on change.
+    plan_seen: Mutex<String>,
     out: std::path::PathBuf,
 }
 
@@ -43,12 +48,20 @@ impl ProxyState {
     }
 
     fn add_route(&self, up: &str, down: &str) {
-        self.routes.lock().unwrap().insert(up.to_string(), down.to_string());
+        self.routes
+            .lock()
+            .unwrap()
+            .insert(up.to_string(), down.to_string());
     }
 
     // The id the downstream agent knows a session by.
     fn route_down(&self, sid: &str) -> String {
-        self.routes.lock().unwrap().get(sid).cloned().unwrap_or_else(|| sid.to_string())
+        self.routes
+            .lock()
+            .unwrap()
+            .get(sid)
+            .cloned()
+            .unwrap_or_else(|| sid.to_string())
     }
 
     // The id the IDE knows a session by.
@@ -81,6 +94,7 @@ impl ProxyState {
         *self.project.lock().unwrap() = Some(crate::project::Project::load(&cwd));
         start_sink(self);
         watch_runs(self);
+        watch_board(self);
         format!(
             "Initialized a jazyk project in {}: jazyk.toml{}{}.\n\
              Describe what you are building in docs/README.md, then run /compile.\n\
@@ -115,7 +129,9 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         config = config.env(k, v);
     }
     if agent.name == crate::acp::config::EMBEDDED {
-        config = config.env("JAZYK_LLM_BASE_URL", &llm.base_url).env("JAZYK_MODEL", &llm.model);
+        config = config
+            .env("JAZYK_LLM_BASE_URL", &llm.base_url)
+            .env("JAZYK_MODEL", &llm.model);
         if !llm.api_key.is_empty() {
             config = config.env("JAZYK_API_KEY", &llm.api_key);
         }
@@ -132,6 +148,8 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         down_loads: Mutex::new(false),
         routes: Mutex::new(std::collections::HashMap::new()),
         llm: Mutex::new(llm),
+        building: std::sync::atomic::AtomicBool::new(false),
+        plan_seen: Mutex::new(String::new()),
         out,
     });
     if state.in_project() {
@@ -148,6 +166,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_cancel = state.clone();
     if state.in_project() {
         watch_runs(&state);
+        watch_board(&state);
     }
 
     let result = futures::executor::block_on(
@@ -542,6 +561,19 @@ fn advertise_commands(st: &Arc<ProxyState>, up: &ConnectionTo<Client>, sid: &str
         sid_of(sid),
         SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
     ));
+    // The pending-work plan rides session start beside the commands, so the chat
+    // surface opens onto what the board already owes.
+    // Mirrors docs/frontends/acp.md#lsp-and-the-proxy.
+    if let Some(proj) = st.project.lock().unwrap().clone() {
+        let plan = crate::acp::plan::pending_plan(&proj, &st.out);
+        *st.plan_seen.lock().unwrap() = crate::acp::plan::fingerprint(&plan);
+        if !plan.entries.is_empty() {
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(sid),
+                SessionUpdate::Plan(plan),
+            ));
+        }
+    }
 }
 
 fn not_initialized() -> agent_client_protocol::Error {
@@ -629,9 +661,13 @@ fn ensure_down(
 // disk otherwise. Mirrors docs/frontends/acp.md#doc-edit-delegation.
 fn start_sink(state: &Arc<ProxyState>) {
     use std::io::{BufRead, BufReader, Write};
-    let path = state.out.join(format!("acp-edit-sink-{}.sock", std::process::id()));
+    let path = state
+        .out
+        .join(format!("acp-edit-sink-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else { return };
+    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
+        return;
+    };
     *state.sink_path.lock().unwrap() = Some(path);
     let st = state.clone();
     std::thread::spawn(move || {
@@ -644,7 +680,9 @@ fn start_sink(state: &Arc<ProxyState>) {
                 if reader.read_line(&mut line).is_err() {
                     return;
                 }
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else { return };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                    return;
+                };
                 let reply = match delegate_edit(&st, &v) {
                     Ok(()) => json!({"ok": true}),
                     Err(e) => json!({"ok": false, "error": e}),
@@ -661,16 +699,25 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Stri
         return Err("the client has no fs.writeTextFile capability".into());
     }
     let up = st.up.get().ok_or("no upstream connection")?;
-    let sid = st.last_session.lock().unwrap().clone().ok_or("no open session")?;
+    let sid = st
+        .last_session
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("no open session")?;
     let path = v["path"].as_str().ok_or("missing path")?;
     let content = v["content"].as_str().ok_or("missing content")?;
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
-    up.send_request(WriteTextFileRequest::new(sid_of(&sid), path.to_string(), content.to_string()))
-        .on_receiving_result(async move |result| {
-            let _ = tx.send(result.map(|_| ()).map_err(|e| format!("{}", e)));
-            Ok(())
-        })
-        .map_err(|e| format!("{}", e))?;
+    up.send_request(WriteTextFileRequest::new(
+        sid_of(&sid),
+        path.to_string(),
+        content.to_string(),
+    ))
+    .on_receiving_result(async move |result| {
+        let _ = tx.send(result.map(|_| ()).map_err(|e| format!("{}", e)));
+        Ok(())
+    })
+    .map_err(|e| format!("{}", e))?;
     rx.recv_timeout(std::time::Duration::from_secs(20))
         .map_err(|_| "the client did not answer the write".to_string())?
 }
@@ -741,30 +788,60 @@ fn run_command(
         "agent" if args.is_empty() => commands::agent_text(proj),
         "agent" => commands::agent_set(proj, args),
         "questions" => crate::answer::questions_summary(&st.out).unwrap_or_else(|| {
-            "no standing questions; every open finding is either unprompted or already answered".into()
+            "no standing questions; every open finding is either unprompted or already answered"
+                .into()
         }),
         "status" => {
+            // The verdict with its counts, and the board summary beside it.
+            // Mirrors docs/frontends/acp.md#slash-commands.
             let s = crate::store::Store::load(&st.out);
+            let board = crate::board::Board::compute(proj, &st.out);
+            let c = board.counts();
             format!(
-                "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}",
+                "generation {}, verdict {}, {} entity(ies), {} requirement(s), diagnostics {:?}\n{}\nboard: {} open, {} ready, {} blocked, {} parked, {} failed",
                 s.status.generation,
                 s.status.verdict,
                 s.graph.entities.len(),
                 s.graph.requirements.len(),
-                s.open_diag_counts()
+                s.open_diag_counts(),
+                board.summary_line(),
+                c.open,
+                c.ready,
+                c.blocked,
+                c.parked,
+                c.failed
             )
         }
+        "board" => commands::board_text(proj, &st.out),
+        "preview" => commands::preview_text(proj, &st.out, args),
+        "explain" => commands::explain_text(proj, &st.out, args),
+        "ripple" => commands::ripple_text(proj, &st.out, args),
         "release" => {
             crate::control::release(proj, &st.out, None);
             "released: pending compile and generate work is approved".into()
         }
         "compile" => {
             say("compiling…\n".into());
-            let trace = narrated_trace(up.clone(), sid.to_string());
+            st.building
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
             let report = crate::reconcile::compile(proj, &llm, &st.out, &trace);
+            // The watcher takes the plan back where the build left it: record what
+            // remains without republishing over the finished checklist.
+            *st.plan_seen.lock().unwrap() =
+                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
+            st.building
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            // The verdict carries its counts; the board summary rides beside it.
+            let board = crate::board::Board::compute(proj, &st.out);
             format!(
-                "\n{} — {} turn(s), {} mutation(s), {} parked, coverage {}%",
-                report.verdict, report.turns, report.applied, report.parked, report.coverage_pct
+                "\n{}; {} session(s), {} mutation(s), {} parked, coverage {}%\n{}",
+                report.verdict,
+                report.sessions,
+                report.applied,
+                report.parked,
+                report.coverage_pct,
+                board.summary_line()
             )
         }
         "generate" | "verify" => {
@@ -772,7 +849,7 @@ fn run_command(
                 Ok(r) => r,
                 Err(e) => return format!("agent failed to start: {}", e),
             };
-            let trace = narrated_trace(up.clone(), sid.to_string());
+            let trace = narrated_trace(up.clone(), sid.to_string(), proj.clone(), st.out.clone());
             let store = crate::store::Store::load(&st.out);
             let gs = crate::gen::GenSettings::resolve(proj);
             let result = if cmd == "generate" {
@@ -780,12 +857,20 @@ fn run_command(
                     Ok(g) => g,
                     Err(e) => return format!("refused: {}", e),
                 };
+                st.building
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 runner.set_build_token(Some(format!("internal-{}", std::process::id())));
-                let _ = crate::bind::run_all(&store, &runner, &gs, &[], &proj.limits, &proj.linting, &trace);
-                crate::gen::run_all(&store, &runner, &gs, &[], false, &proj.limits, &proj.linting, &trace)
+                let _ = crate::bind::run_all(&store, &runner, &gs, &[], &trace);
+                crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {
+                st.building
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 crate::verify::run_all(&store, &runner, &gs, &[], None, false, &trace)
             };
+            *st.plan_seen.lock().unwrap() =
+                crate::acp::plan::fingerprint(&crate::acp::plan::pending_plan(proj, &st.out));
+            st.building
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             match result {
                 Ok(v) => format!("\ndone: {}", v),
                 Err(e) => format!("\nfailed: {}", e),
@@ -795,10 +880,10 @@ fn run_command(
     }
 }
 
-// Build progress narrated as message chunks: one line per turn lifecycle event.
-// The machinery of a turn is not news to the person who asked for the build: these
+// Build progress narrated as message chunks: one line per session lifecycle event.
+// The machinery of a batch is not news to the person who asked for the build: these
 // calls get no row. Mirrors docs/frontends/acp.md#slash-commands.
-const LIFECYCLE_TOOLS: &[&str] = &["begin_compilation", "finish_compilation", "done"];
+const LIFECYCLE_TOOLS: &[&str] = &["goals", "begin_goals", "done", "abandon_goals"];
 
 // A row is titled by the decision it carries, not the tool's identifier.
 // Mirrors docs/frontends/acp.md#slash-commands.
@@ -814,22 +899,39 @@ fn call_title(name: &str, input: &str) -> String {
     };
     match name {
         "search" => format!("search: {}", s("query")),
-        "context" => format!("context: {}", s("target")),
+        "load" => format!("load {}", s("target")),
+        "unload" => format!("unload {}", s("target")),
         "expand" => "expand context".into(),
+        "graph_status" => "graph status".into(),
+        "load_skill" => format!("skill {}", s("name")),
         "read_section" => format!("read {}", s("section")),
         "get_entity" => format!("read entity {}", s("id")),
+        "get_view" => format!("read view {}", s("id")),
         "diagnostics" => "read diagnostics".into(),
         "upsert_entity" => format!("entity {}", s("name")),
         "update_entity" => format!("update entity {}", s("id")),
         "delete_entity" => format!("delete entity {}", s("id")),
         "merge_entities" => format!("merge {} into {}", s("absorb"), s("keep")),
-        "upsert_requirement" => format!("requirement: {}", short(s("ears"))),
+        "upsert_requirement" => format!("requirement: {}", short(s("statement"))),
         "update_requirement" => format!("update requirement {}", s("id")),
         "delete_requirement" => format!("delete requirement {}", s("id")),
         "report_diagnostic" => format!("report {} {}", s("severity"), s("rule")),
         "update_diagnostic" => format!("update finding {}", s("id")),
         "resolve_diagnostic" => format!("resolve finding {}", s("id")),
         "set_coverage" => format!("coverage: {} {}", s("section"), s("state")),
+        "upsert_view" => format!("view {} {}", s("kind"), s("title")),
+        "update_view" => format!("update view {}", s("id")),
+        "delete_view" => format!("delete view {}", s("id")),
+        // A goal claim is titled by the goal; the justification rides as the row's
+        // payload. Mirrors docs/frontends/acp.md#slash-commands.
+        "mark_goal_done" => format!("resolved {}", s("goal")),
+        "mark_goal_failed" => format!("failed {}", s("goal")),
+        // The batch claim is one row titled by its count; the goal events behind it
+        // stay one per pair.
+        "settle_pairs" => {
+            let n = args["verdicts"].as_array().map(Vec::len).unwrap_or(0);
+            format!("settled {} pair{}", n, if n == 1 { "" } else { "s" })
+        }
         "edit_doc_prose" => format!("edit {}", s("doc")),
         _ => name.replace('_', " "),
     }
@@ -862,11 +964,18 @@ fn result_title(name: &str, output: &str) -> Option<String> {
 // message text, worker reasoning as thought chunks, and each graph tool call as a
 // tool_call row with its result. Ids are namespaced per worker so parallel turns
 // never collide. Mirrors docs/frontends/acp.md#slash-commands.
-fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
-    use crate::turn::TraceEvent;
-    use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields};
+fn narrated_trace(
+    up: ConnectionTo<Client>,
+    sid: String,
+    proj: crate::project::Project,
+    out: std::path::PathBuf,
+) -> crate::session::Trace {
+    use crate::session::TraceEvent;
+    use agent_client_protocol::schema::v1::{
+        ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    };
     // Per worker label: calls made so far, the id of the one still open, and the
-    // summary the suppressed `done` call carried (the runner's TurnDone has none;
+    // summary the suppressed `done` call carried (the runner's SessionDone has none;
     // the model's own words fill the closing line).
     #[derive(Default)]
     struct WorkerRow {
@@ -879,19 +988,90 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
     let send = move |update: SessionUpdate| {
         let _ = up.send_notification(SessionNotification::new(sid_of(&sid), update));
     };
+    // The build's plan, flipped by the same events and republished whole.
+    // Mirrors docs/frontends/acp.md#plans.
+    let plan = Mutex::new(crate::acp::plan::PlanTracker::new(&proj, &out));
     let sink: Arc<dyn Fn(&TraceEvent) + Send + Sync> = Arc::new(move |ev| {
+        if let Some(p) = plan.lock().unwrap().on_event(ev) {
+            send(SessionUpdate::Plan(p));
+        }
         let text_update = |text: String| {
             SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(text)))
         };
         match ev {
-            TraceEvent::WaveStart { task, items, .. } => {
-                send(text_update(format!("wave: {} ({} item(s))\n", task, items.len())));
+            TraceEvent::Board {
+                goals,
+                kinds,
+                blocked,
+                ..
+            } => {
+                // The board summary the build prints first.
+                // Mirrors docs/frontends/cli.md#jazyk-compile.
+                let per_kind: Vec<String> =
+                    kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
+                let mut line = format!("compile: {} goals", goals);
+                if !per_kind.is_empty() {
+                    line.push_str(&format!(" ({})", per_kind.join(", ")));
+                }
+                if *blocked > 0 {
+                    line.push_str(&format!(", {} blocked", blocked));
+                }
+                line.push('\n');
+                send(text_update(line));
             }
-            TraceEvent::TurnStart { label, .. } => {
-                open.lock().unwrap().entry(label.clone()).or_default().done_summary = None;
+            TraceEvent::BatchStart {
+                label,
+                class,
+                goals,
+                ..
+            } => {
+                send(text_update(format!(
+                    "batch {}: {} ({} goal(s))\n",
+                    label,
+                    class,
+                    goals.len()
+                )));
+            }
+            TraceEvent::GcBurst {
+                goal_kind,
+                target,
+                count,
+                limit,
+                ..
+            } => {
+                send(text_update(format!(
+                    "gc burst: {} {} ({} > {})\n",
+                    goal_kind, target, count, limit
+                )));
+            }
+            TraceEvent::Goal {
+                goal,
+                event,
+                justification,
+                reason,
+                ..
+            } => {
+                let tail = justification
+                    .as_ref()
+                    .or(reason.as_ref())
+                    .map(|t| format!(": {}", t))
+                    .unwrap_or_default();
+                send(text_update(format!("{} {}{}\n", event, goal, tail)));
+            }
+            TraceEvent::SessionStart { label, .. } => {
+                open.lock()
+                    .unwrap()
+                    .entry(label.clone())
+                    .or_default()
+                    .done_summary = None;
                 send(text_update(format!("▶ {}\n", label)));
             }
-            TraceEvent::TurnDone { label, staged, summary, .. } => {
+            TraceEvent::SessionDone {
+                label,
+                staged,
+                summary,
+                ..
+            } => {
                 // The model's own account of the turn: the answer to "done doing
                 // what?". Mirrors docs/frontends/acp.md#slash-commands.
                 let said = if summary.trim().is_empty() {
@@ -903,26 +1083,39 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                 } else {
                     summary.trim().to_string()
                 };
-                let tail =
-                    if said.is_empty() { String::new() } else { format!(": {}", said) };
-                send(text_update(format!("✓ {} ({} staged){}\n", label, staged, tail)));
+                let tail = if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", said)
+                };
+                send(text_update(format!(
+                    "✓ {} ({} staged){}\n",
+                    label, staged, tail
+                )));
             }
-            TraceEvent::TurnFailed { label, error, .. } => {
+            TraceEvent::SessionFailed { label, error, .. } => {
                 send(text_update(format!("✗ {}: {}\n", label, error)));
             }
             TraceEvent::GenEntityDone { entity, files } => {
-                send(text_update(format!("✓ gen {} ({} file(s))\n", entity, files)));
+                send(text_update(format!(
+                    "✓ gen {} ({} file(s))\n",
+                    entity, files
+                )));
             }
             TraceEvent::GenEntityFailed { entity, error, .. } => {
                 send(text_update(format!("✗ gen {}: {}\n", entity, error)));
             }
-            TraceEvent::VerifyRowDone { requirement, verdict, .. } => {
+            TraceEvent::VerifyRowDone {
+                requirement,
+                verdict,
+                ..
+            } => {
                 send(text_update(format!("{} {}\n", verdict, requirement)));
             }
             TraceEvent::ModelText { text, .. } => {
-                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(
-                    format!("{}\n", text),
-                ))));
+                send(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{}\n", text)),
+                )));
             }
             // Jazyk's own narration is commentary, not the model thinking: it
             // renders as message text, so a thought section is never empty.
@@ -930,7 +1123,12 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             TraceEvent::Note { text, verbose, .. } if !verbose => {
                 send(text_update(format!("{}\n", text)));
             }
-            TraceEvent::ToolCall { label, name, summary, full } => {
+            TraceEvent::ToolCall {
+                label,
+                name,
+                summary,
+                full,
+            } => {
                 let input = full.clone().unwrap_or_else(|| summary.clone());
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
                     if name == "done" {
@@ -960,11 +1158,21 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                         .raw_input(serde_json::Value::String(input)),
                 ));
             }
-            TraceEvent::ToolResult { label, name, summary, full } => {
+            TraceEvent::ToolResult {
+                label,
+                name,
+                summary,
+                full,
+            } => {
                 if LIFECYCLE_TOOLS.contains(&name.as_str()) {
                     return;
                 }
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
+                if let Some(id) = open
+                    .lock()
+                    .unwrap()
+                    .get_mut(label)
+                    .and_then(|e| e.open.take())
+                {
                     let output = full.clone().unwrap_or_else(|| summary.clone());
                     let title = result_title(name, &output);
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
@@ -976,8 +1184,17 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
                     )));
                 }
             }
-            TraceEvent::ToolError { label, rule, message } => {
-                if let Some(id) = open.lock().unwrap().get_mut(label).and_then(|e| e.open.take()) {
+            TraceEvent::ToolError {
+                label,
+                rule,
+                message,
+            } => {
+                if let Some(id) = open
+                    .lock()
+                    .unwrap()
+                    .get_mut(label)
+                    .and_then(|e| e.open.take())
+                {
                     send(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                         id,
                         ToolCallUpdateFields::new()
@@ -990,7 +1207,7 @@ fn narrated_trace(up: ConnectionTo<Client>, sid: String) -> crate::turn::Trace {
             _ => {}
         }
     });
-    crate::turn::Trace::to_sink(crate::turn::TraceLevel::Normal, sink, Default::default())
+    crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, sink, Default::default())
 }
 
 // Recorded runs as read-only sessions: one per transcript under <out>/trace, newest
@@ -1004,16 +1221,28 @@ fn mirrored_sessions(
     if let Ok(rd) = std::fs::read_dir(out.join("trace")) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            let Some(stem) = name.strip_suffix(".jsonl") else { continue };
-            let Ok(file) = std::fs::File::open(e.path()) else { continue };
+            let Some(stem) = name.strip_suffix(".jsonl") else {
+                continue;
+            };
+            let Ok(file) = std::fs::File::open(e.path()) else {
+                continue;
+            };
             let mut first = String::new();
             use std::io::BufRead;
             if std::io::BufReader::new(file).read_line(&mut first).is_err() {
                 continue;
             }
-            let Ok(meta) = serde_json::from_str::<serde_json::Value>(first.trim()) else { continue };
-            let kind = meta["meta"]["kind"]["kind"].as_str().unwrap_or("run").to_string();
-            let started = meta["meta"]["startedAt"].as_str().unwrap_or_default().to_string();
+            let Ok(meta) = serde_json::from_str::<serde_json::Value>(first.trim()) else {
+                continue;
+            };
+            let kind = meta["meta"]["kind"]["kind"]
+                .as_str()
+                .unwrap_or("run")
+                .to_string();
+            let started = meta["meta"]["startedAt"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             entries.push((stem.to_string(), kind, started));
         }
     }
@@ -1032,35 +1261,85 @@ fn mirrored_sessions(
 fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
     use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus};
     let path = out.join("trace").join(format!("{}.jsonl", stem));
-    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let mut updates: Vec<SessionUpdate> = Vec::new();
-    let chunk = |t: String| SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(t)));
+    let chunk =
+        |t: String| SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(t)));
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
         let ev = &v["event"];
         let n = v["n"].as_u64().unwrap_or(0);
         let label = ev["label"].as_str().unwrap_or("");
         match ev["kind"].as_str().unwrap_or("") {
-            "turnStart" => updates.push(chunk(format!("▶ {}\n", label))),
+            "sessionStart" => updates.push(chunk(format!("▶ {}\n", label))),
+            "batchStart" => updates.push(chunk(format!(
+                "batch {}: {} ({} goal(s))\n",
+                label,
+                ev["class"].as_str().unwrap_or(""),
+                ev["goals"].as_array().map(|a| a.len()).unwrap_or(0)
+            ))),
+            "board" => updates.push(chunk(format!(
+                "compile: {} goals, {} blocked\n",
+                ev["goals"].as_u64().unwrap_or(0),
+                ev["blocked"].as_u64().unwrap_or(0)
+            ))),
+            "goal" => {
+                let tail = ev["justification"]
+                    .as_str()
+                    .or(ev["reason"].as_str())
+                    .map(|t| format!(": {}", t))
+                    .unwrap_or_default();
+                updates.push(chunk(format!(
+                    "{} {}{}\n",
+                    ev["event"].as_str().unwrap_or(""),
+                    ev["goal"].as_str().unwrap_or(""),
+                    tail
+                )));
+            }
+            "gcBurst" => updates.push(chunk(format!(
+                "gc burst: {} {} ({} > {})\n",
+                ev["goalKind"].as_str().unwrap_or(""),
+                ev["target"].as_str().unwrap_or(""),
+                ev["count"].as_u64().unwrap_or(0),
+                ev["limit"].as_u64().unwrap_or(0)
+            ))),
             "modelText" => updates.push(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
                 ContentBlock::from(format!("{}\n", ev["text"].as_str().unwrap_or(""))),
             ))),
             "toolCall" => updates.push(SessionUpdate::ToolCall(
                 ToolCall::new(
                     format!("replay-{}", n),
-                    format!("{} → {} {}", label, ev["name"].as_str().unwrap_or(""), ev["summary"].as_str().unwrap_or("")),
+                    format!(
+                        "{} → {} {}",
+                        label,
+                        ev["name"].as_str().unwrap_or(""),
+                        ev["summary"].as_str().unwrap_or("")
+                    ),
                 )
                 .status(ToolCallStatus::Completed),
             )),
             "toolError" => updates.push(SessionUpdate::ToolCall(
                 ToolCall::new(
                     format!("replay-{}", n),
-                    format!("{} ✗ {}: {}", label, ev["rule"].as_str().unwrap_or(""), ev["message"].as_str().unwrap_or("")),
+                    format!(
+                        "{} ✗ {}: {}",
+                        label,
+                        ev["rule"].as_str().unwrap_or(""),
+                        ev["message"].as_str().unwrap_or("")
+                    ),
                 )
                 .status(ToolCallStatus::Failed),
             )),
-            "turnDone" => updates.push(chunk(format!("✓ {}\n", label))),
-            "turnFailed" => updates.push(chunk(format!("✗ {}: {}\n", label, ev["error"].as_str().unwrap_or("")))),
+            "sessionDone" => updates.push(chunk(format!("✓ {}\n", label))),
+            "sessionFailed" => updates.push(chunk(format!(
+                "✗ {}: {}\n",
+                label,
+                ev["error"].as_str().unwrap_or("")
+            ))),
             _ => {}
         }
     }
@@ -1097,6 +1376,63 @@ fn watch_runs(state: &Arc<ProxyState>) {
     });
 }
 
+// A build in another process moves the board; the proxy pushes the pending-work
+// plan and a session info update into the most recently active jazyk session, and
+// only that one, republishing when the board changes. A cheap signal (the store
+// generation, the control plane's mtime) gates the recompute.
+// Mirrors docs/frontends/acp.md#mirroring-into-ides.
+fn watch_board(state: &Arc<ProxyState>) {
+    let st = state.clone();
+    std::thread::spawn(move || {
+        let mut last_sig: Option<(u64, Option<std::time::SystemTime>)> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if st.building.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
+            let Some(proj) = st.project.lock().unwrap().clone() else {
+                continue;
+            };
+            let Some(sid) = st.last_session.lock().unwrap().clone() else {
+                continue;
+            };
+            let Some(up) = st.up.get() else {
+                continue;
+            };
+            let sig = (
+                crate::store::read_generation(&st.out),
+                std::fs::metadata(st.out.join("control.yaml"))
+                    .ok()
+                    .and_then(|m| m.modified().ok()),
+            );
+            if last_sig.as_ref() == Some(&sig) {
+                continue;
+            }
+            last_sig = Some(sig);
+            let plan = crate::acp::plan::pending_plan(&proj, &st.out);
+            let fp = crate::acp::plan::fingerprint(&plan);
+            {
+                let mut seen = st.plan_seen.lock().unwrap();
+                if *seen == fp {
+                    continue;
+                }
+                *seen = fp;
+            }
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(&sid),
+                SessionUpdate::Plan(plan),
+            ));
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(&sid),
+                SessionUpdate::SessionInfoUpdate(
+                    agent_client_protocol::schema::v1::SessionInfoUpdate::new()
+                        .updated_at(crate::verify::now_iso()),
+                ),
+            ));
+        }
+    });
+}
+
 // The project's recorded conversations, as sessions an IDE can reopen.
 // Mirrors docs/frontends/acp.md#session-store.
 fn recorded_sessions(
@@ -1109,7 +1445,11 @@ fn recorded_sessions(
         .take(30)
         // The timestamp is what a history picker renders as "5m ago"; without it a
         // row cannot be placed in time. Mirrors docs/frontends/acp.md#session-store.
-        .map(|m| SessionInfo::new(sid_of(&m.id), root).title(m.title).updated_at(m.updated_at))
+        .map(|m| {
+            SessionInfo::new(sid_of(&m.id), root)
+                .title(m.title)
+                .updated_at(m.updated_at)
+        })
         .collect()
 }
 

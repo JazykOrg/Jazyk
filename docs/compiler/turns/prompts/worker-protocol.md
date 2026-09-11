@@ -1,1 +1,0 @@
-PROTOCOL: the `jazyk` tools carry this task. First call `begin_compilation` with {"task": "{target}"} to open the changeset (its reply only confirms). Stage findings with the write tools. Finish with `done` and a one-line summary; if `done` is rejected, repair exactly what the error names and call it again. Do exactly this one task, then stop.

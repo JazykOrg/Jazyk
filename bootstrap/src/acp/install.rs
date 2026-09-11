@@ -9,10 +9,17 @@ use std::path::PathBuf;
 pub enum Registry {
     // A JSON or JSONC settings file holding a map of agent name to spawn entry.
     // Merged in place: comments and formatting survive, other agents are untouched.
-    Map { path: PathBuf, key: &'static str, entry: Value },
+    Map {
+        path: PathBuf,
+        key: &'static str,
+        entry: Value,
+    },
     // A config jazyk must not write: editor-managed state, or a language it would
     // have to parse to edit safely. The user pastes the snippet.
-    Snippet { where_: String, text: String },
+    Snippet {
+        where_: String,
+        text: String,
+    },
 }
 
 pub struct Ide {
@@ -23,8 +30,16 @@ pub struct Ide {
 
 // Every client jazyk knows how to register with, in the order `jazyk init` offers
 // them. Mirrors docs/frontends/acp.md#registration.
-pub const IDES: [&str; 8] =
-    ["zed", "jetbrains", "vscode", "neovim", "emacs", "obsidian", "acpx", "marimo"];
+pub const IDES: [&str; 8] = [
+    "zed",
+    "jetbrains",
+    "vscode",
+    "neovim",
+    "emacs",
+    "obsidian",
+    "acpx",
+    "marimo",
+];
 
 pub fn ide(id: &str, cmd: &str) -> Option<Ide> {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
@@ -168,29 +183,43 @@ pub fn spawn_command() -> String {
             return name;
         }
     }
-    exe.and_then(|p| p.to_str().map(|s| s.to_string())).unwrap_or(name)
+    exe.and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or(name)
 }
 
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
+    std::env::split_paths(&path)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 pub fn install(ide_id: &str) -> i32 {
     let cmd = spawn_command();
     let Some(ide) = ide(ide_id, &cmd) else {
-        eprintln!("jazyk: unknown editor `{}`; one of {}", ide_id, IDES.join(", "));
+        eprintln!(
+            "jazyk: unknown editor `{}`; one of {}",
+            ide_id,
+            IDES.join(", ")
+        );
         return 2;
     };
     match ide.registry {
         Registry::Snippet { where_, text } => {
-            println!("jazyk: {} keeps its agents where jazyk should not write.", ide.label);
+            println!(
+                "jazyk: {} keeps its agents where jazyk should not write.",
+                ide.label
+            );
             println!("Add this in {}:\n\n{}\n", where_, text);
             0
         }
         Registry::Map { path, key, entry } => match merge_into(&path, key, "Jazyk", &entry) {
             Ok(Merge::Unchanged) => {
-                println!("jazyk: {} already registers Jazyk ({})", ide.label, path.display());
+                println!(
+                    "jazyk: {} already registers Jazyk ({})",
+                    ide.label,
+                    path.display()
+                );
                 0
             }
             Ok(Merge::Written) => {
@@ -215,10 +244,17 @@ pub enum Merge {
 // hand: they carry comments, trailing commas, and an author's formatting, so the
 // merge is a text splice at the parsed node's range and never a re-serialization of
 // the document. Mirrors docs/frontends/acp.md#registration.
-pub fn merge_into(path: &std::path::Path, key: &str, name: &str, entry: &Value) -> Result<Merge, String> {
+pub fn merge_into(
+    path: &std::path::Path,
+    key: &str,
+    name: &str,
+    entry: &Value,
+) -> Result<Merge, String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let updated = splice(&text, key, name, entry)?;
-    let Some(updated) = updated else { return Ok(Merge::Unchanged) };
+    let Some(updated) = updated else {
+        return Ok(Merge::Unchanged);
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -247,7 +283,10 @@ fn splice(text: &str, key: &str, name: &str, entry: &Value) -> Result<Option<Str
     };
     let ast = parse_to_ast(
         text,
-        &CollectOptions { comments: CommentCollectionStrategy::Off, tokens: false },
+        &CollectOptions {
+            comments: CommentCollectionStrategy::Off,
+            tokens: false,
+        },
         &parse_options,
     )
     .map_err(|e| e.to_string())?;
@@ -333,7 +372,10 @@ fn same_json(text: &str, entry: &Value) -> bool {
 fn indent_of(text: &str, at: Option<usize>) -> Option<usize> {
     let at = at?;
     let line_start = text[..at].rfind('\n').map(|i| i + 1)?;
-    let spaces = text[line_start..at].chars().take_while(|c| *c == ' ').count();
+    let spaces = text[line_start..at]
+        .chars()
+        .take_while(|c| *c == ' ')
+        .count();
     (spaces > 0).then_some(spaces)
 }
 
@@ -345,8 +387,10 @@ fn indented(v: &Value, indent: usize) -> String {
     };
     let pad = " ".repeat(indent);
     let inner = " ".repeat(indent + 2);
-    let body: Vec<String> =
-        fields.iter().map(|(k, val)| format!("{}{}: {}", inner, json!(k), val)).collect();
+    let body: Vec<String> = fields
+        .iter()
+        .map(|(k, val)| format!("{}{}: {}", inner, json!(k), val))
+        .collect();
     format!("{{\n{}\n{}}}", body.join(",\n"), pad)
 }
 
@@ -364,7 +408,9 @@ mod tests {
     #[test]
     fn merging_preserves_comments_and_siblings() {
         let text = "{\n  // my editor settings\n  \"theme\": \"dark\",\n  \"agent_servers\": {\n    \"Gemini\": { \"command\": \"gemini\" }\n  }\n}\n";
-        let out = splice(text, "agent_servers", "Jazyk", &entry()).unwrap().unwrap();
+        let out = splice(text, "agent_servers", "Jazyk", &entry())
+            .unwrap()
+            .unwrap();
         assert!(out.contains("// my editor settings"), "{}", out);
         assert!(out.contains("\"Gemini\""), "{}", out);
         assert!(out.contains("\"type\": \"custom\""), "{}", out);
@@ -380,32 +426,49 @@ mod tests {
     #[test]
     fn merging_is_idempotent_and_repairs_a_stale_entry() {
         let text = "{\n  \"agent_servers\": {\n    \"Jazyk\": { \"command\": \"/old/path/jazyk\", \"args\": [\"acp\"] }\n  }\n}\n";
-        let out = splice(text, "agent_servers", "Jazyk", &entry()).unwrap().unwrap();
+        let out = splice(text, "agent_servers", "Jazyk", &entry())
+            .unwrap()
+            .unwrap();
         let parsed: Value = jsonc_parser::parse_to_serde_value(&out, &Default::default()).unwrap();
         assert_eq!(parsed["agent_servers"]["Jazyk"], entry());
         assert!(!out.contains("/old/path/jazyk"), "{}", out);
-        assert!(splice(&out, "agent_servers", "Jazyk", &entry()).unwrap().is_none());
+        assert!(splice(&out, "agent_servers", "Jazyk", &entry())
+            .unwrap()
+            .is_none());
     }
 
     // Files that have no map yet, including one that does not exist at all.
     #[test]
     fn merging_creates_the_map_and_the_document() {
-        let out = splice("{\n  \"theme\": \"dark\"\n}\n", "acp.agents", "Jazyk", &entry())
-            .unwrap()
-            .unwrap();
+        let out = splice(
+            "{\n  \"theme\": \"dark\"\n}\n",
+            "acp.agents",
+            "Jazyk",
+            &entry(),
+        )
+        .unwrap()
+        .unwrap();
         let parsed: Value = jsonc_parser::parse_to_serde_value(&out, &Default::default()).unwrap();
         assert_eq!(parsed["acp.agents"]["Jazyk"], entry());
         assert_eq!(parsed["theme"], "dark");
 
-        let fresh = splice("", "agent_servers", "Jazyk", &entry()).unwrap().unwrap();
+        let fresh = splice("", "agent_servers", "Jazyk", &entry())
+            .unwrap()
+            .unwrap();
         let parsed: Value = serde_json::from_str(&fresh).unwrap();
         assert_eq!(parsed["agent_servers"]["Jazyk"], entry());
 
         // A trailing comma is normal in a hand-kept JSONC file, not an error.
-        let loose = splice("{\n  \"agent_servers\": {\n  },\n}\n", "agent_servers", "Jazyk", &entry())
-            .unwrap()
-            .unwrap();
-        let parsed: Value = jsonc_parser::parse_to_serde_value(&loose, &Default::default()).unwrap();
+        let loose = splice(
+            "{\n  \"agent_servers\": {\n  },\n}\n",
+            "agent_servers",
+            "Jazyk",
+            &entry(),
+        )
+        .unwrap()
+        .unwrap();
+        let parsed: Value =
+            jsonc_parser::parse_to_serde_value(&loose, &Default::default()).unwrap();
         assert_eq!(parsed["agent_servers"]["Jazyk"], entry());
     }
 

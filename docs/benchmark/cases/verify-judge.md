@@ -13,8 +13,8 @@ description: Judge a satisfied criteria file pass.
 tier: verification
 par:
   rounds: 1
-task:
-  type: verify-requirement
+goal:
+  kind: verify
   target: req:motd-1
 given:
   docs:
@@ -31,7 +31,7 @@ given:
             quote: The MOTD file greets with exactly `Welcome aboard.` on its first line.
     requirements:
       req:motd-1:
-        ears: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
+        statement: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
         entities: [ent:motd]
         source:
           section: docs/motd.md#/motd
@@ -54,8 +54,8 @@ description: Judge a violated criteria file fail.
 tier: verification
 par:
   rounds: 1
-task:
-  type: verify-requirement
+goal:
+  kind: verify
   target: req:motd-1
 given:
   docs:
@@ -72,7 +72,7 @@ given:
             quote: The MOTD file greets with exactly `Welcome aboard.` on its first line.
     requirements:
       req:motd-1:
-        ears: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
+        statement: The MOTD file shall greet with exactly `Welcome aboard.` on its first line.
         entities: [ent:motd]
         source:
           section: docs/motd.md#/motd

@@ -9,11 +9,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
-import { delivHref, useInspector } from '../lib/nav'
+import { delivHref, outHref, useInspector } from '../lib/nav'
+import { relTo } from '../lib/mdlinks'
 import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
 import { LspClient } from '../ide/lsp-client'
 import { tokenParam } from '../lib/api'
+import MarkdownView from '../components/MarkdownView'
 import '../ide/ide.css'
+import '../components/markdown.css'
 
 interface DocContent {
   path: string
@@ -25,26 +28,16 @@ function contentPath(path: string): string {
   return `/api/docs/content?path=${encodeURIComponent(path)}`
 }
 
-// Lexical path normalization: the project reports the deliverable directory as it is
-// configured (`../product`), and link targets carry the same unresolved segments.
-function normPath(p: string): string {
-  const parts: string[] = []
-  for (const seg of p.split('/')) {
-    if (seg === '' || seg === '.') continue
-    if (seg === '..') {
-      parts.pop()
-      continue
-    }
-    parts.push(seg)
-  }
-  return `${p.startsWith('/') ? '/' : ''}${parts.join('/')}`
-}
+// The preview toggle is a browser-wide preference, remembered across documents
+// (docs/frontends/gui.md#markdown-preview).
+const PREVIEW_KEY = 'jazyk-doc-preview'
 
-// The path relative to a directory, or null when it is not under it.
-function relTo(dir: string, path: string): string | null {
-  const d = normPath(dir)
-  const p = normPath(path)
-  return p.startsWith(`${d}/`) ? p.slice(d.length + 1) : null
+function readPreviewPref(): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 function sevClass(sev: Marker['severity']): string {
@@ -64,6 +57,33 @@ export default function DocEditor() {
   const { openNode } = useInspector()
   const setEditorDirty = useApp((a) => a.setEditorDirty)
   const [diffMode, setDiffMode] = useState(false)
+  const [preview, setPreview] = useState(readPreviewPref)
+  // The text the preview renders: what the editor holds, a beat behind the keystrokes.
+  const [previewText, setPreviewText] = useState('')
+  const previewTimer = useRef<number | null>(null)
+  const onText = useCallback((text: string) => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    previewTimer.current = window.setTimeout(() => {
+      previewTimer.current = null
+      setPreviewText(text)
+    }, 120)
+  }, [])
+  useEffect(
+    () => () => {
+      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    },
+    [],
+  )
+  const togglePreview = useCallback(() => {
+    setPreview((v) => {
+      try {
+        localStorage.setItem(PREVIEW_KEY, v ? '0' : '1')
+      } catch {
+        // a private window; the choice lives for this page only
+      }
+      return !v
+    })
+  }, [])
 
   // What the running build is doing to this document, if anything.
   const turns = useApp((a) => a.turns)
@@ -117,6 +137,8 @@ export default function DocEditor() {
   rootRef.current = projectQ.data?.root
   const delivRef = useRef<string | undefined>(undefined)
   delivRef.current = projectQ.data?.deliverable
+  const outRef = useRef<string | undefined>(undefined)
+  outRef.current = projectQ.data?.out
   const docsRef = useRef<{ path: string }[]>([])
   docsRef.current = docsQ.data?.docs ?? []
   const docPathRef = useRef(docPath)
@@ -265,8 +287,8 @@ export default function DocEditor() {
 
   // A clicked link from a document link or the requirement card. The node wins (the
   // card's requirement link opens the inspector), then a matched document, then a
-  // deliverable file at the line. Anything else is left alone: an artifact under the
-  // out directory has no page (docs/frontends/gui.md#editor).
+  // deliverable file at the line, then a file under the out directory on its
+  // preview (docs/frontends/gui.md#editor).
   const onOpenLink = useCallback(
     (t: LinkTarget) => {
       if (t.node) {
@@ -285,9 +307,9 @@ export default function DocEditor() {
         navigate(delivHref(delivRel, undefined, t.line))
         return
       }
-      // A docsgen link names an entity's requirements document; land on the entity.
-      const docsgen = t.path.match(/\/docsgen\/([a-z0-9-]+)\.md$/)
-      if (docsgen) openNode(`ent:${docsgen[1]}`)
+      const out = outRef.current
+      const outRel = out ? relTo(out, t.path) : null
+      if (outRel) navigate(outHref(outRel))
     },
     [navigate, onNavigate, openNode],
   )
@@ -367,6 +389,13 @@ export default function DocEditor() {
         {saveErr && <span className="error-inline ide-inline">{saveErr}</span>}
         <div className="ide-topbar-right row">
           <button
+            className={preview ? 'btn-on' : ''}
+            title={preview ? 'hide the rendered preview' : 'render the markdown beside the text, live'}
+            onClick={togglePreview}
+          >
+            preview
+          </button>
+          <button
             className={diffMode ? 'btn-on' : ''}
             disabled={!hasBaseline}
             title={
@@ -390,24 +419,30 @@ export default function DocEditor() {
           <button onClick={() => void overwrite()}>overwrite</button>
         </div>
       )}
-      <CmHost
-        ref={hostRef}
-        root={root}
-        path={loaded.path}
-        initialText={loaded.text}
-        lsp={lsp}
-        record={coverageQ.data?.[loaded.path]}
-        build={loaded.path === docPath ? build : undefined}
-        onHoverLine={onHoverLine}
-        baseline={baseline}
-        diffMode={diffMode && hasBaseline}
-        onDirty={onDirty}
-        onNavigate={onNavigate}
-        onOpenLink={onOpenLink}
-        onOpenNode={openNode}
-        onMarkers={setMarkers}
-        onSave={() => void save()}
-      />
+      <div className="ide-split">
+        <CmHost
+          ref={hostRef}
+          root={root}
+          path={loaded.path}
+          initialText={loaded.text}
+          lsp={lsp}
+          record={coverageQ.data?.[loaded.path]}
+          build={loaded.path === docPath ? build : undefined}
+          onHoverLine={onHoverLine}
+          baseline={baseline}
+          diffMode={diffMode && hasBaseline}
+          onDirty={onDirty}
+          onText={onText}
+          onNavigate={onNavigate}
+          onOpenLink={onOpenLink}
+          onOpenNode={openNode}
+          onMarkers={setMarkers}
+          onSave={() => void save()}
+        />
+        {preview && !diffMode && (
+          <MarkdownView text={previewText} baseAbs={`${root}/${loaded.path}`} />
+        )}
+      </div>
       <div className="ide-problems">
         {sortedMarkers.length === 0 ? (
           <div className="ide-problem-none muted">no problems</div>

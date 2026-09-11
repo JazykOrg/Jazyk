@@ -1,6 +1,7 @@
 // The files center with nothing open: the project at a glance and the attention
 // list. The run actions live in the activity control line below.
 import { Link } from 'react-router'
+import { entryLabel } from '../lib/api'
 import { useGenPending, useGraph, useJournal, useMatrix, useStatus } from '../lib/queries'
 import NodeLink from '../components/NodeLink'
 import { SevChip, verifyClass } from '../components/Chip'
@@ -56,13 +57,16 @@ export default function FilesHome() {
         <span>
           coverage <b>{s.coverage.covered}</b>/{s.coverage.total}
         </span>
-        <span>
-          {Object.entries(counts).map(([st, n]) => (
-            <span key={st} className={verifyClass(st)} style={{ marginRight: 8 }}>
-              {n} {st}
-            </span>
-          ))}
-        </span>
+        {Object.keys(counts).length > 0 && (
+          <Link to="/work/verify" style={{ textDecoration: 'none' }} title="verification by derived status">
+            <span className="muted">verification </span>
+            {Object.entries(counts).map(([st, n]) => (
+              <span key={st} className={verifyClass(st)} style={{ marginRight: 8 }}>
+                {n} {st}
+              </span>
+            ))}
+          </Link>
+        )}
       </div>
 
       <div className="grid2">
@@ -88,8 +92,8 @@ export default function FilesHome() {
           )}
           {(journal.data?.entries ?? []).slice(0, 8).map((e) => (
             <p key={e.generation} className="oneline mono">
-              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {e.workItem.task} ·{' '}
-              {e.workItem.target} · {e.mutations.length} mut · {e.tokens} tok
+              <Link to={`/journal/${e.generation}`}>g{e.generation}</Link> · {entryLabel(e)} ·{' '}
+              {e.mutations.length} mut · {e.tokens} tok
             </p>
           ))}
         </div>

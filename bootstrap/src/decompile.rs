@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 // The drafting contract, served as begin_decompile instructions and as the internal
-// worker's system prompt. Mirrors docs/consumers/decompile.md#draft-tasks.
+// worker's system prompt. Mirrors docs/consumers/decompile.md#draft-goals.
 pub fn instructions() -> String {
-    include_str!("../../docs/compiler/turns/prompts/decompile-contract.md").into()
+    include_str!("../../docs/compiler/goals/prompts/decompile-contract.md").into()
 }
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,13 @@ fn record_draft(out: &Path, doc: &str, hash: &str) {
 pub fn unratified(store: &Store) -> Vec<String> {
     drafts(&store.out)
         .iter()
-        .filter(|(doc, hash)| store.docs.get(*doc).map(|rec| &rec.content_hash == *hash).unwrap_or(false))
+        .filter(|(doc, hash)| {
+            store
+                .docs
+                .get(*doc)
+                .map(|rec| &rec.content_hash == *hash)
+                .unwrap_or(false)
+        })
         .map(|(doc, _)| doc.clone())
         .collect()
 }
@@ -54,24 +60,39 @@ pub fn unratified(store: &Store) -> Vec<String> {
 // Scopes and tasks.
 
 // Group the unclaimed report by top-level directory under the deliverable. A scope is
-// the unit one draft task covers. Root-level files gather under ".".
+// the unit one draft goal covers. Root-level files gather under ".".
 pub fn scopes(proj: &Project, store: &Store, gs: &GenSettings) -> BTreeMap<String, Vec<String>> {
     let mut by_scope: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in crate::bind::unclaimed(proj, store, gs) {
-        let scope = f.split('/').next().filter(|_| f.contains('/')).unwrap_or(".").to_string();
+        let scope = f
+            .split('/')
+            .next()
+            .filter(|_| f.contains('/'))
+            .unwrap_or(".")
+            .to_string();
         by_scope.entry(scope).or_default().push(f);
     }
     by_scope
 }
 
 fn scope_released(control: &crate::control::Control, scope: &str) -> bool {
-    control.released.decompile.iter().any(|s| s == scope || s == "." || scope.starts_with(&format!("{}/", s)))
+    control
+        .released
+        .decompile
+        .iter()
+        .any(|s| s == scope || s == "." || scope.starts_with(&format!("{}/", s)))
 }
 
-// Draft tasks, derived from the unclaimed report. Always gated until a decompile
-// release names the scope; there is no auto mode.
-// Mirrors docs/compiler/reconciler.md#the-task-queue.
-pub fn pending(proj: &Project, store: &Store, gs: &GenSettings, control: &crate::control::Control) -> Vec<Value> {
+// Draft goals, derived from the unclaimed report and never from the dirty set:
+// decompilation stays outside the goal board. Always gated until a decompile release
+// names the scope; there is no auto mode.
+// Mirrors docs/consumers/decompile.md#triggering.
+pub fn pending(
+    proj: &Project,
+    store: &Store,
+    gs: &GenSettings,
+    control: &crate::control::Control,
+) -> Vec<Value> {
     scopes(proj, store, gs)
         .into_iter()
         .map(|(scope, files)| {
@@ -85,14 +106,15 @@ pub fn pending(proj: &Project, store: &Store, gs: &GenSettings, control: &crate:
             });
             if !released {
                 t["gated"] = json!(true);
-                t["blockedBy"] = json!("awaiting a decompile release (`jazyk decompile` or the GUI)");
+                t["blockedBy"] =
+                    json!("awaiting a decompile release (`jazyk decompile` or the GUI)");
             }
             t
         })
         .collect()
 }
 
-// The package for one draft task: the inventory slice, the test files with their
+// The package for one draft goal: the inventory slice, the test files with their
 // content, and the drafting contract. Mirrors docs/compiler/tools.md#decompilation-tools.
 pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Result<Value, String> {
     let by_scope = scopes(proj, store, gs);
@@ -125,7 +147,11 @@ pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Res
             break;
         }
     }
-    let slug = if scope == "." { "root".to_string() } else { scope.replace('/', "-") };
+    let slug = if scope == "." {
+        "root".to_string()
+    } else {
+        scope.replace('/', "-")
+    };
     let mut lint: Vec<String> = proj.linting.warnings.clone();
     lint.extend(proj.linting.errors.iter().cloned());
     Ok(json!({
@@ -142,17 +168,28 @@ pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Res
 // Validate and land a draft in the docs tree, record its hash for ratification, and
 // consume the scope's release. The compiler picks the file up like any hand-written
 // document. Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
-pub fn submit(proj: &Project, out: &Path, path: &str, content: &str, scope: Option<&str>) -> Result<Value, String> {
-    let path = path.trim().trim_start_matches("./");
-    if path.is_empty() || path.contains("..") {
-        return Err("path must be a project-relative documentation path".into());
-    }
+pub fn submit(
+    proj: &Project,
+    out: &Path,
+    path: &str,
+    content: &str,
+    scope: Option<&str>,
+) -> Result<Value, String> {
+    // A project-relative path under the docs tree, never one that climbs out or
+    // starts at the root (docs/consumers/decompile.md#drafts-land-in-the-docs-tree).
+    let path = crate::gen::confine_rel(path)
+        .map_err(|e| format!("path must be a project-relative documentation path: {}", e))?;
+    let path = path.as_str();
     let content = content.trim_end();
     if content.is_empty() {
         return Err("content is empty; a draft states what the code does".into());
     }
-    if !content.lines().any(|l| l.starts_with("# ")) {
-        return Err("a draft is a document: it needs one H1 heading".into());
+    let h1s = content.lines().filter(|l| l.starts_with("# ")).count();
+    if h1s != 1 {
+        return Err(format!(
+            "a draft is one document with exactly one H1 heading (`# Title`); this one has {}",
+            h1s
+        ));
     }
     if content.contains('\u{2014}') {
         return Err("the draft contains an em dash; the documentation voice uses commas, periods, parentheses, or colons".into());
@@ -176,6 +213,19 @@ pub fn submit(proj: &Project, out: &Path, path: &str, content: &str, scope: Opti
         ));
     }
     let abs = proj.root.join(path);
+    // A draft never overwrites a document a person wrote or edited: only an
+    // unedited draft at the same path (its hash still the recorded one) is replaced
+    // (docs/consumers/decompile.md#drafts-land-in-the-docs-tree).
+    if abs.exists() {
+        let on_disk = std::fs::read_to_string(&abs).map(|t| hash_hex(&t)).ok();
+        let drafted = drafts(out).get(path).cloned();
+        if on_disk.is_none() || drafted != on_disk {
+            return Err(format!(
+                "`{}` already exists and is not an unedited draft: a person wrote or edited it, and a draft never overwrites that; pick another path, or edit that document by hand",
+                path
+            ));
+        }
+    }
     if let Some(dir) = abs.parent() {
         std::fs::create_dir_all(dir).ok();
     }
@@ -195,16 +245,15 @@ pub fn submit(proj: &Project, out: &Path, path: &str, content: &str, scope: Opti
 // The built-in draft worker: one scope per LLM reply, the file-reply protocol the
 // pipeline generation worker uses. An attached agent over `jazyk mcp decompile` is
 // the better worker; this one keeps the command usable without one.
-// Mirrors docs/consumers/decompile.md#draft-tasks.
+// Mirrors docs/consumers/decompile.md#draft-goals.
 pub fn run_all(
     proj: &Project,
     store: &Store,
     runner: &crate::acp::runner::AcpRunner,
     gs: &GenSettings,
     scopes_wanted: &[String],
-    trace: &crate::turn::Trace,
+    trace: &crate::session::Trace,
 ) -> Result<Value, String> {
-
     let control = crate::control::Control::load(proj, &store.out);
     let all = pending(proj, store, gs, &control);
     let targets: Vec<String> = all
@@ -243,9 +292,18 @@ pub fn run_all(
             let prompt = if attempt == 0 || last_err.is_empty() {
                 user.clone()
             } else {
-                format!("{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.", user, last_err)
+                format!(
+                    "{}\n\nYour previous draft was rejected: {}\nFix exactly that and resubmit.",
+                    user, last_err
+                )
             };
-            let reply = match runner.ask_traced(&system, &prompt, &format!("decompile {}", scope), if attempt == 0 { "draft" } else { "draft retry" }, Some(trace)) {
+            let reply = match runner.ask_traced(
+                &system,
+                &prompt,
+                &format!("decompile {}", scope),
+                if attempt == 0 { "draft" } else { "draft retry" },
+                Some(trace),
+            ) {
                 Ok(r) => r,
                 Err(e) => {
                     last_err = e;
@@ -261,7 +319,10 @@ pub fn run_all(
             };
             match submit(proj, &store.out, &path, &content, Some(scope)) {
                 Ok(v) => {
-                    trace.line("decompile", &format!("drafted {}", v["written"].as_str().unwrap_or("")));
+                    trace.line(
+                        "decompile",
+                        &format!("drafted {}", v["written"].as_str().unwrap_or("")),
+                    );
                     ok = true;
                     break;
                 }
@@ -271,7 +332,10 @@ pub fn run_all(
         if ok {
             drafted += 1;
         } else {
-            trace.line("decompile", &format!("scope {} failed: {}", scope, last_err));
+            trace.line(
+                "decompile",
+                &format!("scope {} failed: {}", scope, last_err),
+            );
             failures += 1;
         }
     }
@@ -285,14 +349,22 @@ mod tests {
     fn tmp() -> (Project, Store, GenSettings) {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let root = std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", std::process::id(), n));
+        let root =
+            std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", std::process::id(), n));
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(&root).unwrap();
         let mut proj = Project::default();
         proj.root = root.clone();
         proj.out = root.join("jazyk-out");
-        let store = Store { out: proj.out.clone(), ..Default::default() };
-        let gs = GenSettings { deliverable: root.clone(), worker: "agentic".into(), code: Vec::new() };
+        let store = Store {
+            out: proj.out.clone(),
+            ..Default::default()
+        };
+        let gs = GenSettings {
+            deliverable: root.clone(),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
         (proj, store, gs)
     }
 
@@ -318,7 +390,14 @@ mod tests {
         std::fs::create_dir_all(proj.root.join("src")).unwrap();
         std::fs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
         crate::control::release_decompile(&proj, &store.out, &["src".into()]);
-        let v = submit(&proj, &store.out, "docs/src.md", "# Src\n\nThe `lib.sh` script prints hi (observed: none, inferred: `src/lib.sh`).", Some("src")).unwrap();
+        let v = submit(
+            &proj,
+            &store.out,
+            "docs/src.md",
+            "# Src\n\nThe `lib.sh` script prints hi (observed: none, inferred: `src/lib.sh`).",
+            Some("src"),
+        )
+        .unwrap();
         assert_eq!(v["written"], "docs/src.md");
         assert!(proj.root.join("docs/src.md").exists());
         assert_eq!(drafts(&store.out).len(), 1);
@@ -331,11 +410,59 @@ mod tests {
     fn a_draft_outside_the_docs_glob_is_rejected() {
         let (proj, store, _gs) = tmp();
         assert!(submit(&proj, &store.out, "notes/x.md", "# X\n\nBody.", None).is_err());
+        // A climbing or absolute path never reaches the file system.
+        let err = submit(&proj, &store.out, "../x.md", "# X\n\nBody.", None).unwrap_err();
+        assert!(err.contains(".."), "{}", err);
+        let err = submit(&proj, &store.out, "/tmp/x.md", "# X\n\nBody.", None).unwrap_err();
+        assert!(err.contains("absolute"), "{}", err);
+        assert!(!proj.root.join("x.md").exists());
+    }
+
+    // A draft is one document: two H1s are two documents, none is a fragment.
+    // Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
+    #[test]
+    fn a_draft_needs_exactly_one_h1() {
+        let (proj, store, _gs) = tmp();
+        let err = submit(&proj, &store.out, "docs/x.md", "# X\n\nBody.\n\n# Y\n\nMore.", None)
+            .unwrap_err();
+        assert!(err.contains("exactly one H1") && err.contains("2"), "{}", err);
+        assert!(submit(&proj, &store.out, "docs/x.md", "## X\n\nBody.", None).is_err());
+    }
+
+    // A draft never overwrites a document a person wrote or edited; it replaces only
+    // its own unedited predecessor. Mirrors docs/consumers/decompile.md#drafts-land-in-the-docs-tree.
+    #[test]
+    fn a_draft_never_overwrites_an_edited_document() {
+        let (proj, store, _gs) = tmp();
+        std::fs::create_dir_all(proj.root.join("docs")).unwrap();
+        std::fs::write(proj.root.join("docs/src.md"), "# Src\n\nWritten by hand.\n").unwrap();
+        let err = submit(&proj, &store.out, "docs/src.md", "# Src\n\nDrafted.", None).unwrap_err();
+        assert!(err.contains("not an unedited draft"), "{}", err);
+        assert_eq!(
+            std::fs::read_to_string(proj.root.join("docs/src.md")).unwrap(),
+            "# Src\n\nWritten by hand.\n"
+        );
+        // A draft of its own may be drafted again.
+        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nFirst draft.", None).unwrap();
+        submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nSecond draft.", None).unwrap();
+        assert!(std::fs::read_to_string(proj.root.join("docs/lib.md"))
+            .unwrap()
+            .contains("Second"));
+        // Once a person edits it, the draft is theirs.
+        std::fs::write(proj.root.join("docs/lib.md"), "# Lib\n\nSecond draft, reviewed.\n").unwrap();
+        assert!(submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nThird draft.", None).is_err());
     }
 
     #[test]
     fn an_em_dash_is_rejected() {
         let (proj, store, _gs) = tmp();
-        assert!(submit(&proj, &store.out, "docs/x.md", "# X\n\nBody \u{2014} with a dash.", None).is_err());
+        assert!(submit(
+            &proj,
+            &store.out,
+            "docs/x.md",
+            "# X\n\nBody \u{2014} with a dash.",
+            None
+        )
+        .is_err());
     }
 }

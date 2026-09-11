@@ -30,5 +30,8 @@ where
             });
         }
     });
-    slots.into_iter().map(|m| m.into_inner().unwrap().expect("slot filled")).collect()
+    slots
+        .into_iter()
+        .map(|m| m.into_inner().unwrap().expect("slot filled"))
+        .collect()
 }

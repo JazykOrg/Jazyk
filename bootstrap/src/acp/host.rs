@@ -5,9 +5,9 @@
 use super::config::ResolvedAgent;
 use super::policy::{self, PermissionPolicy};
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities,
-    InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PromptRequest,
-    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+    CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, HttpHeader,
+    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
+    PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
     RequestPermissionResponse, SessionNotification, SessionUpdate, WriteTextFileRequest,
     WriteTextFileResponse,
 };
@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-// An MCP server to inject into a session, in jazyk's own terms.
+// An MCP server to inject into a session over stdio, in jazyk's own terms.
 #[derive(Clone, Debug)]
 pub struct McpSpec {
     pub name: String,
@@ -32,11 +32,58 @@ pub struct McpSpec {
     pub env: Vec<(String, String)>,
 }
 
+// An MCP server entry for `session/new`: the agent spawns a stdio command, or calls
+// an HTTP URL jazyk serves for the session (docs/frontends/mcp.md#mcp-over-http).
+#[derive(Clone, Debug)]
+pub enum McpEntry {
+    Stdio(McpSpec),
+    Http {
+        name: String,
+        url: String,
+        headers: Vec<(String, String)>,
+    },
+}
+
+impl McpEntry {
+    fn to_protocol(self) -> McpServer {
+        match self {
+            McpEntry::Stdio(s) => {
+                let mut stdio = McpServerStdio::new(s.name, s.command).args(s.args);
+                stdio = stdio.env(
+                    s.env
+                        .into_iter()
+                        .map(|(k, v)| agent_client_protocol::schema::v1::EnvVariable::new(k, v))
+                        .collect::<Vec<_>>(),
+                );
+                McpServer::Stdio(stdio)
+            }
+            McpEntry::Http { name, url, headers } => McpServer::Http(
+                McpServerHttp::new(name, url).headers(
+                    headers
+                        .into_iter()
+                        .map(|(k, v)| HttpHeader::new(k, v))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        }
+    }
+}
+
+// What the initialize handshake learned about the agent, kept for the session path.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AgentInfo {
+    // The reply advertised `mcpCapabilities.http`.
+    pub mcp_http: bool,
+}
+
 // What a prompt reports while it runs: session updates, and (for Forward-policy
 // sessions) permission requests awaiting an answer.
 pub enum HostEvent<'a> {
     Update(&'a SessionUpdate),
-    Permission { id: String, request: &'a RequestPermissionRequest },
+    Permission {
+        id: String,
+        request: &'a RequestPermissionRequest,
+    },
 }
 
 pub type OnUpdate = Arc<dyn Fn(&HostEvent) + Send + Sync>;
@@ -52,7 +99,7 @@ pub struct PromptOutcome {
 enum Cmd {
     Open {
         cwd: PathBuf,
-        mcp: Vec<McpSpec>,
+        mcp: Vec<McpEntry>,
         policy: PermissionPolicy,
         reply: std::sync::mpsc::Sender<Result<String, String>>,
     },
@@ -97,6 +144,7 @@ pub struct AcpHost {
     thread: Option<std::thread::JoinHandle<()>>,
     #[allow(dead_code)]
     pub agent: ResolvedAgent,
+    info: AgentInfo,
 }
 
 // A handle to one open session. Cloneable; prompts on the same session queue.
@@ -110,6 +158,11 @@ fn err_s(e: agent_client_protocol::Error) -> String {
     format!("{}", e)
 }
 
+// How many of the agent's last stderr lines a session failure quotes.
+const STDERR_TAIL: usize = 40;
+
+type OpenReply = std::sync::mpsc::Sender<Result<String, String>>;
+
 impl AcpHost {
     // Spawn the agent and complete the initialize handshake. `extra_env` rides on the
     // agent process (the embedded profile gets the resolved LLM settings this way).
@@ -120,49 +173,117 @@ impl AcpHost {
         extra_env: Vec<(String, String)>,
     ) -> Result<AcpHost, String> {
         let (cmd_tx, cmd_rx) = unbounded::<Cmd>();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<AgentInfo, String>>();
         let spawn_agent = agent.clone();
         let thread = std::thread::Builder::new()
             .name("acp-host".into())
             .spawn(move || {
-                let mut config = AcpAgentConfig::new(&spawn_agent.command).args(spawn_agent.args.clone());
+                let mut config =
+                    AcpAgentConfig::new(&spawn_agent.command).args(spawn_agent.args.clone());
                 for (k, v) in spawn_agent.env.iter().chain(extra_env.iter()) {
                     config = config.env(k, v);
                 }
-                let transport = AcpAgent::new(config);
+                // The agent's stderr, last lines only: an agent's refusal is usually
+                // explained there and nowhere in the protocol.
+                let stderr: Arc<std::sync::Mutex<std::collections::VecDeque<String>>> =
+                    Default::default();
+                let stderr_sink = stderr.clone();
+                let transport = AcpAgent::new(config).with_debug(move |line, dir| {
+                    if matches!(dir, agent_client_protocol::LineDirection::Stderr) {
+                        let mut q = stderr_sink.lock().unwrap();
+                        if q.len() >= STDERR_TAIL {
+                            q.pop_front();
+                        }
+                        q.push_back(line.chars().take(300).collect());
+                    }
+                });
+                // Session requests in flight: an error reply to session/new ends the
+                // driver (the client library treats it as fatal), and the requester
+                // deserves the agent's error rather than a dropped channel.
+                let opening: Arc<std::sync::Mutex<Vec<(u64, OpenReply)>>> = Default::default();
+                let opening_ref = opening.clone();
                 let result = futures::executor::block_on(
                     Client
                         .builder()
                         .name("jazyk")
                         .connect_with(transport, |cx: ConnectionTo<Agent>| {
-                            main_loop(cx, cmd_rx, ready_tx.clone(), root)
+                            main_loop(cx, cmd_rx, ready_tx.clone(), root, opening_ref)
                         }),
                 );
                 if let Err(e) = result {
+                    let mut e = err_s(e);
+                    let tail: Vec<String> = stderr.lock().unwrap().iter().cloned().collect();
+                    if !tail.is_empty() {
+                        e = format!("{}; agent stderr: {}", e, tail.join(" | "));
+                    }
+                    // The driver died after initialize: nothing waits on ready_tx
+                    // then, so say it out loud instead of dying silently (pending
+                    // prompts would surface only as dropped reply channels).
+                    eprintln!("[acp] host driver for `{}` ended: {}", spawn_agent.name, e);
+                    for (_, reply) in opening.lock().unwrap().drain(..) {
+                        let _ = reply.send(Err(format!(
+                            "acp host for `{}` ended while creating a session: {}",
+                            spawn_agent.name, e
+                        )));
+                    }
                     // If initialize never completed, start() is still waiting.
-                    let _ = ready_tx.send(Err(err_s(e)));
+                    let _ = ready_tx.send(Err(e));
                 }
             })
             .map_err(|e| format!("cannot spawn acp host thread: {}", e))?;
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpHost { cmd_tx, thread: Some(thread), agent }),
-            Ok(Err(e)) => Err(format!("agent `{}` failed to initialize: {}", agent.name, e)),
+            Ok(Ok(info)) => Ok(AcpHost {
+                cmd_tx,
+                thread: Some(thread),
+                agent,
+                info,
+            }),
+            Ok(Err(e)) => Err(format!(
+                "agent `{}` failed to initialize: {}",
+                agent.name, e
+            )),
             Err(_) => Err(format!("agent `{}` exited during initialize", agent.name)),
         }
     }
 
+    // What the agent's initialize reply advertised.
+    pub fn info(&self) -> AgentInfo {
+        self.info
+    }
+
+    // A session whose servings are all stdio commands.
     pub fn new_session(
         &self,
         cwd: &std::path::Path,
         mcp: Vec<McpSpec>,
         policy: PermissionPolicy,
     ) -> Result<SessionHandle, String> {
+        self.new_session_with(cwd, mcp.into_iter().map(McpEntry::Stdio).collect(), policy)
+    }
+
+    // A session with servings of either transport.
+    pub fn new_session_with(
+        &self,
+        cwd: &std::path::Path,
+        mcp: Vec<McpEntry>,
+        policy: PermissionPolicy,
+    ) -> Result<SessionHandle, String> {
         let (reply, rx) = std::sync::mpsc::channel();
         self.cmd_tx
-            .unbounded_send(Cmd::Open { cwd: cwd.to_path_buf(), mcp, policy, reply })
+            .unbounded_send(Cmd::Open {
+                cwd: cwd.to_path_buf(),
+                mcp,
+                policy,
+                reply,
+            })
             .map_err(|_| "acp host is gone".to_string())?;
-        let id = rx.recv().map_err(|_| "acp host dropped the session request".to_string())??;
-        Ok(SessionHandle { id, cmd_tx: self.cmd_tx.clone() })
+        let id = rx
+            .recv()
+            .map_err(|_| "acp host dropped the session request".to_string())??;
+        Ok(SessionHandle {
+            id,
+            cmd_tx: self.cmd_tx.clone(),
+        })
     }
 }
 
@@ -192,11 +313,14 @@ impl SessionHandle {
                 reply,
             })
             .map_err(|_| "acp host is gone".to_string())?;
-        rx.recv().map_err(|_| "acp host dropped the prompt".to_string())?
+        rx.recv()
+            .map_err(|_| "acp host dropped the prompt".to_string())?
     }
 
     pub fn cancel(&self) {
-        let _ = self.cmd_tx.unbounded_send(Cmd::Cancel { session: self.id.clone() });
+        let _ = self.cmd_tx.unbounded_send(Cmd::Cancel {
+            session: self.id.clone(),
+        });
     }
 
     // Answer a forwarded permission request. `None` cancels it.
@@ -214,7 +338,10 @@ impl SessionHandle {
         let (reply, rx) = std::sync::mpsc::channel();
         if self
             .cmd_tx
-            .unbounded_send(Cmd::Close { session: self.id.clone(), reply })
+            .unbounded_send(Cmd::Close {
+                session: self.id.clone(),
+                reply,
+            })
             .is_ok()
         {
             let _ = rx.recv();
@@ -230,24 +357,28 @@ struct SessionEntry {
 async fn main_loop(
     cx: ConnectionTo<Agent>,
     mut cmd_rx: UnboundedReceiver<Cmd>,
-    ready_tx: std::sync::mpsc::Sender<Result<(), String>>,
+    ready_tx: std::sync::mpsc::Sender<Result<AgentInfo, String>>,
     root: PathBuf,
+    opening: Arc<std::sync::Mutex<Vec<(u64, OpenReply)>>>,
 ) -> Result<(), agent_client_protocol::Error> {
     // Handshake first: capabilities out, the agent's back. File-system methods are
-    // advertised and served against the project tree.
+    // advertised and served against the project tree. The reply's MCP capabilities
+    // decide the serving's transport for every session on this host.
     let init = cx
         .send_request(
             InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                ClientCapabilities::new().fs(
-                    FileSystemCapabilities::new().read_text_file(true).write_text_file(true),
-                ),
+                ClientCapabilities::new().fs(FileSystemCapabilities::new()
+                    .read_text_file(true)
+                    .write_text_file(true)),
             ),
         )
         .block_task()
         .await;
     match init {
-        Ok(_) => {
-            let _ = ready_tx.send(Ok(()));
+        Ok(resp) => {
+            let _ = ready_tx.send(Ok(AgentInfo {
+                mcp_http: resp.agent_capabilities.mcp_capabilities.http,
+            }));
         }
         Err(e) => {
             let _ = ready_tx.send(Err(err_s(e)));
@@ -256,29 +387,39 @@ async fn main_loop(
     }
 
     let mut sessions: HashMap<String, SessionEntry> = HashMap::new();
+    let mut open_seq: u64 = 0;
     while let Some(cmd) = cmd_rx.next().await {
         match cmd {
-            Cmd::Open { cwd, mcp, policy, reply } => {
-                let servers: Vec<McpServer> = mcp
-                    .into_iter()
-                    .map(|s| {
-                        let mut stdio = McpServerStdio::new(s.name, s.command).args(s.args);
-                        stdio = stdio.env(
-                            s.env
-                                .into_iter()
-                                .map(|(k, v)| agent_client_protocol::schema::v1::EnvVariable::new(k, v))
-                                .collect::<Vec<_>>(),
-                        );
-                        McpServer::Stdio(stdio)
-                    })
-                    .collect();
+            Cmd::Open {
+                cwd,
+                mcp,
+                policy,
+                reply,
+            } => {
+                let servers: Vec<McpServer> =
+                    mcp.into_iter().map(McpEntry::to_protocol).collect();
                 let request = NewSessionRequest::new(&cwd).mcp_servers(servers);
-                match cx.build_session_from(request).block_task().start_session().await {
+                open_seq += 1;
+                let ticket = open_seq;
+                opening.lock().unwrap().push((ticket, reply.clone()));
+                let started = cx
+                    .build_session_from(request)
+                    .block_task()
+                    .start_session()
+                    .await;
+                opening.lock().unwrap().retain(|(t, _)| *t != ticket);
+                match started {
                     Ok(active) => {
                         let id: String = active.session_id().to_string();
                         let (tx, rx) = unbounded::<SessCmd>();
                         let cancelled = Arc::new(AtomicBool::new(false));
-                        sessions.insert(id.clone(), SessionEntry { tx, cancelled: cancelled.clone() });
+                        sessions.insert(
+                            id.clone(),
+                            SessionEntry {
+                                tx,
+                                cancelled: cancelled.clone(),
+                            },
+                        );
                         let task_root = root.clone();
                         let _ = cx.spawn(session_task(active, rx, cancelled, task_root, policy));
                         let _ = reply.send(Ok(id));
@@ -288,10 +429,23 @@ async fn main_loop(
                     }
                 }
             }
-            Cmd::Prompt { session, text, on_update, reply } => match sessions.get(&session) {
+            Cmd::Prompt {
+                session,
+                text,
+                on_update,
+                reply,
+            } => match sessions.get(&session) {
                 Some(entry) => {
                     entry.cancelled.store(false, Ordering::Relaxed);
-                    if entry.tx.unbounded_send(SessCmd::Prompt { text, on_update, reply: reply.clone() }).is_err() {
+                    if entry
+                        .tx
+                        .unbounded_send(SessCmd::Prompt {
+                            text,
+                            on_update,
+                            reply: reply.clone(),
+                        })
+                        .is_err()
+                    {
                         let _ = reply.send(Err("session task is gone".into()));
                     }
                 }
@@ -299,7 +453,11 @@ async fn main_loop(
                     let _ = reply.send(Err(format!("unknown session {}", session)));
                 }
             },
-            Cmd::Answer { session, id, option } => {
+            Cmd::Answer {
+                session,
+                id,
+                option,
+            } => {
                 if let Some(entry) = sessions.get(&session) {
                     let _ = entry.tx.unbounded_send(SessCmd::Answer { id, option });
                 }
@@ -310,18 +468,22 @@ async fn main_loop(
                 }
                 let _ = cx.send_notification(CancelNotification::new(session.clone()));
             }
-            Cmd::Close { session, reply } => {
-                match sessions.remove(&session) {
-                    Some(entry) => {
-                        if entry.tx.unbounded_send(SessCmd::Close { reply: reply.clone() }).is_err() {
-                            let _ = reply.send(());
-                        }
-                    }
-                    None => {
+            Cmd::Close { session, reply } => match sessions.remove(&session) {
+                Some(entry) => {
+                    if entry
+                        .tx
+                        .unbounded_send(SessCmd::Close {
+                            reply: reply.clone(),
+                        })
+                        .is_err()
+                    {
                         let _ = reply.send(());
                     }
                 }
-            }
+                None => {
+                    let _ = reply.send(());
+                }
+            },
             Cmd::Shutdown => break,
         }
     }
@@ -340,9 +502,7 @@ async fn session_task(
     root: PathBuf,
     policy: PermissionPolicy,
 ) -> Result<(), agent_client_protocol::Error> {
-    use agent_client_protocol::schema::v1::{
-        RequestPermissionOutcome, SelectedPermissionOutcome,
-    };
+    use agent_client_protocol::schema::v1::{RequestPermissionOutcome, SelectedPermissionOutcome};
     let idle = super::config::idle_timeout();
     // Forwarded permission requests awaiting the user, keyed by the ask id the
     // HostEvent carried. The Mutex satisfies the Send bound on spawned futures; the
@@ -365,7 +525,9 @@ async fn session_task(
                 let sid = session.session_id().clone();
                 let _ = session
                     .connection()
-                    .send_request(agent_client_protocol::schema::v1::CloseSessionRequest::new(sid))
+                    .send_request(agent_client_protocol::schema::v1::CloseSessionRequest::new(
+                        sid,
+                    ))
                     .block_task()
                     .await;
                 let _ = reply.send(());
@@ -373,7 +535,11 @@ async fn session_task(
             }
             // No turn in flight: nothing to answer.
             SessCmd::Answer { .. } => {}
-            SessCmd::Prompt { text, on_update, reply } => {
+            SessCmd::Prompt {
+                text,
+                on_update,
+                reply,
+            } => {
                 if let Err(e) = session.send_prompt(text) {
                     let _ = reply.send(Err(err_s(e)));
                     continue;
@@ -495,19 +661,22 @@ async fn handle_dispatch(a: HandleArgs<'_>) -> Result<(), agent_client_protocol:
                 PermissionPolicy::Forward => {
                     let n = a.ask_seq.fetch_add(1, Ordering::Relaxed) + 1;
                     let id = format!("ask-{}-{}", a.session_id, n);
-                    (a.on_update)(&HostEvent::Permission { id: id.clone(), request: &req });
+                    (a.on_update)(&HostEvent::Permission {
+                        id: id.clone(),
+                        request: &req,
+                    });
                     a.pending.lock().unwrap().insert(id, responder);
                     Ok(())
                 }
             }
         })
         .await
-        .if_request(async |req: ReadTextFileRequest, responder| {
-            match read_text_file(root, &req) {
+        .if_request(
+            async |req: ReadTextFileRequest, responder| match read_text_file(root, &req) {
                 Ok(content) => responder.respond(ReadTextFileResponse::new(content)),
                 Err(e) => responder.respond_with_internal_error(e),
-            }
-        })
+            },
+        )
         .await
         .if_request(async |req: WriteTextFileRequest, responder| {
             match write_text_file(root, &req) {
@@ -518,9 +687,9 @@ async fn handle_dispatch(a: HandleArgs<'_>) -> Result<(), agent_client_protocol:
         .await
         .otherwise(|message| async move {
             match message {
-                Dispatch::Request(_, responder) => responder.respond_with_error(
-                    agent_client_protocol::Error::method_not_found(),
-                ),
+                Dispatch::Request(_, responder) => {
+                    responder.respond_with_error(agent_client_protocol::Error::method_not_found())
+                }
                 Dispatch::Notification(_) | Dispatch::Response(_, _) => Ok(()),
             }
         })
@@ -545,13 +714,17 @@ fn checked_path(root: &std::path::Path, path: &std::path::Path) -> Result<PathBu
     if normal.starts_with(root) {
         Ok(normal)
     } else {
-        Err(format!("path {} is outside the project root", path.display()))
+        Err(format!(
+            "path {} is outside the project root",
+            path.display()
+        ))
     }
 }
 
 fn read_text_file(root: &std::path::Path, req: &ReadTextFileRequest) -> Result<String, String> {
     let path = checked_path(root, &req.path)?;
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let start = req.line.map(|l| l.saturating_sub(1) as usize).unwrap_or(0);
     let take = req.limit.map(|l| l as usize).unwrap_or(usize::MAX);
     if start == 0 && take == usize::MAX {
@@ -568,7 +741,8 @@ fn read_text_file(root: &std::path::Path, req: &ReadTextFileRequest) -> Result<S
 fn write_text_file(root: &std::path::Path, req: &WriteTextFileRequest) -> Result<(), String> {
     let path = checked_path(root, &req.path)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
     }
     std::fs::write(&path, &req.content).map_err(|e| format!("write {}: {}", path.display(), e))
 }

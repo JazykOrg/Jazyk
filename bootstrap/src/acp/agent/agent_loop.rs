@@ -11,9 +11,19 @@ use serde_json::{json, Value};
 pub enum AgentEvent {
     Thought(String),
     Message(String),
-    ToolCallStart { id: String, name: String, args: Value },
-    ToolCallEnd { id: String, result: String, ok: bool },
-    Usage { tokens: u64 },
+    ToolCallStart {
+        id: String,
+        name: String,
+        args: Value,
+    },
+    ToolCallEnd {
+        id: String,
+        result: String,
+        ok: bool,
+    },
+    Usage {
+        tokens: u64,
+    },
 }
 
 pub enum Stop {
@@ -33,7 +43,11 @@ that ends the turn.";
 // ---- codecs (moved from the turn harness, generic wording) ----
 
 enum Action {
-    Call { id: Option<String>, name: String, args: Value },
+    Call {
+        id: Option<String>,
+        name: String,
+        args: Value,
+    },
     Text(String),
     // A reply that reads as a JSON action but does not parse. Ending the turn on it
     // would treat a dropped brace as a finished answer; the loop repairs instead.
@@ -75,12 +89,19 @@ impl Codec for NativeCodec {
         }
         if let Some(calls) = msg["tool_calls"].as_array() {
             for c in calls {
-                let name = c["function"]["name"].as_str().unwrap_or_default().to_string();
+                let name = c["function"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let args = match c["function"]["arguments"].as_str() {
                     Some(s) => serde_json::from_str(s).unwrap_or(json!({})),
                     None => c["function"]["arguments"].clone(),
                 };
-                out.push(Action::Call { id: c["id"].as_str().map(|s| s.to_string()), name, args });
+                out.push(Action::Call {
+                    id: c["id"].as_str().map(|s| s.to_string()),
+                    name,
+                    args,
+                });
             }
         }
         out
@@ -96,6 +117,60 @@ impl Codec for NativeCodec {
 
 struct TextCodec;
 
+// Balanced top-level `{...}` blocks in reply text, in order, string-aware: the
+// text codec's action extractor.
+fn balanced_objects(content: &str) -> Vec<String> {
+    let bytes = content.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            let start = i;
+            let mut depth = 0i32;
+            let mut in_str = false;
+            let mut esc = false;
+            let mut j = i;
+            let mut end = None;
+            while j < bytes.len() {
+                let c = bytes[j];
+                if esc {
+                    esc = false;
+                } else if in_str {
+                    match c {
+                        b'\\' => esc = true,
+                        b'"' => in_str = false,
+                        _ => {}
+                    }
+                } else {
+                    match c {
+                        b'"' => in_str = true,
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = Some(j);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                j += 1;
+            }
+            match end {
+                Some(e) => {
+                    out.push(content[start..=e].to_string());
+                    i = e + 1;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 impl Codec for TextCodec {
     fn system_suffix(&self, tools: &[GenericTool]) -> String {
         if tools.is_empty() {
@@ -105,7 +180,10 @@ impl Codec for TextCodec {
             "\n\nTOOL PROTOCOL: you have no native tool support. To call a tool, reply with EXACTLY ONE JSON object per message, nothing else:\n{\"tool\": \"<name>\", \"args\": { ... }}\nThe result comes back as a message starting with RESULT:. Then reply with your next action. A reply that is not a JSON action ends the turn. Available tools:\n",
         );
         for t in tools {
-            s.push_str(&format!("- {}: {} args schema: {}\n", t.name, t.description, t.parameters));
+            s.push_str(&format!(
+                "- {}: {} args schema: {}\n",
+                t.name, t.description, t.parameters
+            ));
         }
         s
     }
@@ -114,21 +192,44 @@ impl Codec for TextCodec {
     }
     fn parse(&self, msg: &Value) -> Vec<Action> {
         let content = msg["content"].as_str().unwrap_or_default();
-        if let Some(obj) = llm::extract_json_object(content) {
+        // Every balanced top-level object in the reply, in order: the protocol
+        // asks for one action per message, but a model that packs several must
+        // see them all executed, never the first with the rest silently dropped
+        // (a session that believes 26 goals are marked while one landed spends
+        // its rounds re-proposing the other 25).
+        let mut calls: Vec<Action> = Vec::new();
+        let mut first_err: Option<String> = None;
+        for obj in balanced_objects(content) {
             match serde_json::from_str::<Value>(&obj) {
                 Ok(v) => {
                     if let Some(name) = v["tool"].as_str() {
-                        return vec![Action::Call { id: None, name: name.to_string(), args: v["args"].clone() }];
+                        calls.push(Action::Call {
+                            id: None,
+                            name: name.to_string(),
+                            args: v["args"].clone(),
+                        });
                     }
                 }
-                Err(e) => return vec![Action::Malformed(e.to_string())],
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e.to_string());
+                    }
+                }
             }
+        }
+        if !calls.is_empty() {
+            return calls;
+        }
+        if let Some(e) = first_err {
+            return vec![Action::Malformed(e)];
         }
         // Content that opens like an action but never yielded one is a broken
         // action, not prose: a truncated object must not end the turn as an answer.
         let t = content.trim_start();
         if t.starts_with('{') && t.contains("\"tool\"") {
-            return vec![Action::Malformed("the object is incomplete or unbalanced".to_string())];
+            return vec![Action::Malformed(
+                "the object is incomplete or unbalanced".to_string(),
+            )];
         }
         if content.trim().is_empty() {
             Vec::new()
@@ -182,20 +283,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         }
     };
     let mut codec = codec_for(mode);
-    let system = |codec: &dyn Codec, tools: &[GenericTool]| {
-        json!({"role": "system", "content": format!("{}{}", SYSTEM, codec.system_suffix(tools))})
-    };
-    if a.history.first().map(|m| m["role"] == "system").unwrap_or(false) {
+    let system = |codec: &dyn Codec, tools: &[GenericTool]| json!({"role": "system", "content": format!("{}{}", SYSTEM, codec.system_suffix(tools))});
+    if a.history
+        .first()
+        .map(|m| m["role"] == "system")
+        .unwrap_or(false)
+    {
         a.history[0] = system(codec.as_ref(), a.tools);
     } else {
         a.history.insert(0, system(codec.as_ref(), a.tools));
     }
 
     let mut rounds = 0u32;
-    // Identical calls repeated verbatim get refused: the answer has not changed, and
-    // a looping model should stop paying for the question.
-    let mut repeats: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
-    let mut refusals = 0u32;
     let mut called_any = false;
     let mut nudged = false;
     let mut empty_nudges = 0u32;
@@ -207,7 +306,10 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         rounds += 1;
         let step = format!("r{}", rounds);
         let tools_param = codec.tools_param(a.tools);
-        let msg = match a.llm.chat_messages(a.history, tools_param.as_deref(), &a.label, &step) {
+        let msg = match a
+            .llm
+            .chat_messages(a.history, tools_param.as_deref(), &a.label, &step)
+        {
             Ok((m, t)) => {
                 (a.emit)(AgentEvent::Usage { tokens: t });
                 m
@@ -237,10 +339,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             a.history[0] = system(codec.as_ref(), a.tools);
             continue;
         }
-        if mode != 2 && llm::tools_mode() == 0 && actions.iter().any(|x| matches!(x, Action::Call { .. })) {
+        if mode != 2
+            && llm::tools_mode() == 0
+            && actions.iter().any(|x| matches!(x, Action::Call { .. }))
+        {
             llm::set_tools_mode(1);
         }
-        a.history.push(msg.clone());
+        // The finish reason is the loop's to read, never the provider's to see again.
+        let finish_reason = msg["finish_reason"].as_str().map(String::from);
+        let mut kept = msg.clone();
+        if let Some(o) = kept.as_object_mut() {
+            o.remove("finish_reason");
+        }
+        a.history.push(kept);
         for field in ["reasoning_content", "reasoning"] {
             if let Some(r) = msg[field].as_str() {
                 if !r.trim().is_empty() {
@@ -252,10 +363,15 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         // A broken action gets a repair message naming the parse error, three
         // strikes before the turn fails: a dropped brace is a resend, not an
         // answer. Mirrors docs/frontends/acp.md#the-embedded-agent.
-        if let Some(Action::Malformed(err)) = actions.iter().find(|x| matches!(x, Action::Malformed(_))) {
+        if let Some(Action::Malformed(err)) =
+            actions.iter().find(|x| matches!(x, Action::Malformed(_)))
+        {
             malformed_streak += 1;
             if malformed_streak >= 3 {
-                return Stop::Error(format!("the model cannot produce a parseable action ({})", err));
+                return Stop::Error(format!(
+                    "the model cannot produce a parseable action ({})",
+                    err
+                ));
             }
             a.history.push(json!({"role": "user", "content": format!(
                 "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
@@ -274,14 +390,42 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             // stall, not an answer: reasoning models narrate the action they intend
             // and stop, as if the thinking were visible. Name that, at most twice.
             // Mirrors docs/frontends/acp.md#the-embedded-agent.
-            let has_text = actions.iter().any(|x| matches!(x, Action::Text(t) if !t.trim().is_empty()));
-            let has_reasoning = ["reasoning_content", "reasoning"]
+            let has_text = actions
                 .iter()
-                .any(|f| msg[*f].as_str().map(|r| !r.trim().is_empty()).unwrap_or(false));
+                .any(|x| matches!(x, Action::Text(t) if !t.trim().is_empty()));
+            let has_reasoning = ["reasoning_content", "reasoning"].iter().any(|f| {
+                msg[*f]
+                    .as_str()
+                    .map(|r| !r.trim().is_empty())
+                    .unwrap_or(false)
+            });
             if !has_text && has_reasoning && empty_nudges < 2 {
                 empty_nudges += 1;
-                a.history.push(json!({"role": "user", "content":
-                    "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."}));
+                // The stalled reply keeps its reasoning as its message text: an
+                // OpenAI-compatible endpoint drops reasoning fields from input
+                // messages, so without this the model re-thinks from nothing and
+                // stalls again. Mirrors docs/frontends/acp.md#the-embedded-agent.
+                let reasoning = ["reasoning_content", "reasoning"]
+                    .iter()
+                    .find_map(|f| msg[*f].as_str().map(|r| r.trim().to_string()))
+                    .unwrap_or_default();
+                if let Some(last) = a.history.last_mut() {
+                    let tail: String = reasoning
+                        .chars()
+                        .rev()
+                        .take(2000)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    last["content"] = json!(format!("(my reasoning, not yet acted on) {}", tail));
+                }
+                let nudge = if finish_reason.as_deref() == Some("length") {
+                    "Your reasoning ran past the completion cap before any call or message. More thinking cannot fit: reply with the tool call alone, no further deliberation, or state your answer in one line."
+                } else {
+                    "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."
+                };
+                a.history.push(json!({"role": "user", "content": nudge}));
                 continue;
             }
             if called_any && !nudged {
@@ -317,35 +461,26 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     }
                     called_any = true;
                     call_n += 1;
-                    let call_id = id.clone().unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, call_n));
-                    (a.emit)(AgentEvent::ToolCallStart { id: call_id.clone(), name: name.clone(), args: args.clone() });
-                    let key = format!("{}|{}", name, args);
-                    let seen = {
-                        let c = repeats.entry(key).or_insert(0);
-                        *c += 1;
-                        *c
-                    };
-                    if seen >= 3 {
-                        refusals += 1;
-                        let refusal = json!({"error": {"rule": "repeated-call", "message": format!(
-                            "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have.",
-                            seen, name
-                        )}});
-                        (a.emit)(AgentEvent::ToolCallEnd { id: call_id, result: refusal.to_string(), ok: false });
-                        a.history.push(codec.result_msg(&id, &name, &refusal));
-                        if refusals > 8 {
-                            return Stop::EndTurn;
-                        }
-                        continue;
-                    }
-                    let (mut result, ok) = match (a.dispatch)(&name, &args) {
+                    let call_id = id
+                        .clone()
+                        .unwrap_or_else(|| format!("{}-{}-{}", a.label, rounds, call_n));
+                    (a.emit)(AgentEvent::ToolCallStart {
+                        id: call_id.clone(),
+                        name: name.clone(),
+                        args: args.clone(),
+                    });
+                    // The repeated-call guard lives in the tool serving, keyed per
+                    // open batch, so every agent gets the same contract
+                    // (docs/compiler/sessions.md#repeated-calls).
+                    let (result, ok) = match (a.dispatch)(&name, &args) {
                         Ok(v) => (v, true),
                         Err(e) => (e, false),
                     };
-                    if seen == 2 {
-                        result.push_str("\n(repeat: you already made this exact call; this is the same answer. Act on it.)");
-                    }
-                    (a.emit)(AgentEvent::ToolCallEnd { id: call_id, result: result.clone(), ok });
+                    (a.emit)(AgentEvent::ToolCallEnd {
+                        id: call_id,
+                        result: result.clone(),
+                        ok,
+                    });
                     a.history.push(codec.result_msg(&id, &name, &json!(result)));
                 }
             }
@@ -370,6 +505,23 @@ mod tests {
                 assert_eq!(args["query"], "cart");
             }
             _ => panic!("expected a call"),
+        }
+    }
+
+    #[test]
+    fn text_codec_executes_every_action_object() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "Marking both.\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\"}}\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:b\"}}"});
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 2);
+        for (a, g) in actions.iter().zip(["g:a", "g:b"]) {
+            match a {
+                Action::Call { name, args, .. } => {
+                    assert_eq!(name, "mark_goal_done");
+                    assert_eq!(args["goal"], g);
+                }
+                _ => panic!("expected calls"),
+            }
         }
     }
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Jazyk — Compiler for natural language</title>
-  <meta name="description" content="Jazyk is a compiler for natural language. It treats prose documentation as source code and maintains a persistent semantic graph of entities, requirements, and diagnostics, reconciled against the docs." />
+  <meta name="description" content="Jazyk is a compiler for natural language. It treats prose documentation as source code and maintains a persistent semantic graph of entities, requirements, views, and diagnostics, reconciled against the docs, with every UML diagram rendered from it level by level." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -22,7 +22,8 @@
       </a>
       <div class="flex items-center gap-6 text-sm">
         <a href="/compilation/" class="hover:text-brand">Compilation</a>
-        <a href="/artifact/" class="hover:text-brand">Graph</a>
+        <a href="/levels/" class="hover:text-brand">Levels</a>
+        <a href="/graph/" class="hover:text-brand">Graph</a>
         <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
       </div>
     </nav>
@@ -49,12 +50,12 @@
         <div class="rounded-lg border-2 border-brand bg-brand/5 p-5">
           <div class="text-xs font-semibold uppercase tracking-wide text-brand">Process</div>
           <div class="mt-1 font-semibold text-slate-900">Reconciliation</div>
-          <p class="mt-2 text-sm text-slate-600">A deterministic harness finds what changed; bounded LLM turns bring the graph in line with it, one document at a time, behind validation gates.</p>
+          <p class="mt-2 text-sm text-slate-600">A deterministic harness finds what changed and derives goals from it; bounded LLM sessions resolve the goals, one batch at a time, behind validation gates.</p>
         </div>
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Output</div>
           <div class="mt-1 font-semibold text-slate-900">The semantic graph</div>
-          <p class="mt-2 text-sm text-slate-600">Entities, EARS requirements, derived relationships, and diagnostics. Persistent, edited in place, never regenerated.</p>
+          <p class="mt-2 text-sm text-slate-600">Entities in one containment tree, requirement statements with verbatim quotes, views, derived relationships and state machines, sticky diagnostics. Persistent, edited in place, never regenerated. Every UML diagram renders from it.</p>
         </div>
       </div>
 
@@ -62,17 +63,19 @@
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Control</div>
           <ul class="mt-2 space-y-1 text-sm text-slate-600">
-            <li><span class="font-medium text-slate-800">CLI</span> to compile, watch, and query</li>
+            <li><span class="font-medium text-slate-800">CLI</span> to compile, watch, query, and answer</li>
             <li><span class="font-medium text-slate-800">MCP</span> so agents read the same graph through the same tools</li>
-            <li><span class="font-medium text-slate-800">IDE</span> via the Language Server Protocol</li>
+            <li><span class="font-medium text-slate-800">IDE</span> via the Language Server Protocol: hover an entity, see its card</li>
+            <li><span class="font-medium text-slate-800">GUI</span> with the containment tree, the diagrams, and the questions the build asks</li>
           </ul>
         </div>
         <div class="rounded-lg border border-slate-200 p-5">
           <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Usages</div>
           <ul class="mt-2 space-y-1 text-sm text-slate-600">
-            <li><span class="font-medium text-slate-800">Code generation</span> — one unit per entity</li>
-            <li><span class="font-medium text-slate-800">Test generation</span> — one test per requirement</li>
-            <li><span class="font-medium text-slate-800">Model benchmark</span> — grades whether a model can drive compilation</li>
+            <li><span class="font-medium text-slate-800">Diagrams</span>: every UML kind, one set per level, drill-down between them</li>
+            <li><span class="font-medium text-slate-800">Code generation</span>: one unit per entity, every requirement verified by a real test run</li>
+            <li><span class="font-medium text-slate-800">Documentation</span>: a card per entity, a page per diagram, a walk</li>
+            <li><span class="font-medium text-slate-800">Model benchmark</span>: grades whether a model can drive compilation</li>
           </ul>
         </div>
       </div>
@@ -83,29 +86,58 @@
       <div class="mx-auto max-w-3xl px-6 py-16 space-y-10">
         <div>
           <h2 class="text-2xl font-bold text-slate-900">The thesis</h2>
-          <p class="mt-3 text-slate-600">Open-ended prompts to a model are unreliable; small, well-defined ones are not. Jazyk decomposes loose documentation into many small, well-defined units — entities and the requirements attached to them — so everything downstream operates in the reliable regime.</p>
-          <p class="mt-3 text-slate-600">The graph, not the prose, is the build artifact. It persists across builds: nodes are created once and edited in place, ids never change, and human triage on a finding survives every rebuild. Downstream tools bind to entity ids and stay bound.</p>
+          <p class="mt-3 text-slate-600">Open-ended prompts to a model are unreliable; small, well-defined ones are not. Jazyk decomposes loose documentation into many small, well-defined units, entities and the requirement statements attached to them, so everything downstream operates in the reliable regime.</p>
+          <p class="mt-3 text-slate-600">The graph, not the prose, is the build artifact. It persists across builds: nodes are created once and edited in place, ids never change, and human triage on a finding survives every rebuild. Every fact carries its provenance: a verbatim quote, a derivation from upstream facts, or a human decree. Downstream tools bind to entity ids and stay bound.</p>
         </div>
 
         <div>
-          <h2 class="text-2xl font-bold text-slate-900">A turn, as it runs</h2>
-          <p class="mt-3 text-slate-600">Compilation is model-driven but harness-governed. The model reads a document's changed sections, searches the graph before creating anything, and stages mutations that commit only if every validation gate passes. From a real trace:</p>
-          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>[reconcile-doc docs/customer.md] turn start (3 dirty, 0 stale)
-→ read_section {"ref":"docs/customer.md#/customer/account-rules"}
-→ search {"query":"Customer"}
-← [{"id":"ent:customer","name":"Customer"}]
-→ upsert_requirement {"ears":"Each Customer shall have a unique Email
-   address, because the Email is the login identifier.", ...}
-← {"created":true,"id":"req:customer-1"}
-→ set_coverage {"section":"docs/customer.md#/customer","state":"covered"}
-✓ done (6 staged, 6 rounds)</code></pre>
+          <h2 class="text-2xl font-bold text-slate-900">A session, as it runs</h2>
+          <p class="mt-3 text-slate-600">Compilation is model-driven but harness-governed. The harness derives goals from what changed and hands a session a batch of them. The model reads the dirty sections, searches the graph before creating anything, and stages mutations that commit only if every validation gate passes; each staged mutation previews the goals it will open. From a real trace, condensed:</p>
+          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>[b10-1] g:reconcile-section:docs/checkout.md#/checkout, #/checkout/rules
+→ read_section {"ref":"docs/checkout.md#/checkout"}
+→ search {"query":"Checkout"}
+← {"hits":[],"entityCount":16, ...}
+→ upsert_entity {"name":"Checkout","stereotype":"process",
+   "definition":"A Checkout turns a Cart into an Order.",
+   "mention":{"quote":"A Checkout turns a Cart into an Order.",
+              "section":"docs/checkout.md#/checkout"}}
+← {"id":"ent:checkout","created":true,
+   "opens":["abstract-entity scope:public (fan-out 12 over soft 9, optional)"]}
+→ upsert_requirement {"statement":"A Checkout turns a Cart into an Order.",
+   "quote":"A Checkout turns a Cart into an Order.",
+   "entities":["ent:checkout","ent:cart","ent:order"],
+   "edges":[{"a":"ent:checkout","b":"ent:cart","type":"association"}, ...]}
+← {"id":"req:checkout-8","created":true,
+   "opens":["review-entity ent:checkout (requirements changed)", ...]}
+→ set_coverage {"section":"docs/checkout.md#/checkout","state":"covered", ...}
+→ mark_goal_done {"goal":"g:reconcile-section:docs/checkout.md#/checkout",
+   "justification":"The /checkout section's eight definition sentences each
+   state what a domain part is or does and are extracted as req:checkout-1
+   through req:checkout-8 ..."}
+→ done
+← {"committed":true,"generation":11,"applied":24,
+   "opened":["g:abstract-entity:scope:public","g:review-entity:ent:checkout", ...]}</code></pre>
         </div>
 
         <div>
           <h2 class="text-2xl font-bold text-slate-900">Changes stay small</h2>
-          <p class="mt-3 text-slate-600">A rebuild with nothing changed makes zero LLM calls. Editing one sentence dirties one document: one turn reconciles it, review turns re-judge the touched entities, and the graph diff is additive. Contradictions across documents surface as sticky diagnostics with the compiler's reasoning attached.</p>
-          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700"><code>diag:contradiction-2  error  [req:payment-2, req:orders-3]
-orders.md requires payment within 14 days; payment.md says 30.</code></pre>
+          <p class="mt-3 text-slate-600">A rebuild with nothing changed derives zero goals and makes zero LLM calls. Editing one sentence dirties one section: one goal reconciles it, the mutations it stages open the judgment goals on the touched entities and pairs, and the graph diff is additive. Contradictions across documents surface as sticky diagnostics with the compiler's reasoning attached and a question the owner answers, each option an exact edit to a document.</p>
+          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>diag:contradiction-1  error  [req:orders-4, req:payment-3]
+  Payment deadline conflict: orders says "An Order shall be paid within 21
+  days of placement; otherwise the system shall cancel it." while payment
+  says "An Order shall be paid within 30 days of placement."
+  Should the Order payment deadline be 21 days or 30 days?
+  0  Use 21 days in payment rules (edit docs/payment.md /payment/rules)
+  1  Use 30 days in order lifecycle (edit docs/orders.md /order/lifecycle)</code></pre>
+        </div>
+
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Levels</h2>
+          <p class="mt-3 text-slate-600">Requirements stay on the entities the documents state. Those entities summarize into groupings, and those into higher still, under a children limit the harness enforces and a name the model chooses from the documents. Every level gets its own structural, use case, and sequence diagrams, and digging into an entity shows the level below it. A grouping no document states carries a proposal for the sentence the documents should gain: the compiler proposes the architecture chapter the documents never wrote, and the owner accepts or retracts it.</p>
+          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
+            <a href="/levels/#top"><img src="/levels/top-level.svg" width="402" height="181" class="mx-auto block" alt="Component diagram of the top level of the ledger example: Ledger, Checkout, Orders, Platform, Shipping" /></a>
+          </div>
+          <p class="mt-2 text-sm text-slate-500">The top level of a real build: five boxes over thirty-two entities four levels deep. The line between Checkout and Orders stands for four sentences, one of them "A Checkout turns a Cart into an Order." <a href="/levels/" class="text-brand hover:underline">Dig in.</a></p>
         </div>
       </div>
     </section>

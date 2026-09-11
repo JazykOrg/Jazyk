@@ -7,10 +7,10 @@ pub mod agent_loop;
 pub mod mcp_client;
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
-    ContentBlock, ContentChunk, InitializeRequest, InitializeResponse, McpServer,
-    NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities,
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
+    ContentChunk, InitializeRequest, InitializeResponse, McpServer, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, SessionCapabilities, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
     SessionConfigSelectOption, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, StopReason, ToolCall, ToolCallStatus, ToolCallUpdate,
     ToolCallUpdateFields, UsageUpdate,
@@ -74,7 +74,7 @@ fn max_rounds() -> u32 {
     std::env::var("JAZYK_AGENT_MAX_ROUNDS")
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(48)
+        .unwrap_or(crate::limits::AGENT_MAX_ROUNDS)
         .max(1)
 }
 
@@ -264,7 +264,18 @@ pub fn run() -> i32 {
                                 responder.respond(PromptResponse::new(StopReason::MaxTurnRequests))
                             }
                             Stop::Cancelled => responder.respond(PromptResponse::new(StopReason::Cancelled)),
-                            Stop::Error(e) => responder.respond_with_internal_error(e),
+                            // A loop failure answers as a refusal with the error in a
+                            // message chunk, never as a protocol error: the client
+                            // library treats an error response to session/prompt as
+                            // fatal to the whole connection, so one rate-limited call
+                            // would take down the host and every later session with it.
+                            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+                            Stop::Error(e) => {
+                                notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                    ContentBlock::from(format!("agent error: {}", e)),
+                                )));
+                                responder.respond(PromptResponse::new(StopReason::Refusal))
+                            }
                         };
                     });
                     Ok(())
@@ -362,7 +373,10 @@ mod tests {
         let options = model_options(&llm, &llm.model);
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].id.0.as_ref(), MODEL_OPTION);
-        assert_eq!(options[0].category, Some(SessionConfigOptionCategory::Model));
+        assert_eq!(
+            options[0].category,
+            Some(SessionConfigOptionCategory::Model)
+        );
         let SessionConfigKind::Select(select) = &options[0].kind else {
             panic!("the model option is a select");
         };
@@ -372,7 +386,10 @@ mod tests {
         assert_eq!(json["options"][0]["value"], "some-model");
 
         // A model with no name at all offers nothing rather than an empty picker.
-        let bare = crate::llm::Llm { model: String::new(), ..llm };
+        let bare = crate::llm::Llm {
+            model: String::new(),
+            ..llm
+        };
         assert!(model_options(&bare, "").is_empty());
     }
 }

@@ -1,21 +1,12 @@
 // Settings: jazyk.toml as a form. Null means the key is unset in the file and the
-// effective value is the default. Saving rewrites the file canonically and applies live.
+// effective value is the default. Saving rewrites the file canonically and applies
+// live. Limits are a built-in registry, not settings; the executors table routes
+// goal kinds and classes to agent profiles (docs/compiler/project-settings.md#executors).
 import { useState } from 'react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
 import { useProject } from '../lib/queries'
 import './routes.css'
-
-const LIMIT_KEYS = [
-  'turnRounds',
-  'turnMutations',
-  'contextBudget',
-  'buildTurnFactor',
-  'maxSectionChars',
-  'maxDocSections',
-  'maxEntityRequirements',
-] as const
-type LimitKey = (typeof LIMIT_KEYS)[number]
 
 interface SettingsPayload {
   exists: boolean
@@ -34,12 +25,13 @@ interface SettingsPayload {
       apiKeySet: boolean
     }
     linting: { warnings: string[]; errors: string[] }
-    limits: Record<LimitKey, number | null>
+    executors: Record<string, string>
   }
+  executorKeys: string[]
+  unknownExecutors?: string[]
   defaults: {
     docsGlob: string[]
     deliverable: string
-    limits: Record<LimitKey, number>
   }
 }
 
@@ -54,12 +46,10 @@ interface Form {
   temperature: string
   warnings: string
   errors: string
-  limits: Record<LimitKey, string>
+  executors: { key: string; value: string }[]
 }
 
 function initForm(p: SettingsPayload): Form {
-  const limits = {} as Record<LimitKey, string>
-  for (const k of LIMIT_KEYS) limits[k] = p.settings.limits[k] === null ? '' : String(p.settings.limits[k])
   return {
     docsGlob: p.settings.docsGlob ?? [],
     roots: p.settings.roots ?? [],
@@ -70,7 +60,7 @@ function initForm(p: SettingsPayload): Form {
     temperature: p.settings.llm.temperature === null ? '' : String(p.settings.llm.temperature),
     warnings: p.settings.linting.warnings.join('\n'),
     errors: p.settings.linting.errors.join('\n'),
-    limits,
+    executors: Object.entries(p.settings.executors ?? {}).map(([key, value]) => ({ key, value })),
   }
 }
 
@@ -153,8 +143,10 @@ export default function Settings() {
   const save = async () => {
     setSaving(true)
     setSaveError(null)
-    const limits: Record<string, number | null> = {}
-    for (const k of LIMIT_KEYS) limits[k] = f.limits[k].trim() === '' ? null : Number(f.limits[k])
+    const executors: Record<string, string> = {}
+    for (const { key, value } of f.executors) {
+      if (key.trim() && value.trim()) executors[key.trim()] = value.trim()
+    }
     try {
       const fresh = await put<SettingsPayload>('/api/settings', {
         baseHash,
@@ -169,7 +161,7 @@ export default function Settings() {
             temperature: f.temperature.trim() === '' ? null : Number(f.temperature),
           },
           linting: { warnings: lines(f.warnings), errors: lines(f.errors) },
-          limits,
+          executors,
         },
       })
       qc.setQueryData(['settings'], fresh)
@@ -187,6 +179,10 @@ export default function Settings() {
       if (r.data) reset(r.data)
     })
   }
+
+  const executorKeys = data.executorKeys ?? []
+  const setExec = (i: number, patch: Partial<{ key: string; value: string }>) =>
+    set({ executors: f.executors.map((x, j) => (j === i ? { ...x, ...patch } : x)) })
 
   return (
     <div className="settings">
@@ -240,6 +236,37 @@ export default function Settings() {
         />
       </label>
 
+      <h2>Executors</h2>
+      <p className="muted">
+        which agent profile runs each goal kind or class; unset kinds fall back to the
+        class, then the [acp] agent
+      </p>
+      {(data.unknownExecutors ?? []).length > 0 && (
+        <p className="error-inline">
+          unknown executor keys in the file: {(data.unknownExecutors ?? []).join(', ')}
+        </p>
+      )}
+      {f.executors.map((row, i) => (
+        <div key={i} className="listrow">
+          <select value={row.key} onChange={(e) => setExec(i, { key: e.target.value })}>
+            <option value="">(pick a kind or class)</option>
+            {executorKeys.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="agent profile"
+            value={row.value}
+            onChange={(e) => setExec(i, { value: e.target.value })}
+          />
+          <button onClick={() => set({ executors: f.executors.filter((_, j) => j !== i) })}>✕</button>
+        </div>
+      ))}
+      <button onClick={() => set({ executors: [...f.executors, { key: '', value: '' }] })}>add</button>
+
       <h2>LLM</h2>
       <div className="settings-grid">
         <label>
@@ -269,23 +296,10 @@ export default function Settings() {
           ? 'api key: set in the file (carried over on save)'
           : 'api key: not in the file; prefer the environment or api_key_env'}
       </p>
-
-      <h2>Limits</h2>
-      <div className="settings-grid">
-        {LIMIT_KEYS.map((k) => (
-          <label key={k}>
-            {k}
-            <input
-              type="number"
-              min={1}
-              value={f.limits[k]}
-              placeholder={String(data.defaults.limits[k])}
-              onChange={(e) => set({ limits: { ...f.limits, [k]: e.target.value } })}
-            />
-          </label>
-        ))}
-      </div>
-      <p className="muted">empty means unset; the placeholder is the effective default</p>
+      <p className="muted">
+        session and build limits are a built-in registry, not settings; a node's own
+        threshold is raised from its board card (dismiss)
+      </p>
 
       <div className="actionrow">
         <button disabled={!dirty || blocked || saving} onClick={save}>

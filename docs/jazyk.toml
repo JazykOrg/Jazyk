@@ -6,10 +6,14 @@ glob = [
     # Benchmark case files are fixtures, not documentation. Compiling them would leak
     # their planted entities (Cart, ABC) into the project graph.
     "!benchmark/cases/**",
-    # Prompt payloads are what the turns say to the model, embedded into the binary
-    # verbatim at compile time. They are instructions to a model, not statements
+    # Goal prompt payloads (the agent contract, one contract paragraph per goal kind,
+    # the generation payloads) are what a session says to the model, embedded into the
+    # binary verbatim at compile time. They are instructions to a model, not statements
     # about jazyk; compiling them would extract their imperatives as requirements.
-    "!compiler/turns/prompts/**",
+    "!compiler/goals/prompts/**",
+    # Skills are payloads of the same kind: the working knowledge for one shape, loaded
+    # into a session on demand and embedded the same way. Same reason to exclude them.
+    "!compiler/skills/**",
 ]
 
 [docs.linting.rules]

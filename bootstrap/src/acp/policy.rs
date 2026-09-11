@@ -16,7 +16,10 @@ pub enum PermissionPolicy {
     Forward,
 }
 
-pub fn answer(policy: PermissionPolicy, req: &RequestPermissionRequest) -> RequestPermissionOutcome {
+pub fn answer(
+    policy: PermissionPolicy,
+    req: &RequestPermissionRequest,
+) -> RequestPermissionOutcome {
     match policy {
         // Forward never reaches here; the host stashes the responder instead.
         PermissionPolicy::Forward | PermissionPolicy::Auto => {

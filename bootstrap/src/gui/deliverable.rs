@@ -13,13 +13,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         // Same skip list as doc collection, so a deliverable at the project root
         // lists the product, not the compiler's output.
-        if name.starts_with('.') || name == "node_modules" || name == "target" || name.starts_with("jazyk-out") {
+        if name.starts_with('.')
+            || name == "node_modules"
+            || name == "target"
+            || name.starts_with("jazyk-out")
+        {
             continue;
         }
         if p.is_dir() {
@@ -46,7 +52,11 @@ fn ownership(out_dir: &Path, gs: &crate::gen::GenSettings) -> BTreeMap<String, V
         }
         // A programmatic test artifact lives under the deliverable too.
         if row.test.kind == "programmatic" && !row.test.artifact.is_empty() {
-            by_file.entry(row.test.artifact.clone()).or_default().2.push(rid.clone());
+            by_file
+                .entry(row.test.artifact.clone())
+                .or_default()
+                .2
+                .push(rid.clone());
         }
     }
     let _ = gs;
@@ -85,12 +95,21 @@ pub async fn listing(State(st): State<SharedState>) -> Json<Value> {
     Json(v)
 }
 
+// The lexical half of the validation: relative, forward slashes, no empty, dot,
+// dot-dot, or hidden component. A path that passes this but names nothing is
+// absence (404), not an invalid path (400).
+fn lexical_ok(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.starts_with('/')
+        && !rel.contains('\\')
+        && !rel
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.'))
+}
+
 // Resolve a client path strictly inside the given root directory.
 fn safe_under(root_dir: &Path, rel: &str) -> Option<PathBuf> {
-    if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
-        return None;
-    }
-    if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
+    if !lexical_ok(rel) {
         return None;
     }
     let abs = root_dir.join(rel);
@@ -137,8 +156,12 @@ fn sites(store: &Store, out_dir: &Path, path: &str, text: &str) -> Vec<Value> {
                 "exists": exists,
             }));
         }
-        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty() {
-            let line = text.lines().position(|l| l.contains(&row.test.name)).map(|i| i + 1);
+        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty()
+        {
+            let line = text
+                .lines()
+                .position(|l| l.contains(&row.test.name))
+                .map(|i| i + 1);
             out.push(json!({
                 "line": line,
                 "requirement": rid,
@@ -183,10 +206,25 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
     let path = p.path.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<Value, (StatusCode, String)> {
         let Some(abs) = safe_path(&gs, &path) else {
-            return Err((StatusCode::BAD_REQUEST, format!("invalid deliverable path {}", path)));
+            // A path that leaves the deliverable (lexically, or through a symlink
+            // that exists) is 400; one that validates but names nothing is 404.
+            if !lexical_ok(&path) || gs.deliverable.join(&path).exists() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid deliverable path {}", path),
+                ));
+            }
+            return Err((StatusCode::NOT_FOUND, format!("no file {}", path)));
         };
-        let bytes = std::fs::read(&abs)
-            .map_err(|e| (StatusCode::NOT_FOUND, format!("cannot read {}: {}", path, e)))?;
+        if abs.is_dir() {
+            return Err((StatusCode::NOT_FOUND, format!("{} is a directory", path)));
+        }
+        let bytes = std::fs::read(&abs).map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("cannot read {}: {}", path, e),
+            )
+        })?;
         let own = ownership(&out_dir, &gs);
         let empty = json!({ "entities": [], "requirements": [], "tests": [] });
         let owners = own.get(&path).unwrap_or(&empty).clone();
@@ -209,5 +247,61 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
     match result {
         Ok(v) => Json(v).into_response(),
         Err((code, msg)) => err(code, msg),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_deliv(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-gui-deliv-{}-{}", name, std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("product/src")).unwrap();
+        std::fs::write(dir.join("product/src/lib.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.join("product/.env"), "SECRET=1\n").unwrap();
+        std::fs::write(dir.join("outside.txt"), "outside\n").unwrap();
+        dir
+    }
+
+    // The lexical rule separates a refusal (400) from an absence (404): a
+    // traversal, a hidden component, or an absolute path never validates; a
+    // well-formed path that names nothing simply does not resolve.
+    #[test]
+    fn deliverable_paths_are_confined_and_absence_is_distinct() {
+        let dir = temp_deliv("confine");
+        let root = dir.join("product");
+        assert!(safe_under(&root, "src/lib.rs").is_some());
+        assert!(safe_under(&root, "../outside.txt").is_none());
+        assert!(!lexical_ok("../outside.txt"));
+        assert!(safe_under(&root, ".env").is_none());
+        assert!(!lexical_ok(".env"));
+        assert!(safe_under(&root, "/etc/passwd").is_none());
+        assert!(safe_under(&root, "src\\lib.rs").is_none());
+        // Missing but well formed: lexically fine, resolves to nothing.
+        assert!(lexical_ok("src/missing.rs"));
+        assert!(safe_under(&root, "src/missing.rs").is_none());
+        assert!(!root.join("src/missing.rs").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The listing skips hidden entries and the compiler's own output directories.
+    #[test]
+    fn listing_skips_hidden_and_output_directories() {
+        let dir = temp_deliv("list");
+        let root = dir.join("product");
+        std::fs::create_dir_all(root.join("jazyk-out/graph")).unwrap();
+        std::fs::write(root.join("jazyk-out/graph/entities.yaml"), "x").unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::write(root.join("target/bin"), "x").unwrap();
+        let mut files = Vec::new();
+        walk(&root, &root, &mut files);
+        files.sort();
+        assert_eq!(
+            files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+            vec!["src/lib.rs"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

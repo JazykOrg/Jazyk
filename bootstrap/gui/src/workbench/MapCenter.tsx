@@ -2,17 +2,28 @@
 // and deliverable files (docs/frontends/gui.md#graph). The overview shows
 // entities and documents; focusing a node pulls in every adjacent node of every
 // type, chips notwithstanding. Selection opens the inspector, never a new page.
+// ?view= overlays one view's membership: structural kinds draw as the map, flow
+// kinds as ordered steps with lanes, a state view as the derived machine. A level
+// view carries a breadcrumb over the panel and links down: double-tapping a member
+// with a level of its own, picking it from the view's children, or clicking its
+// anchor in the picture overlays the level below (docs/frontends/gui.md#graph).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import cytoscape from 'cytoscape'
 import fcose from 'cytoscape-fcose'
-import { useDeliverable, useDocs, useGraph } from '../lib/queries'
-import type { Entity, Graph } from '../lib/api'
+import { useDeliverable, useDocs, useGraph, useTree, useView, useViewPage } from '../lib/queries'
+import type { Entity, Graph, ViewDetail } from '../lib/api'
+import { levelChain } from '../lib/levels'
+import { useExplorer } from '../lib/explore'
+import { selectNodeParams } from '../lib/nav'
+import { pressable } from '../lib/a11y'
+import NodeLink from '../components/NodeLink'
+import DiagramSvg from '../components/DiagramSvg'
 import '../routes/map.css'
 
 cytoscape.use(fcose)
 
-// Relationship types, strongest first.
+// Relationship types, strongest first; instantiation stands outside the ranking.
 const EDGE_TYPES = [
   'generalization',
   'realization',
@@ -20,18 +31,20 @@ const EDGE_TYPES = [
   'aggregation',
   'association',
   'dependency',
+  'instantiation',
   'reference',
 ] as const
 type EdgeType = (typeof EDGE_TYPES)[number]
 
 // UML notation per type. members[0] is the source `a`, members[1] the target `b`:
 // the triangle points at the general entity (target), the diamond sits at the
-// owning end (source).
+// owning end (source). Instantiation is a dashed open arrow labeled «instantiate».
 interface EdgeSpec {
   line: 'solid' | 'dashed' | 'dotted'
   width: number
   target?: { shape: 'triangle' | 'vee'; fill: cytoscape.Css.ArrowFill }
   source?: { shape: 'diamond'; fill: cytoscape.Css.ArrowFill }
+  label?: string
 }
 const EDGE_STYLE: Record<EdgeType, EdgeSpec> = {
   generalization: { line: 'solid', width: 2, target: { shape: 'triangle', fill: 'hollow' } },
@@ -40,6 +53,7 @@ const EDGE_STYLE: Record<EdgeType, EdgeSpec> = {
   aggregation: { line: 'solid', width: 2, source: { shape: 'diamond', fill: 'hollow' } },
   association: { line: 'solid', width: 1.5 },
   dependency: { line: 'dashed', width: 1.5, target: { shape: 'vee', fill: 'filled' } },
+  instantiation: { line: 'dashed', width: 1.5, target: { shape: 'vee', fill: 'filled' }, label: '«instantiate»' },
   reference: { line: 'dotted', width: 1.5 },
 }
 
@@ -102,6 +116,16 @@ function buildStyle(p: Palette): cytoscape.StylesheetStyle[] {
         'text-max-width': '120px',
       },
     },
+    // Containment: a parent entity draws as a compound box around its children.
+    {
+      selector: ':parent',
+      style: {
+        shape: 'round-rectangle',
+        'background-opacity': 0.06,
+        'text-valign': 'top',
+        'text-margin-y': -4,
+      },
+    },
     { selector: 'node[nonpublic = 1]', style: { 'border-style': 'dashed' } },
     {
       selector: 'node[t = "doc"]',
@@ -140,6 +164,8 @@ function buildStyle(p: Palette): cytoscape.StylesheetStyle[] {
         'source-arrow-color': p.muted,
         'target-arrow-color': p.muted,
         'arrow-scale': 1.2,
+        color: p.muted,
+        'font-size': 8,
       },
     },
     ...EDGE_TYPES.map((t): cytoscape.StylesheetStyle => {
@@ -152,8 +178,11 @@ function buildStyle(p: Palette): cytoscape.StylesheetStyle[] {
       }
       if (s.target) style['target-arrow-fill'] = s.target.fill
       if (s.source) style['source-arrow-fill'] = s.source.fill
+      if (s.label) style.label = s.label
       return { selector: `edge[type = "${t}"]`, style }
     }),
+    // A lifted arrow carries its count label; clicking expands it in the inspector.
+    { selector: 'edge[lifted = 1]', style: { label: 'data(label)', 'text-rotation': 'autorotate' } },
     // The cross-type ties: membership, source anchors, sites, and the collapsed
     // doc-to-entity tie shown when requirements are hidden.
     { selector: 'edge[type = "member"]', style: { width: 1, 'line-style': 'solid', opacity: 0.35 } },
@@ -217,6 +246,10 @@ interface NodeData {
   h?: number
   t: 'ent' | 'doc' | 'req' | 'file'
   nonpublic?: number
+  stereotype?: string
+  // The containing entity, applied only when it draws too (compound nesting).
+  pref?: string
+  parent?: string
 }
 
 interface EdgeData {
@@ -226,9 +259,116 @@ interface EdgeData {
   type: string
   // A collapsed tie's first hidden intermediary, for inspection on tap.
   via?: string
+  // The relationship behind a typed or lifted arrow, for the inspector.
+  rel?: string
+  lifted?: number
+  label?: string
 }
 
 const base = (p: string) => p.split('/').pop() ?? p
+
+// A relationship between an entity and one of its drawn ancestors is the nesting
+// itself (docs/frontends/gui.md#graph, containment): the compound box already says
+// it, and cytoscape would draw the arrow as a loop around the box.
+function dropNestedArrows(nodes: Map<string, NodeData>, edges: Map<string, EdgeData>) {
+  const nests = (inner: string, outer: string): boolean => {
+    let at = nodes.get(inner)?.parent
+    for (let i = 0; at && i < 64; i++) {
+      if (at === outer) return true
+      at = nodes.get(at)?.parent
+    }
+    return false
+  }
+  for (const [id, e] of edges) {
+    if (!(EDGE_TYPES as readonly string[]).includes(e.type)) continue
+    if (nests(e.source, e.target) || nests(e.target, e.source)) edges.delete(id)
+  }
+}
+
+const STRUCTURAL_KINDS = ['class', 'object', 'package', 'component', 'composite', 'deployment']
+
+// Flow kinds draw as ordered steps with the participants as lanes, one step per
+// member requirement (docs/frontends/gui.md#graph).
+function FlowOverlay({ v }: { v: ViewDetail }) {
+  const participants = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const s of v.steps) for (const p of s.participants) seen.set(p.id, p.name)
+    return [...seen.entries()]
+  }, [v.steps])
+  return (
+    <div className="wb-center-scroll" style={{ padding: 12 }}>
+      <h2 style={{ marginTop: 0 }}>
+        {v.title} <span className="chip sev-info">{v.kind}</span>
+      </h2>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="mono" style={{ borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: 4 }}>#</th>
+              <th style={{ textAlign: 'left', padding: 4 }}>step</th>
+              {participants.map(([id, name]) => (
+                <th key={id} style={{ padding: 4 }}>
+                  <NodeLink id={id}>{name}</NodeLink>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {v.steps.map((s, i) => (
+              <tr key={s.requirement}>
+                <td style={{ padding: 4, verticalAlign: 'top' }} className="muted">{i + 1}</td>
+                <td style={{ padding: 4, maxWidth: 420 }}>
+                  <NodeLink id={s.requirement} /> {s.statement}
+                </td>
+                {participants.map(([id]) => (
+                  <td key={id} style={{ padding: 4, textAlign: 'center' }}>
+                    {s.participants.some((p) => p.id === id) ? '●' : ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// A state view draws the derived machine of its subject.
+function StateOverlay({ v }: { v: ViewDetail }) {
+  return (
+    <div className="wb-center-scroll" style={{ padding: 12 }}>
+      <h2 style={{ marginTop: 0 }}>
+        {v.title} <span className="chip sev-info">state</span>
+      </h2>
+      {v.machines.length === 0 && <p className="muted">no derived machine for this subject</p>}
+      {v.machines.map(({ id, machine }) => (
+        <div key={id} className="card">
+          <p style={{ margin: '2px 0' }}>
+            <NodeLink id={machine.subject} />{' '}
+            <span className="muted mono">
+              states: {machine.states.join(', ')}
+              {machine.initial ? ` (initial: ${machine.initial})` : ''}
+            </span>
+          </p>
+          {machine.transitions.map((t, i) => (
+            <p key={i} className="mono" style={{ margin: '1px 0' }}>
+              {t.from} → {t.to}
+              {t.trigger && <span className="muted"> on {t.trigger}</span>}
+              {t.guard && <span className="muted"> [{t.guard}]</span>}
+              {t.requirements.map((r) => (
+                <span key={r}>
+                  {' '}
+                  <NodeLink id={r} />
+                </span>
+              ))}
+            </p>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export default function MapCenter() {
   const { data: graph, error } = useGraph()
@@ -237,6 +377,13 @@ export default function MapCenter() {
   const [params, setParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<ScopeFilter>('all')
+  // The stereotype filter: '' draws every entity.
+  const [stereotype, setStereotype] = useState('')
+  const stereotypes = useMemo(() => {
+    const s = new Set<string>()
+    for (const e of Object.values(graph?.entities ?? {})) if (e.stereotype) s.add(e.stereotype)
+    return [...s].sort()
+  }, [graph])
   const [types, setTypes] = useState<Record<EdgeType, boolean>>(
     () => Object.fromEntries(EDGE_TYPES.map((t) => [t, t !== 'reference'])) as Record<EdgeType, boolean>,
   )
@@ -247,13 +394,49 @@ export default function MapCenter() {
     files: false,
   })
   const [focusHops, setFocusHops] = useState<FocusHops>('off')
+  // Picture mode: the rendered svg of the overlaid view instead of the canvas.
+  const [picture, setPicture] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const focusParam = params.get('focus')
   const selected = params.get('node')
+  const viewParam = params.get('view') ?? ''
+  // The explorer: the position (?entity=, ?view=, ?detail=) and the moves.
+  const explorer = useExplorer()
+  const viewQ = useView(viewParam, explorer.detail)
+  const overlay = viewParam !== '' ? viewQ.data : undefined
+  // The diagram page of the overlaid view: the views around it, as chips.
+  const { data: page } = useViewPage(viewParam)
+  const { data: tree } = useTree()
+  // The breadcrumb: the chain from the scope root down to the overlaid level.
+  const chain = useMemo(() => levelChain(tree, viewParam), [tree, viewParam])
 
-  // Selection goes to the inspector: node param, and focus follows for the map.
+  // Overlay another view, keeping the position addressable (?view=) and in history,
+  // so drilling down and back works like any navigation. The detail resets: it
+  // belongs to the view it was asked on.
+  const openView = (id: string) => {
+    setParams((p) => {
+      const next = new URLSearchParams(p)
+      next.set('view', id)
+      next.set('node', id)
+      next.delete('focus')
+      next.delete('detail')
+      return next
+    })
+  }
+  const openViewRef = useRef(openView)
+  openViewRef.current = openView
+  // The links down of the overlaid view: member id to its level view.
+  const drillRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    drillRef.current = new Map((overlay?.children ?? []).map((c) => [c.member, c.view]))
+  }, [overlay])
+
+  // Selection goes to the inspector: node param, and focus follows for the map. An
+  // entity is a step of the walk (its card opens, the position moves), so it enters
+  // history; any other selection replaces in place.
   const select = (id: string | null) => {
+    const step = id !== null && id.startsWith('ent:')
     setParams(
       (p) => {
         const next = new URLSearchParams(p)
@@ -261,16 +444,27 @@ export default function MapCenter() {
           next.delete('node')
           next.delete('focus')
         } else {
-          next.set('node', id)
+          selectNodeParams(next, id)
           next.set('focus', id)
         }
+        return next
+      },
+      { replace: !step },
+    )
+  }
+  const selectRef = useRef(select)
+  selectRef.current = select
+
+  const clearOverlay = () => {
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p)
+        next.delete('view')
         return next
       },
       { replace: true },
     )
   }
-  const selectRef = useRef(select)
-  selectRef.current = select
 
   // The full typed graph, independent of what currently draws. Focus pulls
   // neighborhoods out of this, so hidden types surface around a selection.
@@ -288,12 +482,15 @@ export default function MapCenter() {
     }
     for (const [id, ent] of Object.entries(graph.entities)) {
       const d = degree.get(id) ?? 0
+      const pref = ent.parent ? (resolveEntity(graph, ent.parent) ?? undefined) : undefined
       nodes.set(id, {
         id,
         label: ent.name,
         size: Math.round(16 + Math.sqrt(d) * 7),
         t: 'ent',
         nonpublic: nonPublic(ent) ? 1 : 0,
+        stereotype: ent.stereotype,
+        pref,
       })
     }
     for (const d of docsList?.docs ?? []) {
@@ -306,14 +503,19 @@ export default function MapCenter() {
         if (ent)
           edges.set(`m|${rid}|${ent}`, { id: `m|${rid}|${ent}`, source: rid, target: ent, type: 'member' })
       }
-      edges.set(`a|${rid}`, { id: `a|${rid}`, source: rid, target: `doc:${r.source.doc}`, type: 'anchor' })
+      // Only quote-provenanced requirements anchor in a document.
+      if (r.source)
+        edges.set(`a|${rid}`, { id: `a|${rid}`, source: rid, target: `doc:${r.source.doc}`, type: 'anchor' })
     }
+    // One arrow per direction-and-type group of each relationship, UML notation.
     for (const [relId, rel] of Object.entries(graph.relationships)) {
-      if (rel.members.length < 2) continue
-      const a = resolveEntity(graph, rel.members[0])
-      const b = resolveEntity(graph, rel.members[1])
-      if (!a || !b) continue
-      edges.set(relId, { id: relId, source: a, target: b, type: rel.type })
+      for (const c of rel.contributions ?? []) {
+        const a = resolveEntity(graph, c.a)
+        const b = resolveEntity(graph, c.b)
+        if (!a || !b || a === b) continue
+        const id = `${relId}|${c.type}|${a}|${b}`
+        if (!edges.has(id)) edges.set(id, { id, source: a, target: b, type: c.type, rel: relId })
+      }
     }
     for (const f of deliv?.files ?? []) {
       const owners = f.owners.entities.length + f.owners.requirements.length + f.owners.tests.length
@@ -333,8 +535,43 @@ export default function MapCenter() {
   }, [graph, docsList, deliv])
 
   // What draws: the chip filter in the overview; the full-graph neighborhood of
-  // the selection when focus is on, every type included.
+  // the selection when focus is on; the view's membership when a structural view
+  // overlays (docs/frontends/gui.md#graph).
   const visible = useMemo(() => {
+    // A structural view overlay draws that view's membership and nothing else.
+    if (overlay && STRUCTURAL_KINDS.includes(overlay.kind)) {
+      const nodes = new Map<string, NodeData>()
+      const edges = new Map<string, EdgeData>()
+      const memberIds = new Set(
+        overlay.members.filter((m) => m.node === 'entity' && !m.hidden).map((m) => m.id),
+      )
+      for (const m of overlay.members) {
+        if (m.node !== 'entity' || m.hidden) continue
+        const pref = m.parent && memberIds.has(m.parent) ? m.parent : undefined
+        nodes.set(m.id, {
+          id: m.id,
+          label: m.name ?? m.id,
+          size: 24,
+          t: 'ent',
+          pref,
+          parent: pref,
+        })
+      }
+      overlay.arrows.forEach((a, i) => {
+        if (!nodes.has(a.a) || !nodes.has(a.b)) return
+        edges.set(`v|${i}`, {
+          id: `v|${i}`,
+          source: a.a,
+          target: a.b,
+          type: a.type,
+          rel: a.rel,
+          lifted: a.lifted ? 1 : 0,
+          label: a.lifted ? `${a.type}: ${a.count}` : undefined,
+        })
+      })
+      dropNestedArrows(nodes, edges)
+      return { nodes, edges }
+    }
     const want = new Set<string>()
     const focusOn = focusHops !== 'off' && selected && full.nodes.has(selected)
     if (focusOn) {
@@ -367,6 +604,7 @@ export default function MapCenter() {
           if (!nodeTypes.entities) continue
           if (scope === 'public' && n.nonpublic) continue
           if (scope === 'non-public' && !n.nonpublic) continue
+          if (stereotype !== '' && n.stereotype !== stereotype) continue
           want.add(n.id)
         } else if (n.t === 'doc' && nodeTypes.docs) want.add(n.id)
         else if (n.t === 'req' && nodeTypes.requirements) want.add(n.id)
@@ -435,10 +673,14 @@ export default function MapCenter() {
     const nodes = new Map<string, NodeData>()
     for (const id of want) {
       const n = full.nodes.get(id)
-      if (n) nodes.set(id, n)
+      if (!n) continue
+      // Containment nests a child inside its parent only when the parent draws too.
+      const parent = n.pref && want.has(n.pref) ? n.pref : undefined
+      nodes.set(id, { ...n, parent })
     }
+    dropNestedArrows(nodes, edges)
     return { nodes, edges }
-  }, [full, nodeTypes, types, scope, focusHops, selected])
+  }, [full, nodeTypes, types, scope, stereotype, focusHops, selected, overlay])
 
   // Create the canvas once; restyle on theme change; destroy on unmount.
   useEffect(() => {
@@ -454,10 +696,13 @@ export default function MapCenter() {
     cy.on('tap', 'edge', (e) => {
       const edge = e.target as cytoscape.EdgeSingular
       const type = edge.data('type') as string
+      const rel = edge.data('rel') as string | undefined
       const id = edge.id()
-      // A relationship edge inspects the relationship; the synthesized ties
-      // inspect the requirement (or the document behind a collapsed tie).
-      if ((EDGE_TYPES as readonly string[]).includes(type)) selectRef.current(id)
+      // A relationship (or lifted view) edge inspects the relationship: the
+      // concrete edges beneath a lifted arrow list there, each walking to its
+      // requirement and its sentence.
+      if (rel) selectRef.current(rel)
+      else if ((EDGE_TYPES as readonly string[]).includes(type)) selectRef.current(id)
       else if (type === 'member' || type === 'site') selectRef.current(id.split('|')[1])
       else if (type === 'anchor') selectRef.current(id.slice(2))
       else if (type === 'via') selectRef.current((edge.data('via') as string) ?? edge.source().id())
@@ -468,6 +713,12 @@ export default function MapCenter() {
     })
     cy.on('dbltap', 'node', (e) => {
       const n = e.target as cytoscape.NodeSingular
+      // A member drawn with a level of its own is the link down.
+      const below = drillRef.current.get(n.id())
+      if (below) {
+        openViewRef.current(below)
+        return
+      }
       selectRef.current(n.id())
       setFocusHops('1')
       cy.center(n)
@@ -501,7 +752,9 @@ export default function MapCenter() {
         if (!visible.edges.has(e.id())) e.remove()
       })
       cy.nodes().forEach((n) => {
-        if (!visible.nodes.has(n.id())) n.remove()
+        const want = visible.nodes.get(n.id())
+        // Compound membership cannot be re-parented in place; drop and re-add.
+        if (!want || (n.data('parent') ?? undefined) !== want.parent) n.remove()
       })
       for (const [id, data] of visible.nodes) {
         const ex = cy.getElementById(id)
@@ -516,7 +769,8 @@ export default function MapCenter() {
       for (const [id, data] of visible.edges) {
         const ex = cy.getElementById(id)
         if (ex.nonempty()) ex.data(data as unknown as Record<string, unknown>)
-        else cy.add({ group: 'edges', data: data as unknown as Record<string, unknown> })
+        else if (cy.getElementById(data.source).nonempty() && cy.getElementById(data.target).nonempty())
+          cy.add({ group: 'edges', data: data as unknown as Record<string, unknown> })
       }
     })
 
@@ -527,7 +781,7 @@ export default function MapCenter() {
       const fixed: { nodeId: string; position: cytoscape.Position }[] = []
       if (!randomize) {
         cy.nodes().forEach((n) => {
-          if (!freshSet.has(n.id())) fixed.push({ nodeId: n.id(), position: { ...n.position() } })
+          if (!freshSet.has(n.id()) && !n.isParent()) fixed.push({ nodeId: n.id(), position: { ...n.position() } })
         })
       }
       const opts: FcoseLayoutOptions = {
@@ -582,10 +836,49 @@ export default function MapCenter() {
   }, [selected, focusParam, visible])
 
   const empty = graph && Object.keys(graph.entities).length === 0
+  // Flow and state views draw as their own panels, not on the canvas.
+  const panelOverlay =
+    overlay && !STRUCTURAL_KINDS.includes(overlay.kind)
+      ? overlay.kind === 'state'
+        ? 'state'
+        : 'flow'
+      : null
+  const showPicture = picture && !!overlay?.svg
+  const memberName = (id: string) =>
+    overlay?.members.find((m) => m.id === id)?.name ?? graph?.entities[id]?.name ?? id
+  const viewTitle = (id: string) => graph?.views[id]?.title ?? id
+  // Two views at one level often share a title (the use case and the sequence of
+  // one flow); the kind tells them apart on the chip.
+  const viewLabel = (id: string) => {
+    const v = graph?.views[id]
+    return v ? `${v.kind} · ${v.title}` : id
+  }
+  // The member a level below belongs to, for the `Around` chips' labels.
+  const memberOfLevel = (view: string) => overlay?.children.find((c) => c.view === view)?.member
+  const structural = !!overlay && STRUCTURAL_KINDS.includes(overlay.kind)
+  const around = page?.around
+  const hasAround = !!around && (around.above !== null || around.sameLevel.length > 0 || around.below.length > 0)
 
   return (
     <div className="map-root">
       <div className="wb-map-toolbar">
+        {viewParam !== '' && (
+          <span className="chip sev-info" title="a view overlays the map">
+            view: {overlay?.title ?? viewParam}
+            <button className="ide-mini" style={{ marginLeft: 4 }} onClick={clearOverlay} title="clear the overlay">
+              ✕
+            </button>
+          </span>
+        )}
+        {overlay?.svg && (
+          <button
+            className={`ide-mini${picture ? ' active' : ''}`}
+            onClick={() => setPicture(!picture)}
+            title={picture ? 'draw the view on the canvas' : 'show the rendered picture; its links open the level below'}
+          >
+            {picture ? 'canvas' : 'picture'}
+          </button>
+        )}
         <input
           type="search"
           placeholder="search the map"
@@ -604,11 +897,21 @@ export default function MapCenter() {
             </label>
           ))}
         </div>
-        <select value={scope} onChange={(e) => setScope(e.target.value as ScopeFilter)}>
+        <select value={scope} onChange={(e) => setScope(e.target.value as ScopeFilter)} title="entity scope">
           <option value="all">all scopes</option>
           <option value="public">public</option>
           <option value="non-public">non-public</option>
         </select>
+        {stereotypes.length > 0 && (
+          <select value={stereotype} onChange={(e) => setStereotype(e.target.value)} title="entity stereotype">
+            <option value="">all stereotypes</option>
+            {stereotypes.map((s) => (
+              <option key={s} value={s}>
+                «{s}»
+              </option>
+            ))}
+          </select>
+        )}
         <details className="map-edgetypes">
           <summary className="mono">edges</summary>
           <div className="map-types">
@@ -639,13 +942,110 @@ export default function MapCenter() {
           </span>
         )}
       </div>
+      {overlay && (chain || hasAround || structural) && (
+        <div className="map-crumbs">
+          {chain &&
+            chain.crumbs.map((c, i) => {
+              const last = i === chain.crumbs.length - 1
+              const current = last && !chain.flow
+              return (
+                <span key={c.target} style={{ display: 'contents' }}>
+                  {i > 0 && <span className="map-crumb-sep">›</span>}
+                  {current || !c.levelView ? (
+                    <span className={`map-crumb${current ? ' current' : ''}`} title={c.target}>
+                      {c.label}
+                    </span>
+                  ) : (
+                    <a className="map-crumb" title={`overlay ${c.levelView}`} {...pressable(() => openView(c.levelView!))}>
+                      {c.label}
+                    </a>
+                  )}
+                </span>
+              )
+            })}
+          {chain?.flow && (
+            <>
+              <span className="map-crumb-sep">›</span>
+              <span className="map-crumb current" title={chain.flow}>
+                {viewTitle(chain.flow)}
+              </span>
+            </>
+          )}
+          {/* Detail: the level's groupings collapsed, or expanded one level at a
+              time, the map redrawn from the graph (docs/frontends/gui.md#explore). */}
+          {structural && (
+            <span className="map-group" title="how many levels beneath the members draw, relationships lifted to what shows">
+              <span className="map-group-label">detail</span>
+              <button
+                className="ide-mini"
+                disabled={overlay.detail === 0}
+                onClick={() => explorer.setDetail(overlay.detail - 1)}
+              >
+                less detail
+              </button>
+              <span className="mono muted" style={{ fontSize: 10.5 }}>
+                {overlay.detail}
+              </span>
+              <button
+                className="ide-mini"
+                disabled={!overlay.deeper}
+                onClick={() => explorer.setDetail(overlay.detail + 1)}
+              >
+                more detail
+              </button>
+            </span>
+          )}
+          {/* Around: the diagram page's neighbors as chips, one click sideways,
+              up, or down without going through the tree. */}
+          {around && hasAround && (
+            <span className="map-group">
+              <span className="map-group-label">around</span>
+              {around.above && (
+                <a
+                  className="map-level-chip"
+                  title={`the level above: ${around.above}`}
+                  {...pressable(() => openView(around.above!))}
+                >
+                  ↑ {viewTitle(around.above)}
+                </a>
+              )}
+              {around.sameLevel.map((id) => (
+                <a key={id} className="map-level-chip" title={`another view of this level: ${id}`} {...pressable(() => openView(id))}>
+                  {viewLabel(id)}
+                </a>
+              ))}
+              {around.below.map((id) => {
+                const member = memberOfLevel(id)
+                return (
+                  <a key={id} className="map-level-chip" title={`the level below: ${id}`} {...pressable(() => openView(id))}>
+                    {member ? memberName(member) : viewTitle(id)} ↓
+                  </a>
+                )
+              })}
+            </span>
+          )}
+        </div>
+      )}
       <div className="map-body">
-        <div className="map-canvas">
+        {showPicture && overlay?.svg && (
+          <div className="map-picture">
+            <DiagramSvg svg={overlay.svg} />
+          </div>
+        )}
+        {!showPicture && panelOverlay === 'flow' && overlay && <FlowOverlay v={overlay} />}
+        {!showPicture && panelOverlay === 'state' && overlay && <StateOverlay v={overlay} />}
+        <div className="map-canvas" style={panelOverlay || showPicture ? { display: 'none' } : undefined}>
           <div className="map-cy" ref={boxRef} />
           {error ? (
-            <p className="error-inline map-empty">{String(error)}</p>
+            <p className="error-inline map-empty">{error.message}</p>
+          ) : !graph ? (
+            <p className="muted map-empty">loading the graph…</p>
           ) : empty ? (
             <p className="empty map-empty">No entities in the graph yet. Run a compile to populate it.</p>
+          ) : viewParam !== '' && viewQ.error ? (
+            <p className="error-inline map-empty">{viewQ.error.message}</p>
+          ) : viewParam !== '' && !overlay ? (
+            <p className="muted map-empty">resolving the view…</p>
           ) : null}
         </div>
       </div>

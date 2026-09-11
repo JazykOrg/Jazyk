@@ -43,7 +43,9 @@ impl McpServerConn {
         for (k, v) in env {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("cannot spawn MCP server `{}`: {}", command, e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("cannot spawn MCP server `{}`: {}", command, e))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
         let mut conn = McpServerConn {
@@ -71,7 +73,11 @@ impl McpServerConn {
                     .map(|t| GenericTool {
                         name: t["name"].as_str().unwrap_or_default().to_string(),
                         description: t["description"].as_str().unwrap_or_default().to_string(),
-                        parameters: if t["inputSchema"].is_null() { json!({"type": "object"}) } else { t["inputSchema"].clone() },
+                        parameters: if t["inputSchema"].is_null() {
+                            json!({"type": "object"})
+                        } else {
+                            t["inputSchema"].clone()
+                        },
                     })
                     .collect()
             })
@@ -106,7 +112,9 @@ impl McpServerConn {
         let line = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let stdin = self.stdin.as_mut().ok_or("mcp stdin closed")?;
         writeln!(stdin, "{}", line).map_err(|e| format!("mcp {} write: {}", self.name, e))?;
-        stdin.flush().map_err(|e| format!("mcp {} flush: {}", self.name, e))?;
+        stdin
+            .flush()
+            .map_err(|e| format!("mcp {} flush: {}", self.name, e))?;
         // Skip notifications and unrelated traffic until our response arrives.
         loop {
             let mut buf = String::new();
@@ -115,7 +123,10 @@ impl McpServerConn {
                 .read_line(&mut buf)
                 .map_err(|e| format!("mcp {} read: {}", self.name, e))?;
             if n == 0 {
-                return Err(format!("mcp {}: server closed the stream during `{}`", self.name, method));
+                return Err(format!(
+                    "mcp {}: server closed the stream during `{}`",
+                    self.name, method
+                ));
             }
             let v: Value = match serde_json::from_str(buf.trim()) {
                 Ok(v) => v,
@@ -140,7 +151,9 @@ impl McpServerConn {
         let line = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let stdin = self.stdin.as_mut().ok_or("mcp stdin closed")?;
         writeln!(stdin, "{}", line).map_err(|e| format!("mcp {} write: {}", self.name, e))?;
-        stdin.flush().map_err(|e| format!("mcp {} flush: {}", self.name, e))
+        stdin
+            .flush()
+            .map_err(|e| format!("mcp {} flush: {}", self.name, e))
     }
 }
 

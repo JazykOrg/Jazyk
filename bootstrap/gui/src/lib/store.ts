@@ -11,30 +11,38 @@ export interface JobTraceRow {
   event: TraceEvent
 }
 
-// Where a build is working, keyed by the turn label (`{task} {target}`), the same
-// key the harness puts on every event (docs/compiler/turns.md#trace-events). The
-// files tree and the editor read this to show progress in place.
+// Where a build is working, keyed by the session label (the batch id), the same
+// key the harness puts on every event (docs/compiler/sessions.md#trace-events).
+// The files tree and the editor read this to show progress in place.
 export interface TurnProgress {
   label: string
   task: string
   target: string
-  // The document, when the turn reconciles one. Null for review turns.
+  // The document, when the session reconciles one. Null for judgment sessions.
   doc: string | null
   state: 'queued' | 'running' | 'done' | 'failed'
-  // The turn's dirty sections, and the ones it has reached so far.
+  // The batch's sections, and the ones the session has reached so far.
   sections: string[]
   touched: string[]
   active: string | null
   result: string | null
   since: number
-  // When the entry disappears. Null keeps it: a running turn, or a held one.
+  // When the entry disappears. Null keeps it: a running session, or a held one.
   until: number | null
   // The pointer is on it, in the tree or in the text: hold the result.
   held: boolean
 }
 
-// How long a finished turn stays visible before it fades.
+// How long a finished session stays visible before it fades.
 export const LINGER_MS = 6000
+
+// A goal state change seen on the live stream: resolved cards turn into their
+// justification and stay until the build ends (docs/frontends/gui.md#board).
+export interface GoalNote {
+  event: string
+  text: string
+  at: number
+}
 
 // One chat session as the server reports it (docs/frontends/gui.md#chat).
 export interface ChatSessionInfo {
@@ -69,7 +77,10 @@ interface AppStore {
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
   turns: Record<string, TurnProgress>
-  turnsQueued: (task: string, targets: string[]) => void
+  goalNotes: Record<string, GoalNote>
+  noteGoal: (goal: string, event: string, text: string) => void
+  clearGoalNotes: () => void
+  queueSession: (p: { label: string; task: string; target: string; doc: string | null; sections: string[] }) => void
   turnStarted: (p: { label: string; task: string; target: string; doc: string | null; sections: string[] }) => void
   turnSection: (label: string, section: string) => void
   turnEnded: (label: string, state: 'done' | 'failed', result: string) => void
@@ -169,29 +180,32 @@ export const useApp = create<AppStore>((set) => ({
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
   turns: {},
-  turnsQueued: (task, targets) =>
+  goalNotes: {},
+  noteGoal: (goal, event, text) =>
+    set((s) => ({
+      goalNotes: { ...s.goalNotes, [goal]: { event, text, at: Date.now() } },
+    })),
+  clearGoalNotes: () => set({ goalNotes: {} }),
+  queueSession: (p) =>
     set((s) => {
-      const turns = { ...s.turns }
-      for (const target of targets) {
-        const label = `${task} ${target}`
-        // A wave lists what it will run; an entry already in flight keeps its state.
-        if (turns[label] && turns[label].state === 'running') continue
-        turns[label] = {
-          label,
-          task,
-          target,
-          doc: task === 'reconcile-doc' || task === 'align-doc' ? target : null,
-          state: 'queued',
-          sections: [],
-          touched: [],
-          active: null,
-          result: null,
-          since: Date.now(),
-          until: null,
-          held: turns[label]?.held ?? false,
-        }
+      // A batch names what its session will run; an entry already in flight
+      // keeps its state.
+      if (s.turns[p.label] && s.turns[p.label].state === 'running') return s
+      return {
+        turns: {
+          ...s.turns,
+          [p.label]: {
+            ...p,
+            state: 'queued',
+            touched: [],
+            active: null,
+            result: null,
+            since: Date.now(),
+            until: null,
+            held: s.turns[p.label]?.held ?? false,
+          },
+        },
       }
-      return { turns }
     }),
   turnStarted: (p) =>
     set((s) => ({

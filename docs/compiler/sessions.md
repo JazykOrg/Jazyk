@@ -51,8 +51,10 @@ prompt, so it can be shown before it is spent. The parts, in order:
    judgment; a problem in the documents is a diagnostic, not feedback.
 2. The active skills, each as `[skill: <name> (active)]` followed by its payload.
 3. `## Project`: the generation number, the workflow mode, the open
-   diagnostic counts, and the board counts: goals in this session, goals elsewhere,
-   goals blocked on a human.
+   diagnostic counts, the board counts (goals in this session, goals elsewhere, goals
+   blocked on a human), and the project's lint rules with their severities when it
+   declares any ([linting](./project-settings.md#linting)), so a `lint` diagnostic
+   names a rule the model has read.
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
    the kind's contract paragraph (its payload file under `goals/prompts/`), the change in
    one line, the gate in one line, and the hints.
@@ -74,6 +76,7 @@ shortened here; the real ones are the payload files):
 - generation 413, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
 - board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers
+- lint: warning: An em dash appears in prose. Use commas, periods, parentheses, or colons instead.
 
 ## Goals
 - [g:rejudge-pair:req:orders-6~req:payment-9] mandatory
@@ -384,7 +387,12 @@ Budgets are registry constants built into the binary, not settings
   several tool calls, so a trace's call count can exceed it. An external agent bounds
   its own loop, and the idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
   [worker sessions](../frontends/acp.md#worker-sessions)) bounds them all.
-- Staged mutations per session: 64. Enforced by the tool serving.
+- Staged mutations per session: 64, raised for a session holding an
+  [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 64
+  plus that count: a split of ninety-six statements stages one move per grouped
+  statement, and a budget the split cannot fit fails every honest session (the first
+  caps split measured ran out at 64 with three sub-entities staged empty). Enforced by
+  the tool serving.
 - Context: 24000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).
 - High-water mark: 0.9 of the context budget. Past it, `load` and `expand` are refused

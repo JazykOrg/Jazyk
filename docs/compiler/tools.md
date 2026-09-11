@@ -147,7 +147,10 @@ a mutating reply previews the goals the mutation will open
   the `statement` as the `quote` is the common miscall, so every rejection on
   `section` or `quote` names the requirement's existing anchor and says to drop the
   two fields when only `entities`, `edges`, `transition`, or `facets` were meant to
-  change.
+  change. Under an [`abstract-entity`](./goals/abstract-entity.md) goal a re-point is
+  a swap: `entities` may replace the goal's target with a sub-entity and never drops
+  another entity the statement names (`entities-dropped`); the refusal carries the
+  list to send, the stored entities with the target swapped for the sub-entity.
 - `delete_requirement({id, reason})`: allowed while views or `from` lists reference the
   requirement; the commit writes the change records and `retrace` derives. The sweep
   prunes the mentions the requirement carried
@@ -238,7 +241,11 @@ variant of [`abstract-entity`](./goals/abstract-entity.md)
   the grouping was at the scope root), and the entity tombstones with a redirect to
   its parent. Refused on an entity a document states (`stated-entity`): revise the
   documents instead. The deterministic sweep applies the same operation to a derived
-  grouping left with fewer than two children ([the sweep](./graph.md#the-sweep)).
+  grouping left with fewer than two children ([the sweep](./graph.md#the-sweep)). On
+  an entity this session staged and has not committed, the call withdraws it from the
+  changeset instead: the create, every move under it, and every requirement re-pointed
+  to it drop, so a sub-entity created and then found empty leaves nothing behind. The
+  reply names what dropped (`withdrawn`).
 
 `update_entity`'s `parent` stays the single-move path: one child under one new parent,
 under the same gates.

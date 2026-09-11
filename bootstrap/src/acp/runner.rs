@@ -469,7 +469,8 @@ impl AcpRunner {
         store.sync_docs(&parsed);
         let control = crate::control::Control::load(&self.project, &self.out);
         let (loaded, skills) = crate::session::initial_loaded(&store, &batch.goals);
-        let mut pb = crate::session::ProjectBlock::compute(&store, &batch.goals, &control.compile);
+        let mut pb = crate::session::ProjectBlock::compute(&store, &batch.goals, &control.compile)
+            .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
         crate::session::session_prompt(&store, &batch.goals, &loaded, &skills, &pb)
     }

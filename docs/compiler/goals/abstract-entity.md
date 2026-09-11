@@ -98,9 +98,13 @@ entities were never grouped is resolved by the same split.
 Sub-entities with `parent`, detail moved, docs proposals staged, count within the limit.
 At `mark_goal_done` the harness checks over the staged state:
 
-- The crossed count is within the limit's soft value, or the entity's bump. A split that
-  only de-escalates commits its work at `done` but does not resolve the goal: the goal
-  stays open, optional, and the session continues or fails it with the reason.
+- The crossed count is within the limit's soft value, or the entity's bump
+  (`count-over-limit` otherwise, the refusal naming the count and both honest exits).
+  A split that only de-escalates commits its work at `done` but does not resolve the
+  goal: the goal stays open, optional, and the session moves more grouped statements
+  or fails it with the reason (the remaining statements are about the whole, so the
+  count is honest and the entity's own limit is the bump to recommend); the staged
+  split commits either way.
 - Every entity staged with `parent` under the target (directly, or under an intermediate
   parent staged in the same session) carries derived provenance: `from` naming the
   target and the requirements or children moved under it, `reasoning` the cohesion it
@@ -110,7 +114,13 @@ At `mark_goal_done` the harness checks over the staged state:
 - Detail moved: each staged sub-entity has at least one requirement re-pointed to it
   (`update_requirement` passing only `id` and `entities`) or at least one child
   re-parented to it (`update_entity` `parent`). A sub-entity with nothing under it is
-  invented structure and is named in the rejection.
+  invented structure and is named in the rejection; `dissolve_entity` on it withdraws
+  it from the changeset ([grouping tools](../tools.md#grouping-tools)).
+- A re-point is a swap, checked as staged: `entities` replaces the target with the
+  sub-entity and keeps every other entity the statement names (`entities-dropped`
+  otherwise, the refusal carrying the list to send). A statement about the Session
+  and the Database that moves to the data model still names the Session and the
+  Database.
 - For the state limit: each staged sub-entity is the `transition.subject` of at least
   one re-pointed transition statement, and no state is merged away: the union of the
   states across the target's machine and the sub-entities' machines after the split is
@@ -235,12 +245,18 @@ The hint computer emits, per goal:
   crossed limit.
 - `load sm:<entity-slug>`: for the state limit, the machine with its states and transitions.
 - `group <noun> (<n> requirements, <section>)`: candidate cohesion groups, best first:
-  content tokens (minus the entity's own name tokens) recurring across at least three
-  of the entity's statements, with the section title where most of them are quoted.
-  Suggestions from token counts, never judgments; the gate is the truth.
+  content tokens (minus the entity's own name tokens and function words such as
+  `every`, `from`, `must`) recurring across at least three of the entity's statements,
+  shown as the word the statements use (never a stem), with the section where most
+  of them are quoted. Suggestions from token counts, never judgments; the gate is the
+  truth.
 - `child <ent> (<n> requirements)`: existing children as stubs, so a noun that already
   is an entity is re-parented, never minted twice.
-- `load <section>`: the section that defines the entity (the proposal's target), with
+- `load <section>`: the section that defines the entity (the proposal's target): the
+  root section of the document headed with the entity's name when one exists, else
+  the section among its mentions quoting the most of the entity's requirements, else
+  its first mention (a list item on a front door names the entity without defining
+  it), with
   `section-too-large` noted when the check filed it.
 - `root: no parent, no composition stated`: when the target is at the top of the tree,
   so the session knows the `decision` prompt is owed.
@@ -299,9 +315,24 @@ The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
   documents is not a sub-entity.
 - Re-point each grouped requirement with `update_requirement`, passing only `id` and
   `entities`: the sub-entity in place of the target when the statement is about the
-  part, the target kept when the statement is about the whole. `transition.subject` and
-  every edge end stay in `entities`. Attributes move with their concept through
-  `update_entity` on the sub-entity.
+  part, the target kept when the statement is about the whole. Every other entity the
+  statement names stays in the list, `transition.subject` and every edge end among
+  them. Attributes move with their concept through `update_entity` on the sub-entity.
+- A statement whose subject is another entity acting on the target (a deployer
+  starting it, a monitor checking its health, a client posting to it, a database
+  accepting its connections) is about the whole: it stays on the target, and its actor
+  is never a sub-entity. A sub-entity named after an entity elsewhere in the tree (a
+  Deployment under the API Server beside the stated Deployment) is a twin the
+  documents do not state.
+- The target's existing children that are the members of a part (the handlers of
+  request handling, the renderers of rendering) re-parent under it with
+  `update_entity` `parent`, so the level under the target does not grow: a split that
+  leaves them beside the new parts pushes the level over `children-per-entity`, and
+  the staging previews say so.
+- Create a sub-entity and move its statements in the same reply, so an empty
+  sub-entity never waits on a later round; the session's mutation budget grows with
+  the crossed count ([budgets](../sessions.md#budgets)), one move per grouped
+  statement.
 - Over the children limit, the goal derives with the fan-out change instead, and the
   level is grouped rather than the node split ([the fan-out variant](#the-fan-out-variant)).
 - Over the state limit, the subject conflates phases or concepts. Split it into a
@@ -329,7 +360,9 @@ the staged call ([gate](#gate)). No deletes and no merges: an
 abstraction adds structure and moves detail, and what a merged or dead node needs is
 [`review-entity`](./review-entity.md)'s or [`retrace`](./retrace.md)'s work. See
 [write tools](../tools.md#write-tools). The toolset also carries `group_entities` and
-`dissolve_entity`, the tools of the [fan-out variant](#fan-out-tools).
+`dissolve_entity`, the tools of the [fan-out variant](#fan-out-tools); under this
+variant `dissolve_entity` on a sub-entity staged this session withdraws it from the
+changeset, the create and every move onto it dropped.
 
 ## The fan-out variant
 

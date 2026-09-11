@@ -42,7 +42,10 @@ field. See [cases](./cases.md#case-format).
   registry, same [validation gates](../compiler/graph.md#validation-gates), same
   [budgets](../compiler/sessions.md#budgets), same one mid-batch reminder when the
   session ends in prose without finishing
-  ([worker sessions](../frontends/acp.md#worker-sessions)). Only the store and the
+  ([worker sessions](../frontends/acp.md#worker-sessions)), and the session holds the
+  loaded set its prompt lists from the first round, as a build session does (the
+  first caps-split snippet measured held an empty set behind a prompt listing eleven
+  items, and every `unload` of them bounced). Only the store and the
   fixture differ from a build.
 - Cases never touch the project graph. See [execution](./cases.md#execution).
 - A case passes only when its session completes. An aborted session (endpoint error,

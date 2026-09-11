@@ -97,7 +97,8 @@ pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
         .cloned()
         .collect();
     let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
-    let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile);
+    let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
+        .with_lint(&proj.linting);
     pb.batch = batch.id.clone();
     let prompt = crate::session::session_prompt(&store, &goals, &loaded, &skills, &pb);
     let mut kinds: Vec<&str> = Vec::new();

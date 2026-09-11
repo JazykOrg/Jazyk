@@ -427,6 +427,58 @@ forced:
 - Not measured here: traps 1, 2, 3, 6, 9, 10 depend on the ingest and the judgment
   goals that the snapshot's remaining sessions have not run.
 
+### example-saas, the caps split on the API Server
+
+The caps variant of `abstract-entity` had never run under any model. Snapshot at
+generation 29 (98% coverage, 57 entities, 418 requirements; `ent:api-server` referenced
+by 96 requirements, over hard 80, with seven stated children: four handlers and three
+renderers), the goal mandatory and blocked behind ~1400 pair and bind goals in its cone,
+forced as a snippet each time on a fresh copy. Model `qwen3.8:27b-mlx` via Ollama, about
+three minutes per round; the initial loaded set was 37k characters against the 24k
+budget in every run, the 96-requirement target alone.
+
+- Attempt 1 (binary as-is): fail, nothing committed. The model minted the four
+  api-server.md heading parts and five cross-document areas, two of them twins of the
+  stated Deployment and Monitoring under another parent (the near-duplicate gate keys on
+  the parent), re-pointed 55 statements with `entities: [<sub-entity>]` alone, dropping
+  Session, Database, and Account from each (accepted), never re-parented the seven
+  children, exhausted the 64-mutation budget with three sub-entities staged empty,
+  could not withdraw them (`dissolve_entity` refused `staged-entity`), and failed the
+  goal honestly. The prompt's `## Loaded` had listed eleven items the snippet session
+  did not hold, so every `unload` bounced `bad-target`; the `group` hints read
+  `persist`, `clas`, `every`, `from`; the defining section was the README's list item;
+  and the gate the page states first (count within soft) had no code.
+- Fixed docs first, then code: the session's mutation budget grows by the count a caps
+  goal splits; `dissolve_entity` on an entity staged this session withdraws it; a
+  re-point is a swap refused as `entities-dropped` with the list to send;
+  `mark_goal_done` faces `count-over-limit` against soft; the hints show written words
+  with function words dropped; the defining section is the document headed with the
+  entity's name; the skill and contract say an actor's statement about the whole stays,
+  existing children re-parent under their part, and a sub-entity and its moves go in
+  one reply.
+- Attempt 2: partial, committed (generation 30). Exactly the four heading parts, no
+  twins; 15 `entities-dropped` refusals and every retry right; 38 statements moved; the
+  handlers and renderers re-parented under theirs with one whole-part sentence each;
+  then `count-over-limit` at 58 over soft 50, and the model deliberated past its
+  completion cap into silence, so the implicit `done` committed a de-escalating split
+  and the goal re-derived optional. The honest close was `mark_goal_failed`
+  recommending a bump to 58; the model never said it.
+- Fixed: the snippet session now holds the loaded set its prompt lists (the benchmark
+  path built an empty one); the count refusal names both honest exits and says the
+  staged split commits either way.
+- Attempt 3: pass, resolved (generation 30). 20 rounds, 60 mutations: Data Model (28),
+  Request Handling (11 plus the four handlers), Rendering (3 plus the three renderers),
+  Errors (5), one whole-part statement per re-parented part with composition edges, 20
+  `entities-dropped` refusals all repaired, 49 left on the API Server, the record
+  cleared, level views `class/request-handling` and `class/rendering` derived, six
+  ratification proposals blocked on a human, fan-out 2 to 9 everywhere. One judgment
+  concession: Data Model absorbed seven collaboration behavior statements (the API
+  Server creating a Notification when a Task is assigned) to reach the count.
+- Left standing: a 96-requirement target overflows the 24k context budget by itself, so
+  `load` and `expand` are refused for the whole session unless stubs are unloaded first;
+  the model still sends the truncated `entities` list on its first batch every time
+  (the gate carries the repair); a snippet journals `tokens: 0`.
+
 ### f2 and example-org regressions
 
 Both from generation-0 copies (`f2-levels`, `org-levels`), advanced with `compile

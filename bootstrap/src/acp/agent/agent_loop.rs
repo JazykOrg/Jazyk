@@ -106,11 +106,14 @@ impl Codec for NativeCodec {
         }
         out
     }
+    // The reply pretty-printed (docs/compiler/tools.md): the model and the person
+    // reading the transcript see one field per line.
     fn result_msg(&self, call_id: &Option<String>, name: &str, result: &Value) -> Value {
+        let content = serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
         json!({
             "role": "tool",
             "tool_call_id": call_id.clone().unwrap_or_else(|| name.to_string()),
-            "content": result.to_string()
+            "content": content
         })
     }
 }

@@ -38,6 +38,12 @@ separated; each adds its tools to the union:
   graph surgery; each write commits as its own changeset, and the commit writes its
   [change records](../compiler/graph.md#change-records) so the next build derives
   the goals the write opened.
+- `jazyk mcp all`: `compile`, `generate`, `verify`, `decompile`, and `chat` in one
+  serving, the union an agent working a whole project needs, so a config names one
+  entry instead of listing them. `benchmark` stays out (it performs cases against
+  sandbox stores, not the project) and so do the raw write tools of `graph --write`
+  (a write outside a batch is graph surgery, served on purpose). `jazyk init` writes
+  this one ([init](./cli.md#jazyk-init)).
 - `jazyk mcp chat`: the serving for [chat sessions](./acp.md#chat-sessions): read
   tools, the [compilation](../compiler/tools.md#compilation-tools),
   [binding](../compiler/tools.md#binding-tools),
@@ -53,7 +59,9 @@ Every serving includes the [read tools](../compiler/tools.md#read-tools) (`load`
 `get_view`, `diagnostics`), [`report_feedback`](../compiler/tools.md#feedback-tool),
 and `await_changes` (below). The reads maintain the
 [loaded set](../compiler/context.md#the-loaded-set) per open batch, and every
-mutating reply carries its condensed status block.
+mutating reply carries its condensed status block. A reply's text content is the JSON
+object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in
+the client's tool call view the way the model does.
 
 On a compile serving, `done` is the one finishing call: the session prompt says
 `done`, so the model never translates a verb.

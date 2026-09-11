@@ -23,6 +23,17 @@ interface Row {
 }
 
 // Chat sessions: coalesce streamed chunks, one row per tool call.
+// A tool payload one field per line (docs/compiler/tools.md): a string that already
+// holds pretty JSON stays as it is, anything else is pretty-printed.
+function pretty(v: unknown): string {
+  if (typeof v === 'string') return v
+  try {
+    return JSON.stringify(v, null, 2)
+  } catch {
+    return String(v)
+  }
+}
+
 function chatRows(updates: ChatUpdateRow[]): Row[] {
   const rows: Row[] = []
   const toolRow: Record<string, number> = {}
@@ -57,7 +68,7 @@ function chatRows(updates: ChatUpdateRow[]): Row[] {
           kind: 'tool',
           text: String(u.title ?? 'tool'),
           status: 'pending',
-          detail: u.rawInput !== undefined ? JSON.stringify(u.rawInput) : undefined,
+          detail: u.rawInput !== undefined ? pretty(u.rawInput) : undefined,
         })
         break
       }
@@ -70,7 +81,7 @@ function chatRows(updates: ChatUpdateRow[]): Row[] {
           rows[at] = {
             ...rows[at],
             status,
-            detail: fields.rawOutput !== undefined ? String(fields.rawOutput as string) : rows[at].detail,
+            detail: fields.rawOutput !== undefined ? pretty(fields.rawOutput) : rows[at].detail,
           }
         }
         break

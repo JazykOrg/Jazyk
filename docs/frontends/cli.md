@@ -25,8 +25,9 @@ build, inspects the [graph store](../compiler/graph.md) and the
 - Offers [MCP](./mcp.md) integration for a coding agent: a numbered choice of
   `none`, Claude Code (`.mcp.json`), Cursor (`.cursor/mcp.json`), VS Code
   (`.vscode/mcp.json`), or Gemini CLI (`.gemini/settings.json`). The chosen file
-  gains a `jazyk` server entry running `jazyk mcp graph`; an existing file is merged,
-  never overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
+  gains a `jazyk` server entry running `jazyk mcp all`, every lifecycle toolset in
+  one serving ([toolsets](./mcp.md#toolsets)); an existing file is merged, never
+  overwritten, and an existing `jazyk` entry warns and stays. `--mcp AGENT`
   (`claude`, `cursor`, `vscode`, `gemini`, `none`) skips the prompt, and a
   non-interactive stdin skips it too, so scripts never hang.
 - Asks which [agent](./acp.md#agents) does the AI work: the `embedded` one, or an
@@ -45,8 +46,10 @@ build, inspects the [graph store](../compiler/graph.md) and the
   [`jazyk acp install`](#jazyk-acp) for the chosen one. `--acp IDE` (any client name,
   or `none`) skips the prompt, and a non-interactive stdin skips it too.
 
-The server entry is read-only; add `--write` to its `args` to hand the agent the
-[write tools](../compiler/tools.md#write-tools). A `--mcp`, `--agent`, or `--acp` value
+The server entry's writes all go through claimed batches (`begin_goals`, the binding,
+generation, and verification rows); raw writes outside a batch are a second entry
+running `jazyk mcp graph --write` ([write tools](../compiler/tools.md#write-tools)),
+added by hand when graph surgery is wanted. A `--mcp`, `--agent`, or `--acp` value
 that names nothing jazyk knows is a usage error before any file is written. Exit `0`
 when something was set up, `1` when nothing was written, `2` on a usage error.
 
@@ -559,7 +562,8 @@ Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds
 [write tools](../compiler/tools.md#write-tools). `jazyk mcp <toolsets>` serves the
 other [toolsets](./mcp.md#toolsets): `compile` claims goal batches
 ([compilation over MCP](./mcp.md#compilation-over-mcp)), `generate`, `verify`,
-`decompile`, `benchmark`, `chat`.
+`decompile`, `benchmark`, `chat`; `all` is `compile,generate,verify,decompile,chat`,
+the entry `jazyk init` writes.
 
 ### jazyk acp
 

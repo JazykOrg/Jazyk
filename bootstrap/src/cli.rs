@@ -263,7 +263,7 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
                 return Ok(false);
             }
             println!(
-                "\nSet up MCP integration? The agent gets the graph tools over `jazyk mcp graph`."
+                "\nSet up MCP integration? The agent gets every lifecycle toolset over `jazyk mcp all`."
             );
             println!("  1) none");
             for (i, (_, name, file, _)) in MCP_AGENTS.iter().enumerate() {
@@ -311,8 +311,9 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    // Read-only by default; adding --write to args hands the agent the write tools.
-    let mut entry = serde_json::json!({ "command": "jazyk", "args": ["mcp", "graph"] });
+    // Every lifecycle toolset in one serving (docs/frontends/mcp.md#toolsets); raw
+    // writes outside a batch are a second `jazyk mcp graph --write` entry by hand.
+    let mut entry = serde_json::json!({ "command": "jazyk", "args": ["mcp", "all"] });
     if *key == "servers" {
         entry["type"] = serde_json::json!("stdio"); // the VS Code shape names the transport
     }
@@ -324,7 +325,7 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
     let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
     std::fs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
     println!(
-        "jazyk: wrote a read-only `jazyk` MCP server into {} for {}",
+        "jazyk: wrote a `jazyk` MCP server (`jazyk mcp all`) into {} for {}",
         rel, name
     );
     Ok(true)

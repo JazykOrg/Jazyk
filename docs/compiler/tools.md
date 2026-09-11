@@ -17,6 +17,12 @@ The catalog is deliberately small. Weak models handle few, simple tools better t
 clever ones. No tool enqueues work: the model writes graph state, the harness derives the
 [goals](./reconciler.md#goal-derivation).
 
+Every reply is one JSON object. Wherever a reply travels as text (the MCP text content,
+the tool message the embedded agent hands its model, the chat pane's expanded row) it
+is pretty-printed with two-space indentation, one field per line: a person reading a
+transcript or watching an IDE's tool call reads the same shape the model does, never a
+single line. The trace keeps its condensed one-line summaries beside the full payload.
+
 ## Read tools
 
 Every serving carries the read tools. The first four maintain the

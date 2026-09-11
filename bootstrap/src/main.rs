@@ -457,7 +457,8 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              workflow), decompile (draft docs for unclaimed code), benchmark (the\n\
              agent under test performs the cases against sandbox stores), chat (the\n\
              chat serving: reads, lifecycles, dual-write tools, no raw writes),\n\
-             graph (read tools; --write adds raw write tools).\n\n\
+             graph (read tools; --write adds raw write tools), all (compile,\n\
+             generate, verify, decompile, chat in one serving; what init writes).\n\n\
              Bridge flags (set by the ACP bridge when it injects a serving into a\n\
              session; not for standalone servings):\n  \
              --ephemeral          the serving belongs to one session\n  \
@@ -689,11 +690,21 @@ fn main() {
             Some(arg) => {
                 // The toolsets served, comma separated: compile, generate, verify,
                 // decompile, benchmark, chat, graph.
-                let modes: Vec<String> = arg
-                    .split(',')
-                    .map(|m| m.trim().to_string())
-                    .filter(|m| !m.is_empty())
-                    .collect();
+                // `all` is the union an agent working a whole project needs
+                // (docs/frontends/mcp.md#toolsets): benchmark and graph stay out.
+                let mut modes: Vec<String> = Vec::new();
+                for m in arg.split(',').map(|m| m.trim()).filter(|m| !m.is_empty()) {
+                    let expanded: &[&str] = if m == "all" {
+                        &["compile", "generate", "verify", "decompile", "chat"]
+                    } else {
+                        std::slice::from_ref(&m)
+                    };
+                    for e in expanded {
+                        if !modes.iter().any(|x| x == e) {
+                            modes.push((*e).to_string());
+                        }
+                    }
+                }
                 let known = [
                     "compile",
                     "generate",

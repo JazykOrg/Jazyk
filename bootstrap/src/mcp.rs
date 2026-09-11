@@ -2517,9 +2517,12 @@ fn sink_write(
     }
 }
 
+// The reply pretty-printed, one field per line, so the agent's user reads the tool
+// call the way the model does (docs/compiler/tools.md).
 fn text_result(v: Value, is_error: bool) -> Value {
+    let text = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
     json!({
-        "content": [{"type": "text", "text": v.to_string()}],
+        "content": [{"type": "text", "text": text}],
         "isError": is_error
     })
 }

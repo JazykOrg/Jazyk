@@ -6,6 +6,41 @@ build, inspects the [graph store](../compiler/graph.md) and the
 
 ## Commands
 
+### jazyk
+
+Bare `jazyk`, no command, is the launcher, not the help:
+
+- Outside a project (no `jazyk.toml` above the working directory) it runs
+  [`jazyk init`](#jazyk-init). A non-interactive stdin prints the one-line hint (`no
+  jazyk.toml above <dir>; run jazyk init`) and exits `1` instead, so a script never
+  lands in a prompt.
+- Inside a project it prints the [status](#jazyk-status) lines (the store, the
+  verdict, the board, coverage), then a numbered list of ways to start working, and
+  runs the chosen one. Each choice verifies its own setup first and then starts the
+  program, so one pick is the whole path from a fresh checkout to a running tool:
+
+  | choice | verifies | then runs |
+  |---|---|---|
+  | `gui` | nothing | `jazyk gui` |
+  | `claude` | `.mcp.json` carries the `jazyk` server (the [init MCP step](#jazyk-init) for Claude Code) | `claude` |
+  | `codex` | `codex mcp list` names `jazyk`, else `codex mcp add jazyk -- jazyk mcp all` | `codex` |
+  | `gemini` | `.gemini/settings.json` carries the server | `gemini` |
+  | `cursor` | `.cursor/mcp.json` carries the server | `cursor .` |
+  | `vscode` | `.vscode/mcp.json` carries the server, the ACP entry is registered ([`jazyk acp install vscode`](#jazyk-acp)), and the Jazyk extension is installed (`code --list-extensions` names `jazyk.jazyk`; when it does not, the path to its `.vsix` and the `code --install-extension` line are printed and the launch goes on) | `code .` |
+  | `jetbrains` | the ACP entry is registered (`jazyk acp install jetbrains`) | `idea .` |
+  | `zed` | the ACP entry is registered (`jazyk acp install zed`) | `zed .` |
+  | `compile` | nothing | `jazyk compile` |
+
+  A program that is not on `PATH` is named with where to get it, exit `1`; the
+  setup it would have needed is still written, so the next pick after installing it
+  starts straight away. The launched program inherits the terminal and its exit code
+  is jazyk's. A non-interactive stdin prints the status and the list with the command
+  each choice runs, and exits `0`.
+
+`jazyk launch [choice]` is the same launcher by name, for scripts and for skipping the
+menu: `jazyk launch claude`. Without a choice it behaves as bare `jazyk` inside a
+project. A choice jazyk does not know is a usage error.
+
 ### jazyk init
 
 `jazyk init [--mcp AGENT]` initializes the current directory as a project root:
@@ -590,9 +625,11 @@ meant to be run by hand.
 
 ### jazyk lsp
 
-`jazyk lsp` starts the [language server](./lsp.md) on stdio. Read-only: it serves the last
-committed graph and its rendered diagrams, and a `compile` or `watch` rebuild refreshes
-it.
+`jazyk lsp [--stdio]` starts the [language server](./lsp.md) on stdio. Read-only: it
+serves the last committed graph and its rendered diagrams, and a `compile` or `watch`
+rebuild refreshes it. `--stdio` is accepted and changes nothing: LSP clients append it
+to name the transport (the VS Code client library does), and a server that refused it
+would crash on every start.
 
 ### jazyk benchmark
 
@@ -617,14 +654,20 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 
 ## Help
 
-- `jazyk --help` (or `-h`, or bare `jazyk help`) prints the top-level usage: one line per
-  command plus the common options.
+- `jazyk --help` (or `-h`, or `jazyk help`) prints the top-level usage: one line per
+  command, in four groups in this order, plus the common options. The groups put what
+  a person types most at the top and what programs spawn at the bottom:
+  - Start here: `init`, `launch`, `gui`, `status`, `compile`, `benchmark`.
+  - Actions on the project: `check`, `watch`, `gen`, `test`, `decompile`, `docsgen`,
+    `release`, `answer`.
+  - Inspect: `preview`, `explain`, `ripple`, `context`, `query`, `viewer`.
+  - Run by IDEs and agents, not by hand: `mcp`, `acp`, `lsp`, `agent`, `monitor`.
 - `jazyk <command> --help` prints that command's usage: its arguments, the options it
   honors (only those), and its exit codes where they carry meaning. `jazyk help <command>`
   is equivalent.
-- Help prints to stdout and exits `0`. A missing command prints the top-level usage to
-  stderr and exits `2`; an unknown command (with or without `--help`, or after `help`)
-  prints one line naming it and pointing at `jazyk --help`, and exits `2`.
+- Help prints to stdout and exits `0`. Bare `jazyk` is the [launcher](#jazyk), never
+  the help; an unknown command (with or without `--help`, or after `help`) prints one
+  line naming it and pointing at `jazyk --help`, and exits `2`.
 - The options a command honors are exactly the ones its help lists. An option a
   command does not honor, an option jazyk does not define, an option missing its value,
   a value that is not a whole number where one is required (`--sessions`, `--depth`,

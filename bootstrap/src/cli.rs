@@ -674,6 +674,160 @@ pub fn run_acp_install(ide: Option<&str>) -> i32 {
     crate::acp::install::install(ide)
 }
 
+// The launcher's choices, in menu order: id, what it starts, the program it runs
+// and where to get it. Mirrors docs/frontends/cli.md#jazyk.
+const LAUNCH_CHOICES: &[(&str, &str, &str, &str)] = &[
+    ("gui", "the local GUI", "jazyk gui", ""),
+    ("claude", "Claude Code with jazyk over MCP", "claude", "https://claude.com/claude-code"),
+    ("codex", "Codex with jazyk over MCP", "codex", "https://github.com/openai/codex"),
+    ("gemini", "Gemini CLI with jazyk over MCP", "gemini", "https://github.com/google-gemini/gemini-cli"),
+    ("cursor", "Cursor with jazyk over MCP", "cursor .", "https://cursor.com"),
+    ("vscode", "VS Code with the Jazyk extension, ACP and MCP", "code .", "https://code.visualstudio.com"),
+    ("jetbrains", "a JetBrains IDE with jazyk over ACP", "idea .", "https://www.jetbrains.com"),
+    ("zed", "Zed with jazyk over ACP", "zed .", "https://zed.dev"),
+    ("compile", "one build now", "jazyk compile", ""),
+];
+
+// Bare `jazyk`: init outside a project; inside one the status, then a verified way to
+// start. Mirrors docs/frontends/cli.md#jazyk.
+pub fn run_launch(opts: &Options, choice: Option<&str>) -> i32 {
+    use std::io::IsTerminal;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(root) = project::find_root(&cwd) else {
+        if std::io::stdin().is_terminal() {
+            return run_init(opts);
+        }
+        eprintln!("jazyk: no jazyk.toml above {}; run jazyk init", cwd.display());
+        return 1;
+    };
+    if let Some(c) = choice {
+        if !LAUNCH_CHOICES.iter().any(|(id, ..)| *id == c) {
+            eprintln!(
+                "jazyk: unknown launch choice `{}`; one of {}",
+                c,
+                LAUNCH_CHOICES.iter().map(|(id, ..)| *id).collect::<Vec<_>>().join(", ")
+            );
+            return 2;
+        }
+    }
+    run_status(opts);
+    let picked = match choice {
+        Some(c) => c.to_string(),
+        None => {
+            println!("\nStart with:");
+            for (i, (id, what, cmd, _)) in LAUNCH_CHOICES.iter().enumerate() {
+                println!("  {:>2}) {:<10} {} (`{}`)", i + 1, id, what, cmd);
+            }
+            if !std::io::stdin().is_terminal() {
+                println!("\n`jazyk launch <choice>` starts one.");
+                return 0;
+            }
+            print!("choose [1-{}] (enter to quit): ", LAUNCH_CHOICES.len());
+            use std::io::Write;
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).ok();
+            let line = line.trim();
+            match line.parse::<usize>() {
+                Ok(n) if (1..=LAUNCH_CHOICES.len()).contains(&n) => LAUNCH_CHOICES[n - 1].0.to_string(),
+                _ if LAUNCH_CHOICES.iter().any(|(id, ..)| *id == line) => line.to_string(),
+                _ => return 0,
+            }
+        }
+    };
+    let (_, _, cmd, url) = LAUNCH_CHOICES.iter().find(|(id, ..)| *id == picked).unwrap();
+    // Verify the setup the choice needs; a refusal to write is fatal, an entry that is
+    // already there is fine (init_mcp says so and returns Ok(false)).
+    let mcp = |agent: &str| -> Result<(), i32> {
+        match init_mcp(&root, Some(agent)) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("jazyk: {}", e);
+                Err(1)
+            }
+        }
+    };
+    let acp = |ide: &str| -> Result<(), i32> {
+        match crate::acp::install::install(ide) {
+            0 => Ok(()),
+            code => Err(code),
+        }
+    };
+    let setup: Result<(), i32> = match picked.as_str() {
+        "claude" => mcp("claude"),
+        "gemini" => mcp("gemini"),
+        "cursor" => mcp("cursor"),
+        "vscode" => mcp("vscode").and_then(|_| acp("vscode")).map(|_| {
+            let installed = std::process::Command::new("code")
+                .arg("--list-extensions")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "jazyk.jazyk"))
+                .unwrap_or(false);
+            if !installed {
+                eprintln!(
+                    "jazyk: the Jazyk extension is not installed; from the jazyk checkout run: code --install-extension bootstrap/editors/vscode/jazyk-0.2.1.vsix"
+                );
+            }
+        }),
+        "jetbrains" => acp("jetbrains"),
+        "zed" => acp("zed"),
+        "codex" => {
+            let listed = std::process::Command::new("codex")
+                .args(["mcp", "list"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("jazyk"))
+                .unwrap_or(false);
+            if listed {
+                Ok(())
+            } else {
+                match std::process::Command::new("codex")
+                    .args(["mcp", "add", "jazyk", "--", "jazyk", "mcp", "all"])
+                    .status()
+                {
+                    Ok(s) if s.success() => Ok(()),
+                    Ok(s) => {
+                        eprintln!("jazyk: `codex mcp add` exited {}", s);
+                        Err(1)
+                    }
+                    Err(_) => Err(1), // not on PATH: the run below names it
+                }
+            }
+        }
+        _ => Ok(()),
+    };
+    if let Err(code) = setup {
+        if picked != "codex" {
+            return code;
+        }
+    }
+    // Run it: jazyk's own commands through this binary, the rest from PATH, all
+    // inheriting the terminal; the program's exit code is ours.
+    let mut parts = cmd.split(' ');
+    let prog = parts.next().unwrap_or(cmd);
+    let args: Vec<&str> = parts.collect();
+    let mut command = if prog == "jazyk" {
+        std::process::Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("jazyk")))
+    } else {
+        std::process::Command::new(prog)
+    };
+    command.args(&args).current_dir(&root);
+    match command.status() {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "jazyk: `{}` is not on PATH{}; the setup for it is written, so it starts once installed",
+                prog,
+                if url.is_empty() { String::new() } else { format!(" (get it at {})", url) }
+            );
+            1
+        }
+        Err(e) => {
+            eprintln!("jazyk: cannot start `{}`: {}", prog, e);
+            1
+        }
+    }
+}
+
 // Spawn the run's ACP runner (docs/frontends/acp.md#worker-sessions), or explain why not.
 fn runner_for(
     proj: &Project,
@@ -2350,8 +2504,15 @@ mod tests {
         }
         assert!(usage.contains("goal-based"), "{}", usage);
         assert!(!usage.contains('\u{2014}'), "em dash in the top usage");
-        for (line, _) in crate::COMMANDS {
-            let cmd = line.split_whitespace().next().unwrap();
+        // The groups come in the documented order: what a person types first,
+        // what programs spawn last.
+        let start = usage.find("start here:").expect("start here group");
+        let ides = usage.find("run by IDEs and agents").expect("IDE group");
+        assert!(start < ides, "{}", usage);
+        for (line, _) in crate::COMMAND_GROUPS.iter().flat_map(|(_, cs)| cs.iter()) {
+            let Some(cmd) = line.split_whitespace().next() else {
+                continue; // bare `jazyk`, the launcher
+            };
             let (_, extra) = crate::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
             let u = crate::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);

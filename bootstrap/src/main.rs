@@ -59,41 +59,60 @@ fn load_dotenv() {
     }
 }
 
-// One line per command, in the order docs/frontends/cli.md documents them.
-const COMMANDS: &[(&str, &str)] = &[
-    ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
-    ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
-    ("check [path...]", "compile, exit non-zero on error diagnostics (CI)"),
-    ("watch [path...]", "recompile on change, one line per goal"),
-    ("monitor [--json] [--once]", "print ready and blocked goals as the state changes; --once exits at the first"),
-    ("release [compile|generate]", "approve gated goals in manual mode without running anything"),
-    ("answer <diag|goal> [--option N | --text T]", "answer a prompted diagnostic; without a reply, list its options"),
-    ("status [--json]", "the store version, the last verdict, the board counts, what to do next"),
-    ("preview [goal|target|batch]", "the next session's prompt, exactly as the model receives it"),
-    ("explain [goal|target]", "why a goal exists, or what a change to a target opens"),
-    ("ripple [root] [--back]", "walk a change's cascade through the journal (id, g412, or doc)"),
-    ("context <target>", "what the `load` tool renders (--depth N, --expand HANDLE)"),
-    ("query <text> [--json]", "search entities"),
-    ("gen [entity...]", "resolve the bind and generate goals into the deliverable (--force)"),
-    ("test [target...]", "resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)"),
-    ("decompile [path...]", "draft docs describing what unclaimed code does"),
-    ("docsgen", "render the requirements documents, entity cards, level and diagram pages"),
-    ("viewer [--out FILE]", "render the graph to a self-contained HTML page"),
-    ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
-    ("mcp <toolsets>", "the MCP server: compile,generate,verify,decompile,benchmark,chat,graph"),
-    ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
-    ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
-    ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
-    ("benchmark [case...]", "grade the configured agent and model"),
+// The commands in four groups, what a person types most first and what programs
+// spawn last, in the order docs/frontends/cli.md#help lists them.
+const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
+    ("start here", &[
+        ("", "the launcher: status, then a numbered way to start (init outside a project)"),
+        ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
+        ("launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]", "verify a tool's setup, then start it"),
+        ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
+        ("status [--json]", "the store version, the last verdict, the board counts, what to do next"),
+        ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
+        ("benchmark [case...]", "grade the configured agent and model"),
+    ]),
+    ("actions on the project", &[
+        ("check [path...]", "compile, exit non-zero on error diagnostics (CI)"),
+        ("watch [path...]", "recompile on change, one line per goal"),
+        ("gen [entity...]", "resolve the bind and generate goals into the deliverable (--force)"),
+        ("test [target...]", "resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)"),
+        ("decompile [path...]", "draft docs describing what unclaimed code does"),
+        ("docsgen", "render the requirements documents, entity cards, level and diagram pages"),
+        ("release [compile|generate]", "approve gated goals in manual mode without running anything"),
+        ("answer <diag|goal> [--option N | --text T]", "answer a prompted diagnostic; without a reply, list its options"),
+    ]),
+    ("inspect", &[
+        ("preview [goal|target|batch]", "the next session's prompt, exactly as the model receives it"),
+        ("explain [goal|target]", "why a goal exists, or what a change to a target opens"),
+        ("ripple [root] [--back]", "walk a change's cascade through the journal (id, g412, or doc)"),
+        ("context <target>", "what the `load` tool renders (--depth N, --expand HANDLE)"),
+        ("query <text> [--json]", "search entities"),
+        ("viewer [--out FILE]", "render the graph to a self-contained HTML page"),
+    ]),
+    ("run by IDEs and agents, not by hand", &[
+        ("mcp <toolsets>", "the MCP server: all, compile,generate,verify,decompile,benchmark,chat,graph"),
+        ("acp [install --ide CLIENT]", "the IDE-facing ACP proxy; `install` registers it with an editor"),
+        ("lsp", "language server over stdio (read-only; compile or watch rebuilds)"),
+        ("agent", "the embedded ACP agent over stdio (spawned by the bridge)"),
+        ("monitor [--json] [--once]", "print ready and blocked goals as the state changes; --once exits at the first"),
+    ]),
 ];
 
 fn top_usage() -> String {
     let mut s = String::new();
     s.push_str("jazyk: natural language compiler (goal-based)\n\n");
-    s.push_str("usage:\n");
-    let width = COMMANDS.iter().map(|(u, _)| u.len()).max().unwrap_or(0) + 2;
-    for (usage, what) in COMMANDS {
-        s.push_str(&format!("  jazyk {:<width$} {}\n", usage, what, width = width));
+    s.push_str("usage: jazyk [command] [options]\n");
+    let width = COMMAND_GROUPS
+        .iter()
+        .flat_map(|(_, cs)| cs.iter().map(|(u, _)| u.len()))
+        .max()
+        .unwrap_or(0)
+        + 2;
+    for (group, commands) in COMMAND_GROUPS {
+        s.push_str(&format!("\n{}:\n", group));
+        for (usage, what) in *commands {
+            s.push_str(&format!("  jazyk {:<width$} {}\n", usage, what, width = width));
+        }
     }
     s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --out DIR\n");
     s.push_str(
@@ -170,6 +189,7 @@ const VALUE_OPTIONS: &[&str] = &[
 fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> {
     Some(match cmd {
         "init" => (Some(0), &["--mcp", "--acp"]),
+        "launch" => (Some(1), &[]),
         "compile" => (None, &["--sessions"]),
         "check" | "watch" | "decompile" => (None, &[]),
         "status" => (Some(0), &["--json"]),
@@ -180,7 +200,9 @@ fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> 
         "gen" => (None, &["--force"]),
         "test" => (None, &["--kind", "--list", "--audit", "--force"]),
         "codegen" | "testgen" => (None, &[]),
-        "docsgen" | "lsp" | "agent" => (Some(0), &[]),
+        "docsgen" | "agent" => (Some(0), &[]),
+        // LSP clients append `--stdio` to name the transport (docs/frontends/cli.md#jazyk-lsp).
+        "lsp" => (Some(0), &["--stdio"]),
         "viewer" => (Some(0), &[]),
         "gui" => (
             Some(0),
@@ -212,6 +234,13 @@ const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/
 
 fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
+        "launch" => "usage: jazyk launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]\n\n\
+             The launcher, what bare `jazyk` runs inside a project: print the status, then\n\
+             verify the chosen tool's setup (the MCP server entry, the ACP registration,\n\
+             the editor extension) and start it. Without a choice, a numbered menu on an\n\
+             interactive terminal; the list with each choice's command otherwise.\n\n\
+             exit: the launched program's code; 1 when it is not on PATH; 2 on an unknown choice\n"
+            .to_string(),
         "init" => "usage: jazyk init [--mcp claude|cursor|vscode|gemini|none] [--agent NAME] [--acp IDE]\n\n\
              Initialize the current directory as a project root: write a minimal\n\
              jazyk.toml, scaffold docs/ (with a placeholder README.md) and\n\
@@ -490,9 +519,10 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              was printed, 1 when a file could not be written"
             .to_string(),
         "lsp" => format!(
-            "usage: jazyk lsp\n\n\
+            "usage: jazyk lsp [--stdio]\n\n\
              Language server over stdio. Read-only: serves the last committed graph, and\n\
-             a compile or watch rebuild refreshes it.\n\n\
+             a compile or watch rebuild refreshes it. --stdio is accepted and changes\n\
+             nothing: LSP clients append it to name the transport.\n\n\
              {}",
             COMMON_OUT
         ),
@@ -590,6 +620,9 @@ fn main() {
             "--force" => opts.force = true,
             "--list" => opts.list = true,
             "--audit" => opts.audit = true,
+            // LSP clients append it to name the transport; `lsp` honors it and it
+            // changes nothing (docs/frontends/cli.md#jazyk-lsp).
+            "--stdio" => {}
             // An option nobody defined is a typo, never a positional: `status --bogus`
             // must not become an explicit document path.
             s if s.starts_with('-') && s.len() > 1 => {
@@ -629,8 +662,13 @@ fn main() {
             None => usage_error("", &format!("unknown command `{}`", cmd)),
         }
     }
+    // Bare `jazyk` is the launcher (docs/frontends/cli.md#jazyk): init outside a
+    // project, the status and a way to start inside one.
     if cmd.is_empty() {
-        usage();
+        if let Some(e) = errors.first() {
+            usage_error("", e);
+        }
+        std::process::exit(cli::run_launch(&opts, None));
     }
     let Some((arity, extra)) = command_shape(&cmd) else {
         usage_error("", &format!("unknown command `{}`", cmd));
@@ -665,6 +703,7 @@ fn main() {
 
     let code = match cmd.as_str() {
         "init" => cli::run_init(&opts),
+        "launch" => cli::run_launch(&opts, positional.first().map(|s| s.as_str())),
         "compile" => cli::run_compile(&positional, &opts),
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),

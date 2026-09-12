@@ -248,7 +248,8 @@ the model's judgment make it; nothing here fixes a depth.
 ### Level views
 
 Derivation emits, for every node with at least two children (the scope root included),
-one structural level view, recomputed on every commit like every default
+and for a node with one child that carries attributes, one structural level view,
+recomputed on every commit like every default
 ([default views](./model/view.md#default-views)):
 
 - Members: the node's direct children plus every outside entity with a lifted edge into
@@ -318,7 +319,7 @@ OS ..> IS
 
 Every element links to its card ([drill-down](#drill-down)). `order-service` has four
 children, so its card's `Inside` section embeds its level view; `inventory-service` has
-one child, so its card says `a leaf`.
+one child without attributes, so its card says `a leaf`.
 
 ### Drill-down
 

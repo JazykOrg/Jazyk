@@ -519,8 +519,22 @@ fn levels(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<Level> {
     out
 }
 
-// The level a target names, with two or more children: a node id (redirects
-// followed) or `scope:<scope>`. None for a leaf, a one-child node, or an unknown id.
+// Whether a level derives a view: two or more children, or one child that carries
+// attributes, since the class box is the only place an attribute is drawn.
+// Mirrors docs/compiler/model/view.md#level-views.
+fn level_holds(store: &Store, level: &Level) -> bool {
+    level.children.len() >= 2
+        || (level.children.len() == 1
+            && store
+                .graph
+                .entities
+                .get(&level.children[0])
+                .is_some_and(|e| !e.attributes.is_empty()))
+}
+
+// The level a target names, when it derives a view: a node id (redirects followed)
+// or `scope:<scope>`. None for a leaf, a one-child node whose child carries no
+// attributes, or an unknown id.
 fn level_of_target(store: &Store, target: &str, rank: &BTreeMap<String, usize>) -> Option<Level> {
     let target = match crate::board::scope_target(target) {
         Some(_) => target.to_string(),
@@ -529,7 +543,7 @@ fn level_of_target(store: &Store, target: &str, rank: &BTreeMap<String, usize>) 
     levels(store, rank)
         .into_iter()
         .find(|l| l.target == target)
-        .filter(|l| l.children.len() >= 2)
+        .filter(|l| level_holds(store, l))
 }
 
 // The kind rule: component when the node, any child, or any descendant below a
@@ -791,7 +805,7 @@ pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
     let rank = entity_document_rank(store);
     levels(store, &rank)
         .into_iter()
-        .filter(|l| l.children.len() >= 2)
+        .filter(|l| level_holds(store, l))
         .find(|l| {
             let members = level_members_of(store, l, &rank);
             flow_view_rules(store, l, &members)
@@ -806,7 +820,7 @@ pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
 pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
     let rank = entity_document_rank(store);
     let mut out = BTreeMap::new();
-    for l in levels(store, &rank).into_iter().filter(|l| l.children.len() >= 2) {
+    for l in levels(store, &rank).into_iter().filter(|l| level_holds(store, &l)) {
         let members = level_members_of(store, &l, &rank);
         for w in flow_view_rules(store, &l, &members) {
             out.insert(w.id.clone(), l.target.clone());
@@ -874,7 +888,7 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
     // One structural level view per level of two or more, the scope root included, and
     // the flow views of the requirements lifted into it.
     for level in levels(store, &rank) {
-        if level.children.len() < 2 {
+        if !level_holds(store, &level) {
             continue;
         }
         let members = level_members_of(store, &level, &rank);
@@ -1343,6 +1357,32 @@ pub(crate) mod tests {
             rel_type: Some(t.into()),
             cardinality: card.map(String::from),
         }
+    }
+
+    // Mirrors docs/compiler/model/view.md#level-views: a node with one child derives
+    // its level view when the child carries attributes, and stays a leaf otherwise.
+    #[test]
+    fn a_one_child_level_derives_a_class_view_when_the_child_carries_attributes() {
+        let mut s = Store::default();
+        let ent = |name: &str, parent: Option<&str>, attrs: &[&str]| Entity {
+            name: name.into(),
+            parent: parent.map(String::from),
+            attributes: attrs.iter().map(|a| attr(a, None, None)).collect(),
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:backend".into(), ent("Backend", None, &[]));
+        s.graph.entities.insert("ent:users".into(), ent("User Management", Some("ent:backend"), &[]));
+        s.graph.entities.insert("ent:inventory".into(), ent("Inventory", Some("ent:backend"), &[]));
+        s.graph.entities.insert(
+            "ent:account".into(),
+            ent("User Account", Some("ent:users"), &["id", "role"]),
+        );
+        s.graph.entities.insert("ent:product".into(), ent("Product", Some("ent:inventory"), &[]));
+        let ids: Vec<String> = default_view_rules(&s).into_iter().map(|v| v.id).collect();
+        assert!(ids.contains(&"view:class/users".to_string()), "{:?}", ids);
+        assert!(!ids.iter().any(|i| i.ends_with("/inventory")), "{:?}", ids);
+        assert_eq!(level_view_id(&s, "ent:users").as_deref(), Some("view:class/users"));
+        assert_eq!(level_view_id(&s, "ent:inventory"), None);
     }
 
     fn attr(name: &str, ty: Option<&str>, value: Option<&str>) -> Attribute {

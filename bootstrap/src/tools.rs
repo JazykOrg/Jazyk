@@ -2141,7 +2141,14 @@ impl ToolSession {
             }
         }
         let children = self.level_after(id);
-        if children.len() < 2 {
+        // One child with attributes holds a level too (view.md#level-views).
+        let lone_with_attributes = children.len() == 1
+            && self
+                .staged_entities
+                .get(&children[0])
+                .or_else(|| self.snapshot.graph.entities.get(&children[0]))
+                .is_some_and(|e| !e.attributes.is_empty());
+        if children.len() < 2 && !lone_with_attributes {
             return None;
         }
         let structural = |x: &str| {

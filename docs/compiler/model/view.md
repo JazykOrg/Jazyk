@@ -146,7 +146,7 @@ has no object view. Six kinds derive, each with a stable id:
 
 | kind | id | one per | members |
 | --- | --- | --- | --- |
-| `class` or `component` | `view:class/<node-slug>` or `view:component/<node-slug>`; `view:class/<scope>` or `view:component/<scope>` for the scope root | level: a node with two or more children, the scope root included | the node's direct children plus every outside entity with a lifted edge into the level, in document order |
+| `class` or `component` | `view:class/<node-slug>` or `view:component/<node-slug>`; `view:class/<scope>` or `view:component/<scope>` for the scope root | level: a node with two or more children, the scope root included, or with one child that carries attributes | the node's direct children plus every outside entity with a lifted edge into the level, in document order |
 | `use-case` | `view:usecase/<node-slug>-<doc-slug>` | flow cluster of a level: one per document whose behavior reaches the level | the cluster's requirements in document order |
 | `sequence` | `view:sequence/<node-slug>-<doc-slug>` | flow cluster of a level | the cluster's requirements that carry an edge, in document order |
 | `state` | `view:state/<entity-slug>` | state machine | the subject |
@@ -172,7 +172,12 @@ until a session splits it along the document's own breaks. The `provenance` of a
 A level is a node's set of direct children; the scope root (the parentless entities of a
 scope, addressed as `scope:<scope>`) is the top level. See
 [levels](../concepts/levels.md#levels). For every node with two or more children, the
-scope root included, one structural view of its level derives:
+scope root included, one structural view of its level derives. A node with one child
+derives it too when that child carries attributes: the class box is the only place an
+attribute is drawn, and a sub-system holding one domain object (User Management over a
+User Account with `id`, `role`, `username`, `password`) would otherwise render it
+nowhere, since the parent's level shows the sub-system as a box. A one-child node whose
+child carries no attributes stays a leaf.
 
 - Kind: `component` when the node, any of its children, or any descendant below a
   child carries a structural stereotype (`system`, `component`, `service`,
@@ -196,7 +201,7 @@ scope root included, one structural view of its level derives:
 - `children`: the level views of the members that have one. A rendered member links
   down to its level view. See [drill-down](../diagrams.md#drill-down).
 - A node that drops below two children loses its level view at the same commit, as any
-  default whose rule stops holding.
+  default whose rule stops holding, unless the child left carries attributes.
 
 The limits `members-per-structural-view` and `edges-per-view` bound every level view; an
 over-limit level view renders with its largest subtrees auto-collapsed and a visible

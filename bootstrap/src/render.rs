@@ -1406,12 +1406,35 @@ fn emit_sequence(scene: &Scene) -> String {
         ));
     }
     for m in &msgs {
+        // A failure-mode step is a branch: its message sits in an `alt` fragment
+        // labeled by its condition (the transition's trigger and guard when it has
+        // one). Mirrors docs/compiler/diagrams.md#the-emitters.
+        let r = scene.requirement(&m.rid);
+        let failure = r.facets.iter().any(|f| f.facet == "failure-mode");
+        if failure {
+            let cond = r
+                .transition
+                .as_ref()
+                .and_then(|t| {
+                    let mut c = t.trigger.clone().unwrap_or_default();
+                    if let Some(g) = &t.guard {
+                        c = if c.is_empty() { format!("[{}]", g) } else { format!("{} [{}]", c, g) };
+                    }
+                    (!c.is_empty()).then_some(c)
+                })
+                .unwrap_or_else(|| "failure".to_string());
+            out.push(format!("alt {}", condition_text(&cond)));
+        }
         out.push(format!(
-            "{} -> {} : {}",
+            "{}{} -> {} : {}",
+            if failure { "  " } else { "" },
             alias_of(&m.from),
             alias_of(&m.to),
             scene.flow_label(&m.rid)
         ));
+        if failure {
+            out.push("end".to_string());
+        }
     }
     document(title_line(scene.view, note.as_deref()), out)
 }

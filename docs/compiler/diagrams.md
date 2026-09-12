@@ -177,11 +177,14 @@ The kinds, with what each reads from the graph:
   ```
 
 - `sequence`: the ordered member requirements as messages. A member's message follows
-  its first `dependency` edge (its first edge when it has no dependency): the sender is
-  `a`, the receiver is `b`, and a receiver that is an «interface» resolves to its
+  the edge the [message rule](./model/view.md#fields) picks (the subject's edge first,
+  then a dependency, then any): the sender is `a`, the receiver is `b`, and a receiver that is an «interface» resolves to its
   provider (the entity with a `realization` toward it). A member with no edges is a
-  self-message on its first entity. «actor» participants render as `actor`. The default
-  is one per flow cluster, over the members that carry a message edge.
+  self-message on its first entity. «actor» participants render as `actor`. A
+  `failure-mode` member is a branch: its message sits in an `alt` fragment labeled by
+  its condition (the transition's trigger and guard when it carries one, `failure`
+  otherwise), so the reader sees the step it departs from. The default is one per flow
+  cluster, over the members that carry a message edge.
 - `communication`: the same view in its second layout: participants as `actor` or
   `rectangle`, messages numbered `1.`, `2.`, in member order.
 - `timing`: the member requirements that carry a `quality` facet with a `measure`, and

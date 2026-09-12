@@ -114,13 +114,14 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_entity",
-            description: "Update an existing entity. A rename keeps the id. attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
+            description: "Update an existing entity. A rename keeps the id. add_aliases records a wording, remove_aliases takes one back (a wording the documents turn out not to use). attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
                     "name": {"type": "string"},
                     "definition": {"type": "string"},
                     "add_aliases": {"type": "array", "items": {"type": "string"}},
+                    "remove_aliases": {"type": "array", "items": {"type": "string"}},
                     "stereotype": {"type": "string"},
                     "parent": {"type": "string"},
                     "attributes": {"type": "array", "items": attribute_schema()}
@@ -1508,6 +1509,26 @@ impl ToolSession {
             }
         }
         untouched
+    }
+
+    // A name that starts with an article is a proper name when a document writes it
+    // capitalized mid-sentence ("upstairs at The Lantern Room"): the article is part of
+    // the name, and the junk-name rule stands aside. Mirrors docs/compiler/tools.md.
+    fn proper_name_in_docs(&self, name: &str) -> bool {
+        let capitalized_article = ["The ", "A ", "An "]
+            .iter()
+            .any(|a| name.starts_with(a) && name.len() > a.len());
+        if !capitalized_article {
+            return false;
+        }
+        self.snapshot.docs.values().any(|d| {
+            d.sections.values().any(|sec| {
+                sec.raw.match_indices(name).any(|(i, _)| {
+                    let before: Vec<char> = sec.raw[..i].chars().rev().take(2).collect();
+                    before.len() == 2 && before[0] == ' ' && before[1].is_lowercase()
+                })
+            })
+        })
     }
 
     fn unmarked_sections(&self, doc: &str, sections: &[String]) -> Vec<String> {
@@ -3905,6 +3926,7 @@ impl ToolSession {
                         name,
                         definition,
                         add_aliases,
+                        remove_aliases,
                         add_mention,
                         stereotype,
                         parent,
@@ -3929,6 +3951,7 @@ impl ToolSession {
                             e.aliases.push(a.clone());
                         }
                     }
+                    e.aliases.retain(|a| !remove_aliases.contains(a));
                     if let Some(m) = add_mention {
                         e.mentions.push(m.clone());
                     }
@@ -4059,7 +4082,7 @@ impl ToolSession {
                 let scope = Self::opt_str(args, "scope").unwrap_or_else(|| "public".to_string());
                 let note = Self::opt_str(args, "note");
                 if let Some(why) = junk_name(&name_arg) {
-                    if note.is_none() {
+                    if note.is_none() && !self.proper_name_in_docs(&name_arg) {
                         return Err(ToolError::new(
                             "junk-name",
                             format!(
@@ -4222,6 +4245,7 @@ impl ToolSession {
                         name: None,
                         definition: Self::opt_str(args, "definition"),
                         add_aliases: Self::str_list(args, "aliases"),
+                        remove_aliases: Vec::new(),
                         add_mention: mention_ref,
                         stereotype,
                         parent,
@@ -4262,7 +4286,9 @@ impl ToolSession {
                 let name = Self::opt_str(args, "name");
                 if let Some(n) = &name {
                     if let Some(why) = junk_name(n) {
-                        return Err(ToolError::new("junk-name", format!("`{}` {}", n, why)));
+                        if !self.proper_name_in_docs(n) {
+                            return Err(ToolError::new("junk-name", format!("`{}` {}", n, why)));
+                        }
                     }
                 }
                 let parent = match Self::opt_str(args, "parent") {
@@ -4294,6 +4320,7 @@ impl ToolSession {
                     name,
                     definition: Self::opt_str(args, "definition"),
                     add_aliases: Self::str_list(args, "add_aliases"),
+                    remove_aliases: Self::str_list(args, "remove_aliases"),
                     add_mention: None,
                     stereotype: Self::opt_str(args, "stereotype"),
                     parent,
@@ -4561,6 +4588,7 @@ impl ToolSession {
                         name: None,
                         definition: None,
                         add_aliases: Vec::new(),
+                        remove_aliases: Vec::new(),
                         add_mention: None,
                         stereotype: None,
                         parent: Some(id.clone()),
@@ -6341,6 +6369,7 @@ impl ToolSession {
                         name: None,
                         definition,
                         add_aliases: Vec::new(),
+                        remove_aliases: Vec::new(),
                         add_mention: None,
                         stereotype,
                         parent,
@@ -6376,6 +6405,7 @@ impl ToolSession {
                         name: None,
                         definition,
                         add_aliases: Vec::new(),
+                        remove_aliases: Vec::new(),
                         add_mention: None,
                         stereotype,
                         parent,
@@ -7520,6 +7550,55 @@ mod tests {
             .dispatch("upsert_requirement", &json!({"statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap();
         assert_eq!(ok["created"], true);
+    }
+
+    // Mirrors docs/compiler/tools.md#write-tools: remove_aliases takes a wording back
+    // in the same session, and the read-back shows the list as it will commit.
+    #[test]
+    fn update_entity_remove_aliases_takes_a_wording_back() {
+        let mut t = session();
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:customer", "add_aliases": ["Buyer", "Shopper"]}),
+        )
+        .unwrap();
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:customer", "remove_aliases": ["Buyer"]}),
+        )
+        .unwrap();
+        let v = t.dispatch("get_entity", &json!({"id": "ent:customer"})).unwrap();
+        assert_eq!(v["aliases"], json!(["Shopper"]), "{}", v);
+    }
+
+    // Mirrors docs/compiler/tools.md#write-tools: a name starting with an article is
+    // a proper name when a document writes it capitalized mid-sentence.
+    #[test]
+    fn a_proper_name_with_an_article_passes_the_junk_name_rule() {
+        let mut t = session();
+        let err = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "The Lantern Room", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "junk-name");
+        let text = "# Shop\nintro text\n\n## Cart\nThe Shopping Cart holds items a Customer intends to buy.\nShe reads upstairs at The Lantern Room.\n";
+        t.snapshot.docs.insert(
+            "shop.md".into(),
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
+        );
+        let v = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "The Lantern Room", "mention": {"section": "/shop/cart", "quote": "She reads upstairs at The Lantern Room."}}),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true, "{}", v);
     }
 
     #[test]

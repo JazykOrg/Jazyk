@@ -23,6 +23,9 @@ pub enum Op {
         definition: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         add_aliases: Vec<String>,
+        // A wording the session takes back (docs/compiler/tools.md#write-tools).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove_aliases: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         add_mention: Option<SourceRef>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2479,6 +2482,7 @@ impl Store {
                             name: None,
                             definition: entity.definition,
                             add_aliases: Vec::new(),
+                            remove_aliases: Vec::new(),
                             add_mention: None,
                             stereotype: entity.stereotype,
                             parent: None,
@@ -2514,6 +2518,7 @@ impl Store {
                     name,
                     definition,
                     add_aliases,
+                    remove_aliases,
                     add_mention,
                     stereotype,
                     parent,
@@ -2594,6 +2599,7 @@ impl Store {
                             e.aliases.push(a.clone());
                         }
                     }
+                    e.aliases.retain(|a| !remove_aliases.contains(a));
                     if let Some(m) = &add_mention {
                         if !e.mentions.contains(m) {
                             e.mentions.push(m.clone());
@@ -2648,6 +2654,7 @@ impl Store {
                         name,
                         definition,
                         add_aliases,
+                        remove_aliases,
                         add_mention,
                         stereotype,
                         parent,
@@ -6027,6 +6034,7 @@ mod tests {
             name: None,
             definition: definition.map(String::from),
             add_aliases: Vec::new(),
+            remove_aliases: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6095,6 +6103,7 @@ mod tests {
             name: None,
             definition: None,
             add_aliases: Vec::new(),
+            remove_aliases: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6260,6 +6269,7 @@ mod tests {
                 name: None,
                 definition: Some("a person who buys".into()),
                 add_aliases: Vec::new(),
+                remove_aliases: Vec::new(),
                 add_mention: None,
                 stereotype: None,
                 parent: None,
@@ -6573,6 +6583,7 @@ mod tests {
             name: None,
             definition: None,
             add_aliases: Vec::new(),
+            remove_aliases: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

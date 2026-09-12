@@ -1149,6 +1149,23 @@ impl Board {
                 b.locality.clone(),
             )
         };
+        // A batch is labeled by the key most of its goals share, never by the
+        // union-find root of its locality group: forty-one pair batches over two
+        // characters once all read as the notebook scene's.
+        // Mirrors docs/compiler/reconciler.md#batching.
+        for b in &mut batches {
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            for id in &b.goals {
+                if let Some(g) = self.goal(id) {
+                    for k in locality_keys(store, g) {
+                        *counts.entry(k).or_insert(0) += 1;
+                    }
+                }
+            }
+            if let Some((k, _)) = counts.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))) {
+                b.locality = k.clone();
+            }
+        }
         batches.sort_by_key(rank);
         for (i, b) in batches.iter_mut().enumerate() {
             b.id = format!("b{}-{}", self.generation, i + 1);
@@ -1290,6 +1307,45 @@ impl Board {
             waiting.entry(reason).or_default().push(g.id.clone());
         }
         full["goals"] = json!(ready_loose);
+        // Past the first few batches only the shape travels, and a reason lists a
+        // handful of ids: a 41-batch board once answered with ninety thousand
+        // characters. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+        const COMPACT_BATCHES: usize = 6;
+        const COMPACT_IDS: usize = 8;
+        if let Some(arr) = full["batches"].as_array_mut() {
+            if arr.len() > COMPACT_BATCHES {
+                let rest: Vec<Value> = arr
+                    .split_off(COMPACT_BATCHES)
+                    .iter()
+                    .map(|b| {
+                        let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+                        for g in b["goals"].as_array().into_iter().flatten() {
+                            let k = g["kind"].as_str().unwrap_or("?").to_string();
+                            *kinds.entry(k).or_insert(0) += 1;
+                        }
+                        json!({"id": b["id"], "locality": b["locality"], "goals": kinds})
+                    })
+                    .collect();
+                full["moreBatches"] = json!(rest);
+                full["batchesNote"] = json!(format!(
+                    "the first {} batches in full; moreBatches lists the rest as counts by kind (begin_goals takes them in order)",
+                    COMPACT_BATCHES
+                ));
+            }
+        }
+        let waiting: BTreeMap<String, Value> = waiting
+            .into_iter()
+            .map(|(reason, ids)| {
+                let v = if ids.len() > COMPACT_IDS {
+                    let mut shown: Vec<Value> = ids[..COMPACT_IDS].iter().map(|i| json!(i)).collect();
+                    shown.push(json!(format!("and {} more", ids.len() - COMPACT_IDS)));
+                    json!(shown)
+                } else {
+                    json!(ids)
+                };
+                (reason, v)
+            })
+            .collect();
         full["notReady"] = json!({"byKind": by_kind, "byReason": waiting});
         full["countsNote"] = json!("open, ready, parked, and failed count mandatory goals; optional counts the rest; by_class and by_kind include both; blocked are the goals waiting on a release or a human answer, gated the subset a release opens");
         full["note"] = json!(match full.get("note").and_then(Value::as_str) {

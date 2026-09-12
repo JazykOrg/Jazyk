@@ -234,7 +234,10 @@ serving; what it claims is a batch:
   (each with its id, its resolved [executor](./acp.md#executors), and its goals as
   id, kind, target, `mandatory`), one line per ready goal outside a batch, and the
   goals that are not ready summarized by kind and by blocking reason with their ids,
-  never their hints. A `countsNote` says which counts include optional goals (`open`,
+  never their hints. Past the first six batches only the shape travels: `moreBatches`
+  lists the rest as id, locality, and goal counts by kind, and a blocking reason lists
+  eight ids and a count of the rest, since a 41-batch board once answered with ninety
+  thousand characters. A `countsNote` says which counts include optional goals (`open`,
   `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)

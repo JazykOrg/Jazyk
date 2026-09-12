@@ -898,8 +898,53 @@ impl GoalKind for ReconcileSection {
                     .unwrap_or_default();
                 hints.push(format!("stale {} {}", a, what));
             }
-            let subjects = linked_subjects(store, &doc);
+            // The document's own text decides what it names: an entity linked from
+            // another document counts as this one's subject only when this document
+            // names it (or is titled with its name), and the known entities are the
+            // ones whose name or alias occurs in the text, listed by id. A settings
+            // document once read "primarySubject: Scene; 0 entities mentioned" because
+            // a scene's setting linked to it and mentions were counted, not names.
+            // Mirrors docs/compiler/goals/reconcile-section.md#what-the-model-sees.
+            let text = store
+                .docs
+                .get(&doc)
+                .map(|d| {
+                    d.sections
+                        .values()
+                        .map(|s| s.raw.to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            let root_title = store.docs.get(&doc).and_then(|d| {
+                d.sections
+                    .values()
+                    .find(|s| s.kind == "root")
+                    .map(|s| s.title.to_lowercase())
+            });
+            let named_in_doc = |e: &Entity| {
+                std::iter::once(&e.name)
+                    .chain(e.aliases.iter())
+                    .any(|n| n.len() >= 3 && text.contains(&n.to_lowercase()))
+            };
+            let linked = linked_subjects(store, &doc);
+            let subjects: Vec<&(String, String, String)> = linked
+                .iter()
+                .filter(|(id, name, _)| {
+                    root_title.as_deref() == Some(name.to_lowercase().as_str())
+                        || store.graph.entities.get(id).is_some_and(named_in_doc)
+                })
+                .collect();
             match subjects.len() {
+                0 if !linked.is_empty() => hints.push(format!(
+                    "linked from {} other document(s) (via {}); none of their entities is named here, so no primarySubject",
+                    linked.len(),
+                    linked
+                        .iter()
+                        .map(|(id, _, _)| id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
                 0 => {}
                 1 => hints.push(format!(
                     "primarySubject: {} ({})",
@@ -914,17 +959,31 @@ impl GoalKind for ReconcileSection {
                         .join(", ")
                 )),
             }
-            let mentioned = store
+            let mut known: Vec<String> = store
                 .graph
                 .entities
-                .values()
-                .filter(|e| e.mentions.iter().any(|m| m.doc == doc))
-                .count();
-            hints.push(format!(
-                "{} entities mentioned in the document, {} in the graph; search before creating",
-                mentioned,
-                store.graph.entities.len()
-            ));
+                .iter()
+                .filter(|(_, e)| named_in_doc(e))
+                .map(|(id, e)| format!("{} ({})", e.name, id))
+                .collect();
+            let known_count = known.len();
+            known.truncate(8);
+            if known_count > 8 {
+                known.push(format!("and {} more", known_count - 8));
+            }
+            hints.push(if known_count == 0 {
+                format!(
+                    "no known entity is named in the document; {} in the graph; search before creating",
+                    store.graph.entities.len()
+                )
+            } else {
+                format!(
+                    "{} known entities named in the document: {}; {} in the graph; search before creating",
+                    known_count,
+                    known.join(", "),
+                    store.graph.entities.len()
+                )
+            });
             let _ = ents;
             hints.push(format!("load {}", full));
             if sec.kind == "code" {
@@ -5510,6 +5569,7 @@ pub(crate) mod tests {
             name: None,
             definition: None,
             add_aliases: Vec::new(),
+            remove_aliases: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

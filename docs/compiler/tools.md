@@ -111,10 +111,15 @@ a mutating reply previews the goals the mutation will open
   the wording as an alias; a `note` overrides and is kept on the new entity as
   `distinct_from`, so the pair is never asked about again. A name that looks like syntax rather
   than a concept is rejected unless `note` explains it
-  ([what is an entity](./model/entity.md#what-is-an-entity)). Omit `scope` unless the
+  ([what is an entity](./model/entity.md#what-is-an-entity)); a name starting with an
+  article passes when a document writes it capitalized mid-sentence ("upstairs at The
+  Lantern Room"), since the article is then part of a proper name. Omit `scope` unless the
   documents explicitly name a bounded context.
-- `update_entity({id, name?, definition?, add_aliases?, stereotype?, parent?, attributes?})`:
-  a rename keeps the id. `attributes` upserts by name; attributes not named stand.
+- `update_entity({id, name?, definition?, add_aliases?, remove_aliases?, stereotype?, parent?, attributes?})`:
+  a rename keeps the id. `add_aliases` records a wording; `remove_aliases` takes one
+  back, so a session repairs an alias it judged unsupported instead of leaving an
+  invented wording in the graph. `attributes` upserts by name; attributes not named
+  stand.
   `parent` obeys the same gates as on create. No gate compares `parent` with committed
   `composition` edges: composition consistency is the `containment-mismatch`
   [check](./compilation.md#checks).

@@ -185,8 +185,13 @@ Computed by the harness and rendered under the goal block:
 - The subject: `primarySubject: ent:<slug>` when the loaded set resolves exactly one
   entity another document introduced for this document, `candidateSubjects` when
   several, so the session never guesses what "the system" means
-  ([incoming links](#incoming-links)).
-- The count of entities mentioned in the document, with `search` before creating.
+  ([incoming links](#incoming-links)). An introduced entity counts only when this
+  document names it (its name or an alias in the text) or is titled with its name: a
+  settings document linked from a scene's setting is not about the Scene, and the
+  hint says so instead (`linked from N other document(s); none of their entities is
+  named here`).
+- The known entities named in the document (name and id, eight at most, then a
+  count), or a line saying none is, with `search` before creating.
 - `load docs/<doc>#/<ref>` when the body is not loaded in full.
 - For a code-block section, its line count: coverage needs a requirement per behavioral
   step ([code blocks](../concepts/statements.md#code-blocks-state-obligations)).

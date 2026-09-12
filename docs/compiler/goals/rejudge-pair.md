@@ -240,7 +240,12 @@ The `rejudge-pair` toolset ([toolsets](../tools.md#toolsets)):
   quote before judging. A call that only changes the `statement` passes `id` and
   `statement`; `section` and `quote` re-anchor the provenance and are for a quote that
   itself must move.
-- `delete_requirement({id, reason})`: the worse-sourced same-document duplicate.
+- `delete_requirement({id, reason})`: the worse-sourced same-document duplicate. Before
+  the delete, anything that side alone carries (an edge, a transition, an entity)
+  moves onto the survivor with `update_requirement`, or the fact goes with it.
+- `update_entity({id, add_aliases})`: a wording the pair's quotes settle (plot.md's
+  `Nessa` against characters.md's "Dot has called her Nessa since she was six") lands
+  as an alias here instead of waiting for the entity's next review.
 - `report_diagnostic({rule, severity, subjects, message, reasoning, prompt?})`, rules
   `duplicate-requirement` and `contradiction`.
 - `resolve_diagnostic({id, reason})`: a pair diagnostic whose condition lapsed, or one

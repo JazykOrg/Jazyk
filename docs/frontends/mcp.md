@@ -297,7 +297,10 @@ serving; what it claims is a batch:
   batch of a serving ships the agent contract and the active skills in full; later
   batches elide the contract and any skill already delivered (the agent saw them
   earlier in the same session), while the project block, the goals block, and the
-  loaded block always ship whole. `begin_goals` with `full: true` repeats everything
+  loaded block always ship whole. When that first reply would pass 45k characters, the
+  skills ship as `load_skill` pointers instead of bodies and the reply opens with a
+  line saying to load them, since a client once spilled a 58k reply to a file and
+  spent four calls reading it back. `begin_goals` with `full: true` repeats everything
   for a client that lost its context.
 - A goal the batch neither resolved nor failed when `done` commits parks; a parked
   goal resumes first in the next batch that fits it

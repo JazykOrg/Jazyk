@@ -92,7 +92,11 @@ A document set describes one subject by splitting it across files. A parent list
 parts and links to a file per part; the file details the part. The link is what says
 which entity the file is about, and the parent's session has already recorded it: the
 list item yielded a requirement, and that requirement introduced the part's entity
-([enumerations](../concepts/statements.md#enumerations)).
+([enumerations](../concepts/statements.md#enumerations)). A link introduces an entity
+only when the sentence carrying it names that entity (its name or an alias in the
+quote): `[User Management](./user.md)` introduces User Management, while a scene's
+`setting: the upstairs room` line linking to `settings.md` introduces no Scene, since
+the sentence's own entity is not what the linked page is about.
 
 So the loaded set for a section names every incoming link the graph already resolved:
 

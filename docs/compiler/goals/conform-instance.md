@@ -73,7 +73,10 @@ the session runs; a repair of the name resolves them.
 ## Gate
 
 `mark_goal_done({goal, justification, evidence})` carries `evidence` with one verdict
-per attribute the type declares and one per link the instance carries:
+per attribute the type declares and one per link the instance carries: its outgoing
+edges other than the `instantiation` edge to its type, as the `links` hint lists them.
+An inbound `composition` or `aggregation` from a container is the container's edge,
+not a link of the instance, and takes no verdict.
 
 ```yaml
 evidence:

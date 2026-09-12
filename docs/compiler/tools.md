@@ -723,8 +723,9 @@ Compile goals:
   `delete_requirement`, `set_coverage`. No `report_diagnostic`: extraction records,
   judgment goals judge.
 - [`rejudge-pair`](./goals/rejudge-pair.md): `update_requirement`,
-  `delete_requirement`, `report_diagnostic` (`contradiction`,
-  `duplicate-requirement`), `resolve_diagnostic`, and the batch claim
+  `delete_requirement`, `update_entity` (a wording the pair's quotes settle, such as a
+  nickname, lands as an alias instead of being dropped until a review), `report_diagnostic`
+  (`contradiction`, `duplicate-requirement`), `resolve_diagnostic`, and the batch claim
   `settle_pairs` ([goal tools](#goal-tools)).
 - [`review-entity`](./goals/review-entity.md): `update_entity`, `merge_entities`,
   `update_requirement` (a review adds missing `edges` when requirements tie entities

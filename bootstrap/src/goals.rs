@@ -671,9 +671,18 @@ fn anchor_stale(store: &Store, id: &str) -> bool {
 // quote elsewhere whose link resolves to the document.
 pub fn linked_subjects(store: &Store, doc: &str) -> Vec<(String, String, String)> {
     let mut out: Vec<(String, String, String)> = Vec::new();
+    // The sentence carrying the link must name the entity it introduces; a scene's
+    // setting line linking to the settings page introduces no Scene.
+    // Mirrors docs/compiler/goals/reconcile-section.md#incoming-links.
+    let names = |e: &Entity, quote: &str| {
+        let q = quote.to_lowercase();
+        std::iter::once(&e.name)
+            .chain(e.aliases.iter())
+            .any(|n| n.len() >= 3 && q.contains(&n.to_lowercase()))
+    };
     for (id, e) in &store.graph.entities {
         for m in &e.mentions {
-            if m.doc == doc {
+            if m.doc == doc || !names(e, &m.quote) {
                 continue;
             }
             if crate::md::doc_links(&m.quote, &m.doc)
@@ -704,7 +713,9 @@ pub fn linked_subjects(store: &Store, doc: &str) -> Vec<(String, String, String)
                 continue;
             }
             if let Some(ent) = store.graph.entities.get(&id) {
-                out.push((id, ent.name.clone(), format!("{}#{}", s.doc, s.section)));
+                if names(ent, &s.quote) {
+                    out.push((id, ent.name.clone(), format!("{}#{}", s.doc, s.section)));
+                }
             }
         }
     }
@@ -1537,6 +1548,7 @@ impl GoalKind for RejudgePair {
         &[
             "update_requirement",
             "delete_requirement",
+            "update_entity",
             "report_diagnostic",
             "resolve_diagnostic",
             crate::tools::PAIR_SETTLE_TOOL,
@@ -4291,6 +4303,14 @@ fn fan_out_hints(store: &Store, target: &str, f: &FanOut, cands: &[Candidate]) -
             more,
             c.weight
         ));
+            if crate::board::scope_target(&target).is_some() {
+                // The default scope's top level, not a scope anyone set
+                // (docs/compiler/goals/abstract-entity.md#the-fan-out-variant).
+                hints.push(format!(
+                    "{} is the top level of the scope: its parentless entities, not a scope you set; a grouping under a documented name gives them a parent",
+                    target
+                ));
+            }
     }
     let members = level_members(store, target);
     // The node's own document: the section that lists a member there is the heading

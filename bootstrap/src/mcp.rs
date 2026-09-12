@@ -697,7 +697,7 @@ impl McpServer {
             d.skills.extend(skills.rendered_names());
             (include, skip)
         };
-        let instructions = crate::session::session_prompt_elided(
+        let mut instructions = crate::session::session_prompt_elided(
             &store,
             &goals,
             &loaded,
@@ -707,6 +707,32 @@ impl McpServer {
             &skip_skills,
             crate::session::Protocol::Serving,
         );
+        // A first reply over the client's inline limit ships the skills as pointers
+        // (docs/frontends/mcp.md#compilation-over-mcp).
+        const INLINE_LIMIT: usize = 45_000;
+        let inline_skills: Vec<String> = skills
+            .rendered_names()
+            .into_iter()
+            .filter(|n| !skip_skills.contains(n))
+            .collect();
+        if instructions.len() > INLINE_LIMIT && !inline_skills.is_empty() {
+            let all: BTreeSet<String> = skills.rendered_names().into_iter().collect();
+            let body = crate::session::session_prompt_elided(
+                &store,
+                &goals,
+                &loaded,
+                &skills,
+                &pb,
+                include_contract,
+                &all,
+                crate::session::Protocol::Serving,
+            );
+            instructions = format!(
+                "Skills not inlined (the reply would pass the inline limit): {}. Call load_skill for each before the work; they are the method.\n\n{}",
+                inline_skills.join(", "),
+                body
+            );
+        }
         let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
         let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);
         let scope = WorkScope::for_batch(&batch.id, &goals);

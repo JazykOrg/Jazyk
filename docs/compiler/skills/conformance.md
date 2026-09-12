@@ -9,6 +9,7 @@ Values against attributes.
 
 Links against relationships.
 - A link from this instance to another conforms when the type of this instance and the type of the linked instance carry a relationship of a compatible type, and the cardinality admits the count: `ana -- anas-cart` conforms because `customer -- shopping-cart` is an `association`; a second cart on a `1` cardinality does not.
+- A link to an entity that is no instance (a character, a place, a document) conforms when it realizes an attribute the type declares: a scene's `setting` is a place and its `point of view` a character, so the notebook scene's links to the upstairs room and to Ines realize `setting` and `point of view`; name the attribute in the verdict. Such a link is nonconformant only when no declared attribute and no relationship of the type accounts for it.
 - A link to an instance whose type carries no relationship with this type is nonconformant. Say in the message whether the type's own statements imply the missing relationship, so the author can state it in one sentence, or whether the example is wrong.
 - A link the example sentence states but the requirement omitted is the requirement's: add the edge with `update_requirement`, passing only `id` and `edges`, never `section` or `quote`.
 - Instantiation through a generalization counts: an instance of a subtype conforms to the supertype's attributes and relationships as well as its own.

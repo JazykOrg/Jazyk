@@ -823,6 +823,20 @@ The loop continued onto the org corpus and onto generation:
   entity "instead" of a requirement while the skill's example said requirement, and the
   sessions chose requirements (both now).
 
+- example-novel again, capped at five invocations on the fixed binary ($31.82, 547
+  turns, not converged by design): the four characters now carry `age` and
+  `occupation`, the Lantern Room its hours and position, the harbor wall its dates, and
+  the leads stay whole (the per-entity limit no longer counts the statements that only
+  name them). Seven feedback entries fixed: the settings page still read the Scene as
+  its subject (a link introduces an entity only when its sentence names it), the pair
+  slice had no way to record an alias the quotes settle (`update_entity` now), the
+  conform-instance gate and the conformance skill said nothing about links to
+  entities that are no instances (they realize a declared attribute), the judgment
+  skill did not resolve the same fact stated of a source artifact and the deliverable
+  built from it (two subjects, consistent), `scope:public` read as a scope the session
+  had set (the hint says it is the flat top level), and a 58k first reply spilled to a
+  file (skills ship as `load_skill` pointers past 45k).
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

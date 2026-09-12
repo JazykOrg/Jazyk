@@ -36,6 +36,9 @@ The page, in order:
   `a → b (type, cardinality)`, the transition when one is declared, and the provenance:
   the verbatim quote with its source section for a quote-provenanced requirement, the
   upstream nodes and reasoning for a derived one, the author, time, and note for a decree.
+  A relative link inside a quote is rewritten to resolve from the page (a bullet quoting
+  `[User Management](./subsystems/user.md)` from `docs/backend.md` links to
+  `../../docs/subsystems/user.md`), so the quote reads verbatim and its link still lands.
   The heading is the anchor the [LSP](../frontends/lsp.md) and the GUI open
   (`jazyk.openRequirement`), so the id is the heading text, verbatim.
 - `## Relationships`: the derived [relationships](../compiler/model/relationship.md),
@@ -326,8 +329,11 @@ of the index after the views.
 The glossary, `<out>/docsgen/glossary.md`, is generated from the graph: every entity's
 name, aliases, `stereotype`, and `definition`, sorted by name, each linked to its
 [card](#entity-cards) and to its defining sections through its mentions (relative links
-into the source documents). The graph is the only input, so a term missing from the
-glossary is a term missing from the graph. The index links the glossary.
+into the source documents, anchored by the heading's own slug, the last segment of the
+section reference: `docs/main.md#/warehouse-erp/backend` links to
+`../../docs/main.md#backend`, since a GitHub anchor is the heading alone, never the
+path). The graph is the only input, so a term missing from the glossary is a term
+missing from the graph. The index links the glossary.
 
 ## Fragmentation reports
 

@@ -364,7 +364,7 @@ pub fn doc_links(text: &str, from_doc: &str) -> Vec<String> {
 
 // Resolve a relative link target against the directory of `from_doc` (both '/'-separated,
 // relative to the project root). Returns None if the path escapes the root.
-fn resolve_rel(from_doc: &str, target: &str) -> Option<String> {
+pub fn resolve_rel(from_doc: &str, target: &str) -> Option<String> {
     let mut parts: Vec<&str> = from_doc.split('/').collect();
     parts.pop(); // drop the file name
     for seg in target.split('/') {

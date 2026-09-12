@@ -834,6 +834,41 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
 
 // The GitHub anchor of the heading "### `req:x`" in a requirements document: the
 // backticks and the colon drop, the rest lowercases.
+// A quote's relative links resolve from the source document; on the page they must
+// resolve from `docsgen/`, two levels under the project root when the out directory
+// sits where the default puts it. Mirrors docs/consumers/docsgen.md#the-requirements-document.
+fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
+    let default_out = store.out.file_name().and_then(|f| f.to_str()) == Some("jazyk-out");
+    if !default_out || !quote.contains("](") {
+        return quote.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = quote;
+    while let Some(i) = rest.find("](") {
+        out.push_str(&rest[..i + 2]);
+        rest = &rest[i + 2..];
+        let Some(close) = rest.find(')') else { break };
+        let target = &rest[..close];
+        let (path, anchor) = match target.find('#') {
+            Some(h) => (&target[..h], &target[h..]),
+            None => (target, ""),
+        };
+        let relative = !path.is_empty()
+            && !path.contains("://")
+            && !path.starts_with('/')
+            && !path.starts_with("mailto:");
+        match (relative, crate::md::resolve_rel(doc, path)) {
+            (true, Some(resolved)) => {
+                out.push_str(&format!("../../{}{}", resolved, anchor));
+            }
+            _ => out.push_str(target),
+        }
+        rest = &rest[close..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn heading_anchor(rid: &str) -> String {
     rid.chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
@@ -1427,7 +1462,11 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 match r.source.as_ref() {
                     Some(src) => s.push_str(&format!(
                         "> {}\n\nSource: `{}#{}`",
-                        src.quote.split_whitespace().collect::<Vec<_>>().join(" "),
+                        relink_quote(
+                            &src.quote.split_whitespace().collect::<Vec<_>>().join(" "),
+                            &src.doc,
+                            store
+                        ),
                         src.doc,
                         src.section
                     )),
@@ -1779,7 +1818,9 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     let section_link = |doc: &str, section: &str| -> String {
         let text = format!("{}#{}", doc, section);
         if default_out {
-            format!("[{}](../../{}#{})", text, doc, crate::md::slug(section.trim_start_matches('/')))
+            // A GitHub anchor is the heading alone, never the path: the last segment.
+            let heading = section.rsplit('/').next().unwrap_or(section);
+            format!("[{}](../../{}#{})", text, doc, crate::md::slug(heading))
         } else {
             format!("`{}`", text)
         }
@@ -1917,6 +1958,49 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         }
+    }
+
+    // Mirrors docs/consumers/docsgen.md#the-requirements-document and #glossary: a
+    // quote's relative link resolves from the page, and a section link anchors on the
+    // heading's own slug, never the path.
+    #[test]
+    fn quoted_links_relink_and_section_anchors_take_the_heading() {
+        let mut s = Store::default();
+        let out = std::env::temp_dir()
+            .join(format!("jazyk-docsgen-links-{}", std::process::id()))
+            .join("jazyk-out");
+        std::fs::create_dir_all(&out).unwrap();
+        s.out = out.clone();
+        assert_eq!(
+            relink_quote("- [User Management](./subsystems/user.md)", "docs/backend.md", &s),
+            "- [User Management](../../docs/subsystems/user.md)"
+        );
+        assert_eq!(
+            relink_quote("see [the spec](https://x.org/a.md) and [top](#top)", "docs/backend.md", &s),
+            "see [the spec](https://x.org/a.md) and [top](#top)"
+        );
+        s.graph.entities.insert(
+            "ent:backend".into(),
+            Entity {
+                name: "Backend".into(),
+                mentions: vec![SourceRef {
+                    doc: "docs/main.md".into(),
+                    section: "/warehouse-erp/backend".into(),
+                    quote: "the backend".into(),
+                }],
+                ..Default::default()
+            },
+        );
+        let dir = out.join("docsgen");
+        std::fs::create_dir_all(&dir).unwrap();
+        write_reports(&s, &dir);
+        let glossary = std::fs::read_to_string(dir.join("glossary.md")).unwrap();
+        assert!(
+            glossary.contains("[docs/main.md#/warehouse-erp/backend](../../docs/main.md#backend)"),
+            "{}",
+            glossary
+        );
+        std::fs::remove_dir_all(out.parent().unwrap()).ok();
     }
 
     #[test]

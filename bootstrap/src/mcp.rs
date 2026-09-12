@@ -786,10 +786,18 @@ impl McpServer {
         let mut reply = self.commit_open(&mut o);
         *self.finished.lock().unwrap() = Some(batch_id);
         drop(open);
-        // The consumer that empties the board runs the deterministic tail.
+        // The consumer that empties the board of mandatory work runs the deterministic
+        // tail; optional goals stand aside, as blocked ones do.
+        // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
         let board = crate::board::Board::compute(&self.project, &self.out);
         let graph_kinds = crate::board::Board::graph_kinds();
-        if board.ready_of(&graph_kinds) == 0 {
+        let mandatory_ready = |b: &crate::board::Board| {
+            b.ready_goals()
+                .iter()
+                .filter(|g| g.mandatory && graph_kinds.contains(&g.kind.as_str()))
+                .count()
+        };
+        if mandatory_ready(&board) == 0 {
             let mut s2 = Store::load(&self.out);
             let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
             let report = crate::reconcile::finalize(
@@ -810,7 +818,7 @@ impl McpServer {
                 );
             }
             let board2 = crate::board::Board::compute(&self.project, &self.out);
-            if board2.ready_of(&graph_kinds) == 0 {
+            if mandatory_ready(&board2) == 0 {
                 // The generation rows that became ready ride under `ready`
                 // (docs/frontends/mcp.md#compilation-over-mcp).
                 let generate: Vec<String> = board2

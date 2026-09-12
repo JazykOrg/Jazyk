@@ -35,6 +35,9 @@ pub enum Op {
         // Take the entity out of the containment tree (docs/compiler/tools.md#write-tools).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         clear_parent: bool,
+        // Requirement ids judged word matches by a review (entity.md#fields).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        not_about_add: Vec<String>,
         // Replace the whole attribute list, or refresh by name.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         set_attributes: Option<Vec<Attribute>>,
@@ -2487,6 +2490,7 @@ impl Store {
                             add_aliases: Vec::new(),
                             remove_aliases: Vec::new(),
                             clear_parent: false,
+                            not_about_add: Vec::new(),
                             add_mention: None,
                             stereotype: entity.stereotype,
                             parent: None,
@@ -2527,6 +2531,7 @@ impl Store {
                     stereotype,
                     parent,
                     clear_parent,
+                    not_about_add,
                     set_attributes,
                     add_attributes,
                     provenance,
@@ -2621,6 +2626,12 @@ impl Store {
                     if clear_parent {
                         e.parent = None;
                     }
+                    for rid in &not_about_add {
+                        if !e.not_about.contains(rid) {
+                            e.not_about.push(rid.clone());
+                        }
+                    }
+                    e.not_about.sort();
                     if let Some(attrs) = &set_attributes {
                         e.attributes = attrs.clone();
                     }
@@ -2664,6 +2675,7 @@ impl Store {
                         add_aliases,
                         remove_aliases,
                         clear_parent,
+                        not_about_add: Vec::new(),
                         add_mention,
                         stereotype,
                         parent,
@@ -3150,6 +3162,16 @@ impl Store {
                                 rid, t.subject
                             ));
                             continue;
+                        }
+                    }
+                    // A statement change voids the word-match judgments on it
+                    // (docs/compiler/model/entity.md#fields).
+                    let statement_changes = statement
+                        .as_ref()
+                        .is_some_and(|e| self.graph.requirements[&rid].statement != *e);
+                    if statement_changes {
+                        for ent in self.graph.entities.values_mut() {
+                            ent.not_about.retain(|x| x != &rid);
                         }
                     }
                     let r = self.graph.requirements.get_mut(&rid).unwrap();
@@ -6045,6 +6067,7 @@ mod tests {
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
             clear_parent: false,
+            not_about_add: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6115,6 +6138,7 @@ mod tests {
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
             clear_parent: false,
+            not_about_add: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6282,6 +6306,7 @@ mod tests {
                 add_aliases: Vec::new(),
                 remove_aliases: Vec::new(),
                 clear_parent: false,
+                not_about_add: Vec::new(),
                 add_mention: None,
                 stereotype: None,
                 parent: None,
@@ -6597,6 +6622,7 @@ mod tests {
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
             clear_parent: false,
+            not_about_add: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

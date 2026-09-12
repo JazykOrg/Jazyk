@@ -453,7 +453,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -1531,6 +1531,29 @@ impl ToolSession {
         })
     }
 
+    // Whether a requirement names an entity after this session's staged updates.
+    fn requirement_names_entity(&self, rid: &str, entity: &str) -> bool {
+        let names = |es: &[String]| es.iter().any(|e| self.snapshot.resolve_id(e) == entity);
+        let staged = self.staged.iter().rev().find_map(|o| match o {
+            Op::UpdateRequirement {
+                id,
+                entities: Some(es),
+                ..
+            } if id == rid => Some(names(es)),
+            Op::CreateRequirement { id, requirement } if id == rid => {
+                Some(names(&requirement.entities))
+            }
+            _ => None,
+        });
+        staged.unwrap_or_else(|| {
+            self.snapshot
+                .graph
+                .requirements
+                .get(rid)
+                .is_some_and(|r| names(&r.entities))
+        })
+    }
+
     fn unmarked_sections(&self, doc: &str, sections: &[String]) -> Vec<String> {
         sections
             .iter()
@@ -1752,6 +1775,59 @@ impl ToolSession {
             ));
         }
         self.goal_gate(&gs)?;
+        // The review's unreferenced verdicts: referenced is backed by the staged
+        // update, word-match is remembered on the entity so the hint never returns.
+        // Mirrors docs/compiler/goals/review-entity.md#gate.
+        if gs.kind == "review-entity" {
+            if let Some(list) = args["evidence"]["unreferenced"].as_array() {
+                let target = self.snapshot.resolve_id(&gs.target).to_string();
+                let mut word_matches: Vec<String> = Vec::new();
+                for e in list {
+                    let rid = e["id"].as_str().unwrap_or("").to_string();
+                    match e["verdict"].as_str() {
+                        Some("referenced") => {
+                            if !self.requirement_names_entity(&rid, &target) {
+                                return Err(ToolError::new(
+                                    "unreferenced-unbacked",
+                                    format!(
+                                        "{} claims {} referenced, but {} does not name {} after this session's staged work; update_requirement with id and the full entities list, or verdict word-match",
+                                        goal, rid, rid, target
+                                    ),
+                                ));
+                            }
+                        }
+                        Some("word-match") => word_matches.push(rid),
+                        other => {
+                            return Err(ToolError::new(
+                                "bad-verdict",
+                                format!(
+                                    "unreferenced verdict `{}` for {}: referenced or word-match",
+                                    other.unwrap_or("?"),
+                                    rid
+                                ),
+                            ));
+                        }
+                    }
+                }
+                if !word_matches.is_empty() {
+                    self.stage(Op::UpdateEntity {
+                        id: target,
+                        name: None,
+                        definition: None,
+                        add_aliases: Vec::new(),
+                        remove_aliases: Vec::new(),
+                        add_mention: None,
+                        stereotype: None,
+                        parent: None,
+                        clear_parent: false,
+                        not_about_add: word_matches,
+                        set_attributes: None,
+                        add_attributes: Vec::new(),
+                        provenance: None,
+                    })?;
+                }
+            }
+        }
         self.outcomes.insert(
             goal.clone(),
             GoalOutcome::Done {
@@ -4264,6 +4340,7 @@ impl ToolSession {
                         add_aliases: Self::str_list(args, "aliases"),
                         remove_aliases: Vec::new(),
                         clear_parent: false,
+                        not_about_add: Vec::new(),
                         add_mention: mention_ref,
                         stereotype,
                         parent,
@@ -4340,6 +4417,7 @@ impl ToolSession {
                     add_aliases: Self::str_list(args, "add_aliases"),
                     remove_aliases: Self::str_list(args, "remove_aliases"),
                     clear_parent: args["remove_parent"].as_bool() == Some(true),
+                    not_about_add: Vec::new(),
                     add_mention: None,
                     stereotype: Self::opt_str(args, "stereotype"),
                     parent,
@@ -4609,6 +4687,7 @@ impl ToolSession {
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
                         clear_parent: false,
+                        not_about_add: Vec::new(),
                         add_mention: None,
                         stereotype: None,
                         parent: Some(id.clone()),
@@ -6391,6 +6470,7 @@ impl ToolSession {
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
                         clear_parent: false,
+                        not_about_add: Vec::new(),
                         add_mention: None,
                         stereotype,
                         parent,
@@ -6428,6 +6508,7 @@ impl ToolSession {
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
                         clear_parent: false,
+                        not_about_add: Vec::new(),
                         add_mention: None,
                         stereotype,
                         parent,
@@ -7591,6 +7672,52 @@ mod tests {
         .unwrap();
         let v = t.dispatch("get_entity", &json!({"id": "ent:customer"})).unwrap();
         assert_eq!(v["aliases"], json!(["Shopper"]), "{}", v);
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#gate: a word-match verdict is
+    // remembered on the entity, a referenced verdict needs the staged update behind it.
+    #[test]
+    fn review_unreferenced_verdicts_are_backed_or_remembered() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:customer".into(), plain("Customer"));
+        s.graph.entities.insert("ent:order".into(), plain("Order"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "An Order names the Customer who placed it.".into(),
+                entities: vec!["ent:order".into()],
+                ..Default::default()
+            },
+        );
+        let goals = vec![Goal {
+            id: "g:review-entity:ent:customer".into(),
+            kind: "review-entity".into(),
+            mandatory: true,
+            target: "ent:customer".into(),
+            ..Default::default()
+        }];
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:review-entity:ent:customer", "justification": "Reviewed.",
+                        "evidence": {"definition": "current", "unreferenced": [{"id": "req:a", "verdict": "referenced"}]}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unreferenced-unbacked", "{}", err.message);
+        let v = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:review-entity:ent:customer", "justification": "Reviewed.",
+                        "evidence": {"definition": "current", "unreferenced": [{"id": "req:a", "verdict": "word-match", "reason": "the Customer is the object here"}]}}),
+            )
+            .unwrap();
+        assert_eq!(v["marked"], "g:review-entity:ent:customer", "{}", v);
+        assert!(
+            t.staged.iter().any(|o| matches!(o, Op::UpdateEntity { id, not_about_add, .. } if id == "ent:customer" && not_about_add == &vec!["req:a".to_string()])),
+            "{:?}",
+            t.staged.len()
+        );
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of

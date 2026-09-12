@@ -1693,7 +1693,9 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
     };
     let mut out = Vec::new();
     for (rid, r) in &store.graph.requirements {
-        if r.entities.iter().any(|x| store.resolve_id(x) == id) {
+        // A word match a review already judged stays off the list
+        // (docs/compiler/model/entity.md#fields).
+        if e.not_about.contains(rid) || r.entities.iter().any(|x| store.resolve_id(x) == id) {
             continue;
         }
         let text = blank_code(&r.statement);
@@ -5526,6 +5528,33 @@ pub(crate) mod tests {
         assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
     }
 
+    // Mirrors docs/compiler/model/entity.md#fields: a word match a review judged stays
+    // off the unreferenced list.
+    #[test]
+    fn judged_word_matches_leave_the_unreferenced_list() {
+        let mut s = Store::default();
+        s.graph.entities.insert(
+            "ent:customer".into(),
+            Entity {
+                name: "Customer".into(),
+                not_about: vec!["req:a".into()],
+                ..Default::default()
+            },
+        );
+        for (id, st) in [("req:a", "An Order names the Customer who placed it."), ("req:b", "A Customer receives a receipt.")] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: st.into(),
+                    entities: vec!["ent:order".into()],
+                    ..Default::default()
+                },
+            );
+        }
+        let ids: Vec<String> = unreferenced_statements(&s, "ent:customer").into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["req:b".to_string()]);
+    }
+
     // Mirrors docs/compiler/goals/reconcile-section.md#created-when: a bare heading's
     // dirt derives no goal, the sections with a body derive theirs.
     #[test]
@@ -5602,6 +5631,7 @@ pub(crate) mod tests {
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
             clear_parent: false,
+            not_about_add: Vec::new(),
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

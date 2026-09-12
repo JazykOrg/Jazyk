@@ -66,6 +66,11 @@ overrides when the resemblance is coincidental.
   itself, a Payment Method is what a Checkout charges"`). The note that let the name
   through the near-duplicate gate is the separate verdict on that pair, so the lookalike
   index never opens [`dedupe-candidates`](../goals/dedupe-candidates.md) on it again.
+- `not_about`: the requirement ids a [`review-entity`](../goals/review-entity.md#gate)
+  session judged to name this entity as a word match only (the verb "returns" under
+  Returns, a trigger clause reading a Stock), written by the harness from the review's
+  `unreferenced` evidence. The review hint stops offering them, and a statement change
+  on such a requirement clears its entry, since the judgment was about the old text.
 - `definition`: the one living definition, refined as documents are reconciled. It is
   never forked per document.
 - `scope`: keeps distinct same-name concepts apart; defaults to `public`. See [scopes](../concepts/scopes.md).

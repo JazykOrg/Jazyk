@@ -194,6 +194,10 @@ pub struct Entity {
     // separate verdict on that pair. Mirrors docs/compiler/model/entity.md#fields.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub distinct_from: BTreeMap<String, String>,
+    // Requirement ids a review judged word matches, not statements about this entity.
+    // Mirrors docs/compiler/model/entity.md#fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_about: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<String>,
     #[serde(default = "default_scope", skip_serializing_if = "is_default_scope")]
@@ -227,6 +231,7 @@ impl Default for Entity {
             name: String::new(),
             aliases: Vec::new(),
             distinct_from: BTreeMap::new(),
+            not_about: Vec::new(),
             definition: None,
             scope: default_scope(),
             stereotype: None,

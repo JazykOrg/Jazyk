@@ -278,6 +278,13 @@ definitions:
         type: object
         additionalProperties:
           type: string
+      not_about:
+        description: >-
+          Requirement ids a review judged to name this entity as a word match only;
+          the review hint stops offering them until their statement changes
+        type: array
+        items:
+          type: string
       definition:
         description: The single living definition, refined across builds
         type: string

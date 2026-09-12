@@ -105,6 +105,13 @@ The harness validates the claim over the store plus what the session has staged:
   not certain.
 - Every open diagnostic naming a `(deleted)` subject among the entity's statements is
   resolved in this session, refiled or not.
+- Every unreferenced statement the hints listed has an entry under `unreferenced`:
+  `{id, verdict: referenced | word-match, reason?}`. `referenced` requires the
+  requirement to name the entity after this session's staged `update_requirement`
+  (`unreferenced-unbacked` otherwise); `word-match` is written to the entity's
+  `not_about` at commit, so the hint never offers it again while the statement stands
+  ([fields](../model/entity.md#fields)). A session once judged three word matches in
+  free text and expected the same hints back on the next build.
 - The justification is present.
 
 `done` runs the same gate over every goal in the batch and the per-mutation gates on
@@ -195,7 +202,9 @@ The initially loaded set for the batch holds:
   stubs with edge counts. An over-budget list becomes a handle
   (`h:ent:order:requirements`, `h:ent:order:related`).
 - The lookalike candidates as stubs.
-- The unreferenced statements, each with its id, statement, and section.
+- The unreferenced statements, each with its id, statement, and section, omitting the
+  ones the entity's `not_about` already holds (judged word matches in an earlier
+  review).
 - The open diagnostics naming the entity or its requirements.
 
 E.g.:

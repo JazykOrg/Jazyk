@@ -369,9 +369,12 @@ clear or keep change records; they are not graph mutations
   `goal` trace events, and `jazyk explain` keep one entry per goal, as with
   `mark_goal_done`. The repeated-call guard counts per accepted entry
   ([repeated calls](./sessions.md#repeated-calls)).
-- `mark_goal_failed({goal, reason})`: always accepted. A goal that cannot be
+- `mark_goal_failed({goal, reason})`: always available. A goal that cannot be
   accomplished (documents too deeply contradictory, a target that no longer makes
-  sense) must be failable, or the board fills with dishonestly resolved goals. A failed
+  sense) must be failable, or the board fills with dishonestly resolved goals. The
+  reason is a sentence saying what blocked the goal; a placeholder (`placeholder`,
+  `TODO`, under twelve characters) is refused as `bad-reason`, since a failed
+  mandatory goal blocks convergence and one once landed by a slip. A failed
   goal keeps its target, so the failure surfaces on the thing itself everywhere it
   renders. A failed mandatory goal blocks convergence; a failed optional goal is
   recorded and stands ([parked and failed](./reconciler.md#parked-and-failed)).

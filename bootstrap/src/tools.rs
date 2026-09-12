@@ -452,7 +452,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (omit lookalikes and diagnostics when the hints list none); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic filed in this session is its filing goal's evidence, not an entry here); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -3819,6 +3819,19 @@ impl ToolSession {
                     ));
                 }
                 let reason = Self::str_arg(args, "reason")?;
+                // A failed mandatory goal blocks convergence, so the reason has to
+                // say what blocked it: a placeholder once landed by mistake.
+                // Mirrors docs/compiler/tools.md#goal-tools.
+                let lower = reason.trim().to_lowercase();
+                if lower.len() < 12 || ["placeholder", "todo", "tbd", "n/a", "none"].contains(&lower.as_str()) {
+                    return Err(ToolError::new(
+                        "bad-reason",
+                        format!(
+                            "the reason for failing {} is `{}`; say in a sentence what blocked the goal (a failed mandatory goal blocks convergence), or mark it done with its evidence",
+                            goal, reason
+                        ),
+                    ));
+                }
                 self.outcomes
                     .insert(goal.clone(), GoalOutcome::Failed { reason });
                 Ok(
@@ -8868,6 +8881,27 @@ mod tests {
 
     // The claim tools: an essay justification, a false claim, and a goal outside the
     // batch are rejected; a failure is always accepted.
+    // Mirrors docs/compiler/tools.md#goal-tools: a placeholder reason fails no goal.
+    #[test]
+    fn mark_goal_failed_refuses_a_placeholder_reason() {
+        let mut t = session();
+        let err = t
+            .dispatch(
+                "mark_goal_failed",
+                &json!({"goal": "g:reconcile-section:shop.md#/shop", "reason": "placeholder"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-reason");
+        assert!(err.message.contains("blocks convergence"), "{}", err.message);
+        let v = t
+            .dispatch(
+                "mark_goal_failed",
+                &json!({"goal": "g:reconcile-section:shop.md#/shop", "reason": "The section contradicts itself in every sentence."}),
+            )
+            .unwrap();
+        assert_eq!(v["failed"], "g:reconcile-section:shop.md#/shop");
+    }
+
     #[test]
     fn mark_goal_done_rejects_an_essay_and_a_false_claim() {
         let mut t = session();

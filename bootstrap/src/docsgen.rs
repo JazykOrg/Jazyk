@@ -1607,7 +1607,11 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     "- `{}#{}`: \"{}\"\n",
                     m.doc,
                     m.section,
-                    m.quote.split_whitespace().collect::<Vec<_>>().join(" ")
+                    relink_quote(
+                        &m.quote.split_whitespace().collect::<Vec<_>>().join(" "),
+                        &m.doc,
+                        store
+                    )
                 ));
             }
         }

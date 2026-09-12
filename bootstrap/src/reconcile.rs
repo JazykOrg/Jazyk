@@ -3043,6 +3043,7 @@ mod tests {
             ),
         );
         let row = |_: ()| ReqRow {
+            tests: std::collections::BTreeMap::new(),
             entity: "ent:gw".into(),
             files: vec!["gw.rs".into()],
             sites: Vec::new(),

@@ -623,9 +623,14 @@ tools; jazyk holds the ledger. These tools never mutate the graph.
   `existingTests`, the deliverable files that name the requirement by id, slug, or
   statement hash (a test left under an earlier id is found here, never by hand).
   Stateless on the server; the lease is the claim.
-- `record_binding({requirement, files, test, verdict, evidence?})`: record the row: the
-  implementing files (an empty list is a finding), the test row
-  (`{kind, label, artifact, name, run, cwd}`), and the first verdict. Rejects a test
+- `record_binding({requirement, files, tests?, test?, verdict?, evidence?})`: record the
+  row: the implementing files (an empty list is a finding), one test per
+  [criterion](./model/criterion.md) under `tests`
+  (`[{criterion, kind, label, artifact, name, run, cwd?, verdict, evidence?}]`; a
+  requirement with criteria is refused without them, the package lists them with
+  suggested names), and for a requirement without criteria the requirement-level
+  `test` (`{kind, label, artifact, name, run, cwd}`) with its `verdict`; with criteria
+  the first criterion's test stands in as the row's headline and the verdict aggregates. Rejects a test
   whose artifact does not exist or does not contain the declared name, the same shape
   gate `record_generation` applies. The row's
   [derived status](../consumers/gen.md#status-is-derived-never-stored) classifies the

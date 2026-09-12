@@ -398,6 +398,10 @@ pub struct ReqRow {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sites: Vec<Site>,
     pub test: TestRef,
+    // One test per criterion, keyed by criterion id; `test` mirrors the first when
+    // criteria exist. Mirrors docs/consumers/gen.md#the-ledger.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tests: BTreeMap<String, CritTest>,
     pub hashes: RowHashes,
     #[serde(default = "verdict_none")]
     pub verdict: String, // none | pass | fail
@@ -414,6 +418,24 @@ pub struct ReqRow {
 
 fn verdict_none() -> String {
     "none".into()
+}
+
+// The test of one criterion: its reference, the criterion statement hash it encodes,
+// the artifact hash, and the last verdict. Mirrors docs/consumers/gen.md#the-ledger.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CritTest {
+    pub test: TestRef,
+    pub criterion_hash: String,
+    #[serde(default)]
+    pub test_hash: String,
+    #[serde(default = "verdict_none")]
+    pub verdict: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -669,6 +691,24 @@ pub fn test_name(rid: &str, statement: &str) -> String {
         })
         .collect();
     format!("req_{}_{}", sanitized, &hash_hex(statement)[..8])
+}
+
+// The suggested test name of a criterion: `crit_<slug>_<hash8>`, the hash of the
+// criterion statement (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
+pub fn crit_test_name(cid: &str, statement: &str) -> String {
+    let sanitized: String = cid
+        .strip_prefix("crit:")
+        .unwrap_or(cid)
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("crit_{}_{}", sanitized, &hash_hex(statement)[..8])
 }
 
 pub fn reqs_of_sorted(store: &Store, id: &str) -> Vec<String> {
@@ -1329,6 +1369,10 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                         "status": status,
                         "test": {"kind": row.test.kind, "artifact": row.test.artifact,
                                  "name": row.test.name, "run": row.test.run, "cwd": row.test.cwd},
+                        "criteriaTests": row.tests.iter().map(|(cid, t)| json!({
+                            "criterion": cid, "kind": t.test.kind, "artifact": t.test.artifact,
+                            "name": t.test.name, "run": t.test.run, "cwd": t.test.cwd, "verdict": t.verdict,
+                        })).collect::<Vec<Value>>(),
                     })
                 })
             })
@@ -1642,6 +1686,7 @@ pub fn mark(
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
+                    tests: std::collections::BTreeMap::new(),
                     entity: owner,
                     files: row_files,
                     sites: sites_by_rid.remove(&rid).unwrap_or_default(),
@@ -2394,6 +2439,7 @@ mod tests {
     #[test]
     fn medium_divergence_names_disjoint_tool_families() {
         let row = |run: &str| ReqRow {
+            tests: std::collections::BTreeMap::new(),
             entity: "ent:cart".into(),
             files: Vec::new(),
             sites: Vec::new(),
@@ -2663,7 +2709,7 @@ mod tests {
         )
         .ok();
         let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
-        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
+        crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["reason"], "unimplemented-bindings");
@@ -2671,11 +2717,11 @@ mod tests {
 
         // Binding that found the code verified: adopted, nothing to generate.
         std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
-        crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, "pass", None, &gs)
+        crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, &json!([]), "pass", None, &gs)
             .unwrap();
         assert!(pending(&s, &gs).is_empty(), "adopted code is not generation work");
         assert!(skip_reason(&s, &gs, "ent:cart").contains("no ledger entry"));
-        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
+        crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
 
         // A mark with a manifest whose files exist makes it disappear from pending and
         // seeds a verification row.
@@ -3238,7 +3284,7 @@ mod tests {
         let name = test_name("req:shop-1", "The Cart shall hold items.");
         std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
         let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
-        crate::bind::record(&s, "req:shop-1", &[], &bound, "fail", None, &gs).unwrap();
+        crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
         let records = ledger_stale_records(&s, &gs);
         let g = records
             .iter()

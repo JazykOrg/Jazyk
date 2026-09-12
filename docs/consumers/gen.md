@@ -516,6 +516,13 @@ requirements:
       - file: src/catalog.rs              # markers (see traceability)
         line: 41                          # 1-based, in the stripped file
         head: "fn add(&mut self, i: Item) {"  # verbatim next significant line
+    test:                                 # the headline: the requirement's own test, or the
+      kind: programmatic                  # first criterion's when criteria exist
+      label: unit
+      artifact: tests/catalog.rs
+      name: crit_catalog_2_a1b2c3d4
+      run: cargo test crit_catalog_2_a1b2c3d4
+      cwd: .
     tests:                                # one per criterion, keyed by criterion id
       crit:catalog-2:
         kind: programmatic                # programmatic | llm
@@ -524,17 +531,17 @@ requirements:
         name: crit_catalog_2_a1b2c3d4     # embeds criterion id + hash prefix
         run: cargo test crit_catalog_2_a1b2c3d4    # for llm, jazyk test crit:catalog-2
         cwd: .                            # deliverable-relative working dir for run
-        hashes:
-          criterion: <criterion statement hash>   # written at binding, never by a run
-          test: <hash of test artifact bytes>
+        criterionHash: <criterion statement hash>   # written at binding, never by a run
+        testHash: <hash of test artifact bytes>
         verdict: none                     # none | pass | fail (last run outcome)
         lastRun: 2026-07-03T18:40:00Z
         exitCode: 0                       # programmatic runs only; absent for llm rows
         evidence: "cargo test: 1 passed"  # or the llm verdict reasoning, short
     hashes:
       requirement: <full statement hash>  # written at generation and binding, never by a run
+      test: <hash of the headline test artifact bytes>
       files: <hash over the manifest files, sorted, concatenated>
-    verdict: none                         # derived: pass when every test passes, fail when any fails
+    verdict: none                         # the headline's outcome; fail when any criterion test fails
 ```
 
 ### Status is derived, never stored

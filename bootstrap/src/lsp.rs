@@ -1433,6 +1433,7 @@ mod tests {
         ledger.requirements.insert(
             "req:shop-1".into(),
             ReqRow {
+                tests: std::collections::BTreeMap::new(),
                 entity: "ent:cart".into(),
                 files: vec!["src/cart.rs".into(), "src/checkout.rs".into()],
                 sites: vec![Site {

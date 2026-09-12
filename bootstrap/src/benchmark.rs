@@ -1106,6 +1106,7 @@ pub fn seed_verification(
     ledger.requirements.insert(
         rid.clone(),
         crate::gen::ReqRow {
+            tests: std::collections::BTreeMap::new(),
             entity: r.entities.first().cloned().unwrap_or_default(),
             files: files.clone(),
             sites: Vec::new(),

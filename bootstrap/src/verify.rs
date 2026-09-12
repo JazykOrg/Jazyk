@@ -396,6 +396,74 @@ pub struct ProgRun {
     pub evidence: String,
 }
 
+// Run one programmatic test reference under the deliverable.
+fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
+    let cwd = gs.deliverable.join(&t.cwd);
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&t.run)
+        .current_dir(&cwd)
+        .output()
+        .map_err(|e| format!("failed to run `{}` in {}: {}", t.run, cwd.display(), e))?;
+    let pass = out.status.success();
+    let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
+    evidence.push_str(&String::from_utf8_lossy(&out.stderr));
+    let tail: String = evidence
+        .lines()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let tail = crate::llm::truncate(&tail, 300);
+    Ok(ProgRun {
+        pass,
+        code: out.status.code().unwrap_or(-1),
+        evidence: format!("{}: {}", t.run, tail),
+        tail,
+    })
+}
+
+// Run a row's criterion tests (the programmatic ones whose command differs from the
+// headline's) and record each verdict on its entry; the row's verdict fails when any
+// criterion fails. Returns one line per criterion run.
+// Mirrors docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable.
+pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Value> {
+    let rid = store.resolve_id(rid).to_string();
+    let mut ledger = Ledger::load(&store.out);
+    let Some(row) = ledger.requirements.get_mut(&rid) else {
+        return Vec::new();
+    };
+    let headline_run = row.test.run.clone();
+    let mut lines = Vec::new();
+    let mut any_fail = false;
+    for (cid, t) in row.tests.iter_mut() {
+        if t.test.kind != "programmatic" || t.test.run == headline_run {
+            continue;
+        }
+        match run_test_ref(gs, &t.test) {
+            Ok(r) => {
+                t.verdict = if r.pass { "pass".into() } else { "fail".into() };
+                t.exit_code = Some(r.code);
+                t.last_run = Some(now_iso());
+                t.evidence = Some(crate::llm::truncate(&r.evidence, 400).to_string());
+                t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
+                any_fail |= !r.pass;
+                lines.push(json!({"requirement": rid, "criterion": cid, "verdict": t.verdict, "exitCode": r.code, "evidence": r.tail}));
+            }
+            Err(e) => lines.push(json!({"requirement": rid, "criterion": cid, "verdict": "none", "reason": e})),
+        }
+    }
+    if any_fail && row.verdict == "pass" {
+        row.verdict = "fail".into();
+        row.evidence = Some("a criterion test failed".into());
+    }
+    ledger.save(&store.out);
+    lines
+}
+
 impl ProgRun {
     // The command was never executed: not found, or not executable. Nothing here says
     // anything about the requirement.
@@ -534,8 +602,15 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
                     gs,
                 )
                 .ok();
-                passed += 1;
-                rows.push(json!({"requirement": rid, "verdict": "pass", "exitCode": r.code, "evidence": r.tail}));
+                // The criteria's own tests ride behind the headline.
+                let crit_rows = run_criterion_tests(store, rid, gs);
+                let crit_failed = crit_rows.iter().any(|c| c["verdict"] == "fail");
+                if crit_failed {
+                    failed += 1;
+                } else {
+                    passed += 1;
+                }
+                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else { "pass" }, "exitCode": r.code, "evidence": r.tail, "criteria": crit_rows}));
             }
             // A failure waits: whether it is the deliverable's or the machine's is
             // decided once, when the run knows how the other rows went
@@ -766,6 +841,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
+                    tests: std::collections::BTreeMap::new(),
                     entity: owner,
                     files,
                     sites: Vec::new(),

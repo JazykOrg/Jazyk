@@ -87,7 +87,7 @@ lets generation write one test per criterion.
 - [x] Phase 2 store with tests.
 - [x] Phase 3 tools and extraction with tests (the two loop runs follow phase 4).
 - [x] Phase 4 goal kind and checks with tests (the loop run follows phase 5).
-- [ ] Phase 5 ledger with tests and two generation runs.
+- [x] Phase 5 ledger with tests (the generation runs follow).
 - [ ] Phase 6 VALIDATION.md.
 
 ## Decisions taken

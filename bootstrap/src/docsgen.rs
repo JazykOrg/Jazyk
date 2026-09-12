@@ -1298,6 +1298,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
     // run is `jazyk docsgen` alone. Unchanged views are skipped by content.
     crate::render::render_all(store, &store.out);
     let vmap = crate::verify::status_map(store, gs);
+    let ledger = crate::gen::Ledger::load(&store.out);
     let instances = instance_types(store);
     let dir = store.out.join("docsgen");
     std::fs::create_dir_all(&dir).ok();
@@ -1509,6 +1510,33 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     s.push_str(&format!(" · ties: {}", others.join(", ")));
                 }
                 s.push_str("\n\n");
+                // The requirement's criteria with their test verdicts
+                // (docs/consumers/docsgen.md#the-requirements-document).
+                let crits = store.criteria_of(rid);
+                if crits.is_empty() {
+                    s.push_str("Criteria: none\n\n");
+                } else {
+                    s.push_str("Criteria:\n\n");
+                    for cid in &crits {
+                        if let Some(c) = store.graph.criteria.get(cid) {
+                            let where_ = match &c.source {
+                                Some(src) => format!("{}#{}", src.doc, src.section),
+                                None => "proposed".to_string(),
+                            };
+                            let verdict = ledger
+                                .requirements
+                                .get(rid.as_str())
+                                .and_then(|row| row.tests.get(cid))
+                                .map(|t| format!(" · test `{}` {}", t.test.name, t.verdict))
+                                .unwrap_or_default();
+                            s.push_str(&format!(
+                                "- `{}` [{}] {} ({}){}\n",
+                                cid, c.kind, c.statement, where_, verdict
+                            ));
+                        }
+                    }
+                    s.push('\n');
+                }
                 if let Some(v) = vmap.get(rid.as_str()) {
                     let status = v["status"].as_str().unwrap_or("missing");
                     let mut line = format!("Verification: `{}`", status);

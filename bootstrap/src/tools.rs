@@ -419,7 +419,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_binding",
-            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement); test is {kind: programmatic|llm, label, artifact, name, run, cwd?}; verdict is the test's outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the test is its acceptance gate), failing (fail with files: the deliverable contradicts the statement, a diagnostic for the author). Never rewrite implementation files during binding.",
+            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the test is its acceptance gate), failing (fail with files: the deliverable contradicts the statement, a diagnostic for the author). Never rewrite implementation files during binding.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -432,10 +432,21 @@ pub fn catalog() -> Vec<ToolDef> {
                         "run": {"type": "string"},
                         "cwd": {"type": "string"}
                     }},
+                    "tests": {"type": "array", "items": {"type": "object", "properties": {
+                        "criterion": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["programmatic", "llm"]},
+                        "label": {"type": "string"},
+                        "artifact": {"type": "string"},
+                        "name": {"type": "string"},
+                        "run": {"type": "string"},
+                        "cwd": {"type": "string"},
+                        "verdict": {"type": "string", "enum": ["pass", "fail"]},
+                        "evidence": {"type": "string"}
+                    }, "required": ["criterion", "kind", "artifact", "name", "verdict"]}},
                     "verdict": {"type": "string", "enum": ["pass", "fail"]},
                     "evidence": {"type": "string"}
                 }),
-                &["requirement", "files", "test", "verdict"],
+                &["requirement", "files"],
             ),
         },
         ToolDef {
@@ -5995,10 +6006,10 @@ impl ToolSession {
                 let gs = self.gen_settings();
                 let files = Self::str_list(args, "files");
                 let evidence = Self::opt_str(args, "evidence");
-                if !args["test"].is_object() {
+                if !args["test"].is_object() && !args["tests"].is_array() {
                     return Err(ToolError::new(
                         "bad-argument",
-                        "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into(),
+                        "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}, or tests: [{criterion, ...}] one per criterion".into(),
                     ));
                 }
                 crate::bind::record(
@@ -6006,6 +6017,7 @@ impl ToolSession {
                     &rid,
                     &files,
                     &args["test"],
+                    &args["tests"],
                     &verdict,
                     evidence.as_deref(),
                     &gs,

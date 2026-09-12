@@ -41,6 +41,13 @@ section, and from one coverage state:
 
 Several records on one section fold into one goal whose `change` merges their details
 and whose `cause` is the earliest ([change records](../reconciler.md#change-records)).
+A section without a body of its own (a bare heading, a document title whose content
+sits in child sections) derives no goal from its dirt or from unprocessed coverage:
+there is nothing to extract and nothing to mark, and the coverage meter does not count
+it ([coverage](../compilation.md#coverage)). A stale anchor orphaned onto such a
+heading still rides there, since the anchor is the work. A fresh build once handed three such
+headings to a session, which had to guess between `covered` and `non-normative` for
+text that was not there.
 A section whose own body did not change is not dirty when its parent heading changed:
 a heading rename that moves children is an exact move. A section removed from the
 document derives nothing here: the sweep kills the quotes anchored in it

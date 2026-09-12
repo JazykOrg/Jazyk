@@ -737,6 +737,11 @@ impl GoalKind for ReconcileSection {
             // A fenced block's dirt is its holding section's: the block owns no goal.
             // Mirrors docs/compiler/parsing.md#section-tree.
             let sec = owning_section(store, &doc, &sec);
+            // A bare heading has nothing to extract and nothing to mark.
+            // Mirrors docs/compiler/goals/reconcile-section.md#created-when.
+            if record.sections.get(&sec).is_some_and(|s| !section_has_body(s)) {
+                continue;
+            }
             if record
                 .coverage
                 .get(&sec)
@@ -1165,10 +1170,19 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             };
             let target = pair_target(rid, &nbr);
             let shared_ent = shared_entity(store, req, other);
-            let tokens: Vec<String> = content_tokens(store, &req.statement, &req.entities)
-                .intersection(&content_tokens(store, &other.statement, &other.entities))
-                .cloned()
-                .collect();
+            // The words both statements share, minus the shared entities' boilerplate
+            // the scorer dropped (docs/compiler/reconciler.md#pairs).
+            let boilerplate = store.pair_boilerplate(req, other);
+            let other_stems = content_tokens(store, &other.statement, &other.entities);
+            let mut tokens: Vec<String> = Vec::new();
+            for (stemmed, word) in content_token_words(store, &req.statement, &req.entities) {
+                if other_stems.contains(&stemmed)
+                    && !boilerplate.contains(&store::content_stem(&word))
+                    && !tokens.contains(&stemmed)
+                {
+                    tokens.push(stemmed);
+                }
+            }
             let sticky: Vec<String> = open_diags_naming(store, &[rid, &nbr])
                 .into_iter()
                 .filter(|(_, d)| {
@@ -5413,6 +5427,39 @@ pub(crate) mod tests {
         assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
     }
 
+    // Mirrors docs/compiler/goals/reconcile-section.md#created-when: a bare heading's
+    // dirt derives no goal, the sections with a body derive theirs.
+    #[test]
+    fn a_dirty_bare_heading_derives_no_reconcile_goal() {
+        let mut s = Store::default();
+        let text = "# Backend\n\n## API Endpoints\n\n## Database\n\nThe backend uses PostgreSQL.\n";
+        s.docs.insert(
+            "backend.md".into(),
+            crate::model::DocRecord {
+                content_hash: crate::model::hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: Default::default(),
+            },
+        );
+        let mut batch = store::RecordBatch::new(1);
+        for sec in ["/backend", "/backend/api-endpoints", "/backend/database"] {
+            batch.push(
+                0,
+                store::CHANGE_SECTION_DIRTY,
+                &format!("backend.md#{}", sec),
+                "edit",
+                json!({"added": 1}),
+            );
+        }
+        for r in batch.records() {
+            s.status.record_change(r.clone());
+        }
+        s.status.generation = 1;
+        let goals = ReconcileSection.derive_goals(&s, &gen_settings());
+        let targets: Vec<&str> = goals.iter().map(|g| g.target.as_str()).collect();
+        assert_eq!(targets, vec!["backend.md#/backend/database"], "{:?}", targets);
+    }
+
     // Mirrors docs/compiler/compilation.md#coverage: a code block follows its parent's
     // coverage; a diagram owes its own.
     #[test]
@@ -5773,9 +5820,21 @@ pub(crate) mod tests {
     // one word of its own from the hub's list) and only `reject` with the other
     // partners, so the hub is each partner's sole neighbor: twelve pairs on one
     // requirement, eleven at score 3 and `req:p12` at score 4.
+    // Two words each, since the verb every partner would otherwise repeat is the
+    // gateway's boilerplate and counts for nothing (reconciler.md#pairs).
     pub(crate) const HUB_WORDS: [&str; 12] = [
-        "expired", "logs", "alerts", "counts", "throttles", "audits", "blocks", "signs",
-        "rotates", "caches", "purges", "reports",
+        "drops expired tokens",
+        "logs refusals",
+        "alerts operators",
+        "counts failures",
+        "throttles clients",
+        "audits sessions",
+        "blocks replays",
+        "signs receipts",
+        "rotates keys",
+        "caches verdicts",
+        "purges entries",
+        "reports",
     ];
 
     pub(crate) fn fanned_store() -> Store {
@@ -5801,7 +5860,7 @@ pub(crate) mod tests {
             let statement = if i + 1 == 12 {
                 "The gateway rejects reports and metrics.".to_string()
             } else {
-                format!("The gateway rejects {}.", w)
+                format!("The gateway {}.", w)
             };
             s.graph.requirements.insert(id.clone(), req(&statement));
             let mut batch = store::RecordBatch::new(5);

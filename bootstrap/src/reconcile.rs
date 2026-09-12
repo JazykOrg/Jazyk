@@ -683,6 +683,18 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     let (Some(sa), Some(sb)) = (ra.source.as_ref(), rb.source.as_ref()) else {
                         continue;
                     };
+                    // A pair a session judged is its finding, not the check's: a
+                    // one-subject twin beside the two-subject diagnostic is the same
+                    // finding twice (docs/compiler/compilation.md#checks).
+                    let judged = store.graph.diagnostics.values().any(|d| {
+                        d.lifecycle == "open"
+                            && (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                            && d.subjects.iter().any(|s| s == &key.0)
+                            && d.subjects.iter().any(|s| s == &key.1)
+                    });
+                    if judged {
+                        continue;
+                    }
                     if sa.doc == sb.doc {
                         if sa.section == sb.section && norm(&sa.quote) == norm(&sb.quote) {
                             f.push(finding(
@@ -3240,6 +3252,28 @@ mod tests {
             .any(|(_, subj, sev, msg, _)| subj.iter().any(|s| s == "req:b-1")
                 && sev == "info"
                 && msg.contains("both kept")));
+        // A session's two-subject finding on the cross-document pair: the check
+        // files no twin beside it (docs/compiler/compilation.md#checks).
+        s.graph.diagnostics.insert(
+            "diag:duplicate-requirement-9".into(),
+            crate::model::Diagnostic {
+                rule: "duplicate-requirement".into(),
+                severity: "info".into(),
+                subjects: vec!["req:b-1".into(), "req:b-2".into()],
+                message: "the same fact".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "duplicate-requirement");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert!(hits[0].1.iter().any(|s| s == "req:a-1"));
     }
 
     #[test]

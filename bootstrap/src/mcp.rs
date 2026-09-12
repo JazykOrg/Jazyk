@@ -852,6 +852,16 @@ impl McpServer {
                 }
                 reply["next"] = json!(parts.join("; "));
                 reply["ready"] = json!({"generate": generate});
+                // The claim holds at convergence: an agent that asked for the next
+                // batch gets the optional one instead of a note that it stays
+                // claimable (docs/frontends/mcp.md#compilation-over-mcp).
+                if optional_ready > 0 && params["arguments"]["beginNext"].as_bool() == Some(true)
+                {
+                    let began = self.begin_goals(&json!({"arguments": {}}));
+                    if began["error"].is_null() {
+                        reply["began"] = began;
+                    }
+                }
                 return reply;
             }
             // The checks can surface new work (rare); fall through to name it.

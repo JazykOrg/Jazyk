@@ -535,6 +535,27 @@ pub(crate) const CONTENT_STOP: [&str; 113] = [
         ];
 
 // A content token: not a stop word, and three letters or more unless it is a number.
+// A token is an entity's boilerplate from this many statements naming the entity
+// (and at least half of them). Mirrors docs/compiler/reconciler.md#pairs.
+const BOILERPLATE_MIN: usize = 4;
+
+// The pair scorer's stem: the suffix goes, then a trailing "e", so "files" and
+// "filed" both land on "fil" and "reverses" meets "reversed": the one stem per word
+// the pairing rules count on.
+pub(crate) fn content_stem(t: &str) -> String {
+    let mut s = t.to_string();
+    for suffix in ["ing", "ed", "s"] {
+        if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
+            s = t[..t.len() - suffix.len()].to_string();
+            break;
+        }
+    }
+    if s.len() > 3 && s.ends_with('e') {
+        s.pop();
+    }
+    s
+}
+
 pub(crate) fn is_content_token(t: &str) -> bool {
     !t.is_empty()
         && !CONTENT_STOP.contains(&t)
@@ -1351,23 +1372,7 @@ impl Store {
     // entities' own name tokens, reduced to crude stems so "reverses" meets "reverse"
     // and "sorting" meets "sort". Feeds requirement_neighbors.
     fn content_tokens(&self, statement: &str, entities: &[String]) -> BTreeSet<String> {
-
-        // The suffix goes, then a trailing "e", so "files" and "filed" both land on
-        // "fil" and "reverses" meets "reversed": the one stem per word the pairing
-        // rules count on.
-        let stem = |t: &str| -> String {
-            let mut s = t.to_string();
-            for suffix in ["ing", "ed", "s"] {
-                if t.len() > suffix.len() + 2 && t.ends_with(suffix) {
-                    s = t[..t.len() - suffix.len()].to_string();
-                    break;
-                }
-            }
-            if s.len() > 3 && s.ends_with('e') {
-                s.pop();
-            }
-            s
-        };
+        let stem = content_stem;
         let mut name_toks: BTreeSet<String> = BTreeSet::new();
         for e in entities {
             if let Some(ent) = self.graph.entities.get(self.resolve_id(e)) {
@@ -1385,6 +1390,60 @@ impl Store {
             .filter(|t| is_content_token(t))
             .filter(|t| !name_toks.contains(t))
             .collect()
+    }
+
+    // Per entity (resolved id): how many requirements name it, and how many of those
+    // carry each content token. The pair scorer's boilerplate source.
+    fn entity_token_counts(&self) -> BTreeMap<String, (usize, BTreeMap<String, usize>)> {
+        let mut counts: BTreeMap<String, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
+        for r in self.graph.requirements.values() {
+            let toks = self.content_tokens(&r.statement, &r.entities);
+            let ids: BTreeSet<&str> = r.entities.iter().map(|e| self.resolve_id(e)).collect();
+            for id in ids {
+                let e = counts.entry(id.to_string()).or_default();
+                e.0 += 1;
+                for t in &toks {
+                    *e.1.entry(t.clone()).or_default() += 1;
+                }
+            }
+        }
+        counts
+    }
+
+    // An entity's boilerplate: the content tokens carried by at least four of the
+    // statements naming it and by at least half of them, the wording every statement
+    // of that entity shares. Mirrors docs/compiler/reconciler.md#pairs.
+    fn boilerplate_of(
+        counts: &BTreeMap<String, (usize, BTreeMap<String, usize>)>,
+        entities: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for e in entities {
+            if let Some((n, toks)) = counts.get(e.as_ref()) {
+                for (t, c) in toks {
+                    if *c >= BOILERPLATE_MIN && *c * 2 >= *n {
+                        out.insert(t.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    // The boilerplate of the entities two requirements share, as content stems
+    // (`content_stem`), for a hint that drops the same words the scorer drops.
+    pub fn pair_boilerplate(&self, a: &Requirement, b: &Requirement) -> BTreeSet<String> {
+        let bs: BTreeSet<&str> = b.entities.iter().map(|e| self.resolve_id(e)).collect();
+        let shared: Vec<&str> = a
+            .entities
+            .iter()
+            .map(|e| self.resolve_id(e))
+            .filter(|e| bs.contains(e))
+            .collect();
+        if shared.is_empty() {
+            return BTreeSet::new();
+        }
+        Self::boilerplate_of(&self.entity_token_counts(), shared)
     }
 
     // The graph's hub: the entity co-referenced with the most other entities across
@@ -1446,6 +1505,7 @@ impl Store {
             req.entities.iter().map(|e| self.resolve_id(e)).collect();
         let toks = self.content_tokens(&req.statement, &req.entities);
         let hub = self.hub_entity();
+        let counts = self.entity_token_counts();
         let norm = crate::derive::normalize_state;
         // The transition the subject carries, its subject resolved and its states
         // normalized, so a restated transition meets its original.
@@ -1470,9 +1530,15 @@ impl Store {
             if shared_entities == 0 {
                 continue;
             }
+            // The shared entities' boilerplate leaves the pool: "supports" and
+            // "operation" on every operation bullet of one page say nothing about
+            // any two of them.
+            let boilerplate =
+                Self::boilerplate_of(&counts, other_entities.intersection(&subject_entities));
             let shared = self
                 .content_tokens(&other.statement, &other.entities)
                 .intersection(&toks)
+                .filter(|t| !boilerplate.contains(*t))
                 .count();
             // The hub never counts as a shared entity: sharing it says little (a
             // hub-sharing flood once derived forty-nine pair goals with one real pair
@@ -7904,6 +7970,39 @@ mod tests {
         assert!(!n.contains(&"req:policies-5".to_string()), "{:?}", n);
     }
 
+    // The erp operation bullets: six statements of one entity sharing "supports" and
+    // "operation" pair on nothing, and the two about a password still pair on it.
+    // Mirrors docs/compiler/reconciler.md#pairs.
+    #[test]
+    fn entity_boilerplate_never_counts_as_a_shared_token() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:um".into(), entity("User Management"));
+        s.graph.entities.insert("ent:ua".into(), entity("User Account"));
+        let mk = |statement: &str| Requirement {
+            statement: statement.into(),
+            entities: vec!["ent:um".into(), "ent:ua".into()],
+            source: Some(mention("user.md", "/ops", "q")),
+            ..Default::default()
+        };
+        for (id, st) in [
+            ("req:u-1", "The user management system supports an `authenticateUser` operation that authenticates a user with a username and password."),
+            ("req:u-2", "The user management system supports a `passwordChange` operation that changes the password of the caller's own account."),
+            ("req:u-3", "The user management system supports a `createUser` operation that creates a new user account."),
+            ("req:u-4", "The user management system supports an `updateUser` operation that updates an existing user account."),
+            ("req:u-5", "The user management system supports a `deleteUser` operation that deletes a user account."),
+            ("req:u-6", "The user management system supports a `passwordReset` operation that resets the password of a user account."),
+        ] {
+            s.graph.requirements.insert(id.into(), mk(st));
+        }
+        let bp = s.pair_boilerplate(&s.graph.requirements["req:u-3"], &s.graph.requirements["req:u-5"]);
+        assert!(bp.contains("support") && bp.contains("operation"), "{:?}", bp);
+        assert!(!bp.contains("password"), "{:?}", bp);
+        let n = s.requirement_neighbors("req:u-3");
+        assert!(n.is_empty(), "{:?}", n);
+        let n = s.requirement_neighbors("req:u-2");
+        assert_eq!(n, vec!["req:u-1".to_string(), "req:u-6".to_string()], "{:?}", n);
+    }
+
     // The qwen pair flood: requirements sharing only the hub entity need three shared
     // tokens, a pair sharing any other entity still needs two, and a graph whose
     // entities never meet has no hub. Mirrors docs/compiler/reconciler.md#pairs.
@@ -7935,14 +8034,14 @@ mod tests {
         s.graph.requirements.insert(
             "req:o-2".into(),
             mk(
-                "An Order ships in one Shipment; the tool records the carrier.",
+                "An Order ships in one Shipment; the carrier is noted.",
                 &["ent:order", "ent:shipment"],
             ),
         );
         s.graph.requirements.insert(
             "req:o-3".into(),
             mk(
-                "An Order is paid by one Payment; the tool records the date.",
+                "An Order is paid by one Payment; the receipt is kept.",
                 &["ent:order", "ent:payment"],
             ),
         );

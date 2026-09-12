@@ -285,7 +285,11 @@ serving; what it claims is a batch:
   leaves the changeset open and names the repair. The reply is `{committed, next}`,
   `next` naming the next ready batch by id with its goals. `beginNext: true` claims
   that batch in the same call and carries its `instructions` and `package` in the
-  reply, saving a round trip per batch; the default reply only names it. The first
+  reply, saving a round trip per batch; the default reply only names it. The claim
+  holds at convergence too: when the commit leaves only optional goals ready, the
+  reply carries the verdict and, under `began`, the optional batch it claimed, so an
+  agent never reads "N optional goal(s) stay claimable" after asking for the next
+  batch. The first
   batch of a serving ships the agent contract and the active skills in full; later
   batches elide the contract and any skill already delivered (the agent saw them
   earlier in the same session), while the project block, the goals block, and the

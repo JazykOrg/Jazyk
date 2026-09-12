@@ -278,6 +278,15 @@ computed deterministically:
   pair goals with one real pair among them, and on a ten-document shop the hub plus
   Product qualified every stock, catalog, and order statement against each other with
   no word in common.
+- an entity's boilerplate never counts as a shared token: a content token carried by
+  at least four of the statements naming the entity, and by at least half of them, is
+  the wording every statement of that entity shares, not a sign that two of them say
+  the same thing. The pair's shared entities each contribute their boilerplate, and
+  the pair hint drops those words too. Six operation bullets of one user management
+  page ("The user management system supports a `createUser` operation that ...",
+  `deleteUser`, `passwordReset`, ...) once opened twenty-three pair goals on
+  `supports` and `operation` alone; with the boilerplate out, the two bullets about a
+  password still pair on `password`, and the rest derive nothing.
 - Best six by score.
 
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed

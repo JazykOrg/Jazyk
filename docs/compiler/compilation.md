@@ -175,7 +175,11 @@ Every check run journals a `checks` entry under its own generation.
 - `duplicate-requirement`, the mechanical part: near-identical statements on one
   entity, both quote-anchored. The same sentence extracted twice in one section is a
   warning (keep one); the same fact restated across documents is an info (both kept).
-  Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment.
+  Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment, and a
+  pair a session already judged is left to it: when an open `contradiction` or
+  `duplicate-requirement` diagnostic names both statements, the check files nothing,
+  since a one-subject twin beside the session's two-subject finding is the same
+  finding twice.
 - Format, over the files the docs glob matches: `unsupported-format` (a file no
   [format handler](./parsing.md#format-handlers) claims by its extension),
   `parse-error` (a file its handler cannot read, not valid UTF-8 or unreadable, the

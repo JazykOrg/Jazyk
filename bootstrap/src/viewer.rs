@@ -1414,6 +1414,7 @@ mod tests {
         let html = render(
             &s,
             &GenSettings {
+                configured: true,
                 deliverable: std::path::PathBuf::from("/nonexistent"),
                 worker: "agentic".into(),
                 code: Vec::new(),
@@ -1456,6 +1457,7 @@ mod tests {
 
     fn gs() -> GenSettings {
         GenSettings {
+            configured: true,
             deliverable: std::path::PathBuf::from("/nonexistent"),
             worker: "agentic".into(),
             code: Vec::new(),

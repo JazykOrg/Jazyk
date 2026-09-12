@@ -1987,6 +1987,7 @@ mod tests {
 
     fn gs(out: &std::path::Path) -> GenSettings {
         GenSettings {
+            configured: true,
             deliverable: out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),

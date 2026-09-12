@@ -37,6 +37,9 @@ An Order paid on day 5 is never cancelled for non-payment.
   the documents state none, `from` naming the requirement, with a ratification proposal
   toward prose like every derived fact ([provenance](../model.md#provenance)); or
   `{decree: {...}}` for a human write. Exactly one of `source` or `provenance`.
+- `stale`: set by the store when the owning requirement's statement changed after this
+  derived criterion was written, cleared by the next update or re-upsert; what
+  [`derive-criteria`](../goals/derive-criteria.md) reads as `revised`.
 - `confidence` and `reasoning`; `created` and `updated`.
 
 ## Identity

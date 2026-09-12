@@ -2050,6 +2050,62 @@ impl ToolSession {
                 }
             }
         }
+        // derive-criteria: one entry per requirement, complete backed by a criterion,
+        // open-question backed by an invented-choice prompt
+        // (docs/compiler/goals/derive-criteria.md#gate).
+        if gs.kind == "derive-criteria" {
+            let Some(list) = args["evidence"]["requirements"].as_array() else {
+                return Err(ToolError::new(
+                    "bad-evidence",
+                    format!(
+                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed",
+                        goal
+                    ),
+                ));
+            };
+            for e in list {
+                let rid = e["id"].as_str().unwrap_or("").to_string();
+                let has_criterion = !self.snapshot.criteria_of(&rid).is_empty()
+                    || self.staged.iter().any(|o| matches!(o, Op::CreateCriterion { criterion, .. } if criterion.requirement == rid));
+                match e["verdict"].as_str() {
+                    Some("complete") | Some("stated-only") => {
+                        if !has_criterion {
+                            return Err(ToolError::new(
+                                "criterion-missing",
+                                format!(
+                                    "{} claims {} {}, but no criterion is recorded or staged on it; upsert_criterion, or verdict open-question with an invented-choice prompt",
+                                    goal, rid, e["verdict"].as_str().unwrap_or("")
+                                ),
+                            ));
+                        }
+                    }
+                    Some("open-question") => {
+                        let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
+                            if diagnostic.rule == "invented-choice" && diagnostic.subjects.iter().any(|s| s == &rid)))
+                            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && d.rule == "invented-choice" && d.subjects.iter().any(|s| s == &rid));
+                        if !prompted {
+                            return Err(ToolError::new(
+                                "unbacked-question",
+                                format!(
+                                    "{} claims {} open-question, but no invented-choice diagnostic names it; report_diagnostic rule invented-choice with a prompt carrying the options",
+                                    goal, rid
+                                ),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-verdict",
+                            format!(
+                                "verdict `{}` for {}: complete, stated-only, or open-question",
+                                other.unwrap_or("?"),
+                                rid
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
         self.outcomes.insert(
             goal.clone(),
             GoalOutcome::Done {
@@ -8693,6 +8749,9 @@ mod tests {
                 }
                 "rejudge-pair" => include_str!("../../docs/compiler/goals/rejudge-pair.md"),
                 "review-entity" => include_str!("../../docs/compiler/goals/review-entity.md"),
+                "derive-criteria" => {
+                    include_str!("../../docs/compiler/goals/derive-criteria.md")
+                }
                 "retrace" => include_str!("../../docs/compiler/goals/retrace.md"),
                 "conform-instance" => {
                     include_str!("../../docs/compiler/goals/conform-instance.md")

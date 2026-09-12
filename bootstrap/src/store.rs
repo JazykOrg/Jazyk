@@ -235,7 +235,9 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 30] = [
+pub const CHECK_RULES: [&str; 32] = [
+    "criterion-missing",
+    "criterion-restates",
     "pinned-fact-drift",
     "unsupported-format",
     "parse-error",
@@ -3251,6 +3253,9 @@ impl Store {
                             .map(|(cid, _)| cid.clone())
                             .collect();
                         for cid in derived {
+                            if let Some(c) = self.graph.criteria.get_mut(&cid) {
+                                c.stale = true;
+                            }
                             dirt.revised(&cid, m, "requirement");
                         }
                     }
@@ -3459,6 +3464,10 @@ impl Store {
                                 changed = true;
                             }
                         }
+                        if c.stale {
+                            c.stale = false;
+                            changed = true;
+                        }
                         if changed {
                             c.updated = Some(build.clone());
                             dirt.revised(&cid, m, "fields");
@@ -3575,6 +3584,10 @@ impl Store {
                             c.entities = es;
                             changed = true;
                         }
+                    }
+                    if c.stale {
+                        c.stale = false;
+                        changed = true;
                     }
                     if changed {
                         c.updated = Some(build.clone());

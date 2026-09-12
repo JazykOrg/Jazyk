@@ -549,6 +549,41 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             ));
         }
     }
+    // Criteria: a requirement with none, and a criterion that restates its
+    // requirement. Neither holds the verdict (docs/compiler/compilation.md#checks).
+    let gen_configured = proj.gen_deliverable.is_some();
+    for (rid, r) in &store.graph.requirements {
+        if store.criteria_of(rid).is_empty() {
+            f.push(finding(
+                "criterion-missing",
+                rid,
+                if gen_configured { "warning" } else { "info" },
+                format!(
+                    "{} has no acceptance criterion; {}",
+                    rid,
+                    if gen_configured {
+                        "bind waits for one (derive-criteria writes them)"
+                    } else {
+                        "nothing says how one would know it holds"
+                    }
+                ),
+            ));
+        }
+        for cid in store.criteria_of(rid) {
+            if let Some(c) = store.graph.criteria.get(&cid) {
+                if crate::store::normalize_statement(&c.statement)
+                    == crate::store::normalize_statement(&r.statement)
+                {
+                    f.push(finding(
+                        "criterion-restates",
+                        &cid,
+                        "warning",
+                        format!("{} restates {} instead of giving evidence for it", cid, rid),
+                    ));
+                }
+            }
+        }
+    }
     // Reachability from root entities (entities mentioned in a root document).
     let root_entities: BTreeSet<String> = store
         .graph

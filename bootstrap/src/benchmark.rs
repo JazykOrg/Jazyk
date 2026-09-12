@@ -1597,6 +1597,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             let case_tokens_before = llm::tokens_spent();
             // The generation turn writes into a temp deliverable beside the sandbox.
             let gs = crate::gen::GenSettings {
+                configured: true,
                 deliverable: tmp.join("deliverable"),
                 worker: "agentic".into(),
                 code: Vec::new(),

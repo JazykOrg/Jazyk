@@ -1472,6 +1472,7 @@ mod tests {
             store,
             generation: 0,
             gen: GenSettings {
+                configured: true,
                 deliverable: deliv,
                 worker: "agentic".into(),
                 code: Vec::new(),
@@ -1534,6 +1535,7 @@ mod tests {
             store,
             generation: 0,
             gen: GenSettings {
+                configured: true,
                 deliverable: tmp.join("product"),
                 worker: "agentic".into(),
                 code: Vec::new(),
@@ -1686,6 +1688,7 @@ mod tests {
             store,
             generation: 0,
             gen: GenSettings {
+                configured: true,
                 deliverable: out.join("product"),
                 worker: "agentic".into(),
                 code: Vec::new(),

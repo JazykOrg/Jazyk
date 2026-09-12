@@ -1110,6 +1110,7 @@ impl McpServer {
         std::fs::remove_dir_all(&tmp).ok();
         let store = crate::benchmark::sandbox(case, &tmp);
         let gs = crate::gen::GenSettings {
+            configured: true,
             deliverable: tmp.join("deliverable"),
             worker: "agentic".into(),
             code: Vec::new(),

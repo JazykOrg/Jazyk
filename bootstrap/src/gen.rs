@@ -17,6 +17,9 @@ pub const GROUP: usize = 20;
 // Mirrors docs/compiler/project-settings.md#generation.
 #[derive(Clone)]
 pub struct GenSettings {
+    // Whether the project names a deliverable: the generation scope exists
+    // (docs/compiler/goals/derive-criteria.md#created-when).
+    pub configured: bool,
     pub deliverable: PathBuf,
     // The built-in worker: "agentic" (a generation turn with file and command tools,
     // the default) or "pipeline" (the fixed file-reply sequence).
@@ -36,6 +39,7 @@ impl GenSettings {
             None => proj.root.clone(),
         };
         GenSettings {
+            configured: proj.gen_deliverable.is_some(),
             deliverable,
             worker: proj.gen_worker.clone().unwrap_or_else(|| "agentic".into()),
             code: proj.gen_code.clone(),
@@ -46,6 +50,7 @@ impl GenSettings {
     // from those toolsets, so the path is never read.
     pub fn from_out(out: &Path) -> GenSettings {
         GenSettings {
+            configured: false,
             deliverable: out.join("gen").join("deliverable"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -2233,6 +2238,7 @@ mod tests {
             },
         );
         let gs = GenSettings {
+            configured: true,
             deliverable: out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),

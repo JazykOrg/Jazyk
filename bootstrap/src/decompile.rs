@@ -361,6 +361,7 @@ mod tests {
             ..Default::default()
         };
         let gs = GenSettings {
+            configured: true,
             deliverable: root.clone(),
             worker: "agentic".into(),
             code: Vec::new(),

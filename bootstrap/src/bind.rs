@@ -578,6 +578,7 @@ mod tests {
     fn an_unbound_requirement_is_bind_work() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -592,6 +593,7 @@ mod tests {
     fn recording_a_failing_bind_with_no_files_reads_unimplemented() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -623,6 +625,7 @@ mod tests {
     fn recording_a_passing_bind_with_files_reads_verified() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -665,6 +668,7 @@ mod tests {
     fn a_bind_over_a_diverged_medium_re_decides_while_nothing_is_generated() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -733,6 +737,7 @@ mod tests {
     fn binding_paths_are_confined_to_the_deliverable() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -772,6 +777,7 @@ mod tests {
     fn the_bind_gate_reads_the_landed_row() {
         let mut s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -801,6 +807,7 @@ mod tests {
     fn a_missing_test_artifact_is_rejected() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),
@@ -813,6 +820,7 @@ mod tests {
     fn the_unclaimed_report_lists_code_no_binding_names() {
         let s = tmp_store();
         let gs = GenSettings {
+            configured: true,
             deliverable: s.out.join("product"),
             worker: "agentic".into(),
             code: Vec::new(),

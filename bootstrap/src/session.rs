@@ -682,7 +682,7 @@ pub(crate) fn with_feedback_note(system: &str) -> String {
 }
 
 // The skill payloads, embedded at compile time. Mirrors docs/compiler/sessions.md#skills.
-pub const SKILLS: [(&str, &str); 6] = [
+pub const SKILLS: [(&str, &str); 7] = [
     (
         "extraction",
         include_str!("../../docs/compiler/skills/extraction.md"),
@@ -690,6 +690,10 @@ pub const SKILLS: [(&str, &str); 6] = [
     (
         "judgment",
         include_str!("../../docs/compiler/skills/judgment.md"),
+    ),
+    (
+        "criteria",
+        include_str!("../../docs/compiler/skills/criteria.md"),
     ),
     (
         "flow-views",

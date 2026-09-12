@@ -349,6 +349,10 @@ pub struct Criterion {
     pub source: Option<SourceRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
+    // Set by the store when the requirement's statement changed after this derived
+    // criterion was written; cleared by the next update (criterion.md#lifecycle).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

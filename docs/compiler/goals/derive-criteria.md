@@ -64,6 +64,12 @@ sections the hints name loadable by reference. The contract paragraph is
 
 ## Tools
 
+The `derive-criteria` toolset ([toolsets](../tools.md#toolsets)):
+
+- The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,
+  `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`.
+- The [goal tools](../tools.md#goal-tools): `mark_goal_done`, `mark_goal_failed`,
+  `load_skill`, `done`, and [`report_feedback`](../tools.md#feedback-tool).
 - `upsert_criterion({requirement, statement, kind, measure?, given?, when?, then?,
   entities?, section?, quote?, provenance?})`: a stated criterion carries `section` and
   `quote`; a derived one carries `provenance: {derived: {from: [req id], reasoning}}` and
@@ -71,4 +77,3 @@ sections the hints name loadable by reference. The contract paragraph is
 - `update_criterion({id, statement?, kind?, measure?, given?, when?, then?})`.
 - `delete_criterion({id, reason})`.
 - `report_diagnostic` (`invented-choice`, `ambiguity`).
-- `read_section`, `load`, `search`, and the goal tools.

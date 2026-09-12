@@ -690,6 +690,9 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
                 "upsert_requirement",
                 "update_requirement",
                 "delete_requirement",
+                "upsert_criterion",
+                "update_criterion",
+                "delete_criterion",
                 "set_coverage",
                 "report_diagnostic",
                 "update_diagnostic",
@@ -8884,6 +8887,22 @@ mod tests {
 
     // The batch claim rides in the pair slice only, and the compile serving lists it
     // so an MCP client sees it. Mirrors docs/compiler/tools.md#toolsets.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp: the compile serving exposes
+    // every tool a compile or GC goal kind's slice names, or a batch lists writeTools
+    // the server does not have (a sort session found upsert_criterion missing).
+    #[test]
+    fn the_compile_serving_exposes_every_goal_kinds_slice() {
+        let served = toolset("mcp-compile");
+        for k in crate::goals::REGISTRY.iter() {
+            if matches!(k.kind(), "bind" | "generate" | "verify") {
+                continue;
+            }
+            for t in k.toolset() {
+                assert!(served.contains(t), "mcp compile lacks `{}` of {}", t, k.kind());
+            }
+        }
+    }
+
     #[test]
     fn settle_pairs_is_in_the_pair_toolset_only() {
         assert!(toolset("rejudge-pair").contains(&PAIR_SETTLE_TOOL));

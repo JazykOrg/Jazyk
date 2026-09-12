@@ -36,7 +36,8 @@ loaded set as a stub.
   the budget cut off arrives as [expansion handles](./context.md#expansion-handles).
   Loading an already loaded target is a [repeat](./sessions.md#repeated-calls). Past
   the high-water mark the call is refused until something is unloaded
-  ([policy](./context.md#policy)). A node staged this session and not yet committed
+  ([policy](./context.md#policy)); the refusal's candidates never name the target
+  itself, and a target held as a stub reloads in place, its stub's chars discounted. A node staged this session and not yet committed
   is refused with `staged-target`: the loaded set renders the committed snapshot, the
   staged node is exactly what the write call sent, and it loads after `done`.
 - `expand({handle})`: load the frontier behind a handle, under the same policy. A

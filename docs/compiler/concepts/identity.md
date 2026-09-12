@@ -79,7 +79,12 @@ The rule for `upsert_entity`:
 
 - An upsert that supplies `parent` matches only an entity with that `name`, `scope`, and
   `parent`. It never matches an entity with a different or missing `parent`; placing an
-  existing entity under a parent is `update_entity` with `parent`, on the id.
+  existing entity under a parent is `update_entity` with `parent`, on the id. When the
+  only same-named entity in the scope has no parent, the upsert is refused with
+  `parentless-twin` naming it and that call, since a parentless twin is almost always
+  the concept whose whole the section just stated (an f2 session minted `ent:admin-cli-2`
+  under Orderly beside a parentless `ent:admin-cli` this way); a `note` saying what tells
+  the two apart lets the second one through.
 - An upsert without `parent` matches when exactly one entity with that `name` and
   `scope` exists, whatever its `parent`.
 - When several exist, the store rejects the call with an error naming the candidates

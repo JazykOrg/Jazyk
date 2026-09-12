@@ -35,7 +35,10 @@ the text `load` would return for each, so the initially loaded set is read, not 
 listed. The set holds items of three depths: a node loaded in full, a stub (one line), and a
 section body. Each item carries the handles at its frontier, the things that could be
 loaded next with a size estimate. The [skills](./sessions.md#skills) rendered this
-session ride in the same accounting.
+session show in the same total, but never trigger the load refusal: the high-water
+mark is measured over the loaded items alone, since a batch with two skills active
+(extraction and flow-views together pass 26k characters) could otherwise load
+nothing at all.
 
 What joins the set:
 

@@ -1386,8 +1386,15 @@ impl ToolSession {
 
     // Past the high-water mark, load and expand are refused with the unload
     // candidates named, until something is unloaded. Mirrors docs/compiler/context.md#policy.
-    fn refuse_past_high_water(&self, what: &str) -> Result<(), ToolError> {
-        if !self.loaded.over_high_water(self.skills.rendered_chars()) {
+    fn refuse_past_high_water(&self, what: &str, target: Option<&str>) -> Result<(), ToolError> {
+        // Skills show in the total but never trigger the refusal: measured over the
+        // items alone, and a target already held as a stub is reloaded in place, so
+        // its own chars never count against it. Mirrors docs/compiler/context.md#the-loaded-set.
+        let held = target
+            .and_then(|t| self.loaded.items.iter().find(|i| i.target == t))
+            .map(|i| i.chars)
+            .unwrap_or(0);
+        if self.loaded.used().saturating_sub(held) <= self.loaded.high_water {
             return Ok(());
         }
         let pinned = self.pinned_targets();
@@ -1401,6 +1408,8 @@ impl ToolSession {
                 .filter(|t| !pinned.contains(t))
                 .collect();
         }
+        // The thing being loaded is never the thing to unload.
+        candidates.retain(|c| Some(c.as_str()) != target);
         Err(ToolError::new(
             "context-full",
             format!(
@@ -3565,8 +3574,8 @@ impl ToolSession {
             "load" => {
                 let target = Self::str_arg(args, "target")?;
                 let depth = args["depth"].as_u64().unwrap_or(1).max(1) as u32;
-                self.refuse_past_high_water("load")?;
                 let id = self.canon_entity_id(&target).unwrap_or(target);
+                self.refuse_past_high_water("load", Some(&id))?;
                 let text = self
                     .loaded
                     .load(&self.snapshot, &id, depth)
@@ -3602,7 +3611,7 @@ impl ToolSession {
             }
             "expand" => {
                 let handle = Self::str_arg(args, "handle")?;
-                self.refuse_past_high_water("expand")?;
+                self.refuse_past_high_water("expand", None)?;
                 let text = self
                     .loaded
                     .expand(&self.snapshot, &handle)
@@ -4050,6 +4059,36 @@ impl ToolSession {
                         })
                         .map(|(id, _)| id.clone())
                 });
+                // A parentless twin: the same name in the same scope with no parent is
+                // almost always the concept whose whole this section states, so placing
+                // it is update_entity with parent; a second one under the parent needs a
+                // note. Mirrors docs/compiler/concepts/identity.md#the-natural-key-under-containment.
+                if existing.is_none() && parent.is_some() && note.is_none() {
+                    let key = name_arg.trim().to_lowercase();
+                    let twin = self
+                        .snapshot
+                        .graph
+                        .entities
+                        .iter()
+                        .filter(|(id, _)| !self.staged_entities.contains_key(*id))
+                        .map(|(id, e)| (id.clone(), e))
+                        .chain(self.staged_entities.iter().map(|(id, e)| (id.clone(), e)))
+                        .find(|(_, e)| {
+                            e.scope == scope
+                                && e.parent.is_none()
+                                && e.name.trim().to_lowercase() == key
+                        })
+                        .map(|(id, _)| id);
+                    if let Some(tid) = twin {
+                        return Err(ToolError::new(
+                            "parentless-twin",
+                            format!(
+                                "`{}` already exists without a parent as `{}`; to place it under `{}` call update_entity {{id: {}, parent: {}}}. A second `{}` under that parent is a different concept only with a `note` saying what tells them apart",
+                                name_arg, tid, parent.as_deref().unwrap_or(""), tid, parent.as_deref().unwrap_or(""), name_arg
+                            ),
+                        ));
+                    }
+                }
                 if let Some(id) = existing {
                     if let Some(p) = &parent {
                         self.staged_parents.insert(id.clone(), p.clone());

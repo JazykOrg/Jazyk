@@ -1199,8 +1199,16 @@ pub fn session_prompt_elided(
     if !loaded.initial_pack.is_empty() {
         s.push_str("\nLoaded items, as load returns them:\n");
         for t in &loaded.initial_pack {
-            s.push_str(t.trim_end());
-            s.push('\n');
+            // An item's own `## id` header nests under the Loaded block.
+            for line in t.trim_end().lines() {
+                if let Some(rest) = line.strip_prefix("## ") {
+                    s.push_str("### ");
+                    s.push_str(rest);
+                } else {
+                    s.push_str(line);
+                }
+                s.push('\n');
+            }
         }
     }
     s.push('\n');

@@ -293,7 +293,8 @@ the write tools. They serve the [`retrace`](./goals/retrace.md),
   ([over-limit views](./diagrams.md#over-limit-views)); the `split-view` goal follows.
 - `update_view({id, title?, members?, add_members?, remove_members?, query?, collapse?, exclude?, reasoning?})`:
   `members` replaces the whole ordered list; `add_members` and `remove_members` edit
-  it; `exclude` adds one `{id, note}` pair. On a default view any field clears the
+  it; `exclude` adds one `{id, note}` pair or a list of them, so one view's exclusions
+  batch into one call. On a default view any field clears the
   boolean `default` field: the store stops rewriting the view's `title` and `members`
   from the rule, and the view is curated from then on
   ([default views](./model/view.md#default-views)).
@@ -339,7 +340,8 @@ clear or keep change records; they are not graph mutations
   - `duplicate`: stages a `duplicate-requirement` diagnostic on the pair (severity
     `info`, `message` when given, else a line saying both are kept), then marks. The
     same-document delete stays on `delete_requirement` plus `mark_goal_done`: a
-    delete deserves its own call and reason.
+    delete deserves its own call and reason, and a `duplicate` entry whose two sides
+    quote one document is refused (`same-document-duplicate`) naming that route.
   - `contradiction`: stages a `contradiction` diagnostic on the pair with the entry's
     `severity` (`error` or `warning`, required), `message` (required), `reasoning`,
     and `prompt`, then marks.

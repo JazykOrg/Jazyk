@@ -827,14 +827,30 @@ impl McpServer {
                     .filter(|g| g.kind == "generate")
                     .map(|g| g.target.clone())
                     .collect();
-                reply["next"] = if generate.is_empty() {
-                    json!("compilation done; nothing pending")
-                } else {
-                    json!(format!(
-                        "compilation done; {} generation goal(s) ready (generation_tasks lists them)",
+                // Optional goals stand aside for the verdict but stay claimable:
+                // say so, or "nothing pending" contradicts the next goals reply.
+                let optional_ready = board2
+                    .ready_goals()
+                    .iter()
+                    .filter(|g| !g.mandatory && graph_kinds.contains(&g.kind.as_str()))
+                    .count();
+                let mut parts: Vec<String> = vec!["compilation converged".to_string()];
+                if optional_ready > 0 {
+                    parts.push(format!(
+                        "{} optional goal(s) stay claimable (begin_goals takes the next batch; the verdict does not wait for them)",
+                        optional_ready
+                    ));
+                }
+                if !generate.is_empty() {
+                    parts.push(format!(
+                        "{} generation goal(s) ready (generation_tasks lists them)",
                         generate.len()
-                    ))
-                };
+                    ));
+                }
+                if parts.len() == 1 {
+                    parts.push("nothing pending".to_string());
+                }
+                reply["next"] = json!(parts.join("; "));
                 reply["ready"] = json!({"generate": generate});
                 return reply;
             }

@@ -1231,12 +1231,24 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             ));
             let diags = open_diags_naming(store, &[rid, &nbr]);
             if diags.is_empty() {
-                hints.push("no open diagnostic on the pair".into());
+                hints.push("no open diagnostic on either side".into());
             } else {
+                // A diagnostic naming both sides is on the pair; one naming one side
+                // is context, and the hint says which.
                 for (id, d) in diags {
+                    let on_pair = d.subjects.iter().any(|s| s == rid)
+                        && d.subjects.iter().any(|s| s == &nbr);
+                    let where_ = if on_pair {
+                        "on the pair".to_string()
+                    } else if d.subjects.iter().any(|s| s == rid) {
+                        format!("on {} only", rid)
+                    } else {
+                        format!("on {} only", nbr)
+                    };
                     hints.push(format!(
-                        "open {} ({}, {}): {}",
+                        "open {} {} ({}, {}): {}",
                         id,
+                        where_,
                         d.rule,
                         d.severity,
                         truncate(&d.message, 100)

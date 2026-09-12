@@ -272,7 +272,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_view",
-            description: "Update a view. members replaces the whole ordered list; add_members and remove_members edit it; exclude adds one {id, note} pair (the member leaves the list and stays out). Any field on a default view makes it curated from then on.",
+            description: "Update a view. members replaces the whole ordered list; add_members and remove_members edit it; exclude adds one {id, note} pair or a list of them (each member leaves the list and stays out). Any field on a default view makes it curated from then on.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -282,7 +282,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "remove_members": {"type": "array", "items": {"type": "string"}},
                     "query": query_schema(),
                     "collapse": {"type": "array", "items": {"type": "string"}},
-                    "exclude": exclusion_schema(),
+                    "exclude": {"anyOf": [exclusion_schema(), {"type": "array", "items": exclusion_schema()}]},
                     "reasoning": {"type": "string"}
                 }),
                 &["id"],
@@ -1915,6 +1915,28 @@ impl ToolSession {
             let evidence = match verdict.as_str() {
                 "consistent" => json!({"verdict": "consistent"}),
                 "duplicate" => {
+                    // Two quotes of one document are the same-document case: the
+                    // worse-sourced side is deleted, never kept beside a finding.
+                    // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
+                    let doc_of = |id: &str| {
+                        self.snapshot
+                            .graph
+                            .requirements
+                            .get(id)
+                            .and_then(|r| r.source.as_ref())
+                            .map(|s| s.doc.clone())
+                    };
+                    if let (Some(da), Some(db)) = (doc_of(&a), doc_of(&b)) {
+                        if da == db {
+                            return Err(ToolError::new(
+                                "same-document-duplicate",
+                                format!(
+                                    "{} and {} both quote {}: a same-document duplicate is settled by delete_requirement on the worse-sourced side plus mark_goal_done with evidence {{verdict: duplicate, carried_by: <deleted id>}}, never by a duplicate-requirement finding that keeps both",
+                                    a, b, da
+                                ),
+                            ));
+                        }
+                    }
                     let filed = self.dispatch_inner(
                         "report_diagnostic",
                         &json!({
@@ -8179,6 +8201,17 @@ mod tests {
     #[test]
     fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
         let mut t = pair_session();
+        // A duplicate across documents is the filing case; the same-document case
+        // is a delete and is refused below.
+        if let Some(src) = t
+            .snapshot
+            .graph
+            .requirements
+            .get_mut("req:a")
+            .and_then(|r| r.source.as_mut())
+        {
+            src.doc = "other.md".into();
+        }
         t.snapshot.graph.diagnostics.insert(
             "diag:contradiction-7".into(),
             Diagnostic {
@@ -8221,6 +8254,22 @@ mod tests {
         assert_eq!(r[3]["error"]["rule"], "unknown-goal", "{}", r[3]);
         assert_eq!(r[4]["error"]["rule"], "bad-args", "{}", r[4]);
         assert!(r[4]["error"]["message"].as_str().unwrap().contains("message"));
+        // Two sides quoting one document: the delete route, never a filing.
+        let same = t
+            .dispatch(
+                PAIR_SETTLE_TOOL,
+                &json!({"verdicts": [
+                    {"goal": "g:rejudge-pair:req:b~req:c", "verdict": "duplicate",
+                     "justification": "Restated in one document."}
+                ]}),
+            )
+            .unwrap();
+        assert_eq!(
+            same["results"][0]["error"]["rule"],
+            "same-document-duplicate",
+            "{}",
+            same
+        );
         assert_eq!(r[5]["error"]["rule"], "bad-severity", "{}", r[5]);
         // Two staged ops: the duplicate filing and the resolve; the refused
         // contradiction staged nothing.

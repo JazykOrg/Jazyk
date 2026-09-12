@@ -1146,13 +1146,12 @@ pub fn threshold_crossings(store: &Store) -> Vec<Crossing> {
             *children.entry(p).or_insert(0) += 1;
         }
     }
+    // A requirement counts toward the entity it leads (its first-listed entity, the
+    // subject), never toward the ones it only references.
+    // Mirrors docs/compiler/goals/abstract-entity.md#created-when.
     for r in store.graph.requirements.values() {
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        for e in &r.entities {
-            let id = store.resolve_id(e);
-            if seen.insert(id) {
-                *reqs.entry(id).or_insert(0) += 1;
-            }
+        if let Some(first) = r.entities.first() {
+            *reqs.entry(store.resolve_id(first)).or_insert(0) += 1;
         }
     }
     let mut roots: BTreeMap<&str, u64> = BTreeMap::new();

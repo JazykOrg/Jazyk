@@ -3686,7 +3686,7 @@ impl GoalKind for SplitView {
                         .as_ref()
                         .map(|s| format!("{}#{}", s.doc, s.section));
                     if last_section.is_some() && sec != last_section {
-                        hints.push(format!("break after {} (section boundary)", m));
+                        hints.push(format!("break before {} (section boundary)", m));
                     }
                     last_section = sec;
                 }
@@ -3957,10 +3957,21 @@ pub fn caps_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Viol
     })?;
     let soft = rec.detail["soft"].as_u64()?;
     let hard = rec.detail["hard"].as_u64().unwrap_or(soft);
+    // The count is the statements the target leads (first-listed entity), as the
+    // threshold counts them (docs/compiler/goals/abstract-entity.md#created-when).
     let names_target =
-        |entities: &[String]| entities.iter().any(|x| store.resolve_id(x) == target);
-    let mut referencing: BTreeSet<String> =
-        store.requirements_referencing(target).into_iter().collect();
+        |entities: &[String]| entities.first().is_some_and(|x| store.resolve_id(x) == target);
+    let mut referencing: BTreeSet<String> = store
+        .requirements_referencing(target)
+        .into_iter()
+        .filter(|id| {
+            store
+                .graph
+                .requirements
+                .get(id)
+                .is_some_and(|r| names_target(&r.entities))
+        })
+        .collect();
     for op in staged {
         match op {
             Op::UpdateRequirement {

@@ -795,6 +795,26 @@ The loop continued onto the org corpus and onto generation:
   non-normative, `sm:order`), and checklinks reports zero broken links on the
   generated pages after the docsgen anchor and quote-link fixes.
 
+- example-novel, no answer key in the copy: converged after two driver rounds (eleven
+  invocations, 1085 turns, $67.87, 132 minutes) at 100 percent coverage with 251
+  requirements, 267 pair verdicts, and 47 entity reviews. The traps held: one Ines
+  Marlow with `Nessa` as an alias and no `ent:nessa`, Theo's 34 versus 36 filed as an
+  error with Ines's 31 twice a quiet duplicate, both `acquaintance` transitions standing
+  with `nondeterministic-transition` from the checks and a contradiction from a session,
+  the research note's three-day rule extracted and the section covered, no chapter-file
+  or directory entity, the two ledgers and the three Marlows apart, the notebook scene an
+  instance of Scene with its four values. What it cost: the two leads carried 95 and 82
+  statements, so `requirements-per-entity` (hard 80) raised mandatory `abstract-entity`
+  goals on people, and the sessions moved each lead's arc into an `arc` sub-entity to
+  get under the limit, taking the state machines with it; the limit now counts the
+  statements an entity leads (its first-listed entity), never the ones that only name
+  it. A session also grouped the four characters and the Marlow family under a derived
+  Characters node along the front door's index line, and split the 30-member plot flow
+  into one sequence view per chapter with an overview above them. The characters carry
+  no `age` or `occupation` attributes: the contract had said an attribute goes on the
+  entity "instead" of a requirement while the skill's example said requirement, and the
+  sessions chose requirements (both now).
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

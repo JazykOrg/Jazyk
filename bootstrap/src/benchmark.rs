@@ -2217,7 +2217,7 @@ mod tests {
                 "split-view" => {
                     assert_eq!(goal.change["limits"][0]["limit"], "participants-per-sequence-view");
                     assert!(
-                        goal.hints.iter().any(|h| h.starts_with("break after req:purchase-7")),
+                        goal.hints.iter().any(|h| h.starts_with("break before req:purchase-7")),
                         "{:?}",
                         goal.hints
                     );

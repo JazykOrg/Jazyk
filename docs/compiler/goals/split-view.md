@@ -171,8 +171,10 @@ The hint computer emits, per goal:
 - `<count> > <limit> (<limit name>, soft <s>, hard <h>)`: the change.
 - `collapse <ent> (<n> descendants hidden, <m> arrows lifted)`: for a structural view,
   the members with the largest subtrees, best first, with the effect on both counts.
-- `break after <req> (<sentence>)`: for a flow view, the members at which the documents
-  break the flow (a section boundary, a "then", a change of initiator), in order.
+- `break before <req> (<sentence>)`: for a flow view, the members at which the
+  documents break the flow (the first member of a new section, a "then", a change of
+  initiator), in order; a session once read `break after` as naming the last member
+  before the boundary where it named the first after it.
 - `participants: <n> (<names>)`: for a sequence or communication view.
 - `linked <view>`: the sub-views already linked to this view.
 - `skill structural-views` or `skill flow-views`, per kind.

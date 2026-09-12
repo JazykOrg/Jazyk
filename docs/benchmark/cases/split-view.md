@@ -4,7 +4,7 @@ Grades view splitting ([`split-view`](../../compiler/goals/split-view.md)) on a
 sequence view over its participant limit. The goal derives from the seeded fixture:
 the curated view draws ten participants against a soft limit of eight
 (`participants-per-sequence-view`), so the seeding commit writes `threshold-crossed`
-on it and the board derives the goal with its `break after` hint at the section
+on it and the board derives the goal with its `break before` hint at the section
 boundary ([derived goals](../cases.md#derived-goals)).
 
 The document states the break: `## Checkout` (six steps among six participants) then

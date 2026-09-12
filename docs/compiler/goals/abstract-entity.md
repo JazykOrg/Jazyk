@@ -37,7 +37,7 @@ third, `children-per-entity`, derives the [fan-out variant](#the-fan-out-variant
 
 | limit | soft | hard | counts |
 |---|---|---|---|
-| `requirements-per-entity` | 50 | 80 | requirements listing the entity in `entities` |
+| `requirements-per-entity` | 50 | 80 | requirements the entity leads: those whose first-listed entity (the subject) it is. A statement that only references it counts toward its own subject, so a lead character named in ninety plot lines, or a Customer named in every order rule, is not asked to split itself into sub-concepts over what other things do to it (a novel run once moved both leads' arcs into `arc` sub-entities to get under the limit, and the state machines went with them) |
 | `states-per-state-machine` | 12 | 20 | states of the entity's derived [state machine](../model/state-machine.md#derivation) `sm:<slug>`; the record's subject is the machine's subject, since the machine derives from the subject's requirements |
 | `children-per-entity` | 9 | 15 | entities whose `parent` is the entity, or the parentless entities of a scope for the root form; the fan-out variant |
 
@@ -98,7 +98,8 @@ entities were never grouped is resolved by the same split.
 Sub-entities with `parent`, detail moved, docs proposals staged, count within the limit.
 At `mark_goal_done` the harness checks over the staged state:
 
-- The crossed count is within the limit's soft value, or the entity's bump
+- The crossed count (the statements the entity leads) is within the limit's soft value
+  named in the goal's `Change` line, or the entity's bump
   (`count-over-limit` otherwise, the refusal naming the count and both honest exits).
   A split that only de-escalates commits its work at `done` but does not resolve the
   goal: the goal stays open, optional, and the session moves more grouped statements

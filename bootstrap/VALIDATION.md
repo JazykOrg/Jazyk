@@ -749,6 +749,31 @@ What the loop fixed, docs first then code, in the order found:
   defines under the area; a test case's data blocks belong to the case section; a
   contradiction prompt's `old_text` comes from the section, not only the quote.
 
+The loop continued onto the org corpus and onto generation:
+
+- example-org, no answer key in the copy: converged twice at 100 percent coverage
+  with every one of its eight traps passing (one Employee, one Finance, the 250 versus
+  500 threshold as an error with a two-option prompt, the salary-band rule out of
+  Background, no form-number or path entity, the glossary quiet, `hired` never entered
+  and `dead-end-state` filed, "promptly" flagged unmeasured). The first run spent 155
+  pair verdicts and $23.38 because pairs qualified on shared tokens such as `s`, `at`,
+  and `their`; with function words and short tokens dropped the rerun spent 106 on a
+  richer graph (35 entities against 27) for $21.73.
+- Generation over `jazyk mcp all` on the converged f2 (tracked fixture files only):
+  three invocations bound 29 requirements and generated five entities (Admin CLI,
+  Catalog, Customer, Inventory, Restock task) with every recorded row green, the
+  medium recorded first by the agent through `record_medium`. On example-sort the
+  agent recorded a Node script as the medium, bound all 17 requirements (two as `llm`
+  rows), found nothing to generate, and left one test failing on purpose: it encodes
+  the documented Simple case, which contradicts the ascending rule, the real defect
+  the compile had already filed. What the runs fixed: an actor with no files of its
+  own re-deriving forever as `files-gone`, the medium undecidable by an external
+  worker, the crate root no entity could touch (`supportFiles`), a shared requirement
+  tested once per entity, a test name matched literally where a Rust runner addresses
+  `tests::req_x`, an earlier test keyed on an id that renumbers between compiles
+  rather than the statement hash, and stale tests reconstructed by hand
+  (`existingTests` in the binding package now names them).
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a statement repair inside a pair
 session re-deriving its pairs; the front door's "Its concerns are described in"

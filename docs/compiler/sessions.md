@@ -128,7 +128,7 @@ shows its block. The hints are computed and honest (what to load, which skill ex
 the shape, which tool usually resolves the kind); the gate is the truth.
 
 The `## Loaded` block is the model's working set and the harness keeps it current: it
-re-renders condensed on every mutating tool reply and in full on `graph_status`
+re-renders condensed on a mutating tool reply when it changed, one line when it did not, and in full on `graph_status`
 ([context](./context.md#the-loaded-set)). Over ACP the whole prompt travels as the
 session prompt; over plain MCP `begin_goals` carries the same assembly as
 `instructions` and the loaded set as `package`, eliding the contract and the skills a

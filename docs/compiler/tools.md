@@ -63,8 +63,10 @@ loaded set as a stub.
 - `read_section({ref})`: one section's raw body and its child titles. A bare document
   name (`orders.md`, or `orders.md#`) reads the document's root section, the way a
   reader opens a file to see what it is about.
-- `get_entity({id})`: one entity with its definition, stereotype, parent, attributes,
-  mentions, requirements, relationships, and its derived state machine when one exists.
+- `get_entity({id})`: one entity with its definition, stereotype, parent, children,
+  attributes, mentions, requirements, relationships, and its derived state machine
+  when one exists; `parent`, `stereotype`, `attributes`, and `children` appear only
+  when set, so a review can tell an absent parent from an unknown one.
   The lookup sees the session's own staged entities, same as `search`.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
   collapse list, the relationships among its members (lifted where a member is

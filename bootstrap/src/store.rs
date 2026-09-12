@@ -3930,9 +3930,18 @@ impl Store {
         crate::derive::recompute(self, &build, &mut batch);
         self.record_reparent_flips(&moves, &mut batch);
 
-        // The typed dirtiness this commit caused. Mirrors docs/compiler/graph.md#change-records.
+        // The typed dirtiness this commit caused. A review's own mutations on its
+        // target write no record for it: the review saw the result it staged, and a
+        // definition refresh must not reopen the review that made it.
+        // Mirrors docs/compiler/graph.md#change-records and
+        // docs/compiler/goals/review-entity.md#created-when.
+        let reviewed: BTreeSet<&str> = commit
+            .resolved
+            .iter()
+            .filter_map(|r| r.goal.strip_prefix("g:review-entity:"))
+            .collect();
         for (id, (m, via)) in &dirt.entities {
-            if self.graph.entities.contains_key(id) {
+            if self.graph.entities.contains_key(id) && !reviewed.contains(id.as_str()) {
                 batch.push(*m, CHANGE_ENTITY, id, via, serde_json::Value::Null);
             }
         }

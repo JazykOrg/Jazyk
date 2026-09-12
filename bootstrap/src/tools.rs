@@ -1271,6 +1271,9 @@ pub struct ToolSession {
     // Parents this session set on existing entities: the cycle gate reads them.
     staged_parents: std::collections::BTreeMap<String, String>,
     taken_ids: BTreeSet<String>,
+    // The condensed status block as last rendered on a reply: an unchanged set
+    // answers with one line instead of the same listing again.
+    last_condensed: std::cell::RefCell<String>,
     // True only while finish_implicit drives `done`: the implicit path commits around
     // an unmarked dirty section instead of bouncing (docs/compiler/sessions.md#budgets).
     implicit_done: bool,
@@ -1316,6 +1319,7 @@ impl ToolSession {
             staged_views: Default::default(),
             staged_parents: Default::default(),
             taken_ids: Default::default(),
+            last_condensed: Default::default(),
             implicit_done: false,
         }
     }
@@ -1381,7 +1385,19 @@ impl ToolSession {
     }
 
     fn condensed_status(&self) -> String {
-        self.loaded.render_condensed(self.skills.rendered_chars())
+        // The listing only when it changed; twenty-six updates echoing the same two
+        // thousand characters was repetition. Mirrors docs/compiler/context.md#the-loaded-set.
+        let full = self.loaded.render_condensed(self.skills.rendered_chars());
+        let mut last = self.last_condensed.borrow_mut();
+        if *last == full {
+            return format!(
+                "## Loaded: unchanged ({} items, {} chars; graph_status renders it in full)",
+                self.loaded.items.len(),
+                self.loaded.used() + self.skills.rendered_chars()
+            );
+        }
+        *last = full.clone();
+        full
     }
 
     // Past the high-water mark, load and expand are refused with the unload
@@ -3885,6 +3901,28 @@ impl ToolSession {
                 // The default scope is noise; showing it reads as a value someone set.
                 if e.scope != "public" {
                     v["scope"] = json!(e.scope);
+                }
+                // The containment and label fields a review judges: absent means absent.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                if let Some(p) = &e.parent {
+                    v["parent"] = json!(p);
+                }
+                if let Some(s) = &e.stereotype {
+                    v["stereotype"] = json!(s);
+                }
+                if !e.attributes.is_empty() {
+                    v["attributes"] = json!(e.attributes);
+                }
+                let children: Vec<&String> = self
+                    .snapshot
+                    .graph
+                    .entities
+                    .iter()
+                    .filter(|(_, c)| c.parent.as_deref() == Some(rid.as_str()))
+                    .map(|(cid, _)| cid)
+                    .collect();
+                if !children.is_empty() {
+                    v["children"] = json!(children);
                 }
                 self.loaded.load_stub(&self.snapshot, &rid);
                 Ok(v)

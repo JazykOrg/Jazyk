@@ -54,8 +54,10 @@ What leaves it: `unload`. Nothing else shrinks the set; a session that loads fre
 never unloads reaches the high-water mark and is told so.
 
 The status block renders in the [session prompt](./sessions.md#the-prompt) as the
-`## Loaded` block, condensed on every mutating tool reply, and in full on
-`graph_status`. The transcript records each rendering, so what the model saw is on
+`## Loaded` block, condensed on a mutating tool reply when the set changed since the
+last reply (one line saying it is unchanged otherwise, since twenty-six updates
+echoing the same two thousand characters is repetition, not information), and in full
+on `graph_status`. The transcript records each rendering, so what the model saw is on
 record.
 
 ## Tools

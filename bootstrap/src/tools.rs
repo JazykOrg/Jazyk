@@ -64,10 +64,10 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "search",
-            description: "Look up entities by name or alias (kind entity, the default) or views by title (kind view) before creating one. Returns up to 8 possible matches; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
+            description: "Look up entities by name or alias (kind entity, the default) or views by title (kind view) before creating one. Pass query for one name, or queries for every name a section introduces in one call (one result per query, in order). Returns up to 8 possible matches per name; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
             parameters: obj(
-                json!({"query": {"type": "string"}, "kind": {"type": "string", "enum": ["entity", "view"]}}),
-                &["query"],
+                json!({"query": {"type": "string"}, "queries": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "kind": {"type": "string", "enum": ["entity", "view"]}}),
+                &[],
             ),
         },
         ToolDef {
@@ -3566,7 +3566,21 @@ impl ToolSession {
                 let text = self
                     .loaded
                     .load(&self.snapshot, &id, depth)
-                    .map_err(|e| ToolError::new("bad-target", e))?;
+                    .map_err(|e| {
+                        // A node staged this session is not in the committed snapshot
+                        // the loaded set renders. Mirrors docs/compiler/tools.md#read-tools.
+                        if self.staged_reqs.contains(&id) || self.staged_entities.contains_key(&id) {
+                            ToolError::new(
+                                "staged-target",
+                                format!(
+                                    "`{}` is staged in this session and not committed yet: the loaded set renders the committed snapshot, the staged node is exactly what your write call sent, and it loads after done",
+                                    id
+                                ),
+                            )
+                        } else {
+                            ToolError::new("bad-target", e)
+                        }
+                    })?;
                 let mut v = json!({"pack": text});
                 // In a serving, the first node of a kind loaded brings the kind's
                 // skill, once; a batch works under its goal kinds' skills and reads
@@ -4575,7 +4589,7 @@ impl ToolSession {
                         && rs.section == source.section
                         && (crate::store::normalize_statement(&r.statement) == norm_statement
                             || (crate::store::normalize_statement(&rs.quote) == norm_quote
-                                && crate::store::statement_subsumes(
+                                && crate::store::statement_rewords(
                                     &r.statement,
                                     &requirement.statement,
                                 )))
@@ -4609,9 +4623,16 @@ impl ToolSession {
                     if !requirement.facets.is_empty() {
                         r.facets = requirement.facets;
                     }
+                    let matched = (crate::store::normalize_statement(&r.statement)
+                        != norm_statement)
+                        .then(|| r.statement.clone());
                     r.statement = requirement.statement;
                     r.source = requirement.source;
-                    return Ok(json!({"id": id.clone(), "updated": true}));
+                    let mut v = json!({"id": id.clone(), "updated": true});
+                    if let Some(m) = matched {
+                        v["matched"] = json!(m);
+                    }
+                    return Ok(v);
                 }
                 // A statement the store already holds updates in place. A stale anchor
                 // in the same section whose statement subsumes (or is subsumed by) the
@@ -4646,13 +4667,26 @@ impl ToolSession {
                             .cloned()
                     });
                 if let Some(rid) = existing {
+                    // The reply names the statement the call landed on when it differs,
+                    // so a fold is never silent. Mirrors docs/compiler/tools.md#write-tools.
+                    let matched = self
+                        .snapshot
+                        .graph
+                        .requirements
+                        .get(&rid)
+                        .filter(|r| crate::store::normalize_statement(&r.statement) != norm_statement)
+                        .map(|r| r.statement.clone());
                     self.staged_reqs.insert(rid.clone());
                     self.taken_ids.insert(rid.clone());
                     self.stage(Op::CreateRequirement {
                         id: rid.clone(),
                         requirement,
                     })?;
-                    return Ok(json!({"id": rid, "updated": true}));
+                    let mut v = json!({"id": rid, "updated": true});
+                    if let Some(m) = matched {
+                        v["matched"] = json!(m);
+                    }
+                    return Ok(v);
                 }
                 // A new statement: the store mints the id; a supplied id is ignored.
                 let mut taken = self.taken_ids.clone();

@@ -659,6 +659,18 @@ const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/goals/prompts/feed
 
 // The protocol line; {target} is the batch id.
 const WORKER_PROTOCOL: &str = include_str!("../../docs/compiler/goals/prompts/worker-protocol.md");
+// The protocol line for a prompt returned by begin_goals itself: the batch is already
+// claimed when the agent reads it. Mirrors docs/compiler/sessions.md#the-prompt.
+const SERVING_PROTOCOL: &str =
+    include_str!("../../docs/compiler/goals/prompts/serving-protocol.md");
+
+// Which side of the claim the prompt is read from: ahead of it (an ACP session prompt,
+// a preview) or after it (the instructions a standalone MCP serving returns).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Protocol {
+    Worker,
+    Serving,
+}
 
 // The note rides directly under the first paragraph: the first says what the session
 // is, the second how to report that the rest of the prompt failed it.
@@ -1006,12 +1018,79 @@ pub fn change_line(goal: &Goal) -> String {
     let mut s = if goal.change.is_null() {
         "(no change payload)".to_string()
     } else {
-        llm::truncate(&goal.change.to_string(), 160).to_string()
+        llm::truncate(&change_words(&goal.change), 240).to_string()
     };
     if let Some(c) = &goal.cause {
         s.push_str(&format!(" (g{} via {})", c.generation, c.via));
     }
     s
+}
+
+// A change record as `field: value` pairs, one line, never raw JSON: `dirty: doc
+// docs/orders.md, section /orders; unprocessed`, `revised: req:orders-6; fields:
+// statement, transition`. Nested objects flatten to their own pairs, lists join with
+// commas, a bare true is the field name alone, and false or empty fields are dropped.
+// Mirrors docs/compiler/sessions.md#the-prompt.
+pub fn change_words(v: &Value) -> String {
+    fn scalar(v: &Value) -> Option<String> {
+        match v {
+            Value::Null => None,
+            Value::Bool(false) => None,
+            Value::Bool(true) => Some(String::new()),
+            Value::String(s) if s.is_empty() => None,
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Array(a) if a.is_empty() => None,
+            Value::Array(a) => {
+                let parts: Vec<String> = a.iter().filter_map(scalar).collect();
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join(", "))
+                }
+            }
+            Value::Object(o) if o.is_empty() => None,
+            Value::Object(o) => {
+                let parts: Vec<String> = o
+                    .iter()
+                    .filter_map(|(k, v)| scalar(v).map(|s| pair(k, &s)))
+                    .collect();
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(parts.join(", "))
+                }
+            }
+        }
+    }
+    fn pair(k: &str, v: &str) -> String {
+        if v.is_empty() {
+            k.to_string()
+        } else {
+            format!("{} {}", k, v)
+        }
+    }
+    match v {
+        Value::Object(o) => {
+            let parts: Vec<String> = o
+                .iter()
+                .filter_map(|(k, v)| {
+                    let s = scalar(v)?;
+                    Some(if s.is_empty() {
+                        k.to_string()
+                    } else {
+                        format!("{}: {}", k, s)
+                    })
+                })
+                .collect();
+            if parts.is_empty() {
+                "(no change payload)".to_string()
+            } else {
+                parts.join("; ")
+            }
+        }
+        other => scalar(other).unwrap_or_else(|| "(no change payload)".to_string()),
+    }
 }
 
 // Assemble the session prompt for a batch, in the fixed order: the agent contract
@@ -1033,6 +1112,7 @@ pub fn session_prompt(
         project_block,
         true,
         &BTreeSet::new(),
+        Protocol::Worker,
     )
 }
 
@@ -1048,6 +1128,7 @@ pub fn session_prompt_elided(
     project_block: &ProjectBlock,
     include_contract: bool,
     delivered_skills: &BTreeSet<String>,
+    protocol: Protocol,
 ) -> String {
     let mut s = if include_contract {
         with_feedback_note(AGENT_CONTRACT)
@@ -1074,6 +1155,11 @@ pub fn session_prompt_elided(
     s.push('\n');
     s.push_str(&project_block.render());
     s.push_str("\n## Goals\n");
+    // The contract paragraph renders once per kind, under the first goal of that kind;
+    // later goals of the kind point at it. Mirrors docs/compiler/sessions.md#the-prompt.
+    let mut contracted: BTreeSet<String> = BTreeSet::new();
+    // A hint repeated verbatim from an earlier goal renders once.
+    let mut hinted: BTreeSet<String> = BTreeSet::new();
     for g in batch {
         s.push_str(&format!(
             "- [{}] {}\n",
@@ -1083,24 +1169,37 @@ pub fn session_prompt_elided(
         if let Some(k) = goals::kind(&g.kind) {
             let paragraph = k.prompt().trim();
             if !paragraph.is_empty() {
-                for line in paragraph.lines() {
-                    s.push_str("  ");
-                    s.push_str(line);
-                    s.push('\n');
+                if contracted.insert(g.kind.clone()) {
+                    for line in paragraph.lines() {
+                        s.push_str("  ");
+                        s.push_str(line);
+                        s.push('\n');
+                    }
+                } else {
+                    s.push_str(&format!(
+                        "  Contract: as the first {} goal above.\n",
+                        g.kind
+                    ));
                 }
             }
         }
         s.push_str(&format!("  Change: {}\n", change_line(g)));
         s.push_str(&format!("  Gate: {}\n", gate_line(&g.kind)));
-        if !g.hints.is_empty() {
-            s.push_str(&format!("  Hints: {}\n", g.hints.join("; ")));
+        let fresh: Vec<&String> = g.hints.iter().filter(|h| hinted.insert((*h).clone())).collect();
+        if !fresh.is_empty() {
+            let line: Vec<&str> = fresh.iter().map(|h| h.as_str()).collect();
+            s.push_str(&format!("  Hints: {}\n", line.join("; ")));
         }
     }
     s.push('\n');
     let pinned: BTreeSet<String> = batch.iter().map(|g| g.target.clone()).collect();
     s.push_str(&loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned));
     s.push('\n');
-    s.push_str(&WORKER_PROTOCOL.replace("{target}", &project_block.batch));
+    let line = match protocol {
+        Protocol::Worker => WORKER_PROTOCOL,
+        Protocol::Serving => SERVING_PROTOCOL,
+    };
+    s.push_str(&line.replace("{target}", &project_block.batch));
     if !s.ends_with('\n') {
         s.push('\n');
     }

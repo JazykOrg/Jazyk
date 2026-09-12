@@ -261,11 +261,15 @@ computed deterministically:
   shared content token, typically the verb stem, and scores one more: an opening
   paragraph summarizes the steps below it (`expenses-5` against `expenses-6` share
   `expense claim` and `file` and nothing else).
-- a pair whose only shared entity is the graph's hub counts no entity toward its score
-  and qualifies on three shared content tokens, never two. The hub is the entity
-  co-referenced with the most other entities across requirements; a tie names none.
-  Sharing the hub says little: one hub-sharing flood derived forty-nine pair goals
-  with one real pair among them.
+- the graph's hub never counts as a shared entity: a pair whose only shared entity is
+  the hub counts no entity toward its score and qualifies on three shared content
+  tokens, never two, and a pair sharing the hub plus one other entity counts that one
+  entity, so it needs the two shared tokens like any single-entity pair. The hub is
+  the entity co-referenced with the most other entities across requirements; a tie
+  names none. Sharing the hub says little: one hub-sharing flood derived forty-nine
+  pair goals with one real pair among them, and on a ten-document shop the hub plus
+  Product qualified every stock, catalog, and order statement against each other with
+  no word in common.
 - Best six by score.
 
 Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed

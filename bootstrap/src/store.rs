@@ -529,7 +529,8 @@ pub(crate) fn normalize_statement(s: &str) -> String {
 
 // Same fact reworded: one statement's content tokens contained in the other's. A
 // resumed build often re-extracts "X" as "X using Y" from the same sentence; that is
-// one fact, not two. Distinct atomic facts sharing a sentence are not subsets.
+// one fact, not two. The loose form serves the stale-anchor path, where the dead quote
+// is the signal that a statement is being re-recorded.
 pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
     let toks = |s: &str| -> std::collections::BTreeSet<String> {
         normalize_statement(s)
@@ -539,6 +540,31 @@ pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
     };
     let (ta, tb) = (toks(a), toks(b));
     !ta.is_empty() && !tb.is_empty() && (ta.is_subset(&tb) || tb.is_subset(&ta))
+}
+
+// The tight form for two statements quoting the same live sentence: two facts from one
+// sentence share most of their words too ("An Order is paid within 21 days of
+// placement" inside "When an Order is not paid within 21 days of placement, Orderly
+// cancels it"), so a rewording may add at most two tokens and no negation.
+// Mirrors docs/compiler/tools.md#write-tools.
+pub(crate) fn statement_rewords(a: &str, b: &str) -> bool {
+    const NEGATIONS: [&str; 6] = ["not", "never", "no", "unless", "except", "otherwise"];
+    let toks = |s: &str| -> std::collections::BTreeSet<String> {
+        normalize_statement(s)
+            .split(' ')
+            .map(String::from)
+            .collect()
+    };
+    let (ta, tb) = (toks(a), toks(b));
+    if ta.is_empty() || tb.is_empty() {
+        return false;
+    }
+    let (small, large) = if ta.len() <= tb.len() { (&ta, &tb) } else { (&tb, &ta) };
+    small.is_subset(large)
+        && large.len() - small.len() <= 2
+        && !large
+            .difference(small)
+            .any(|t| NEGATIONS.contains(&t.as_str()))
 }
 
 // Whitespace-insensitive containment: a quote wrapped across source lines still locates.
@@ -1427,14 +1453,16 @@ impl Store {
                 .content_tokens(&other.statement, &other.entities)
                 .intersection(&toks)
                 .count();
-            // A pair whose only shared entity is the hub counts no entity and needs
-            // three shared tokens: sharing the hub says little, and a hub-sharing
-            // flood once derived forty-nine pair goals with one real pair among them.
-            let hub_only = shared_entities == 1
-                && hub
-                    .as_deref()
-                    .map(|h| subject_entities.contains(h) && other_entities.contains(h))
-                    .unwrap_or(false);
+            // The hub never counts as a shared entity: sharing it says little (a
+            // hub-sharing flood once derived forty-nine pair goals with one real pair
+            // among them, and the hub plus one entity paired every statement of a shop
+            // with no word in common). A pair sharing only the hub needs three tokens.
+            let hub_shared = hub
+                .as_deref()
+                .map(|h| subject_entities.contains(h) && other_entities.contains(h))
+                .unwrap_or(false);
+            let shared_entities = shared_entities - usize::from(hub_shared);
+            let hub_only = hub_shared && shared_entities == 0;
             let (entity_score, token_bar) = if hub_only {
                 (0, 3)
             } else {
@@ -2813,7 +2841,7 @@ impl Store {
                                     && (same_statement
                                         || (normalize_statement(&a.quote)
                                             == normalize_statement(&b.quote)
-                                            && statement_subsumes(
+                                            && statement_rewords(
                                                 &r.statement,
                                                 &incoming.statement,
                                             )))
@@ -5643,6 +5671,20 @@ mod tests {
         assert!(!statement_subsumes(
             "The gateway is a REST service.",
             "The gateway is built with Go."
+        ));
+        // A second fact that repeats the first's words and adds a clause is not a
+        // rewording: the deadline and the cancellation it triggers are two statements.
+        assert!(!statement_rewords(
+            "An Order is paid within 21 days of placement.",
+            "When an Order is not paid within 21 days of placement, Orderly cancels it."
+        ));
+        assert!(!statement_rewords(
+            "The Shop sends a confirmation email.",
+            "The Shop does not send a confirmation email."
+        ));
+        assert!(statement_rewords(
+            "The Admin CLI creates a user.",
+            "The Admin CLI creates a user using createUser."
         ));
     }
 

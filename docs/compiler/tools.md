@@ -36,7 +36,9 @@ loaded set as a stub.
   the budget cut off arrives as [expansion handles](./context.md#expansion-handles).
   Loading an already loaded target is a [repeat](./sessions.md#repeated-calls). Past
   the high-water mark the call is refused until something is unloaded
-  ([policy](./context.md#policy)).
+  ([policy](./context.md#policy)). A node staged this session and not yet committed
+  is refused with `staged-target`: the loaded set renders the committed snapshot, the
+  staged node is exactly what the write call sent, and it loads after `done`.
 - `expand({handle})`: load the frontier behind a handle, under the same policy. A
   frontier that does not fit is refused with its size estimate and an unload
   suggestion. Expanding a closed handle is a repeat.
@@ -133,11 +135,15 @@ a mutating reply previews the goals the mutation will open
   `updated: true` and refreshes its `statement` and `quote` in place, never minting a
   duplicate; the model sees the resolution, not a misleading fresh id. A statement
   re-extracted from the same source sentence whose content subsumes or is subsumed by
-  the existing statement is the same fact reworded: it also updates in place. A stale
+  the existing statement is the same fact reworded: it also updates in place, and the
+  reply carries `matched` with the statement it landed on. Subsumption is tight: the
+  longer statement adds at most two content words to the shorter and adds no negation
+  (`not`, `never`, `no`, `unless`, `except`, `otherwise`), so "An Order is paid within
+  21 days of placement" and "When an Order is not paid within 21 days of placement,
+  Orderly cancels it", two facts from one sentence, stay two requirements. A stale
   anchor in the same section whose statement subsumes or is subsumed by the new
   statement resolves the same way, so re-recording a reworded statement lands on the
-  anchor's id. A sentence carrying several atomic facts is unaffected, since those
-  statements are not subsets of each other. `edges` are `[{a, b, type?, cardinality?}]`,
+  anchor's id; there the dead quote is the signal, so any subsumption counts. `edges` are `[{a, b, type?, cardinality?}]`,
   directional, both ends among `entities` ([edges](./model/requirement.md#edges)).
   `transition` is `{subject, from, to, trigger?, guard?}` with `subject` among
   `entities` ([transition](./model/requirement.md#transition)). `facets` are

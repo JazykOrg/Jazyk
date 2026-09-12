@@ -247,7 +247,10 @@ serving; what it claims is a batch:
   batches so the agent picks again without a second `goals` call. The claim reloads
   the store, syncs the section trees in memory, opens a changeset, assembles the
   [session prompt](../compiler/sessions.md#the-prompt) for the batch as
-  `instructions`, and returns the batch id, its goals, and the initially
+  `instructions` (ending in the
+  [`serving-protocol.md`](../compiler/goals/prompts/serving-protocol.md) line, since
+  the batch is already claimed when the agent reads it), and returns the batch id,
+  its goals, and the initially
   [loaded set](../compiler/context.md#the-loaded-set) as `package`. A
   [`place-anchors`](../compiler/goals/place-anchors.md) goal carries the document's
   alignment proposals in its loaded set; a

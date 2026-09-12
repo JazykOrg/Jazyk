@@ -705,6 +705,7 @@ impl McpServer {
             &pb,
             include_contract,
             &skip_skills,
+            crate::session::Protocol::Serving,
         );
         let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
         let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);
@@ -842,7 +843,17 @@ impl McpServer {
                 return reply;
             }
         }
-        reply["next"] = json!(board.answer());
+        // `next` names the next ready batch by id with its goals, never the whole
+        // board: a board reply carries every open goal with its contract paragraph
+        // and once ran to 169k characters. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+        reply["next"] = match board.batches.first() {
+            Some(b) => {
+                let mut v = board.batch_json(b);
+                v["note"] = json!(format!("begin_goals claims the next batch ({})", b.id));
+                v
+            }
+            None => json!({"note": "no goal is ready; goals lists the board with blockedBy per goal"}),
+        };
         reply
     }
 

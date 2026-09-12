@@ -205,7 +205,11 @@ without drawing every leaf:
   type. When several types land on the same shown pair in the same direction, the arrow
   shows the strongest type ([ranking](./model/relationship.md#rendering): generalization,
   realization, composition, aggregation, association, dependency) and carries the count of
-  concrete edges beneath it as its label. A count of one draws no label. `instantiation`
+  concrete edges beneath it as its label. A count of one draws no label. A cardinality
+  is drawn only when the arrow's one concrete edge joins the two shown nodes
+  themselves: a lifted arrow speaks for a hidden pair (`Order o-- "1..*" Product` lifts
+  to `Order o-- Catalog` when Product hides under Catalog), and a count that belonged
+  to the leaf would be false on the ancestor, so the lifted arrow drops it. `instantiation`
   is dropped before grouping and never drawn as an arrow: it names the instance's type
   in the object view.
 - An edge whose two ends lift to the same shown node is not drawn.

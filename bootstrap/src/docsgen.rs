@@ -1587,10 +1587,18 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     }
                 })
                 .collect();
+            // The level page exists only for a root with two or more members; a
+            // one-member scope starts at the member's card.
+            // Mirrors docs/consumers/docsgen.md#relationships-view.
+            let page = if level_targets(store).iter().any(|t| t == &target) {
+                format!(", [level page](./{})", level_page(&target))
+            } else {
+                String::new()
+            };
             idx.push_str(&format!(
-                "Start here: the top level of `{}`, [level page](./{}), then {}\n\n",
+                "Start here: the top level of `{}`{}, then {}\n\n",
                 scope,
-                level_page(&target),
+                page,
                 if members.is_empty() { "nothing yet".to_string() } else { members.join(", ") }
             ));
         }

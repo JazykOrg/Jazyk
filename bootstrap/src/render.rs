@@ -451,7 +451,10 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
                 .min_by_key(|c| rel_rank(&c.r#type))
                 .map(|c| c.r#type.clone())
                 .unwrap_or_else(|| DEFAULT_REL_TYPE.to_string());
-            let cardinality = if cs.len() == 1 {
+            // A cardinality belongs to the pair the sentence counted: a lifted arrow
+            // speaks for a hidden pair and drops it.
+            // Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
+            let cardinality = if cs.len() == 1 && cs[0].a == a && cs[0].b == b {
                 cs[0].cardinality.clone()
             } else {
                 None

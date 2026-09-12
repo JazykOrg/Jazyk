@@ -118,14 +118,15 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `$id` `https://jazyk.org/schemas/*.json`). `docs/site.md` specs jazyk.org;
   `docs/TODO.md` is the live work list.
 - Payloads: `docs/compiler/goals/prompts/` (agent-contract.md, feedback-note.md,
-  worker-protocol.md, one contract paragraph per model-executed goal kind, and the
+  worker-protocol.md, serving-protocol.md, one contract paragraph per model-executed
+  goal kind, and the
   generation payloads bind-contract.md, generate-contract.md,
   decompile-contract.md) and `docs/compiler/skills/` (extraction,
   judgment, flow-views, structural-views, abstraction, conformance). Both are embedded
   into the binary at compile time (`include_str!`), so docs and code share the same
   bytes by construction. Edit the files, never reintroduce string constants in code.
   Both directories are excluded from the docs glob (they are instructions to a model,
-  not prose about jazyk). Placeholders: `{target}` (worker-protocol: the batch id;
+  not prose about jazyk). Placeholders: `{target}` (worker-protocol and serving-protocol: the batch id;
   pointers), `{GROUP}` (generate-contract).
 - `docs/frontends/`: cli.md, acp.md, mcp.md, lsp.md, gui.md, viewer.md.
   `docs/consumers/`: gen.md (generation + verification ledger), bind.md, decompile.md,

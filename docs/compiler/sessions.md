@@ -57,11 +57,23 @@ prompt, so it can be shown before it is spent. The parts, in order:
    names a rule the model has read.
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
    the kind's contract paragraph (its payload file under `goals/prompts/`), the change in
-   one line, the gate in one line, and the hints.
+   one line, the gate in one line, and the hints. The contract paragraph renders once
+   per kind, under the first goal of that kind in the batch; a later goal of the same
+   kind carries `Contract: as the first <kind> goal above` in its place, so a batch of
+   eight pairs reads the pair contract once. The change line renders the change record
+   as `field: value` pairs (`section unprocessed`, `req:orders-6 revised: statement,
+   transition`), never as raw JSON. A hint repeated verbatim from an earlier goal in
+   the batch (`skill judgment`, the kind's tool advice) renders once, on the first goal
+   that carries it.
 5. `## Loaded (x/y chars)`: the [status block](./context.md#rendering) of the loaded set,
    then the skill index line.
-6. The [`worker-protocol.md`](./goals/prompts/worker-protocol.md) line, with `{target}`
-   set to the batch id.
+6. The protocol line, with `{target}` set to the batch id:
+   [`worker-protocol.md`](./goals/prompts/worker-protocol.md) when the prompt travels
+   ahead of the claim (an ACP session prompt, `jazyk preview`), which tells the agent
+   to call `begin_goals` first; [`serving-protocol.md`](./goals/prompts/serving-protocol.md)
+   when `begin_goals` itself returns the prompt over a standalone MCP serving, which
+   says the batch is claimed and not to call `begin_goals` again for it. The two lines
+   describe one loop from either side of the claim.
 
 E.g., a tier 2 batch after a session revised `req:orders-6` (contract paragraphs
 shortened here; the real ones are the payload files):

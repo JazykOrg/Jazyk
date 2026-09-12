@@ -316,7 +316,10 @@ serving; what it claims is a batch:
   because none of it needs a model. The final `done` reply carries the
   [verdict](../compiler/compilation.md#convergence) with its counts and, under
   `ready`, the generation rows that became ready (`ready: {generate: [...]}`);
-  `generation` stays the counter in every reply.
+  `generation` stays the counter in every reply. A verdict that counts blocked goals
+  carries a `verdictNote` saying what they wait on (a `jazyk release` of the ledger
+  work, a human answer) and that they do not hold the verdict, since a Codex session
+  read "converged, 15 blocked" as a contradiction.
 
 ## Generation and verification over MCP
 

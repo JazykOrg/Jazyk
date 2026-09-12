@@ -808,6 +808,12 @@ impl McpServer {
                 &quiet,
             );
             reply["verdict"] = json!(report.verdict);
+            if report.verdict.to_string().contains("blocked") {
+                // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+                reply["verdictNote"] = json!(
+                    "blocked goals wait on a release (jazyk release generate for bind and generate rows) or a human answer (jazyk answer); they do not hold the verdict"
+                );
+            }
             reply["coveragePct"] = json!(report.coverage_pct);
             // The verdict never travels alone (docs/compiler/compilation.md#convergence).
             let counts = s2.open_diag_counts();

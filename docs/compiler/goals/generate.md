@@ -84,7 +84,9 @@ ledger, not the model's word:
 - `record_generation` applies the shape gates, all before any side effect: a
   programmatic row with an empty `artifact` or `run` is rejected naming the row; a
   row whose artifact does not exist, or a programmatic row whose artifact does not
-  contain the declared test name, is rejected naming the row and the file (the same
+  contain the declared test name (its last path segment: `tests::req_x`, the name a
+  Rust runner addresses inside `mod tests`, is found by `req_x`), is rejected naming
+  the row and the file (the same
   gate `record_binding` applies; the pipeline worker gets one corrective retry before
   it records, and a row still wrong after it falls back to `llm`); a path that
   escapes the deliverable is rejected naming it; a path another entity owns is

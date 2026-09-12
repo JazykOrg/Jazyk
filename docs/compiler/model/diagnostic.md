@@ -82,7 +82,10 @@ question).
 
 Gates: an `edit` option's `old_text` must locate in its section
 (whitespace-insensitively) when it is non-empty, `label` is required, and `edit` and
-`answer` are mutually exclusive per option.
+`answer` are mutually exclusive per option. A `contradiction` or a
+`duplicate-requirement` names both sides in `subjects`; one subject is refused, since
+a finding whose message names a second statement that its subjects do not is a
+finding the other side never sees.
 The `section` takes either reference form: `/ref` or the full `doc.md#/ref` the loaded
 set displays.
 

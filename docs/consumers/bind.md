@@ -27,9 +27,11 @@ the open error diagnostics naming the requirement
 - Search the deliverable for an implementation, starting at the entity's recorded files.
   Record the carrying files, or record none. Absence is a finding, not a failure.
 - Search for an existing test that judges the statement. Bind to it when found; never
-  write a duplicate beside it. A test named for this requirement under an earlier hash
-  (the statement was reworded since) is that test: rename it to the suggested name and
-  bind to it.
+  write a duplicate beside it. A test carrying this statement's hash in its name or marker
+  under another requirement id is this requirement's test (ids renumber between
+  compiles, the hash follows the statement): rename it to the suggested name and bind
+  to it. A test named with this id but another hash belongs to the statement that hash
+  names now.
 - When no test exists, write one. Both directions get one:
   - Implementation found: the test pins the observed behavior against the statement.
     It should pass.

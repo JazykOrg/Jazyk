@@ -226,11 +226,15 @@ pub fn record(
         ));
     }
     if kind == "programmatic" {
+        // The name a runner addresses may carry a module path (`tests::req_x` for a
+        // Rust test inside `mod tests`); the artifact holds the function, so the last
+        // path segment is what must be found. Mirrors docs/compiler/goals/generate.md#gate.
         let content = std::fs::read_to_string(&path).unwrap_or_default();
-        if !content.contains(&name) {
+        let bare = name.rsplit("::").next().unwrap_or(&name);
+        if !content.contains(bare) {
             return Err(format!(
                 "test artifact `{}` does not contain the test name `{}`",
-                tref.artifact, name
+                tref.artifact, bare
             ));
         }
     }

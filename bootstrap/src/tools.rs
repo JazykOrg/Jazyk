@@ -5152,6 +5152,18 @@ impl ToolSession {
                         "a diagnostic needs at least one subject node id".into(),
                     ));
                 }
+                // A pair finding names both sides: one subject leaves the other side
+                // unfindable. Mirrors docs/compiler/model/diagnostic.md#prompts.
+                if (rule == "contradiction" || rule == "duplicate-requirement") && subjects.len() < 2 {
+                    return Err(ToolError::new(
+                        "no-subjects",
+                        format!(
+                            "a {} names both sides in subjects; `{}` alone leaves the other statement unfindable",
+                            rule,
+                            subjects.join(", ")
+                        ),
+                    ));
+                }
                 for s in &subjects {
                     let ok = self.known_entity(s)
                         || self.snapshot.graph.requirements.contains_key(s)

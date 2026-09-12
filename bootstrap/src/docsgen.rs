@@ -1346,12 +1346,34 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
 
         // Diagrams: the renderings relevant to this entity, embedded as relative
         // links into ../diagrams/, so the out directory serves anywhere as-is.
+        // Flows are listed, never embedded: an entity in five flows would open with
+        // eleven pictures. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
         let views = relevant_views(store, id, &instances);
-        if !views.is_empty() {
+        let (flows, pictures): (Vec<_>, Vec<_>) = views
+            .into_iter()
+            .partition(|(_, v)| FLOW_KINDS.contains(&v.kind.as_str()));
+        if !pictures.is_empty() {
             s.push_str("## Diagrams\n\n");
-            for (vid, v) in &views {
+            for (vid, v) in &pictures {
                 s.push_str(&embed(store, vid, v, DOCS_DIR));
             }
+        }
+        if !flows.is_empty() {
+            s.push_str("## Flows\n\n");
+            for (vid, v) in &flows {
+                let page = view_page_path(vid)
+                    .map(|p| rel(DOCS_DIR, &p))
+                    .unwrap_or_default();
+                s.push_str(&format!(
+                    "- {} · {} · {} steps · [page]({}) `{}`\n",
+                    v.title,
+                    v.kind,
+                    v.members.len(),
+                    page,
+                    vid
+                ));
+            }
+            s.push('\n');
         }
 
         let mut rids = store.requirements_referencing(id);
@@ -2000,14 +2022,16 @@ mod tests {
             page
         );
         assert!(page.contains("](../diagrams/state/order.svg)"), "{}", page);
+        // Flows are listed under their own heading, never embedded.
+        assert!(!page.contains("](../diagrams/usecase/shop.svg)"), "{}", page);
         assert!(
-            page.contains("](../diagrams/usecase/shop.svg)"),
+            page.contains("## Flows\n") && page.contains("[page](./diagrams/usecase/shop.md) `view:usecase/shop`"),
             "{}",
             page
         );
         let level_pos = page.find(&level_svg).unwrap();
         let state_pos = page.find("../diagrams/state/order.svg").unwrap();
-        let flow_pos = page.find("../diagrams/usecase/shop.svg").unwrap();
+        let flow_pos = page.find("## Flows").unwrap();
         assert!(level_pos < state_pos && state_pos < flow_pos);
         // The state caption lists the states; the level caption links the drawn
         // members to their cards and the view to its diagram page.

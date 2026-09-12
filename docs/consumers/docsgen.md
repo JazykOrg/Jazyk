@@ -104,7 +104,11 @@ The views an entity page embeds, in this order
   the entity as subject ([state machine](../compiler/model/state-machine.md#rendering)).
   The caption lists the states.
 - The flows it appears in: every `use-case`, `activity`, `sequence`, and
-  `communication` view whose member requirements name the entity, default and curated.
+  `communication` view whose member requirements name the entity, default and curated,
+  as a `Flows` list of links (title, kind, step count, the diagram page) rather than
+  embedded images: an Order that takes part in five flows would otherwise open with
+  eleven pictures before its first requirement, and the [card](#entity-cards) and the
+  [diagram pages](#diagram-pages) carry the renderings.
 - The object view of its type (`view:object/<type-slug>`), when the entity is an
   instance or a type with instances.
 - Every other curated view that lists the entity in `members` or `collapse`.

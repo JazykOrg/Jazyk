@@ -923,6 +923,25 @@ impl LoadedSet {
                     .unwrap_or_default()
             ));
         }
+        // The requirement's criteria, one line each (docs/compiler/model/criterion.md).
+        let crits = store.criteria_of(id);
+        if !crits.is_empty() {
+            for cid in &crits {
+                if let Some(c) = store.graph.criteria.get(cid) {
+                    let where_ = match &c.source {
+                        Some(s) => format!("{}#{}", s.doc, s.section),
+                        None => "proposed".to_string(),
+                    };
+                    b.push(&format!(
+                        "criterion {} [{}] {} ({})",
+                        cid,
+                        c.kind,
+                        crate::llm::truncate(&c.statement, 160),
+                        where_
+                    ));
+                }
+            }
+        }
         if !r.facets.is_empty() {
             b.push(&format!(
                 "facets: {}",

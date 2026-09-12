@@ -278,6 +278,9 @@ The `reconcile-section` toolset ([toolsets](../tools.md#toolsets)):
   under another name), `delete_entity`.
 - Requirement tools: `upsert_requirement` (statement, entities, section, quote, edges,
   transition, facets), `update_requirement`, `delete_requirement`.
+- Criterion tools: `upsert_criterion` (the stated criteria: a test case's lead-in, an
+  example sentence, a threshold bullet, each on the requirement it exercises),
+  `update_criterion`, `delete_criterion` ([criterion](../model/criterion.md)).
 - `set_coverage({section, state, note?})`, once per section, after its extraction.
 - [`report_feedback`](../tools.md#feedback-tool).
 

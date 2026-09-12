@@ -85,7 +85,7 @@ lets generation write one test per criterion.
 
 - [x] Phase 1 docs land and link-check clean.
 - [x] Phase 2 store with tests.
-- [ ] Phase 3 tools and extraction with tests and two loop runs.
+- [x] Phase 3 tools and extraction with tests (the two loop runs follow phase 4).
 - [ ] Phase 4 goal kind and checks with tests and a loop run.
 - [ ] Phase 5 ledger with tests and two generation runs.
 - [ ] Phase 6 VALIDATION.md.

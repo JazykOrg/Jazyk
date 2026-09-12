@@ -199,6 +199,48 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
+            name: "upsert_criterion",
+            description: "Record one acceptance criterion of a requirement: the observable evidence it is met, one condition and its outcome with concrete values, written from outside the system (never a function, a table, or a file). requirement is the owning requirement id. kind is positive, negative, boundary, or quality (with measure). Exactly one of section plus quote (a stated criterion: a test case's lead-in, an example sentence, a threshold bullet, copied verbatim from its own section) or provenance.derived {from, reasoning} (a criterion the documents do not state; from names the requirement). Refused when the statement restates the requirement (criterion-restates). Safe to retry: the same statement on the same requirement updates in place.",
+            parameters: obj(
+                json!({
+                    "requirement": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "kind": {"type": "string", "enum": crate::model::CRITERION_KINDS},
+                    "measure": {"type": "string"},
+                    "given": {"type": "string"},
+                    "when": {"type": "string"},
+                    "then": {"type": "string"},
+                    "entities": {"type": "array", "items": {"type": "string"}},
+                    "section": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "provenance": derived_schema()
+                }),
+                &["requirement", "statement", "kind"],
+            ),
+        },
+        ToolDef {
+            name: "update_criterion",
+            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; a field given replaces the stored one. The id and the owning requirement stay.",
+            parameters: obj(
+                json!({
+                    "id": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "kind": {"type": "string", "enum": crate::model::CRITERION_KINDS},
+                    "measure": {"type": "string"},
+                    "given": {"type": "string"},
+                    "when": {"type": "string"},
+                    "then": {"type": "string"},
+                    "entities": {"type": "array", "items": {"type": "string"}}
+                }),
+                &["id"],
+            ),
+        },
+        ToolDef {
+            name: "delete_criterion",
+            description: "Delete a criterion the documents no longer support.",
+            parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
+        },
+        ToolDef {
             name: "place_anchor",
             description: "Move one proposed anchor (a requirement or an entity mention named in this align task) to the section that now holds its text. quote, when given, must locate verbatim there and replaces the stored quote. reevaluate true lists the anchor for the extraction turn to re-judge; false keeps it as an unchanged statement.",
             parameters: obj(
@@ -1531,6 +1573,179 @@ impl ToolSession {
         })
     }
 
+    // A criterion id the store holds or this session staged.
+    fn criterion_known(&self, id: &str) -> bool {
+        self.snapshot.graph.criteria.contains_key(id)
+            || self
+                .staged
+                .iter()
+                .any(|o| matches!(o, Op::CreateCriterion { id: cid, .. } if cid == id))
+    }
+
+    // The statement of a requirement, recorded or staged this session.
+    fn requirement_statement(&self, rid: &str) -> Option<String> {
+        self.staged
+            .iter()
+            .rev()
+            .find_map(|o| match o {
+                Op::CreateRequirement { id, requirement } if id == rid => {
+                    Some(requirement.statement.clone())
+                }
+                Op::UpdateRequirement {
+                    id,
+                    statement: Some(st),
+                    ..
+                } if id == rid => Some(st.clone()),
+                _ => None,
+            })
+            .or_else(|| self.snapshot.graph.requirements.get(rid).map(|r| r.statement.clone()))
+    }
+
+    // upsert_criterion: the observable evidence of one requirement, staged with the
+    // same natural-key resolution the store applies (requirement plus statement).
+    // Mirrors docs/compiler/tools.md#write-tools and docs/compiler/model/criterion.md.
+    fn upsert_criterion(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let statement = Self::str_arg(args, "statement")?;
+        statement_present(&statement)?;
+        let rid = self.canon_req_id(&Self::str_arg(args, "requirement")?)?;
+        let kind = Self::str_arg(args, "kind")?;
+        if !crate::model::CRITERION_KINDS.contains(&kind.as_str()) {
+            return Err(ToolError::new(
+                "bad-kind",
+                format!("kind `{}`; one of: {}", kind, crate::model::CRITERION_KINDS.join(", ")),
+            ));
+        }
+        let has_source = Self::present(&args["section"]) || Self::present(&args["quote"]);
+        let has_derived = Self::present(&args["provenance"]);
+        if has_source == has_derived {
+            return Err(ToolError::new(
+                if has_source { "bad-provenance" } else { "provenance-required" },
+                "a criterion enters with exactly one provenance: section plus quote (the case, example, or bullet copied verbatim from its own section), or provenance {derived: {from, reasoning}} for evidence the documents do not state".into(),
+            ));
+        }
+        if let Some(req_statement) = self.requirement_statement(&rid) {
+            if crate::store::normalize_statement(&req_statement)
+                == crate::store::normalize_statement(&statement)
+            {
+                return Err(ToolError::new(
+                    "criterion-restates",
+                    format!(
+                        "the criterion restates {} (\"{}\"); a criterion is one concrete condition and its observable outcome, not the rule again",
+                        rid, req_statement
+                    ),
+                ));
+            }
+        }
+        let (source, provenance, stem_doc) = if has_source {
+            let section = Self::str_arg(args, "section")?;
+            let quote = Self::str_arg(args, "quote")?;
+            let (doc, sec) = self.resolve_section(&section)?;
+            let quote = self.check_quote(&doc, &sec, &quote)?;
+            (
+                Some(SourceRef {
+                    doc: doc.clone(),
+                    section: sec,
+                    quote: quote.trim().to_string(),
+                }),
+                None,
+                doc,
+            )
+        } else {
+            let derived = &args["provenance"]["derived"];
+            let reasoning = derived["reasoning"]
+                .as_str()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .ok_or_else(|| {
+                    ToolError::new(
+                        "bad-provenance",
+                        "provenance.derived carries reasoning: which part of the statement this criterion covers (the bound, the negative, the measure)".into(),
+                    )
+                })?
+                .to_string();
+            let mut from: Vec<String> = derived["from"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if from.is_empty() {
+                from.push(rid.clone());
+            }
+            (
+                None,
+                Some(Provenance::Derived { from, reasoning }),
+                "x".to_string(),
+            )
+        };
+        let mut entities: Vec<String> = Vec::new();
+        for e in Self::str_list(args, "entities") {
+            match self.canon_entity_id(&e) {
+                Some(id) => {
+                    if !entities.contains(&id) {
+                        entities.push(id);
+                    }
+                }
+                None => return Err(self.unknown_entity_error(&e)),
+            }
+        }
+        let criterion = Criterion {
+            requirement: rid.clone(),
+            statement: statement.clone(),
+            given: Self::opt_str(args, "given"),
+            when: Self::opt_str(args, "when"),
+            then: Self::opt_str(args, "then"),
+            kind,
+            measure: Self::opt_str(args, "measure"),
+            entities,
+            source,
+            provenance,
+            reasoning: Self::opt_str(args, "reasoning"),
+            ..Default::default()
+        };
+        let key = crate::store::normalize_statement(&statement);
+        // Staged this turn: refresh in place.
+        let staged_pos = self.staged.iter().position(|o| {
+            matches!(o, Op::CreateCriterion { criterion: c, .. }
+                if c.requirement == rid && crate::store::normalize_statement(&c.statement) == key)
+        });
+        if let Some(pos) = staged_pos {
+            let Op::CreateCriterion { id, criterion: c } = &mut self.staged[pos] else {
+                unreachable!()
+            };
+            let id = id.clone();
+            *c = criterion;
+            return Ok(json!({"id": id, "updated": true}));
+        }
+        // Recorded: the store folds onto the existing id.
+        let existing = self
+            .snapshot
+            .graph
+            .criteria
+            .iter()
+            .find(|(_, c)| c.requirement == rid && crate::store::normalize_statement(&c.statement) == key)
+            .map(|(cid, _)| cid.clone());
+        if let Some(cid) = existing {
+            self.stage(Op::CreateCriterion {
+                id: cid.clone(),
+                criterion,
+            })?;
+            return Ok(json!({"id": cid, "updated": true}));
+        }
+        let taken: BTreeSet<String> = self
+            .staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::CreateCriterion { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        let id = self.snapshot.mint_crit_id(&stem_doc, &taken);
+        self.stage(Op::CreateCriterion {
+            id: id.clone(),
+            criterion,
+        })?;
+        Ok(json!({"id": id, "created": true}))
+    }
+
     // Whether a requirement names an entity after this session's staged updates.
     fn requirement_names_entity(&self, rid: &str, entity: &str) -> bool {
         let names = |es: &[String]| es.iter().any(|e| self.snapshot.resolve_id(e) == entity);
@@ -1587,16 +1802,23 @@ impl ToolSession {
                 if state != "covered" {
                     continue;
                 }
+                // A test-case or examples section is covered by the criterion sourced
+                // from it (docs/compiler/goals/reconcile-section.md#gate).
+                let crit_at = |s: &Option<SourceRef>| {
+                    s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section)
+                };
                 let has_req = self
                     .snapshot
                     .graph
                     .requirements
                     .values()
                     .any(|r| r.anchored_at(doc, section))
+                    || self.snapshot.graph.criteria.values().any(|c| crit_at(&c.source))
                     || self.staged.iter().any(|o| match o {
                         Op::CreateRequirement { requirement, .. } => {
                             requirement.anchored_at(doc, section)
                         }
+                        Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
                         _ => false,
                     });
                 if !has_req {
@@ -4791,6 +5013,57 @@ impl ToolSession {
                     "note": "a redirect to the parent stays; anything holding the old id resolves there",
                 }))
             }
+            "upsert_criterion" => self.upsert_criterion(args),
+            "update_criterion" => {
+                let id = Self::str_arg(args, "id")?;
+                if !self.criterion_known(&id) {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!("unknown criterion id `{}`; the requirement's criteria are listed under it in the loaded set", id),
+                    ));
+                }
+                if let Some(k) = Self::opt_str(args, "kind") {
+                    if !crate::model::CRITERION_KINDS.contains(&k.as_str()) {
+                        return Err(ToolError::new(
+                            "bad-kind",
+                            format!("kind `{}`; one of: {}", k, crate::model::CRITERION_KINDS.join(", ")),
+                        ));
+                    }
+                }
+                let entities = match args["entities"].as_array() {
+                    Some(_) => {
+                        let mut es = Vec::new();
+                        for e in Self::str_list(args, "entities") {
+                            match self.canon_entity_id(&e) {
+                                Some(id) => es.push(id),
+                                None => return Err(self.unknown_entity_error(&e)),
+                            }
+                        }
+                        Some(es)
+                    }
+                    None => None,
+                };
+                self.stage(Op::UpdateCriterion {
+                    id: id.clone(),
+                    statement: Self::opt_str(args, "statement"),
+                    kind: Self::opt_str(args, "kind"),
+                    measure: Self::opt_str(args, "measure"),
+                    given: Self::opt_str(args, "given"),
+                    when: Self::opt_str(args, "when"),
+                    then: Self::opt_str(args, "then"),
+                    entities,
+                })?;
+                Ok(json!({"id": id, "updated": true}))
+            }
+            "delete_criterion" => {
+                let id = Self::str_arg(args, "id")?;
+                let reason = Self::str_arg(args, "reason")?;
+                if !self.criterion_known(&id) {
+                    return Err(ToolError::new("unknown-id", format!("unknown criterion id `{}`", id)));
+                }
+                self.stage(Op::DeleteCriterion { id: id.clone(), reason })?;
+                Ok(json!({"id": id, "deleted": true}))
+            }
             "upsert_requirement" => {
                 let statement = Self::str_arg(args, "statement")?;
                 statement_present(&statement)?;
@@ -7672,6 +7945,88 @@ mod tests {
         .unwrap();
         let v = t.dispatch("get_entity", &json!({"id": "ent:customer"})).unwrap();
         assert_eq!(v["aliases"], json!(["Shopper"]), "{}", v);
+    }
+
+    // Mirrors docs/compiler/model/criterion.md and tools.md#write-tools: a criterion
+    // enters on its requirement, folds on the same statement, refuses a restatement,
+    // and covers the section its quote sits in.
+    #[test]
+    fn criteria_enter_through_upsert_criterion_and_cover_their_section() {
+        let mut t = session();
+        let rid = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({"statement": "The Shopping Cart holds the items a Customer intends to buy.",
+                        "entities": ["ent:customer"], "section": "/shop/cart",
+                        "quote": "The Shopping Cart holds items a Customer intends to buy."}),
+            )
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let v = t
+            .dispatch(
+                "upsert_criterion",
+                &json!({"requirement": rid, "statement": "A Customer who adds two items sees a Cart holding two items.",
+                        "kind": "positive", "section": "/shop", "quote": "intro text"}),
+            )
+            .unwrap();
+        assert_eq!(v["id"], "crit:shop-1", "{}", v);
+        assert_eq!(v["created"], true);
+        let again = t
+            .dispatch(
+                "upsert_criterion",
+                &json!({"requirement": rid, "statement": "A Customer who adds two items sees a Cart holding two items",
+                        "kind": "positive", "section": "/shop", "quote": "intro text"}),
+            )
+            .unwrap();
+        assert_eq!(again["id"], "crit:shop-1", "{}", again);
+        assert_eq!(again["updated"], true);
+        let err = t
+            .dispatch(
+                "upsert_criterion",
+                &json!({"requirement": rid, "statement": "The Shopping Cart holds the items a Customer intends to buy",
+                        "kind": "positive", "section": "/shop", "quote": "intro text"}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "criterion-restates", "{}", err.message);
+        let err = t
+            .dispatch(
+                "upsert_criterion",
+                &json!({"requirement": rid, "statement": "An empty Cart shows no items.", "kind": "boundary",
+                        "provenance": {"derived": {"from": [rid]}}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "bad-provenance", "{}", err.message);
+        let derived = t
+            .dispatch(
+                "upsert_criterion",
+                &json!({"requirement": rid, "statement": "An empty Cart shows no items.", "kind": "boundary",
+                        "provenance": {"derived": {"from": [rid], "reasoning": "the lower edge of holding items"}}}),
+            )
+            .unwrap();
+        assert_eq!(derived["id"], "crit:x-1", "{}", derived);
+        assert!(t
+            .dispatch("upsert_criterion", &json!({"requirement": "req:nope-1", "statement": "x y z", "kind": "positive", "section": "/shop", "quote": "intro text"}))
+            .is_err());
+        // The intro section holds only the criterion's quote: covered by it.
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop", "state": "covered", "note": "crit:shop-1 carries the example."}),
+        )
+        .unwrap();
+        t.dispatch(
+            "set_coverage",
+            &json!({"section": "/shop/cart", "state": "covered", "note": "the cart rule."}),
+        )
+        .unwrap();
+        let v = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:reconcile-section:shop.md#/shop", "justification": "The example is the criterion."}),
+            )
+            .unwrap();
+        assert_eq!(v["marked"], "g:reconcile-section:shop.md#/shop", "{}", v);
     }
 
     // Mirrors docs/compiler/goals/review-entity.md#gate: a word-match verdict is

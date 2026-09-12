@@ -1072,6 +1072,9 @@ impl GoalKind for ReconcileSection {
             "upsert_requirement",
             "update_requirement",
             "delete_requirement",
+            "upsert_criterion",
+            "update_criterion",
+            "delete_criterion",
             "set_coverage",
         ]
     }
@@ -1091,11 +1094,17 @@ impl GoalKind for ReconcileSection {
                     note,
                 } => {
                     if state == "covered" {
+                        // A criterion sourced from the section covers it too
+                        // (docs/compiler/goals/reconcile-section.md#gate).
+                        let crit_at = |s: &Option<crate::model::SourceRef>| {
+                            s.as_ref().is_some_and(|s| s.doc == *doc && s.section == *section)
+                        };
                         let sourced = store
                             .graph
                             .requirements
                             .values()
                             .any(|r| r.anchored_at(doc, section))
+                            || store.graph.criteria.values().any(|c| crit_at(&c.source))
                             || staged.iter().any(|o| match o {
                                 Op::CreateRequirement { requirement, .. } => {
                                     requirement.anchored_at(doc, section)
@@ -1103,6 +1112,7 @@ impl GoalKind for ReconcileSection {
                                 Op::UpdateRequirement {
                                     source: Some(s), ..
                                 } => s.doc == *doc && s.section == *section,
+                                Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
                                 _ => false,
                             });
                         if !sourced {

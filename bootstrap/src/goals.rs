@@ -3209,6 +3209,18 @@ impl GoalKind for DedupeCandidates {
             if judged.contains(&id) {
                 continue;
             }
+            // A note at creation told the two apart: the standing verdict.
+            // Mirrors docs/compiler/goals/dedupe-candidates.md#created-when.
+            let told_apart = |x: &str, y: &str| {
+                store
+                    .graph
+                    .entities
+                    .get(x)
+                    .is_some_and(|e| e.distinct_from.contains_key(y))
+            };
+            if told_apart(&l.a, &l.b) || told_apart(&l.b, &l.a) {
+                continue;
+            }
             let filed = store.graph.diagnostics.values().any(|d| {
                 d.lifecycle == "open"
                     && d.rule == "duplicate-entity"

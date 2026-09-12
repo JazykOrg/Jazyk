@@ -4043,11 +4043,11 @@ impl ToolSession {
                         .map(|p| self.snapshot.resolve_id(p) == eid || p == eid)
                         .unwrap_or(false)
                 };
+                let lookalike = self
+                    .near_name(&name_arg, &scope, true)
+                    .filter(|(eid, _)| !parent_is_lookalike(eid));
                 if note.is_none() {
-                    if let Some((eid, ename)) = self
-                        .near_name(&name_arg, &scope, true)
-                        .filter(|(eid, _)| !parent_is_lookalike(eid))
-                    {
+                    if let Some((eid, ename)) = &lookalike {
                         return Err(ToolError::new(
                             "near-duplicate",
                             format!(
@@ -4057,6 +4057,16 @@ impl ToolSession {
                         ));
                     }
                 }
+                // The note that let the name through is the separate verdict on the
+                // pair; it rides on the entity so the lookalike index never asks again.
+                // Mirrors docs/compiler/model/entity.md#fields.
+                let distinct_from: std::collections::BTreeMap<String, String> =
+                    match (&note, &lookalike) {
+                        (Some(n), Some((eid, _))) => {
+                            [(eid.clone(), n.clone())].into_iter().collect()
+                        }
+                        _ => std::collections::BTreeMap::new(),
+                    };
                 // Exactly one provenance: a located mention, or a derivation. Empty
                 // objects count as absent (docs/compiler/tools.md#validation-and-errors).
                 let mention = &args["mention"];
@@ -4189,6 +4199,7 @@ impl ToolSession {
                 let entity = Entity {
                     name: name_arg,
                     aliases: Self::str_list(args, "aliases"),
+                    distinct_from,
                     definition: Self::opt_str(args, "definition"),
                     scope,
                     stereotype,

@@ -61,6 +61,11 @@ overrides when the resemblance is coincidental.
 ## Fields
 
 - `name`: the primary handle. `aliases`: alternate names seen in the documents.
+- `distinct_from`: the entities a `note` told this one apart from at creation, the
+  lookalike's id mapped to the note (`ent:payment-method: "a Payment is the settlement
+  itself, a Payment Method is what a Checkout charges"`). The note that let the name
+  through the near-duplicate gate is the separate verdict on that pair, so the lookalike
+  index never opens [`dedupe-candidates`](../goals/dedupe-candidates.md) on it again.
 - `definition`: the one living definition, refined as documents are reconciled. It is
   never forked per document.
 - `scope`: keeps distinct same-name concepts apart; defaults to `public`. See [scopes](../concepts/scopes.md).

@@ -275,6 +275,13 @@ definitions:
         type: array
         items:
           type: string
+      distinct_from:
+        description: >-
+          The lookalikes a note told this entity apart from at creation, id to note;
+          the lookalike index never pairs the two again
+        type: object
+        additionalProperties:
+          type: string
       definition:
         description: The single living definition, refined across builds
         type: string

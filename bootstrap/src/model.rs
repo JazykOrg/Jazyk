@@ -190,6 +190,10 @@ pub struct Entity {
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    // The lookalikes a note told this entity apart from at creation, id to note: the
+    // separate verdict on that pair. Mirrors docs/compiler/model/entity.md#fields.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub distinct_from: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<String>,
     #[serde(default = "default_scope", skip_serializing_if = "is_default_scope")]
@@ -222,6 +226,7 @@ impl Default for Entity {
         Entity {
             name: String::new(),
             aliases: Vec::new(),
+            distinct_from: BTreeMap::new(),
             definition: None,
             scope: default_scope(),
             stereotype: None,

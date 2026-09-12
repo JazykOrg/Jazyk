@@ -23,7 +23,10 @@ graph, changed or not.
 One [change record](../graph.md#change-records) kind derives the goal: `lookalike`
 (`via: lookalike`), written at commit by the name index recompute
 ([derived data](../graph.md#derived-data)) for every pair whose score reaches the
-threshold and holds no standing verdict.
+threshold and holds no standing verdict. A pair either side's `distinct_from` names
+([fields](../model/entity.md#fields)) holds one: the `note` that let the second name
+through the near-duplicate gate told the two apart, and asking again would be asking
+the session to repeat itself.
 
 ### The lookalike score
 

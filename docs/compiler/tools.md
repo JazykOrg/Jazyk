@@ -108,7 +108,8 @@ a mutating reply previews the goals the mutation will open
   `attributes` are `[{name, type?, value?, provenance?}]`, keyed by `name` within the
   entity; an attribute without its own provenance takes the call's quote. A name
   variant of an existing entity is rejected toward reusing that entity and recording
-  the wording as an alias; a `note` overrides. A name that looks like syntax rather
+  the wording as an alias; a `note` overrides and is kept on the new entity as
+  `distinct_from`, so the pair is never asked about again. A name that looks like syntax rather
   than a concept is rejected unless `note` explains it
   ([what is an entity](./model/entity.md#what-is-an-entity)). Omit `scope` unless the
   documents explicitly name a bounded context.

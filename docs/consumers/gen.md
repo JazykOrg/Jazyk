@@ -362,7 +362,10 @@ a choice made in the graph, not an emergency at generation time.
 Each [requirement](../compiler/model/requirement.md) derives a test, keyed by the
 requirement id. The test is written when the requirement is [bound](./bind.md), before
 generation runs. A failing test names the requirement it verifies, and a changed
-requirement invalidates exactly the tests keyed to it.
+requirement invalidates exactly the tests keyed to it. A requirement several entities
+share (an actor's statement about the tool it uses lists both) has one row and one
+test: the entity generated later finds the row in its package's `boundTests` and lists
+it unchanged, never a second test beside it.
 
 The requirement's [facets](../compiler/model/requirement.md#facets) and
 [transition](../compiler/model/requirement.md#transition) suggest the test shape:

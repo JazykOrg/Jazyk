@@ -951,15 +951,20 @@ impl ProjectBlock {
             "- generation {}, {} mode\n",
             self.generation, self.mode
         ));
+        // The judgment findings on the graph; the checks' findings arrive with the
+        // build's tail. Mirrors docs/compiler/sessions.md#the-prompt.
         if self.diagnostics.is_empty() {
-            s.push_str("- diagnostics: none open\n");
+            s.push_str("- diagnostics: none open (the build's checks file theirs at the tail)\n");
         } else {
             let parts: Vec<String> = self
                 .diagnostics
                 .iter()
                 .map(|(sev, n)| format!("{} {}(s)", n, sev))
                 .collect();
-            s.push_str(&format!("- diagnostics: {}\n", parts.join(", ")));
+            s.push_str(&format!(
+                "- diagnostics: {} (the build's checks file theirs at the tail)\n",
+                parts.join(", ")
+            ));
         }
         s.push_str(&format!(
             "- board: {} goal(s) in this session; {} elsewhere; {} blocked on human answers\n",

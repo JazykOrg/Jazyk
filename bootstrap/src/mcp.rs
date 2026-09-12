@@ -843,7 +843,7 @@ impl McpServer {
                 let mut parts: Vec<String> = vec!["compilation converged".to_string()];
                 if optional_ready > 0 {
                     parts.push(format!(
-                        "{} optional goal(s) stay claimable (begin_goals takes the next batch; the verdict does not wait for them)",
+                        "{} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the next batch when you want it, and stopping here is right when your instruction was to converge (the verdict does not wait for them)",
                         optional_ready
                     ));
                 }
@@ -858,16 +858,9 @@ impl McpServer {
                 }
                 reply["next"] = json!(parts.join("; "));
                 reply["ready"] = json!({"generate": generate});
-                // The claim holds at convergence: an agent that asked for the next
-                // batch gets the optional one instead of a note that it stays
-                // claimable (docs/frontends/mcp.md#compilation-over-mcp).
-                if optional_ready > 0 && params["arguments"]["beginNext"].as_bool() == Some(true)
-                {
-                    let began = self.begin_goals(&json!({"arguments": {}}));
-                    if began["error"].is_null() {
-                        reply["began"] = began;
-                    }
-                }
+                // beginNext stops at convergence: an agent told to converge once held
+                // an optional batch it had not asked for, and the note above says how
+                // to take it (docs/frontends/mcp.md#compilation-over-mcp).
                 return reply;
             }
             // The checks can surface new work (rare); fall through to name it.

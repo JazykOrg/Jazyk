@@ -1278,6 +1278,15 @@ fn emit_use_case(scene: &Scene) -> String {
     for a in &actors {
         out.push(format!("{} -- {}", alias_of(a), uc));
     }
+    // A use case nobody initiates says so on the picture instead of drawing one bare
+    // bubble: the members name no «actor» (docs/compiler/diagrams.md#the-emitters).
+    if actors.is_empty() {
+        out.push(format!(
+            "note bottom of {} : no actor: none of the {} member statement(s) names an «actor» entity",
+            uc,
+            scene.requirements.len()
+        ));
+    }
     document(title_line(scene.view, note.as_deref()), out)
 }
 
@@ -2272,6 +2281,14 @@ mod tests {
         let expected =
             "@startuml\nactor Customer\nusecase Checkout\nCustomer -- Checkout\n@enduml\n";
         assert_eq!(canon(&puml), canon(expected), "{}", puml);
+        // No member names an actor: the picture says so under the bubble
+        // (docs/compiler/diagrams.md#the-emitters).
+        let puml = emit_kind(&s, "use-case", &["req:shop-2", "req:shop-4"]);
+        assert!(
+            puml.contains("note bottom of") && puml.contains("no actor: none of the 2 member statement(s)"),
+            "{}",
+            puml
+        );
     }
 
     #[test]

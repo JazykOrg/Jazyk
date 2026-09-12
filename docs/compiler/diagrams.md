@@ -158,7 +158,11 @@ The kinds, with what each reads from the graph:
   members.
 - `use-case`: the view itself is the `usecase`, titled by the view; the actors are the
   «actor» entities among the members' `entities`, each linked `Actor -- UseCase`. The
-  default is one per flow cluster.
+  default is one per flow cluster. A view whose members name no «actor» draws a note
+  under the bubble saying so (`no actor: none of the N member statement(s) names an
+  «actor» entity`), since a bare bubble reads as a rendering defect where it is a
+  curation gap (an erp session placed "Manage the ACME warehouse" with no actor in the
+  graph).
 - `activity`: the same use case view. Each member in order is an action. A run of
   consecutive members whose `transition` fields share `subject` and `from` renders as one
   decision: the condition is the first member's `trigger` with `?`, the first member's

@@ -22,7 +22,7 @@ par:
   rounds: 4
 goal:
   kind: split-view
-  target: view:sequence/purchase
+  target: view:sequence/shop-purchase
 given:
   docs:
     docs/purchase.md: |
@@ -255,7 +255,7 @@ given:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The notifier sends the shipping confirmation to the customer.
     views:
-      view:sequence/purchase:
+      view:sequence/shop-purchase:
         kind: sequence
         title: Purchase flow
         members:
@@ -289,19 +289,19 @@ given:
             reasoning: The two sections of the purchase flow read as one sequence from cart to shipping confirmation.
 assert:
   - nodeExists:
-      id: view:sequence/purchase
+      id: view:sequence/shop-purchase
   - viewWithinLimit:
-      view: view:sequence/purchase
+      view: view:sequence/shop-purchase
       limit: participants-per-sequence-view
   - viewExists:
       kind: sequence
-      excluding: view:sequence/purchase
+      excluding: view:sequence/shop-purchase
   - viewExists:
       kind: sequence
       titlePattern: 'checkout|fulfil'
-      excluding: view:sequence/purchase
+      excluding: view:sequence/shop-purchase
   - membersAccounted:
-      view: view:sequence/purchase
+      view: view:sequence/shop-purchase
       members:
         - req:purchase-1
         - req:purchase-2

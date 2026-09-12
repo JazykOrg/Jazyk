@@ -37,7 +37,7 @@ Two [change record](../graph.md#change-records) kinds derive the goal:
 
 The check matches a requirement to a view deterministically:
 
-- the flow view of the requirement's own cluster, keyed by its actor and its document
+- the flow view of the requirement's own cluster, its document's flow at the root level
   ([flow clusters](../model/view.md#default-views)), when one exists;
 - else the flow view sharing the most entities with the requirement, ties broken by the
   same document first, then by document order of the views' first members;

@@ -1996,13 +1996,13 @@ mod tests {
         );
         assert!(page.contains("](../diagrams/state/order.svg)"), "{}", page);
         assert!(
-            page.contains("](../diagrams/usecase/customer-shop.svg)"),
+            page.contains("](../diagrams/usecase/shop.svg)"),
             "{}",
             page
         );
         let level_pos = page.find(&level_svg).unwrap();
         let state_pos = page.find("../diagrams/state/order.svg").unwrap();
-        let flow_pos = page.find("../diagrams/usecase/customer-shop.svg").unwrap();
+        let flow_pos = page.find("../diagrams/usecase/shop.svg").unwrap();
         assert!(level_pos < state_pos && state_pos < flow_pos);
         // The state caption lists the states; the level caption links the drawn
         // members to their cards and the view to its diagram page.
@@ -2048,7 +2048,7 @@ mod tests {
         assert!(idx.contains("](../diagrams/component/shop.svg)"), "{}", idx);
         assert!(!idx.contains("mermaid"), "{}", idx);
         assert!(idx.contains("- [Order](./order.md) `ent:order`"), "{}", idx);
-        assert!(idx.contains("`view:usecase/customer-shop`"), "{}", idx);
+        assert!(idx.contains("`view:usecase/shop`"), "{}", idx);
         std::fs::remove_dir_all(&out).ok();
     }
 
@@ -2164,9 +2164,9 @@ mod tests {
             "{}",
             root
         );
-        assert!(root.contains("`view:usecase/customer-shop`"), "{}", root);
+        assert!(root.contains("`view:usecase/shop`"), "{}", root);
         let structural = root.find("component/public.svg").unwrap();
-        let flow = root.find("usecase/customer-shop").unwrap();
+        let flow = root.find("usecase/shop").unwrap();
         assert!(
             structural < flow,
             "the structural view embeds first: {}",
@@ -2255,7 +2255,7 @@ mod tests {
         let index = std::fs::read_to_string(out_dir.join("index.md")).unwrap();
         assert!(index.contains("[glossary](./glossary.md)"), "{}", index);
         assert!(
-            card.contains("[use case](../diagrams/usecase/shop-customer-shop.md) · [sequence](../diagrams/sequence/shop-customer-shop.md)"),
+            card.contains("[use case](../diagrams/usecase/shop-shop.md) · [sequence](../diagrams/sequence/shop-shop.md)"),
             "{}",
             card
         );
@@ -2337,7 +2337,7 @@ mod tests {
         );
         assert!(!page.contains("## Steps"), "{}", page);
         assert!(
-            page.contains("(../usecase/shop-customer-shop.md) `view:usecase/shop-customer-shop`"),
+            page.contains("(../usecase/shop-shop.md) `view:usecase/shop-shop`"),
             "{}",
             page
         );
@@ -2354,7 +2354,7 @@ mod tests {
 
         // The shop level's sequence page: the steps as drawn, each id linked to its
         // block in a requirements document, the ends linked to their cards.
-        let seq = std::fs::read_to_string(pages.join("sequence/shop-customer-shop.md")).unwrap();
+        let seq = std::fs::read_to_string(pages.join("sequence/shop-shop.md")).unwrap();
         assert!(
             seq.contains("## Level\n\n[Public](../../levels/scope-public.md) › [Shop](../../entities/shop.md) · level page: [Shop](../../levels/shop.md)\n"),
             "{}",

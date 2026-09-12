@@ -49,7 +49,10 @@ no LLM, no state, no reads outside the snapshot. Rules shared by every emitter:
   title: the [over-limit](#over-limit-views) note, or a timing view's governing
   requirement.
 - A relationship among the drawn members renders as one arrow per direction-and-type
-  group, cardinality at the `b` end. Notation, `a` acting on `b`:
+  group, cardinality at the `b` end. An `association` is the exception: its line carries
+  no arrowhead, so both directions of a pair draw as one line (a `Customer -- Shipment`
+  and a `Shipment -- Customer` contribution are one association, count two), never two
+  parallel lines. Notation, `a` acting on `b`:
 
   | type | arrow |
   |---|---|
@@ -202,7 +205,7 @@ without drawing every leaf:
 
 - Every relationship touching a hidden descendant lifts to the nearest shown ancestor.
 - Contributions landing on the same shown pair collapse to one arrow per direction and
-  type. When several types land on the same shown pair in the same direction, the arrow
+  type (an `association` collapses both directions, since it draws without an arrowhead). When several types land on the same shown pair in the same direction, the arrow
   shows the strongest type ([ranking](./model/relationship.md#rendering): generalization,
   realization, composition, aggregation, association, dependency) and carries the count of
   concrete edges beneath it as its label. A count of one draws no label. A cardinality
@@ -273,10 +276,11 @@ Flow views derive per level, and lifting is applied at derivation, not at render
   drawn here as a self-message (the top level's sequence shows Checkout talking to
   Orders, not twelve messages from Checkout to itself). A self-message on a leaf
   stays: lifting to a leaf is identity.
-- The lifted requirements cluster by the lifted actor (or the lifted first entity when
-  no actor is among them) and document. A cluster of two or more derives a `use-case`
-  view and a `sequence` view whose participants are the lifted members, ids
-  `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/<node-slug>-<cluster-slug>`.
+- The lifted requirements cluster by document. A cluster of two or more derives a
+  `use-case` view and, when two or more members carry an edge, a `sequence` view whose
+  participants are the lifted members, ids `view:usecase/<node-slug>-<doc-slug>` and
+  `view:sequence/<node-slug>-<doc-slug>`. The actors drawn are the members' entities
+  labeled `actor`, lifted; a cluster without one draws no actor.
 - A leaf level keeps today's clustering unchanged: lifting to a leaf is identity.
 - At render, every message endpoint lifts to its nearest ancestor among the level's
   members, so a flow among leaves draws between their groupings (the checkout level's

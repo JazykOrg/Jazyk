@@ -345,15 +345,14 @@ from the facts because it is a function of them.
   node with at least two children, the scope root included (`view:class/<slug>` or
   `view:component/<slug>` by the stereotypes present; the scope root's view is the
   per-scope view, see [level views](./diagrams.md#level-views)), a use-case view and a
-  sequence view per flow cluster of a level (`view:usecase/<node-slug>-<cluster-slug>`,
-  `view:sequence/<node-slug>-<cluster-slug>`), a state view per derived state machine
+  sequence view per flow cluster of a level (`view:usecase/<node-slug>-<doc-slug>`,
+  `view:sequence/<node-slug>-<doc-slug>`), a state view per derived state machine
   (`view:state/<entity-slug>`), and an object view per type (`view:object/<type-slug>`,
   an entity that is `b` of an `instantiation` group). Flow clustering is deterministic:
-  a `behavior` or `failure-mode` requirement is keyed by its actor (the entity labeled
-  `actor` among its `entities`, or its first entity when none is) and by its document,
-  each entity lifted to its nearest ancestor in the level, the cluster slug is
-  `<actor-slug>-<doc-stem>`, members are in document order, and a cluster of fewer
-  than two members derives no view. A default view is stored in `views.yaml`
+  a `behavior` or `failure-mode` requirement is keyed by its document, each entity
+  lifted to its nearest ancestor in the level, the cluster slug is the document stem,
+  members are in document order, and a cluster of fewer than two members derives no
+  view. A default view is stored in `views.yaml`
   under its stable id with the boolean field `default: true` and provenance
   `{derived: {from: [...], reasoning: "default view: <rule>"}}`. On every commit the
   store creates the views whose rule holds, rewrites `title` and `members` on the ones

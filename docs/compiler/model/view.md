@@ -121,7 +121,9 @@ Terms the flow kinds share:
   whose lifted ends differ; when every edge collapses into one member, the
   self-message stays.
 - The actors of a flow are the members' entities labeled `actor`. Where no member's entity
-  carries that label, the actors are the initiators that never receive.
+  carries that label, the use case draws no actor: a flow among the subject's own parts
+  has no outside initiator, and drawing the first component as a stick figure (a
+  Shipment "acting" on Inventory) misreads the picture.
 
 The limits: `structural` is `members-per-structural-view` (20 soft, 30 hard), `edges` is
 `edges-per-view` (40, 60), `flow` is `members-per-flow-view` (12, 20), `participants` is
@@ -139,20 +141,23 @@ has no object view. Six kinds derive, each with a stable id:
 | kind | id | one per | members |
 | --- | --- | --- | --- |
 | `class` or `component` | `view:class/<node-slug>` or `view:component/<node-slug>`; `view:class/<scope>` or `view:component/<scope>` for the scope root | level: a node with two or more children, the scope root included | the node's direct children plus every outside entity with a lifted edge into the level, in document order |
-| `use-case` | `view:usecase/<node-slug>-<cluster-slug>` | flow cluster of a level | the cluster's requirements in document order |
-| `sequence` | `view:sequence/<node-slug>-<cluster-slug>` | flow cluster of a level | the cluster's requirements that carry an edge, in document order |
+| `use-case` | `view:usecase/<node-slug>-<doc-slug>` | flow cluster of a level: one per document whose behavior reaches the level | the cluster's requirements in document order |
+| `sequence` | `view:sequence/<node-slug>-<doc-slug>` | flow cluster of a level | the cluster's requirements that carry an edge, in document order |
 | `state` | `view:state/<entity-slug>` | state machine | the subject |
 | `object` | `view:object/<type-slug>` | type: an entity that is `b` of an `instantiation` group | the type's instances |
 
 The first row is the [level view](#level-views); the scope root's level view is the
 per-scope view, so no separate per-scope `class` view or per-root `component` view
 derives. The title of a default is deterministic: the node's `name` for a level view (the
-scope's name title-cased for the scope root's), `<actor name>: <document title>` for
-`use-case` and `sequence` (the actor as lifted to the level, the document title its root
-section's title), the subject's `name` for `state`, the type's `name` for `object`. A
-`use-case` view and the `sequence` view derived from the same cluster share a title, so
-`view:usecase/backend-order-shop` and `view:sequence/backend-order-shop` describe one
-flow. The `provenance` of a default is
+scope's name title-cased for the scope root's), the document title (its root
+section's title) for a root level's `use-case` and `sequence`, `<node name>: <document
+title>` for a node level's, the subject's `name` for `state`, the type's `name` for
+`object`. A `use-case` view and the `sequence` view derived from the same cluster share
+a title, so `view:usecase/backend-shop` and `view:sequence/backend-shop` describe one
+flow. The document is the unit because a document is how the author already cut the
+subject into flows; the actors are read off the members, never baked into the key, so
+a document mixing a Customer's and an Operator's steps is one use case with two actors
+until a session splits it along the document's own breaks. The `provenance` of a default is
 `{derived: {from: [the rule's subject and the members], reasoning: "default view: <rule>"}}`.
 
 ### Level views
@@ -202,10 +207,11 @@ Flow views derive per level too, from the requirements lifted to it:
   own is internal to that child and belongs to the child's level, never drawn here as
   a self-message; a self-message on a leaf stays. This is the renderer's lifting applied at derivation. See
   [lifting and collapse](../diagrams.md#lifting-and-collapse).
-- The requirements reaching a level cluster by the lifted actor (or the lifted first
-  entity) and document. A cluster of two or more derives a `use-case` view and a
+- The requirements reaching a level cluster by document. A cluster of two or more
+  derives a `use-case` view and, when two or more of its members carry an edge, a
   `sequence` view whose participants are the lifted members, with the ids
-  `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/<node-slug>-<cluster-slug>`.
+  `view:usecase/<node-slug>-<doc-slug>` and `view:sequence/<node-slug>-<doc-slug>`
+  (the root form drops the node prefix: `view:usecase/<doc-slug>`).
 - A level whose members are leaves clusters as before: lifting to a leaf is identity.
 - State and object views stay per machine and per instantiated type.
 

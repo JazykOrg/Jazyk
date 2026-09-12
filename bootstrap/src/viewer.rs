@@ -1545,7 +1545,7 @@ mod tests {
         for (id, kind) in [
             ("view:component/public", "component"),
             ("view:component/backend", "component"),
-            ("view:usecase/user-shop", "use-case"),
+            ("view:usecase/shop", "use-case"),
         ] {
             s.graph.views.insert(
                 id.into(),
@@ -1566,7 +1566,7 @@ mod tests {
         assert_eq!(lines[0].0, 0);
         assert_eq!(
             lines[0].1,
-            "scope:public 2 children view:component/public view:usecase/user-shop"
+            "scope:public 2 children view:component/public view:usecase/shop"
         );
         // A node with children: its count and its structural view, one level in.
         let backend = lines
@@ -1609,11 +1609,11 @@ mod tests {
             html
         );
         assert!(html.contains("href=\"#n-view:component/backend\">view:component/backend</a>"));
-        assert!(html.contains("href=\"#n-view:usecase/user-shop\">view:usecase/user-shop</a>"));
+        assert!(html.contains("href=\"#n-view:usecase/shop\">view:usecase/shop</a>"));
         // Each line filters by its id, name, and view ids.
         assert!(html.contains("data-s=\"ent:api api server\""), "{}", html);
         assert!(html.contains(
-            "data-s=\"scope:public scope:public view:component/public view:usecase/user-shop\""
+            "data-s=\"scope:public scope:public view:component/public view:usecase/shop\""
         ));
     }
 
@@ -1759,7 +1759,7 @@ mod tests {
         let os_view = card("id=\"n-view:component/order-service\"");
         assert!(!os_view.contains("<figure") && !os_view.contains(".svg\">svg</a>"), "{}", os_view);
         // A flow view lists its steps as drawn, each end a card link.
-        let seq = card("id=\"n-view:sequence/shop-customer-shop\"");
+        let seq = card("id=\"n-view:sequence/shop-shop\"");
         assert!(seq.contains("<span class=\"k\">steps</span> <ul class=\"w\"><li><a class=\"id\" href=\"#n-req:shop-1\">"), "{}", seq);
         assert!(seq.contains("<a class=\"n\" href=\"#n-ent:customer\">Customer</a> → <a class=\"n\" href=\"#n-ent:order-service\">Order Service</a>"), "{}", seq);
 
@@ -1774,7 +1774,7 @@ mod tests {
         assert!(os.contains("<span class=\"k\">inside</span> <a class=\"n\" href=\"#n-view:component/order-service\">"), "{}", os);
         assert!(os.contains("dependency → <a class=\"n\" href=\"#n-ent:inventory-service\">Inventory Service</a>"), "{}", os);
         assert!(os.contains("<span class=\"k\">flows</span> <ul class=\"w\"><li>"), "{}", os);
-        assert!(os.contains("<a class=\"n\" href=\"#n-view:usecase/shop-customer-shop\">use case</a> · <a class=\"n\" href=\"#n-view:sequence/shop-customer-shop\">sequence</a>"), "{}", os);
+        assert!(os.contains("<a class=\"n\" href=\"#n-view:usecase/shop-shop\">use case</a> · <a class=\"n\" href=\"#n-view:sequence/shop-shop\">sequence</a>"), "{}", os);
         assert!(os.contains("<span class=\"k\">siblings</span> <ul class=\"w\"><li><a class=\"n\" href=\"#n-ent:inventory-service\">"), "{}", os);
         assert!(os.contains("<span class=\"k\">children</span> <ul class=\"w\">") && os.contains("href=\"#n-ent:order\">Order</a>"), "{}", os);
         assert!(os.contains("<span class=\"k\">levels</span> level of <a class=\"n\" href=\"#l-ent:shop\">Shop</a> · own level <a class=\"n\" href=\"#l-ent:order-service\">Order Service</a>"), "{}", os);
@@ -1788,7 +1788,7 @@ mod tests {
         assert!(shop_level.contains("<p class=\"crumbs\"><a class=\"n\" href=\"#l-scope:public\">Public</a> › Shop</p>"), "{}", shop_level);
         assert!(shop_level.contains("«system»") && shop_level.contains("· <a class=\"n\" href=\"#n-ent:shop\">Shop</a>"), "{}", shop_level);
         assert!(shop_level.contains("<span class=\"k\">diagrams</span> <a class=\"n\" href=\"#n-view:component/shop\">"), "{}", shop_level);
-        assert!(shop_level.contains("href=\"#n-view:usecase/shop-customer-shop\">") && shop_level.contains("href=\"#n-view:sequence/shop-customer-shop\">"), "{}", shop_level);
+        assert!(shop_level.contains("href=\"#n-view:usecase/shop-shop\">") && shop_level.contains("href=\"#n-view:sequence/shop-shop\">"), "{}", shop_level);
         assert!(
             shop_level.contains("<li><a class=\"n\" href=\"#n-ent:order-service\">Order Service</a> «service»") && shop_level.contains("· <a class=\"n\" href=\"#l-ent:order-service\">level</a> <span class=\"k\">(4 children)</span>"),
             "{}",

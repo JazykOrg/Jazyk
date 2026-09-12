@@ -386,43 +386,19 @@ fn flow_placement_ranking(store: &Store, rid: &str) -> Vec<String> {
         .collect();
     ranked.sort();
     let mut ids: Vec<String> = ranked.into_iter().map(|(_, _, _, _, id)| id).collect();
-    // The requirement's own cluster (actor and document) outranks every other.
-    if let Some(actor) = flow_actor(store, r) {
-        let stem = doc
-            .rsplit('/')
-            .next()
-            .unwrap_or(&doc)
-            .trim_end_matches(".md");
-        let own = format!(
-            "view:usecase/{}-{}",
-            crate::derive::entity_slug(&actor),
-            md::slug(stem)
-        );
-        if let Some(pos) = ids.iter().position(|v| *v == own) {
-            let v = ids.remove(pos);
-            ids.insert(0, v);
-        }
+    // The requirement's own cluster (its document's flow at the root level) outranks
+    // every other. Mirrors docs/compiler/goals/curate-view.md.
+    let stem = doc
+        .rsplit('/')
+        .next()
+        .unwrap_or(&doc)
+        .trim_end_matches(".md");
+    let own = format!("view:usecase/{}", md::slug(stem));
+    if let Some(pos) = ids.iter().position(|v| *v == own) {
+        let v = ids.remove(pos);
+        ids.insert(0, v);
     }
     ids
-}
-
-fn flow_actor(store: &Store, r: &Requirement) -> Option<String> {
-    let resolved: Vec<String> = r
-        .entities
-        .iter()
-        .map(|e| store.resolve_id(e).to_string())
-        .filter(|e| store.graph.entities.contains_key(e))
-        .collect();
-    resolved
-        .iter()
-        .find(|e| {
-            store.graph.entities[*e]
-                .stereotype
-                .as_deref()
-                .is_some_and(|s| s.eq_ignore_ascii_case("actor"))
-        })
-        .or_else(|| resolved.first())
-        .cloned()
 }
 
 // The flow placement findings, each with the view the record lands on and the
@@ -3375,7 +3351,7 @@ mod tests {
         assert_eq!(facet, "behavior");
         assert!(
             best.as_deref()
-                .is_some_and(|v| v.starts_with("view:usecase/customer")),
+                .is_some_and(|v| v.starts_with("view:usecase/") && v.ends_with("shop")),
             "{:?}",
             best
         );

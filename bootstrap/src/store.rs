@@ -6183,7 +6183,7 @@ mod tests {
         // Defaults derived: a class view per scope and the cart's flow.
         assert!(s.graph.views["view:class/public"].default);
         assert_eq!(
-            s.graph.views["view:usecase/cart-t"].members,
+            s.graph.views["view:usecase/t"].members,
             vec!["req:t-1", "req:t-2"]
         );
         let r = s.apply(
@@ -6230,7 +6230,7 @@ mod tests {
         // A curated view is never removed by the recompute, and its members survive.
         s.apply(
             vec![Op::UpdateView {
-                id: "view:usecase/cart-t".into(),
+                id: "view:usecase/t".into(),
                 title: Some("Cart flow".into()),
                 members: None,
                 add_members: Vec::new(),
@@ -6245,7 +6245,7 @@ mod tests {
             }],
             &session(),
         );
-        let v = &s.graph.views["view:usecase/cart-t"];
+        let v = &s.graph.views["view:usecase/t"];
         assert!(!v.default);
         assert_eq!(v.title, "Cart flow");
         assert_eq!(v.members, vec!["req:t-1"]);
@@ -6260,7 +6260,7 @@ mod tests {
         );
         assert_eq!(r.applied, 1);
         assert_eq!(
-            s.graph.views["view:usecase/cart-t"].members,
+            s.graph.views["view:usecase/t"].members,
             vec!["req:t-1"]
         );
         let gone = s
@@ -6269,7 +6269,7 @@ mod tests {
             .iter()
             .find(|c| c.kind == CHANGE_VIEW_MEMBER_GONE)
             .expect("view-member-gone");
-        assert_eq!(gone.subject, "view:usecase/cart-t");
+        assert_eq!(gone.subject, "view:usecase/t");
         assert_eq!(gone.via, "members");
         assert_eq!(gone.detail["gone"], serde_json::json!(["req:t-1"]));
         // A bump on a view records the limit and curates it; a limit of the wrong kind

@@ -440,7 +440,14 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
             if a == b {
                 continue;
             }
-            groups.entry((a, b)).or_default().push(c);
+            // An association draws without an arrowhead, so its two directions are one
+            // line. Mirrors docs/compiler/diagrams.md#the-emitters.
+            let key = if c.r#type == "association" && b < a {
+                (b, a)
+            } else {
+                (a, b)
+            };
+            groups.entry(key).or_default().push(c);
         }
     }
     let mut arrows: Vec<Arrow> = groups
@@ -1211,14 +1218,9 @@ fn flow_actors(scene: &Scene, messages: &[Message]) -> Vec<String> {
             }
         }
     }
-    if actors.is_empty() {
-        let receivers: BTreeSet<&str> = messages.iter().map(|m| m.to.as_str()).collect();
-        for m in messages {
-            if !receivers.contains(m.from.as_str()) && !actors.contains(&m.from) {
-                actors.push(m.from.clone());
-            }
-        }
-    }
+    // No labeled actor: the use case draws none. A flow among the subject's own parts
+    // has no outside initiator. Mirrors docs/compiler/model/view.md#fields.
+    let _ = messages;
     actors
 }
 
@@ -1849,14 +1851,14 @@ mod tests {
         s.graph.requirements.insert("req:c-6".into(), c6);
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
-        let id = "view:sequence/checkout-funds-checkout";
+        let id = "view:sequence/checkout-checkout";
         assert!(
             !s.graph.views[id].members.iter().any(|m| m == "req:c-4"),
             "{:?}",
             s.graph.views[id].members
         );
         assert!(
-            s.graph.views["view:sequence/funds-gift-card-checkout"]
+            s.graph.views["view:sequence/funds-checkout"]
                 .members
                 .iter()
                 .any(|m| m == "req:c-4"),

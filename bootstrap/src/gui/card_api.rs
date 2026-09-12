@@ -147,8 +147,8 @@ mod tests {
         assert!(p["around"]["sameLevel"]
             .as_array()
             .unwrap()
-            .contains(&Value::from("view:usecase/shop-customer-shop")));
-        let f = page_value(&s, "view:sequence/shop-customer-shop").expect("the sequence's page");
+            .contains(&Value::from("view:usecase/shop-shop")));
+        let f = page_value(&s, "view:sequence/shop-shop").expect("the sequence's page");
         let steps = f["steps"].as_array().unwrap();
         assert!(!steps.is_empty());
         assert_eq!(steps[0]["requirement"], "req:shop-1");

@@ -677,36 +677,15 @@ pub fn level_view_id(store: &Store, target: &str) -> Option<String> {
     ))
 }
 
-// The actor of a requirement as lifted to a level: the first entity labeled actor
-// whose lift exists, else the first entity in listed order whose lift exists. None
-// when no entity reaches the level. Mirrors docs/compiler/model/view.md#default-views.
-fn lifted_actor(store: &Store, r: &Requirement, members: &[String]) -> Option<String> {
-    let resolved: Vec<String> = r
-        .entities
-        .iter()
-        .map(|e| store.resolve_id(e).to_string())
-        .filter(|e| store.graph.entities.contains_key(e))
-        .collect();
-    resolved
-        .iter()
-        .filter(|e| {
-            store.graph.entities[*e]
-                .stereotype
-                .as_deref()
-                .is_some_and(|s| s.eq_ignore_ascii_case("actor"))
-        })
-        .chain(resolved.iter())
-        .find_map(|e| lift_into(store, members, e))
-}
-
 // The flow rule instances of one level: the behavior and failure-mode requirements
-// whose entities lift to at least one member, clustered by the lifted actor and the
-// document; a cluster of two or more derives a use-case view and, when two or more of
-// its members carry an edge, a sequence view. The root form keeps the unprefixed ids;
-// a node prefixes its slug. Mirrors docs/compiler/model/view.md#level-views.
+// whose entities lift to at least one member, clustered by document (the author's own
+// cut of the subject into flows; the actors are read off the members at render time,
+// never baked into the key); a cluster of two or more derives a use-case view and, when
+// two or more of its members carry an edge, a sequence view. The root form keeps the
+// unprefixed ids; a node prefixes its slug. Mirrors docs/compiler/model/view.md#level-views.
 fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<DefaultView> {
     let mut out = Vec::new();
-    let mut clusters: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rid in document_order(store) {
         let r = &store.graph.requirements[&rid];
         let flows = r
@@ -748,32 +727,28 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
                 continue;
             }
         }
-        let Some(actor) = lifted_actor(store, r, members) else {
-            continue;
-        };
-        clusters.entry((actor, doc)).or_default().push(rid);
+        clusters.entry(doc).or_default().push(rid);
     }
     let prefix = match level.node.as_deref() {
         Some(node) => format!("{}-", entity_slug(node)),
         None => String::new(),
     };
-    for ((actor, doc), cluster) in clusters {
+    for (doc, cluster) in clusters {
         if cluster.len() < 2 {
             continue;
         }
-        let slug = format!(
-            "{}{}-{}",
-            prefix,
-            entity_slug(&actor),
-            md::slug(&doc_stem(&doc))
-        );
-        let title = format!(
-            "{}: {}",
-            store.graph.entities[&actor].name,
-            doc_title(store, &doc)
-        );
+        let slug = format!("{}{}", prefix, md::slug(&doc_stem(&doc)));
+        // The document titles a root flow; a node level's flow carries the node too,
+        // so the two levels' pictures of one document read apart.
+        let title = match level.node.as_deref() {
+            Some(node) => format!(
+                "{}: {}",
+                store.graph.entities[node].name,
+                doc_title(store, &doc)
+            ),
+            None => doc_title(store, &doc),
+        };
         let mut from: Vec<String> = level.node.iter().cloned().collect();
-        from.push(actor.clone());
         let with_edges: Vec<String> = cluster
             .iter()
             .filter(|m| !store.graph.requirements[*m].edges.is_empty())
@@ -1880,16 +1855,16 @@ pub(crate) mod tests {
             views["view:object/shopping-cart"].members,
             vec!["ent:anas-cart"]
         );
-        // Root-level flow cluster: the customer's behavior in shop.md, in document
-        // order, under the unprefixed ids.
-        let uc = &views["view:usecase/customer-shop"];
+        // Root-level flow cluster: shop.md's behavior, in document order, under the
+        // unprefixed ids, titled by the document.
+        let uc = &views["view:usecase/shop"];
         assert_eq!(uc.kind, "use-case");
-        assert_eq!(uc.title, "Customer: Shop");
+        assert_eq!(uc.title, "Shop");
         assert_eq!(
             uc.members,
             vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
         );
-        let seq = &views["view:sequence/customer-shop"];
+        let seq = &views["view:sequence/shop"];
         assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
         assert!(matches!(
             uc.provenance.as_ref(),
@@ -2172,10 +2147,11 @@ pub(crate) mod tests {
         let mut s = showcase_store();
         let mut batch = RecordBatch::new(1);
         recompute(&mut s, "g1", &mut batch);
-        // The shop level: every customer flow reaches it through the services.
-        let uc = &s.graph.views["view:usecase/shop-customer-shop"];
+        // The shop level: every customer flow reaches it through the services. The
+        // node level's title carries the node, so it reads apart from the root's.
+        let uc = &s.graph.views["view:usecase/shop-shop"];
         assert_eq!(uc.kind, "use-case");
-        assert_eq!(uc.title, "Customer: Shop");
+        assert_eq!(uc.title, "Shop: Shop");
         assert_eq!(
             uc.members,
             vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
@@ -2183,32 +2159,32 @@ pub(crate) mod tests {
         assert!(matches!(
             uc.provenance.as_ref(),
             Some(Provenance::Derived { from, .. })
-                if from[0] == "ent:shop" && from[1] == "ent:customer"
+                if from[0] == "ent:shop" && from[1] == "req:shop-1"
         ));
-        let seq = &s.graph.views["view:sequence/shop-customer-shop"];
+        let seq = &s.graph.views["view:sequence/shop-shop"];
         assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
-        assert_eq!(seq.title, "Customer: Shop");
+        assert_eq!(seq.title, "Shop: Shop");
         // The order service's level: three of the four reach it through its
         // children; the stock API step is the service itself (the frame) acting on
         // an outside interface, a flow of the shop level, so it stays out here.
         assert_eq!(
-            s.graph.views["view:usecase/order-service-customer-shop"].members,
+            s.graph.views["view:usecase/order-service-shop"].members,
             vec!["req:shop-1", "req:shop-7", "req:shop-8"]
         );
-        // The root form keeps today's ids, and each flow view knows its level.
-        assert!(s.graph.views.contains_key("view:usecase/customer-shop"));
+        // The root form keeps the unprefixed ids, and each flow view knows its level.
+        assert!(s.graph.views.contains_key("view:usecase/shop"));
         assert_eq!(
-            flow_view_level(&s, "view:usecase/customer-shop").as_deref(),
+            flow_view_level(&s, "view:usecase/shop").as_deref(),
             Some("scope:public")
         );
         assert_eq!(
-            flow_view_level(&s, "view:sequence/shop-customer-shop").as_deref(),
+            flow_view_level(&s, "view:sequence/shop-shop").as_deref(),
             Some("ent:shop")
         );
         assert_eq!(flow_view_level(&s, "view:usecase/nope"), None);
-        // An actor that does not reach the level yields to the first entity that
-        // does: a flow among the order service's children with the customer absent
-        // clusters by its first lifted entity.
+        // A flow among the order service's children with the customer absent joins
+        // the document's cluster at that level: the key is the document, never the
+        // first entity that happens to lead a sentence.
         for (id, text) in [
             ("req:shop-13", "The cart totals its items."),
             ("req:shop-14", "The cart prices its items."),
@@ -2232,17 +2208,23 @@ pub(crate) mod tests {
         }
         let mut batch = RecordBatch::new(2);
         recompute(&mut s, "g2", &mut batch);
-        let cart = &s.graph.views["view:usecase/order-service-shopping-cart-shop"];
-        assert_eq!(cart.members, vec!["req:shop-13", "req:shop-14"]);
-        assert_eq!(cart.title, "Shopping Cart: Shop");
-        // At the shop level both entities lift to the order service, and at the
-        // root to the shop: a flow internal to one child with a level of its own is
-        // that child's, never a self-message above.
+        let svc = &s.graph.views["view:usecase/order-service-shop"];
+        assert!(svc.members.contains(&"req:shop-13".to_string()), "{:?}", svc.members);
+        assert!(svc.members.contains(&"req:shop-14".to_string()), "{:?}", svc.members);
+        assert_eq!(svc.title, "Order Service: Shop");
         assert!(!s
             .graph
             .views
-            .contains_key("view:usecase/shop-order-service-shop"));
-        assert!(!s.graph.views.contains_key("view:usecase/shop-shop"));
+            .contains_key("view:usecase/order-service-shopping-cart-shop"));
+        // At the shop level both entities lift to the order service, and at the
+        // root to the shop: a flow internal to one child with a level of its own is
+        // that child's, never a self-message above.
+        assert!(!s.graph.views["view:usecase/shop-shop"]
+            .members
+            .contains(&"req:shop-13".to_string()));
+        assert!(!s.graph.views["view:usecase/shop"]
+            .members
+            .contains(&"req:shop-13".to_string()));
         assert_eq!(
             lift_into(&s, &["ent:shop".to_string()], "ent:order-item").as_deref(),
             Some("ent:shop")
@@ -2275,7 +2257,7 @@ pub(crate) mod tests {
         // A flow view's participants are its level's lifted members: the shop-level
         // sequence draws the customer, the order service, and the inventory service.
         assert_eq!(
-            children_of_view(&s, "view:sequence/shop-customer-shop"),
+            children_of_view(&s, "view:sequence/shop-shop"),
             vec![(
                 "ent:order-service".to_string(),
                 "view:component/order-service".to_string()
@@ -2283,7 +2265,7 @@ pub(crate) mod tests {
         );
         // The root sequence draws the raw participants lifted to the roots: the shop.
         assert_eq!(
-            children_of_view(&s, "view:sequence/customer-shop"),
+            children_of_view(&s, "view:sequence/shop"),
             vec![("ent:shop".to_string(), "view:component/shop".to_string())]
         );
         // A curated view is read the same way; an unknown view has no children.

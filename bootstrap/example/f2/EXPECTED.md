@@ -121,22 +121,23 @@ mechanism-faithful for an edge-poor cluster. Expected:
 
 | cluster | members (document order) | views |
 | --- | --- | --- |
-| Customer, shipping.md | delivers a packed Order to its buyer; tracking link on dispatch; two failed attempts, return and refund (`failure-mode`) | `view:usecase/customer-shipping`, `view:sequence/customer-shipping`, title `Customer: Shipping` |
-| Operator, admin.md | `orderly serve` starts the system; `orderly report` for the daily numbers; every Order from the selected period | `view:usecase/operator-admin`, `view:sequence/operator-admin`, title `Operator: Admin CLI` |
-| Customer, returns.md | brings goods back into Inventory; open a Return within 30 days of delivery | `view:usecase/customer-returns`, `view:sequence/customer-returns`, title `Customer: Returns` |
-| Customer, orders.md (likely) | a Customer places an Order; submit, reserve Stock | `view:usecase/customer-orders`, `view:sequence/customer-orders`, title `Customer: Order` |
+| shipping.md (actor Customer) | delivers a packed Order to its buyer; tracking link on dispatch; two failed attempts, return and refund (`failure-mode`) | `view:usecase/shipping`, `view:sequence/shipping`, title `Shipping` |
+| admin.md (actor Operator) | `orderly serve` starts the system; `orderly report` for the daily numbers; every Order from the selected period | `view:usecase/admin`, `view:sequence/admin`, title `Admin CLI` |
+| returns.md (actor Customer) | brings goods back into Inventory; open a Return within 30 days of delivery | `view:usecase/returns`, `view:sequence/returns`, title `Returns` |
+| orders.md (actor Customer, likely) | a Customer places an Order; submit, reserve Stock | `view:usecase/orders`, `view:sequence/orders`, title `Order` |
 
-When Operator is not minted, the admin.md cluster keys on the Admin CLI instead
-(`admin-cli-admin`, title `Admin CLI: Admin CLI`) and the use case draws the initiators
-as actors. The cluster slug follows the actor's recorded name, so a plural `Operators`
-keys `operators-admin`: acceptable. The remaining behavior requirements key on non-actor first entities (the
-Customer in system.md, customer.md, payment.md; Payment, Catalog, Return in their own
-pages; Inventory's two stock rules derive `Inventory: Inventory` only when both anchor
-on Inventory first). A cluster reaching two or more members this way derives its view
-pair too (`Payment: Payment`, `Catalog: Catalog`): mechanism-faithful surplus, and the
-four named clusters above are the graded minimum. Each lone member draws `unplaced-behavior` (info) with a
-`flow-unplaced` record and an optional `curate-view` goal: `optional advised` in the
-verdict, never blocking convergence.
+When Operator is not minted, the admin.md cluster still derives (`admin`, title
+`Admin CLI`) and the use case draws no actor, never the Admin CLI as a stick figure.
+The other documents cluster the same way: system.md, customer.md, payment.md,
+inventory.md, and catalog.md each derive a use case titled by the document when two or
+more of their behavior statements reach the root level (`Orderly`, `Customer`,
+`Payment`, `Inventory`, `Catalog`), each drawing the actors its members name (Customer
+where the statements say so, none for the stock rules): mechanism-faithful surplus, and
+the four named clusters above are the graded minimum. A use case never draws a
+component as an actor (`actor Shipment` beside an inventory flow is a failure). Each
+lone member draws `unplaced-behavior` (info) with a `flow-unplaced` record and an
+optional `curate-view` goal: `optional advised` in the verdict, never blocking
+convergence.
 
 Structural defaults are level views: one per node with two or more children, the scope
 root included (docs/compiler/model/view.md#level-views). The kind is `component` when
@@ -168,10 +169,10 @@ plus every outside entity with a lifted edge into the level, in document order; 
 
 Flow views derive per level too. The root form keeps the unprefixed ids in the table
 above (lifting to a parentless entity is identity). A deeper level clusters the
-behavior requirements whose entities lift into its members, by the lifted actor and
-document, under `view:usecase/<node-slug>-<cluster-slug>` and
-`view:sequence/<node-slug>-<cluster-slug>`: `view:usecase/orderly-operator-admin` when
-Admin CLI sits under Orderly and Operator is minted. These are mechanism-faithful
+behavior requirements whose entities lift into its members, by document, under
+`view:usecase/<node-slug>-<doc-slug>` and `view:sequence/<node-slug>-<doc-slug>`:
+`view:usecase/orderly-admin`, titled `Orderly: Admin CLI`, when Admin CLI sits under
+Orderly. These are mechanism-faithful
 surplus; the four root clusters above are the graded minimum. Every rendered member
 with a level view of its own carries a drill-down link (`[[../<kind>/<slug>.svg]]` in
 the `.puml`, an anchor in the `.svg`): Orderly in `component/public` links to
@@ -187,12 +188,12 @@ A compile must produce, each `.puml` with its `.svg` beside it and no `.png`:
 ```
 jazyk-out/diagrams/component/public.puml        .svg   (class/public.puml when no parentless entity carries a structural stereotype)
 jazyk-out/diagrams/component/orderly.puml       .svg   (when Orderly has two or more children)
-jazyk-out/diagrams/usecase/customer-shipping.puml   .svg
-jazyk-out/diagrams/sequence/customer-shipping.puml  .svg
-jazyk-out/diagrams/usecase/operator-admin.puml      .svg
-jazyk-out/diagrams/sequence/operator-admin.puml     .svg
-jazyk-out/diagrams/usecase/customer-returns.puml    .svg
-jazyk-out/diagrams/sequence/customer-returns.puml   .svg
+jazyk-out/diagrams/usecase/shipping.puml            .svg
+jazyk-out/diagrams/sequence/shipping.puml           .svg
+jazyk-out/diagrams/usecase/admin.puml               .svg
+jazyk-out/diagrams/sequence/admin.puml              .svg
+jazyk-out/diagrams/usecase/returns.puml             .svg
+jazyk-out/diagrams/sequence/returns.puml            .svg
 jazyk-out/diagrams/state/order.puml             .svg
 ```
 
@@ -218,9 +219,9 @@ levels exist. What the pictures show:
   no lollipop or socket. Arrows: `Customer ..> Catalog`, `Operator ..> "Admin CLI"`,
   `Order ..> Inventory` (Stock lifted) when those edges exist; a child with a level of
   its own (Catalog over two or more) carries its link.
-- `usecase/customer-shipping`: `actor Customer`, `usecase "Customer: Shipping"`,
-  `Customer -- "Customer: Shipping"`. Never an actor named Buyer.
-- `sequence/customer-shipping`: `actor Customer`; one message per member that carries
+- `usecase/shipping`: `actor Customer`, `usecase "Shipping"`,
+  `Customer -- "Shipping"`. Never an actor named Buyer.
+- `sequence/shipping`: `actor Customer`; one message per member that carries
   an edge, e.g. `Shipment -> Customer : ... tracking link (req:shipping-N)`; a member
   without an edge is a self-message on its first entity.
 - `state/order`: `[*] --> placed`, `placed --> paid : Payment confirmed`,

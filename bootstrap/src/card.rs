@@ -453,7 +453,7 @@ mod tests {
             "{:?}",
             c.relationships
         );
-        assert!(c.flows.iter().any(|f| f == "view:usecase/shop-customer-shop"), "{:?}", c.flows);
+        assert!(c.flows.iter().any(|f| f == "view:usecase/shop-shop"), "{:?}", c.flows);
         assert_eq!(c.provenance, "quote");
         // A node's card lifts its subtree's relationships to the parent level: the
         // shop, whose children carry every edge, is never `none`.
@@ -487,9 +487,9 @@ mod tests {
         assert!(p
             .around
             .same_level
-            .contains(&"view:usecase/shop-customer-shop".to_string()));
+            .contains(&"view:usecase/shop-shop".to_string()));
         assert_eq!(p.around.above.as_deref(), Some("view:component/public"));
-        let f = view_page(&s, &walk, "view:sequence/shop-customer-shop").unwrap();
+        let f = view_page(&s, &walk, "view:sequence/shop-shop").unwrap();
         assert_eq!(f.level.as_ref().unwrap().target, "ent:shop");
         assert!(!f.steps.is_empty());
         assert_eq!(f.steps[0].requirement, "req:shop-1");

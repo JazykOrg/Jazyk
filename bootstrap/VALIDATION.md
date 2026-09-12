@@ -774,8 +774,26 @@ The loop continued onto the org corpus and onto generation:
   rather than the statement hash, and stale tests reconstructed by hand
   (`existingTests` in the binding package now names them).
 
+- The corpora the loop had not run (no answer keys in the copies): example-slides
+  converged in 68 turns and $2.40 with no diagnostics and no flow view, which is right
+  for a deck whose statements are content. example-erp converged twice at 100 percent
+  coverage: 218 turns and $8.74 with 36 pair verdicts, then 193 turns and $7.63 with
+  18 after the fixes it exposed. Six operation bullets of one page had opened
+  twenty-three pair goals on `supports` and `operation`, so an entity's boilerplate
+  (a token on at least four and half of its statements) counts for nothing; the
+  duplicate-requirement check had filed a one-subject twin beside the session's
+  finding; three bare headings had reached a session as goals; `done(beginNext)` had
+  declined the optional batch at convergence; and User Account's four attributes drew
+  nowhere, since a sub-system holding one domain object had no level view (a one-child
+  level with attributes derives its class view now). example-sort rerun on the same
+  binary: 60 turns, $2.71, 18 pair verdicts against 36, and a contradiction filed
+  before its pair opened could not be carried by `settle_pairs` (the reuse path had
+  never run; it needs only the justification now).
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
-design, 32 verdicts for 17 requirements on sort); a statement repair inside a pair
+design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
+actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing
+else, honest but empty); a statement repair inside a pair
 session re-deriving its pairs; the front door's "Its concerns are described in"
 leaving Ledger beside its areas rather than above them (an owner question); the
 deterministic checks' findings appearing only at the tail while the project block

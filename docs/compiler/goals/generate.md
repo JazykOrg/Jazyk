@@ -74,7 +74,11 @@ run, cwd}`), and the build when the medium is `built`. The harness checks the
 ledger, not the model's word:
 
 - `mark_goal_done({goal, justification})` is validated against the ledger entry. No
-  record, or a stale `factHash`, is rejected naming the gate. A `factHash` that moved
+  record, or a stale `factHash`, is rejected naming the gate. A record whose files are
+  all gone is rejected naming them; a record with no files of its own stands when every
+  requirement of the entity has a test row whose artifact exists (an actor whose
+  statements the tool it uses implements writes nothing of its own), and is rejected
+  naming the requirements that have none. A `factHash` that moved
   mid-session is recorded but leaves the entity pending: the goal derives again with
   the new facts.
 - `record_generation` applies the shape gates, all before any side effect: a

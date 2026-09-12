@@ -968,7 +968,10 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                     .iter()
                     .filter(|f| !gs.deliverable.join(f).exists())
                     .collect();
-                if e.files.is_empty() || !gone.is_empty() {
+                // A record with no files is an entity carried by other entities' files
+                // (an actor whose statements the tool implements); nothing of its own
+                // can be gone. Mirrors docs/compiler/goals/generate.md#created-when.
+                if !gone.is_empty() {
                     ("files-gone".to_string(), json!(gone))
                 } else if !unimplemented.is_empty() {
                     ("unimplemented-bindings".to_string(), json!(unimplemented))
@@ -1019,16 +1022,33 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
         .iter()
         .filter(|f| !gs.deliverable.join(f).is_file())
         .collect();
-    if e.files.is_empty() || !gone.is_empty() {
+    if !gone.is_empty() {
         return Err(format!(
             "the record for `{}` lists files that do not exist under the deliverable ({}); write them, then record_generation again with every file the manifest names",
             id,
-            if gone.is_empty() {
-                "no files at all".to_string()
-            } else {
-                gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
-            }
+            gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
         ));
+    }
+    // A record with no files of its own stands only when every requirement of the
+    // entity has a test row whose artifact exists: the entity is carried by other
+    // entities' files. Mirrors docs/compiler/goals/generate.md#gate.
+    if e.files.is_empty() {
+        let missing: Vec<String> = reqs_of_sorted(store, &id)
+            .into_iter()
+            .filter(|rid| {
+                !ledger
+                    .requirements
+                    .get(rid)
+                    .is_some_and(|row| gs.deliverable.join(&row.test.artifact).is_file())
+            })
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "the record for `{}` lists no files, and these requirements have no existing test row to stand on: {}; write the entity's part or bind its requirements to the files that carry them",
+                id,
+                missing.join(", ")
+            ));
+        }
     }
     if require_run {
         let never_run: Vec<String> = reqs_of_sorted(store, &id)

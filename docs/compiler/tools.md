@@ -348,7 +348,8 @@ clear or keep change records; they are not graph mutations
     `severity` (`error` or `warning`, required), `message` (required), `reasoning`,
     and `prompt`, then marks; when an open `contradiction` already names both sides
     (filed by an earlier batch, or by this session against a statement it was not
-    paired with), that one carries the verdict and no second is filed.
+    paired with), that one carries the verdict, no second is filed, and the entry
+    needs only `goal`, `verdict`, and `justification`.
   - `resolved`: resolves every open `contradiction` or `duplicate-requirement`
     diagnostic naming both sides, the justification as the reason, then marks. A
     pair with no such diagnostic is refused (`no-pair-diagnostic`); a refile after a

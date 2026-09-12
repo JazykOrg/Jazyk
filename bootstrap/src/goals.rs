@@ -1265,7 +1265,16 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 }
             }
             hints.push(format!("load {}; load {}", rid, nbr));
-            hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
+            if sticky.is_empty() {
+                hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
+            } else {
+                // The standing finding is the verdict's carrier: no second filing.
+                // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
+                hints.push(format!(
+                    "skill judgment; {} already stands on the pair: settle_pairs verdict contradiction (or duplicate) carries it and files nothing, resolved closes it when the conflict is gone, consistent is wrong while it stands",
+                    sticky.join(", ")
+                ));
+            }
             let pinned = !sticky.is_empty();
             match pairs.get_mut(&target) {
                 // The same pair from the other side: the earliest cause names the

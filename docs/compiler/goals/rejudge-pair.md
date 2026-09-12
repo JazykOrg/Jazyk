@@ -230,7 +230,10 @@ The `rejudge-pair` toolset ([toolsets](../tools.md#toolsets)):
   reasoning?, prompt?}]})`: the batch claim, one entry per pair. `consistent` marks
   the goal done; `duplicate` files `duplicate-requirement` and marks;
   `contradiction` files `contradiction` with the entry's `severity`, `message`, and
-  `prompt` and marks; `resolved` resolves the pair's open diagnostic and marks. The
+  `prompt` and marks, or, when an open `contradiction` already names both sides,
+  lets that one carry the verdict with no second filing and no `severity` or
+  `message` required (the hint names it); `resolved` resolves the pair's open
+  diagnostic and marks. The
   session prefers it when it holds several verdicts; `mark_goal_done` still serves a
   single pair and the same-document delete.
 - `update_requirement({id, statement?, ...})`: repair a statement that drifted from its

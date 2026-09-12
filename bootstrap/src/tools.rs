@@ -459,7 +459,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "settle_pairs",
-            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
+            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks, unless an open contradiction already names both sides (filed by an earlier batch, or by this session before the pair opened): then that one carries the verdict, nothing is filed, and the entry needs only the goal, the verdict, and the justification; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
             parameters: obj(
                 json!({"verdicts": {"type": "array", "minItems": 1, "items": {
                     "type": "object",
@@ -1856,8 +1856,58 @@ impl ToolSession {
                 ),
             ));
         }
-        // The arguments a filing verdict needs, checked before anything stages.
-        if verdict == "contradiction" {
+        // The open pair diagnostics: what a resolved verdict settles, and the
+        // contradiction a contradiction verdict carries instead of filing a twin.
+        // Recorded or staged this session, not already resolved in the changeset.
+        let names_pair = |d: &Diagnostic| {
+            d.lifecycle == "open"
+                && (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                && d.subjects.iter().any(|s| *s == a)
+                && d.subjects.iter().any(|s| *s == b)
+        };
+        let resolved_here: BTreeSet<&str> = self
+            .staged
+            .iter()
+            .filter_map(|o| match o {
+                Op::ResolveDiagnostic { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let mut pair_diags: Vec<String> = self
+            .snapshot
+            .graph
+            .diagnostics
+            .iter()
+            .chain(self.staged_diags.iter())
+            .filter(|(id, d)| names_pair(d) && !resolved_here.contains(id.as_str()))
+            .map(|(id, _)| id.clone())
+            .collect();
+        pair_diags.sort();
+        pair_diags.dedup();
+        if verdict == "resolved" && pair_diags.is_empty() {
+            return Err(ToolError::new(
+                "no-pair-diagnostic",
+                format!(
+                    "no open contradiction or duplicate-requirement diagnostic names both {} and {}; a pair with nothing to resolve takes verdict consistent",
+                    a, b
+                ),
+            ));
+        }
+        // A contradiction already filed on this pair (by an earlier batch, or by
+        // this session against an unpaired statement) carries the verdict; a second
+        // filing would be a twin. Mirrors docs/compiler/goals/rejudge-pair.md#tools.
+        let standing_contradiction: Option<String> = pair_diags
+            .iter()
+            .find(|id| {
+                self.staged_diags
+                    .get(*id)
+                    .or_else(|| self.snapshot.graph.diagnostics.get(*id))
+                    .is_some_and(|d| d.rule == "contradiction")
+            })
+            .cloned();
+        // The arguments a filing verdict needs, checked before anything stages; a
+        // contradiction already standing on the pair needs none.
+        if verdict == "contradiction" && standing_contradiction.is_none() {
             match Self::opt_str(entry, "severity").as_deref() {
                 None => {
                     return Err(ToolError::new(
@@ -1880,47 +1930,6 @@ impl ToolSession {
                 ));
             }
         }
-        // The open pair diagnostics a resolved verdict settles: recorded or staged
-        // this session, not already resolved in the changeset.
-        let pair_diags: Vec<String> = if verdict == "resolved" {
-            let names_pair = |d: &Diagnostic| {
-                d.lifecycle == "open"
-                    && (d.rule == "contradiction" || d.rule == "duplicate-requirement")
-                    && d.subjects.iter().any(|s| *s == a)
-                    && d.subjects.iter().any(|s| *s == b)
-            };
-            let resolved_here: BTreeSet<&str> = self
-                .staged
-                .iter()
-                .filter_map(|o| match o {
-                    Op::ResolveDiagnostic { id, .. } => Some(id.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let mut ids: Vec<String> = self
-                .snapshot
-                .graph
-                .diagnostics
-                .iter()
-                .chain(self.staged_diags.iter())
-                .filter(|(id, d)| names_pair(d) && !resolved_here.contains(id.as_str()))
-                .map(|(id, _)| id.clone())
-                .collect();
-            ids.sort();
-            ids.dedup();
-            if ids.is_empty() {
-                return Err(ToolError::new(
-                    "no-pair-diagnostic",
-                    format!(
-                        "no open contradiction or duplicate-requirement diagnostic names both {} and {}; a pair with nothing to resolve takes verdict consistent",
-                        a, b
-                    ),
-                ));
-            }
-            ids
-        } else {
-            Vec::new()
-        };
         // Stage what the verdict carries, rolling the entry's own work back when
         // the claim behind it is refused.
         let staged_before = self.staged.len();
@@ -1966,17 +1975,7 @@ impl ToolSession {
                     json!({"verdict": "duplicate", "carried_by": filed["id"]})
                 }
                 "contradiction" => {
-                    // A contradiction already filed on this pair (by an earlier batch,
-                    // or by this session against an unpaired statement) carries the
-                    // verdict; a second filing would be a twin.
-                    // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
-                    let standing = pair_diags.iter().find(|id| {
-                        self.staged_diags
-                            .get(*id)
-                            .or_else(|| self.snapshot.graph.diagnostics.get(*id))
-                            .is_some_and(|d| d.rule == "contradiction")
-                    });
-                    if let Some(id) = standing {
+                    if let Some(id) = &standing_contradiction {
                         result["diagnostic"] = json!(id);
                         result["note"] = json!("the contradiction already stood on the pair; no second one filed");
                         json!({"verdict": "contradiction", "carried_by": id})
@@ -8326,6 +8325,45 @@ mod tests {
     // settles the pair's open diagnostic, a goal of another kind and a goal outside
     // the batch are refused by name, a contradiction without its message is refused
     // before anything stages, and the guard counts accepted entries.
+    // Mirrors docs/compiler/goals/rejudge-pair.md#tools: a contradiction already
+    // standing on the pair carries the verdict; the entry needs no severity or
+    // message, and nothing new is filed.
+    #[test]
+    fn settle_pairs_lets_a_standing_contradiction_carry_the_verdict() {
+        let mut t = pair_session();
+        t.snapshot.graph.diagnostics.insert(
+            "diag:contradiction-3".into(),
+            Diagnostic {
+                rule: "contradiction".into(),
+                severity: "error".into(),
+                subjects: vec!["req:a".into(), "req:c".into()],
+                message: "filed before the pair opened".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let v = t
+            .dispatch(
+                PAIR_SETTLE_TOOL,
+                &json!({"verdicts": [
+                    {"goal": "g:rejudge-pair:req:a~req:c", "verdict": "contradiction",
+                     "justification": "The standing finding still holds: one keeps items until checkout, the other drops them after an hour."}
+                ]}),
+            )
+            .unwrap();
+        let r = &v["results"][0];
+        assert!(r["error"].is_null(), "{}", r);
+        assert_eq!(r["diagnostic"], "diag:contradiction-3", "{}", r);
+        assert!(r["note"].as_str().unwrap().contains("already stood"), "{}", r);
+        assert!(t.staged_diags.is_empty(), "{:?}", t.staged_diags.keys());
+        assert_eq!(v["settled"], json!(["g:rejudge-pair:req:a~req:c"]));
+    }
+
     #[test]
     fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
         let mut t = pair_session();

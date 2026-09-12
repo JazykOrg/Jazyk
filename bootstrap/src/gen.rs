@@ -151,6 +151,19 @@ fn tool_family(word: &str) -> Option<&'static str> {
 // Some when both name a tool family and share none: the medium diverged from what
 // the sessions actually wrote. None when either side names no known family.
 // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+// The note a package carries while no session has decided the medium: an external
+// worker decides and records it with record_medium before writing anything.
+// Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+pub fn medium_note(ledger: &Ledger) -> Option<String> {
+    if ledger.medium.is_some() {
+        return None;
+    }
+    Some(
+        "MEDIUM UNDECIDED: no session has decided what this deliverable is made of. Decide it first from the requirements, the deliverable tree (an existing tree pins the language and toolchain), and any recorded run commands, and record it with record_medium before writing files; the contract's line that the medium is settled applies after that."
+            .to_string(),
+    )
+}
+
 pub fn medium_divergence(ledger: &Ledger) -> Option<String> {
     let medium = ledger.medium.as_ref()?;
     let mut toolchain: Vec<&str> = medium
@@ -1275,6 +1288,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         "medium": ledger.medium.as_ref().map(|m| json!({
             "form": m.form, "produced": m.produced, "toolchain": m.toolchain, "artifact": m.artifact,
         })),
+        "mediumNote": medium_note(&ledger),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd, "produces": b.produces})),
         // The tests binding already wrote: they define the interface, and the product
         // conforms to them. A task that cannot make one pass without changing it

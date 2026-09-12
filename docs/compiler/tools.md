@@ -553,8 +553,14 @@ and `list_files` does not list it.
   holds, and the deliverable's
   [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
   and build. Layout, file names, and run commands are the worker's choices, recorded
-  in the manifest; the medium is not, it is already decided. Stateless on the server:
-  beginning claims nothing and holds nothing; the lease is the claim.
+  in the manifest; the medium is not, it is already decided, or the package carries
+  `mediumNote` asking the worker to decide it first with `record_medium`. Stateless on
+  the server: beginning claims nothing and holds nothing; the lease is the claim.
+- `record_medium({form, produced, toolchain?, artifact?})`: record what the
+  deliverable is made of when no session has
+  ([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)):
+  `produced` is `written` or `built`, `artifact` is required when built. Replaces an
+  earlier decision until an entity is generated, refused (`medium-settled`) after.
 - `record_generation({entity, factHash, manifest, choices?})`: record the entity
   generated. The worker writes the deliverable files itself; the `manifest` binds
   them to the graph: `{files: [...], tests: [{requirement, kind, label, artifact, name,

@@ -152,6 +152,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "deliverable": gs.deliverable.to_string_lossy(),
         "suggestedTestName": crate::gen::test_name(&rid, &r.statement),
         "medium": ledger.medium.as_ref().map(|m| m.line()),
+        "mediumNote": crate::gen::medium_note(&ledger),
         // The medium's standing divergence from the recorded commands, if any
         // (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
         "mediumWarning": crate::gen::medium_divergence(&ledger),

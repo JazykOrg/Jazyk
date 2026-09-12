@@ -103,6 +103,14 @@ medium:
 - When the ledger already records run commands (tests bound before any entity
   generated), the decision reads them too: recorded commands pin the toolchain the
   same way an existing tree does.
+- Over MCP the serving has no model of its own to decide with. A `begin_binding` or
+  `begin_generation` package whose ledger holds no medium says so (`medium: null` and
+  a `mediumNote` asking for the decision), and the agent decides it the same way, from
+  the requirements, the deliverable tree, and any recorded run commands, then records
+  it with `record_medium({form, produced, toolchain?, artifact?})` before writing
+  anything. Until an entity is generated a second `record_medium` replaces the
+  decision; after that it is refused (`medium-settled`), since the files already
+  follow it.
 - `produced: written` means the generated files are the deliverable. `produced: built`
   means they are the source that produces `artifact`, and [the build](#the-build) runs
   it.

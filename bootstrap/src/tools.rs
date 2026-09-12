@@ -329,6 +329,19 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
+            name: "record_medium",
+            description: "Record what the deliverable is made of when no session has decided it yet (the package says medium: null with a mediumNote): form in your words (a Rust crate, a PowerPoint deck), produced written (the files are the deliverable) or built (they are the source a tool turns into artifact), toolchain, and artifact when built. An existing deliverable tree and recorded run commands pin the decision. Replaces an earlier decision until an entity is generated; refused after.",
+            parameters: obj(
+                json!({
+                    "form": {"type": "string"},
+                    "produced": {"type": "string", "enum": ["written", "built"]},
+                    "toolchain": {"type": "string"},
+                    "artifact": {"type": "string"}
+                }),
+                &["form", "produced"],
+            ),
+        },
+        ToolDef {
             name: "record_generation",
             description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
             parameters: obj(
@@ -503,7 +516,8 @@ pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_s
 pub const PAIR_SETTLE_TOOL: &str = "settle_pairs";
 // The verdicts one settle_pairs entry may carry. Mirrors docs/compiler/goals/rejudge-pair.md#gate.
 pub const PAIR_VERDICTS: [&str; 4] = ["consistent", "duplicate", "contradiction", "resolved"];
-pub const GEN_TOOLS: [&str; 3] = ["generation_tasks", "begin_generation", "record_generation"];
+pub const GEN_TOOLS: [&str; 4] =
+    ["generation_tasks", "begin_generation", "record_generation", "record_medium"];
 pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
 pub const VERIFY_TOOLS: [&str; 4] = [
     "verification_tasks",
@@ -5386,6 +5400,45 @@ impl ToolSession {
                 let id = self.snapshot.resolve_id(&entity).to_string();
                 crate::gen::task_package(&self.snapshot, &id, &gs)
                     .map_err(|e| ToolError::new("unknown-id", e))
+            }
+            "record_medium" => {
+                // The external worker's decision, recorded once. Mirrors
+                // docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
+                let form = Self::str_arg(args, "form")?;
+                let produced = Self::str_arg(args, "produced")?;
+                if produced != "written" && produced != "built" {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        "produced is written or built".into(),
+                    ));
+                }
+                let artifact = Self::opt_str(args, "artifact").unwrap_or_default();
+                if produced == "built" && artifact.trim().is_empty() {
+                    return Err(ToolError::new(
+                        "bad-args",
+                        "a built deliverable names the artifact its build produces".into(),
+                    ));
+                }
+                let mut ledger = crate::gen::Ledger::load(&self.snapshot.out);
+                if ledger.medium.is_some() && !ledger.entities.is_empty() {
+                    return Err(ToolError::new(
+                        "medium-settled",
+                        format!(
+                            "the medium is settled ({}) and entities already follow it; it is not re-decided",
+                            ledger.medium.as_ref().map(|m| m.line()).unwrap_or_default()
+                        ),
+                    ));
+                }
+                let medium = crate::gen::Medium {
+                    form,
+                    produced,
+                    toolchain: Self::opt_str(args, "toolchain").unwrap_or_default(),
+                    artifact,
+                };
+                let line = medium.line();
+                ledger.medium = Some(medium);
+                ledger.save(&self.snapshot.out);
+                Ok(json!({"recorded": true, "medium": line}))
             }
             "record_generation" => {
                 let entity = Self::str_arg(args, "entity")?;

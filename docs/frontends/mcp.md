@@ -315,7 +315,9 @@ Binding and generation are stateless on the server: `begin_binding` and
 `begin_generation` return the package, the agent searches, edits files, and runs
 commands with its own tools, `record_binding` records the row and
 `record_generation` the manifest. The binding package carries the requirement's
-`statement` and `quote`. Jazyk deliberately serves no file-editing tools here; a
+`statement` and `quote`. A package whose ledger holds no medium carries `mediumNote`,
+and `record_medium` records the agent's decision before anything is written
+([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). Jazyk deliberately serves no file-editing tools here; a
 coding agent brings its own, and the in-process worker's file tools
 ([generation tools](../compiler/goals/generate.md#tools)) are not served over MCP.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these

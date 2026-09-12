@@ -2910,6 +2910,16 @@ impl ToolSession {
         if cand.is_empty() {
             return None;
         }
+        // For an entity, a variant differs by generic classifiers alone; a concrete
+        // noun added ("Employee Handbook" beside "Employee") is another concept. A
+        // grouping keeps the whole containment rule: a lookalike of an existing area
+        // reuses it (docs/compiler/concepts/levels.md#naming).
+        // Mirrors docs/compiler/model/entity.md#what-is-an-entity.
+        const GENERIC: [&str; 16] = [
+            "system", "service", "module", "component", "department", "team", "tool",
+            "layer", "platform", "app", "application", "api", "process", "engine",
+            "subsystem", "hub",
+        ];
         let check = |ename: &str| -> bool {
             if raw(ename) == cand_raw {
                 return false; // exact natural-key match is the upsert path, not a twin
@@ -2926,11 +2936,18 @@ impl ToolSession {
             if !small.is_subset(big) {
                 return false;
             }
+            let generic_only = !compound_passes
+                || big
+                    .difference(small)
+                    .all(|t| GENERIC.contains(&fold(t).as_str()));
+            if !generic_only {
+                return false;
+            }
             if small.len() > 1 {
                 return true; // a multi-token name contained in the other
             }
             // One token inside a longer name: a variant only when the candidate is
-            // the shorter one (`Billing` beside `Billing Handler`); a compound that
+            // the shorter one (`Billing` beside `Billing System`); a compound that
             // extends an existing single name is a different concept.
             (cand.len() == 1 || !compound_passes)
                 && small.iter().next().map(|t| t.len() >= 5).unwrap_or(false)

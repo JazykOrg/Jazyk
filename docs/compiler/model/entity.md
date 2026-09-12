@@ -50,8 +50,13 @@ The [validation gates](../graph.md#validation-gates) reject names that look like
 rather than a concept, unless the call carries an explaining `note`. They also reject a
 name that is a variant of an existing entity's name ("backend" beside "backend
 system"): one concept, one node; the wording joins the existing entity's `aliases`
-instead. A `note` saying how the concepts differ overrides when the resemblance is
-coincidental.
+instead. A variant differs from the existing name by generic classifiers alone
+(system, service, module, component, department, team, tool, layer, platform, app,
+application, api, process, engine, subsystem); a name that adds a concrete noun is
+another concept and passes ("Employee Handbook" beside "Employee", "Store Manager"
+beside "Manager", "Billing Handler" beside "Billing"), since an org corpus once spent
+five repair rounds on exactly those. A `note` saying how the concepts differ
+overrides when the resemblance is coincidental.
 
 ## Fields
 

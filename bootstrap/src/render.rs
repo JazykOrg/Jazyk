@@ -1167,11 +1167,31 @@ fn messages(scene: &Scene) -> Vec<Message> {
                 let f = lift(&first);
                 candidates.push((f.clone(), f));
             }
-            let (from, to) = candidates
-                .iter()
-                .find(|(a, b)| a != b)
-                .cloned()
-                .unwrap_or_else(|| candidates[0].clone());
+            let (from, to) = match candidates.iter().find(|(a, b)| a != b).cloned() {
+                Some(pair) => pair,
+                None => {
+                    // Every edge collapsed into one member: an actor among the
+                    // statement's entities that lifts elsewhere initiates the message
+                    // toward it. Mirrors docs/compiler/model/view.md#fields.
+                    let target = candidates[0].1.clone();
+                    let actor = r
+                        .entities
+                        .iter()
+                        .filter_map(|e| live(e))
+                        .filter(|e| {
+                            store.graph.entities[e]
+                                .stereotype
+                                .as_deref()
+                                .is_some_and(|s| s.eq_ignore_ascii_case("actor"))
+                        })
+                        .map(|e| lift(&e))
+                        .find(|l| *l != target);
+                    match actor {
+                        Some(a) => (a, target),
+                        None => candidates[0].clone(),
+                    }
+                }
+            };
             Some(Message {
                 from,
                 to,

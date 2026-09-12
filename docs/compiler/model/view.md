@@ -122,7 +122,10 @@ Terms the flow kinds share:
   `[shop, customer, order]` draws the Shop's message, not the Customer's trigger. In a
   [level's](#level-views) flow view the ends lift to the level's members, and the
   message follows the first such edge whose lifted ends differ; when every edge
-  collapses into one member, the self-message stays.
+  collapses into one member and an `actor` among the statement's entities lifts
+  elsewhere, the actor initiates the message toward that member (the Operator
+  running the Admin CLI draws as Operator to Orderly at the top level, not Orderly to
+  itself); otherwise the self-message stays.
 - The actors of a flow are the members' entities labeled `actor`. Where no member's entity
   carries that label, the use case draws no actor: a flow among the subject's own parts
   has no outside initiator, and drawing the first component as a stick figure (a
@@ -154,7 +157,8 @@ per-scope view, so no separate per-scope `class` view or per-root `component` vi
 derives. The title of a default is deterministic: the node's `name` for a level view (the
 scope's name title-cased for the scope root's), the document title (its root
 section's title) for a root level's `use-case` and `sequence`, `<node name>: <document
-title>` for a node level's, the subject's `name` for `state`, the type's `name` for
+title>` for a node level's (`Inside <node name>` when the document is titled with the
+node's own name, since `Orderly: Orderly` reads as a defect), the subject's `name` for `state`, the type's `name` for
 `object`. A `use-case` view and the `sequence` view derived from the same cluster share
 a title, so `view:usecase/backend-shop` and `view:sequence/backend-shop` describe one
 flow. The document is the unit because a document is how the author already cut the

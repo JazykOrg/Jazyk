@@ -297,10 +297,10 @@ here` line linking the scope root's [level page](#level-pages) (when the root ha
 two or more members; a one-member scope starts at that member's card) and listing the
 top level's members as links to their [cards](#entity-cards), each with its child count
 where it has a level. Then it lists every entity with a link to its requirements
-document, then embeds the top level of each scope rendered from the graph: one image per scope, the
-scope root's level view (`view:class/<scope>` or `view:component/<scope>`
-by the kind rule), each with the caption line described above, default or curated
-([default views](../compiler/model/view.md#default-views)). The scope root's level view
+document, then embeds the level views rendered from the graph, each scope's top level first (the
+scope root's level view, `view:class/<scope>` or `view:component/<scope>` by the kind
+rule) and the deeper levels after it, each with the caption line described above,
+default or curated ([default views](../compiler/model/view.md#default-views)). The scope root's level view
 is the per-scope view ([level views](../compiler/diagrams.md#level-views)), so the
 index's picture of a scope is its top level, and its caption links to the scope root's
 [level page](#level-pages). An edit turns a

@@ -1632,7 +1632,12 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         let mut linked_scopes: BTreeSet<String> = BTreeSet::new();
         if !class_views.is_empty() || !component_views.is_empty() {
             idx.push_str("\n## Diagrams\n\n");
-            for (vid, v) in class_views.iter().chain(component_views.iter()) {
+            // The scope roots' level views first, then the deeper levels: the index
+            // opens on the top of each scope. Mirrors docs/consumers/docsgen.md#relationships-view.
+            let mut ordered: Vec<(&String, &View)> =
+                class_views.iter().chain(component_views.iter()).cloned().collect();
+            ordered.sort_by_key(|(vid, _)| (!root_levels.contains_key(vid.as_str()), vid.to_string()));
+            for (vid, v) in ordered {
                 let mut block = embed(store, vid, v, DOCS_DIR);
                 if let Some(scope) = root_levels.get(vid.as_str()) {
                     let target = crate::store::scope_root_target(scope);

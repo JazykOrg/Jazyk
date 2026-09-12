@@ -741,11 +741,15 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
         // The document titles a root flow; a node level's flow carries the node too,
         // so the two levels' pictures of one document read apart.
         let title = match level.node.as_deref() {
-            Some(node) => format!(
-                "{}: {}",
-                store.graph.entities[node].name,
-                doc_title(store, &doc)
-            ),
+            Some(node) => {
+                let name = &store.graph.entities[node].name;
+                let dt = doc_title(store, &doc);
+                if dt.trim().eq_ignore_ascii_case(name.trim()) {
+                    format!("Inside {}", name)
+                } else {
+                    format!("{}: {}", name, dt)
+                }
+            }
             None => doc_title(store, &doc),
         };
         let mut from: Vec<String> = level.node.iter().cloned().collect();
@@ -2151,7 +2155,7 @@ pub(crate) mod tests {
         // node level's title carries the node, so it reads apart from the root's.
         let uc = &s.graph.views["view:usecase/shop-shop"];
         assert_eq!(uc.kind, "use-case");
-        assert_eq!(uc.title, "Shop: Shop");
+        assert_eq!(uc.title, "Inside Shop");
         assert_eq!(
             uc.members,
             vec!["req:shop-1", "req:shop-3", "req:shop-7", "req:shop-8"]
@@ -2163,7 +2167,7 @@ pub(crate) mod tests {
         ));
         let seq = &s.graph.views["view:sequence/shop-shop"];
         assert_eq!(seq.members, vec!["req:shop-1", "req:shop-3"]);
-        assert_eq!(seq.title, "Shop: Shop");
+        assert_eq!(seq.title, "Inside Shop");
         // The order service's level: three of the four reach it through its
         // children; the stock API step is the service itself (the frame) acting on
         // an outside interface, a flow of the shop level, so it stays out here.

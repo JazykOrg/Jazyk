@@ -1224,9 +1224,9 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             hints.push(format!(
                 "same document: {}",
                 if same_doc {
-                    "yes (delete the worse-sourced duplicate)"
+                    "yes (a duplicate verdict would delete the worse-sourced side)"
                 } else {
-                    "no (keep both and file duplicate-requirement)"
+                    "no (a duplicate verdict would keep both and file duplicate-requirement)"
                 }
             ));
             let diags = open_diags_naming(store, &[rid, &nbr]);
@@ -1709,7 +1709,7 @@ impl GoalKind for ReviewEntity {
                 .collect();
             if !no_edges.is_empty() {
                 hints.push(format!(
-                    "multi-entity statements without edges: {}",
+                    "multi-entity statements without edges (each has its own declare-edges goal; leave the edges to it): {}",
                     no_edges
                         .iter()
                         .map(|s| s.as_str())

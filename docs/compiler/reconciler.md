@@ -248,7 +248,11 @@ computed deterministically:
 - candidates are requirements sharing an entity with it,
 - each is scored by overlapping content tokens (statement tokens minus stop words and
   the shared entities' own name tokens, reduced to crude stems, so "reverses" meets
-  "reverse" and "sorting" meets "sort") plus the count of shared entities,
+  "reverse" and "sorting" meets "sort") plus the count of shared entities. The stop
+  words are the function words (articles, prepositions, pronouns, auxiliaries,
+  quantifiers such as `their`, `has`, `once`, `every`, `within`), and a token under
+  three letters drops unless it is a number, since a five-document handbook once
+  derived 113 pair goals on shared tokens like `s`, `at`, and `their`,
 - neighbors sharing at least two content tokens qualify, and so do neighbors sharing
   at least two entities and one content token: a restatement built from the same
   entities can share every noun and few other words, because the shared names leave

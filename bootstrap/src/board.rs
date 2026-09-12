@@ -1291,6 +1291,7 @@ impl Board {
         }
         full["goals"] = json!(ready_loose);
         full["notReady"] = json!({"byKind": by_kind, "byReason": waiting});
+        full["countsNote"] = json!("open, ready, parked, and failed count mandatory goals; optional counts the rest; by_class and by_kind include both; blocked are the goals waiting on a release or a human answer, gated the subset a release opens");
         full["note"] = json!(match full.get("note").and_then(Value::as_str) {
             Some(n) => format!("{}; goals {{full: true}} lists every goal with its hints", n),
             None => "compact board; goals {full: true} lists every goal with its hints".to_string(),

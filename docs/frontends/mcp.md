@@ -234,7 +234,9 @@ serving; what it claims is a batch:
   (each with its id, its resolved [executor](./acp.md#executors), and its goals as
   id, kind, target, `mandatory`), one line per ready goal outside a batch, and the
   goals that are not ready summarized by kind and by blocking reason with their ids,
-  never their hints. `full: true` returns every goal whole: kind, class, `mandatory`,
+  never their hints. A `countsNote` says which counts include optional goals (`open`,
+  `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
+  both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
   (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. The
   compact form exists because a thirty-goal board with forty-five gated bind goals

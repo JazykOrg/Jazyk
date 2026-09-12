@@ -1327,10 +1327,21 @@ impl Store {
     // entities' own name tokens, reduced to crude stems so "reverses" meets "reverse"
     // and "sorting" meets "sort". Feeds requirement_neighbors.
     fn content_tokens(&self, statement: &str, entities: &[String]) -> BTreeSet<String> {
-        const STOP: [&str; 30] = [
+        // The function words: articles, prepositions, pronouns, auxiliaries,
+        // quantifiers. A token under three letters drops too unless it is a number.
+        // Mirrors docs/compiler/reconciler.md#pairs.
+        const STOP: [&str; 113] = [
             "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or",
             "and", "if", "with", "by", "it", "its", "when", "then", "that", "which", "this",
-            "system", "not", "no", "only", "all", "each",
+            "system", "not", "no", "only", "all", "each", "at", "as", "from", "into", "than",
+            "has", "have", "had", "having", "their", "they", "them", "there", "these", "those",
+            "once", "need", "needs", "must", "may", "can", "will", "would", "should", "could",
+            "do", "does", "did", "done", "any", "some", "one", "two", "per", "before", "after",
+            "within", "without", "every", "more", "less", "so", "up", "down", "out", "over",
+            "under", "about", "also", "both", "either", "other", "such", "own", "same", "here",
+            "where", "how", "what", "while", "until", "since", "because", "but", "however",
+            "yet", "who", "whose", "whom", "was", "were", "been", "being", "get", "gets", "got",
+            "make", "makes", "made", "use", "uses", "used", "via",
         ];
         // The suffix goes, then a trailing "e", so "files" and "filed" both land on
         // "fil" and "reverses" meets "reversed": the one stem per word the pairing
@@ -1361,7 +1372,9 @@ impl Store {
         normalize_statement(statement)
             .split(' ')
             .filter(|t| !STOP.contains(t))
+            .filter(|t| t.len() >= 3 || t.chars().all(|c| c.is_ascii_digit()))
             .map(|t| stem(t))
+            .filter(|t| !STOP.contains(&t.as_str()))
             .filter(|t| !name_toks.contains(t))
             .collect()
     }

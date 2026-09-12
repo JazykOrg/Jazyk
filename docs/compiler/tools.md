@@ -328,8 +328,8 @@ clear or keep change records; they are not graph mutations
   list none; an empty list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
   `declared` or `not-structural`; [`dedupe-candidates`](./goals/dedupe-candidates.md)
   `merged` or `separate`; [`curate-view`](./goals/curate-view.md) one `added` or
-  `excluded` per matched node; [`conform-instance`](./goals/conform-instance.md) a
-  verdict per attribute; the other kinds read the staged work alone. The tool's
+  `excluded` per matched node; [`conform-instance`](./goals/conform-instance.md)
+  `{attributes: [{name, verdict}], links: [{to, verdict, carried_by?}]}`; the other kinds read the staged work alone. The tool's
   description carries the same list, so the shape is never guessed. A goal outside
   the batch is rejected.
 - `settle_pairs({verdicts: [{goal, verdict, justification, severity?, message?,

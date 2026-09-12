@@ -689,3 +689,69 @@ bounded contexts (`Jazyk`, `compiler`, `Benchmark` beside `benchmark`, `public`)
 the index opens with five top levels, two of them case variants of one word; and the
 public root holds 25 direct children, over the hard fan-out, its regrouping blocked
 behind the compile goals in its cone.
+
+### The prompt loop under Claude Code (2026-09-12)
+
+An improvement loop with Claude Code as the session model over `jazyk mcp compile`,
+driven by one line ("compile this project using the jazyk MCP server's tools, batch
+after batch, then say what confused you"), each project a fresh copy, every iteration
+rebuilt on the fixes the previous one exposed. The run records (graph, journal, trace,
+diagrams, docsgen, the agent's transcript) live outside the repository under
+`~/dev/jazyk-runs/iter-N/<project>/`; the subagents' own `report_feedback` entries and
+closing notes were the main source of defects. Codex (`codex exec --approve-for-me`)
+compiled f1 to the same graph in six batches.
+
+| project | iteration 1 | iteration 4 |
+| --- | --- | --- |
+| f1 | 81 turns, $3.37, 6.4 min, 9 reads | 63 turns, $2.63, 4.9 min, 0 reads |
+| example-sort | 94 turns, $4.29, 7.2 min | 63 turns, $3.27, 6.1 min, one invocation |
+| f2 | 393 turns, $19.84, 34.7 min, 127 pair verdicts, 34 entity reviews | 199 turns, $7.98, 14.6 min, 17 pair verdicts, 15 entity reviews |
+
+Every run converged at 100 percent coverage; f2's planted traps held on every
+iteration (one `ent:order`, `buyer` an alias of Customer, the 21 versus 30 day
+contradiction filed as an error with a two-option prompt, no SKU, no flag or path
+entity, glossary and roadmap non-normative, `sm:order` as EXPECTED). Grading caveat:
+the subagents have shell access and two f2 sessions read the fixture's EXPECTED.md
+(a grep for duplicate hints, a `head -20`); later run copies exclude the file.
+
+What the loop fixed, docs first then code, in the order found:
+
+- The prompt. The protocol line a standalone serving returned said to call
+  `begin_goals` again (`serving-protocol.md` now states the claim); the contract
+  paragraph and the static hints repeated for every goal of a batch (once per kind
+  now); the change line was raw JSON; `done` without `beginNext` returned the whole
+  board, 169k characters; `goals` on a thirty-goal board returned 75k characters
+  (compact by default, `full: true` for everything); the `## Loaded` block listed
+  items whose text never arrived, so every batch opened with a round of reads (the
+  rendered items ride under the block now, and the f1 reads went from nine to zero);
+  the condensed block echoed unchanged on every mutating reply; `search` hid
+  `queries`; `mark_goal_done` had no stated evidence shape; `update_view exclude`
+  refused the list the skill promised.
+- The store. Two statements from one sentence folded into one requirement (the
+  same-quote fold now needs a tight rewording and reports `matched`); an update that
+  touched only `entities` or `edges` reopened every entity's review (only the added
+  entities, or the ends of a new composition); a review's own refresh reopened it (the
+  page said it would not; the code now agrees); `upsert_entity` with a parent minted
+  `admin-cli-2` beside a parentless `admin-cli` (`parentless-twin`); the hub counted
+  as a shared entity and two shared entities qualified a pair with no word in common;
+  a code block owned a reconcile goal and a coverage mark against parsing.md; skill
+  text counted toward the load refusal, so two skills active left no room to load; the
+  near-duplicate gate folded Employee Handbook into Employee.
+- The pictures. Flow views clustered by whichever entity led a sentence (f2 drew
+  `Product: Inventory` with Shipment as its actor); they cluster by document now,
+  titled by the document, actors read off the members, none invented. A lifted arrow
+  kept the leaf's cardinality; an association drew twice, once per direction; a
+  sequence message followed a trigger clause instead of the subject; a root-level
+  message collapsed to `Orderly -> Orderly` where the Operator initiates; the index
+  linked a level page that did not exist and embedded a child level before the top.
+- The skills. A condition naming another entity is context, never an edge; a plural
+  area and its singular concept are two nodes, with the concepts an area's page
+  defines under the area; a test case's data blocks belong to the case section; a
+  contradiction prompt's `old_text` comes from the section, not only the quote.
+
+Left standing: the pair volume on a one-entity corpus (best six per requirement, by
+design, 32 verdicts for 17 requirements on sort); a statement repair inside a pair
+session re-deriving its pairs; the front door's "Its concerns are described in"
+leaving Ledger beside its areas rather than above them (an owner question); the
+deterministic checks' findings appearing only at the tail while the project block
+counts judgment diagnostics, which one session read as a contradiction.

@@ -788,7 +788,12 @@ The loop continued onto the org corpus and onto generation:
   level with attributes derives its class view now). example-sort rerun on the same
   binary: 60 turns, $2.71, 18 pair verdicts against 36, and a contradiction filed
   before its pair opened could not be carried by `settle_pairs` (the reuse path had
-  never run; it needs only the justification now).
+  never run; it needs only the justification now). Regression runs on the fixed binary:
+  f1 converged in 64 turns and $2.87, f2 in 199 turns and $7.83 with 16 pair verdicts
+  and every planted trap holding (one Order, `buyer` an alias, the 21 versus 30 day
+  contradiction as an error with two edit options, no SKU, glossary and roadmap
+  non-normative, `sm:order`), and checklinks reports zero broken links on the
+  generated pages after the docsgen anchor and quote-link fixes.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

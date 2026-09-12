@@ -66,7 +66,7 @@ prompt, so it can be shown before it is spent. The parts, in order:
    transition`), never as raw JSON. A hint repeated verbatim from an earlier goal in
    the batch (`skill judgment`, the kind's tool advice) renders once, on the first goal
    that carries it.
-5. `## Loaded (x/y chars)`: the [status block](./context.md#rendering) of the loaded set,
+5. `## Loaded (x of y chars; skills z besides, uncounted)`: the [status block](./context.md#rendering) of the loaded set,
    then the skill index line, then the rendered items of the initially loaded set, the
    same text `load` returns for each (section bodies with their diff marks, nodes in
    full with their edges and stubs). What the block says is loaded is in the prompt:
@@ -112,7 +112,7 @@ shortened here; the real ones are the payload files):
   Gate: definition current; lookalikes judged; diagnostics filed or resolved.
   Hints: load ent:order; skill judgment.
 
-## Loaded (9.8k/24k chars)
+## Loaded (9.8k of 24k chars)
 - req:orders-6    full: statement, transition placed → expired (guard 30 days), source docs/orders.md#/orders/holds
 - req:payment-9   full: statement, source docs/payment.md#/payment/declines
 - ent:order       full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]

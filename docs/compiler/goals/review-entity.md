@@ -210,7 +210,7 @@ E.g.:
   req:payment-3 "Orders on hold are not charged"; 1 open diagnostic; lint: warnings 1;
   skill judgment
 
-## Loaded (11.4k/24k chars)
+## Loaded (11.4k of 24k chars)
 - ent:order       full: 9 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
 - ent:order-item  stub (definition only)   [2 edges loadable: h:ent:order-item]
 - req:payment-3   stub   docs/payment.md#/payment/holds

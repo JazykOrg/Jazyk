@@ -171,7 +171,7 @@ E.g.:
   Hints: type declares tier: string; instance tier = gold; link ent:anas-cart backed by
   customer -- shopping-cart association; no open diagnostic; skill conformance
 
-## Loaded (5.1k/24k chars)
+## Loaded (5.1k of 24k chars)
 - ent:ana        full: instance of ent:customer; tier = gold; 1 link   (req:shop-9)
 - ent:customer   full: attributes tier: string; 3 requirements; 2 relationships
 - ent:anas-cart  stub (instance of ent:shopping-cart)

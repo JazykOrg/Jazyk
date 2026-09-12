@@ -147,7 +147,7 @@ E.g.:
   Hints: req:orders-6 quote locates in candidate 1; ent:hold mention: 2 candidates;
   load docs/orders.md#/orders/expiry
 
-## Loaded (6.1k/24k chars)
+## Loaded (6.1k of 24k chars)
 - docs/orders.md   section changes: 1 edited, 1 split, 1 deleted
 - proposals docs/orders.md   3 anchors, 5 candidates
 - docs/orders.md#/orders/expiry   stub   [loadable: h:docs/orders.md#/orders/expiry:body]

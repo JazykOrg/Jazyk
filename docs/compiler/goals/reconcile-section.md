@@ -237,7 +237,7 @@ E.g.:
   21 days"; primarySubject: ent:order (Order); 14 known entities, search before create;
   skill extraction
 
-## Loaded (9.8k/24k chars)
+## Loaded (9.8k of 24k chars)
 - docs/orders.md#/orders/holds   section body, with the diff marked; 3 requirements sourced
 - linked from docs/main.md#/systems   "[Orders](./orders.md)" introduced ent:order
 - ent:order    stub (definition only)   [7 requirements loadable: h:ent:order:requirements]

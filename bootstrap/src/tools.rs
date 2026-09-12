@@ -671,7 +671,7 @@ fn edge_schema() -> Value {
             "a": {"type": "string"},
             "b": {"type": "string"},
             "type": {"type": "string", "enum": REL_TYPES},
-            "cardinality": {"type": "string", "enum": crate::model::CARDINALITIES}
+            "cardinality": {"type": "string", "enum": crate::model::CARDINALITIES, "description": "the multiplicity at b: how many b per a (Order o-- 1..* Product is one or more Products per Order)"}
         },
         "required": ["a", "b"]
     })
@@ -1966,19 +1966,35 @@ impl ToolSession {
                     json!({"verdict": "duplicate", "carried_by": filed["id"]})
                 }
                 "contradiction" => {
-                    let mut call = json!({
-                        "rule": "contradiction",
-                        "severity": entry["severity"],
-                        "subjects": [a, b],
-                        "message": entry["message"],
-                        "reasoning": Self::opt_str(entry, "reasoning").unwrap_or_else(|| justification.clone()),
+                    // A contradiction already filed on this pair (by an earlier batch,
+                    // or by this session against an unpaired statement) carries the
+                    // verdict; a second filing would be a twin.
+                    // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
+                    let standing = pair_diags.iter().find(|id| {
+                        self.staged_diags
+                            .get(*id)
+                            .or_else(|| self.snapshot.graph.diagnostics.get(*id))
+                            .is_some_and(|d| d.rule == "contradiction")
                     });
-                    if !entry["prompt"].is_null() {
-                        call["prompt"] = entry["prompt"].clone();
+                    if let Some(id) = standing {
+                        result["diagnostic"] = json!(id);
+                        result["note"] = json!("the contradiction already stood on the pair; no second one filed");
+                        json!({"verdict": "contradiction", "carried_by": id})
+                    } else {
+                        let mut call = json!({
+                            "rule": "contradiction",
+                            "severity": entry["severity"],
+                            "subjects": [a, b],
+                            "message": entry["message"],
+                            "reasoning": Self::opt_str(entry, "reasoning").unwrap_or_else(|| justification.clone()),
+                        });
+                        if !entry["prompt"].is_null() {
+                            call["prompt"] = entry["prompt"].clone();
+                        }
+                        let filed = self.dispatch_inner("report_diagnostic", &call)?;
+                        result["diagnostic"] = filed["id"].clone();
+                        json!({"verdict": "contradiction", "carried_by": filed["id"]})
                     }
-                    let filed = self.dispatch_inner("report_diagnostic", &call)?;
-                    result["diagnostic"] = filed["id"].clone();
-                    json!({"verdict": "contradiction", "carried_by": filed["id"]})
                 }
                 _ => {
                     for id in &pair_diags {

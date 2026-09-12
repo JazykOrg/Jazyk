@@ -18,10 +18,12 @@ The context is an explicit working set, not an accident of what was prompted. Th
 [serving](./compiler.md#the-serving) keeps one loaded set per open goal batch (per
 process for the read-only `graph` serving and the CLI) and renders its status into every
 round, so the model always knows what is loaded, what could be loaded next, and what it
-costs. E.g.:
+costs; the header counts the items against the budget and names the skills' size
+beside them, uncounted, since a header reading over its own budget before the first
+call had read as a defect. E.g.:
 
 ```text
-## Loaded (14.2k/24k chars)
+## Loaded (14.2k of 24k chars)
 - view:class/commerce   12 entities, 18 edges shown; 9 members unloaded  [h:view:class/commerce:members]
 - ent:order             full: 7 requirements, parent ent:order-service   [3 more edges: h:ent:order:related]
 - ent:customer          stub (definition only)                           [5 edges loadable: h:ent:customer]

@@ -199,7 +199,7 @@ E.g.:
   tokens hold, expire); req:orders-7 (failure-mode) followed the dead step;
   load view:usecase/holds; skill flow-views
 
-## Loaded (5.6k/24k chars)
+## Loaded (5.6k of 24k chars)
 - view:usecase/holds   full: 5 members, 1 deleted; participants ent:customer, ent:order-service
 - req:orders-11   stub   docs/orders.md#/orders/holds
 - req:orders-6    tombstone: deleted in g409 (duplicate) "Held orders expire after 21 days."

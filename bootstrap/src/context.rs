@@ -1141,9 +1141,14 @@ impl LoadedSet {
         pinned: &BTreeSet<String>,
     ) -> String {
         let mut s = format!(
-            "## Loaded ({}/{} chars)\n",
-            fmt_k(self.used() + skill_chars),
-            fmt_k(self.budget)
+            "## Loaded ({} of {} chars{})\n",
+            fmt_k(self.used()),
+            fmt_k(self.budget),
+            if skill_chars > 0 {
+                format!("; skills {} besides, uncounted", fmt_k(skill_chars))
+            } else {
+                String::new()
+            }
         );
         for i in &self.items {
             let handles: String = i
@@ -1173,9 +1178,14 @@ impl LoadedSet {
     // The condensed form: the header and the item lines alone.
     pub fn render_condensed(&self, skill_chars: usize) -> String {
         let mut s = format!(
-            "## Loaded ({}/{} chars)\n",
-            fmt_k(self.used() + skill_chars),
-            fmt_k(self.budget)
+            "## Loaded ({} of {} chars{})\n",
+            fmt_k(self.used()),
+            fmt_k(self.budget),
+            if skill_chars > 0 {
+                format!("; skills {} besides, uncounted", fmt_k(skill_chars))
+            } else {
+                String::new()
+            }
         );
         for i in &self.items {
             s.push_str(&format!("- {}   {}\n", i.target, i.summary));

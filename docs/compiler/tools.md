@@ -148,7 +148,8 @@ a mutating reply previews the goals the mutation will open
   anchor in the same section whose statement subsumes or is subsumed by the new
   statement resolves the same way, so re-recording a reworded statement lands on the
   anchor's id; there the dead quote is the signal, so any subsumption counts. `edges` are `[{a, b, type?, cardinality?}]`,
-  directional, both ends among `entities` ([edges](./model/requirement.md#edges)).
+  directional, both ends among `entities`, `cardinality` the multiplicity at `b` (how
+  many `b` per `a`) ([edges](./model/requirement.md#edges)).
   `transition` is `{subject, from, to, trigger?, guard?}` with `subject` among
   `entities` ([transition](./model/requirement.md#transition)). `facets` are
   `[{facet, reasoning, measure?}]`, `measure` on `quality` only
@@ -345,7 +346,9 @@ clear or keep change records; they are not graph mutations
     quote one document is refused (`same-document-duplicate`) naming that route.
   - `contradiction`: stages a `contradiction` diagnostic on the pair with the entry's
     `severity` (`error` or `warning`, required), `message` (required), `reasoning`,
-    and `prompt`, then marks.
+    and `prompt`, then marks; when an open `contradiction` already names both sides
+    (filed by an earlier batch, or by this session against a statement it was not
+    paired with), that one carries the verdict and no second is filed.
   - `resolved`: resolves every open `contradiction` or `duplicate-requirement`
     diagnostic naming both sides, the justification as the reason, then marks. A
     pair with no such diagnostic is refused (`no-pair-diagnostic`); a refile after a

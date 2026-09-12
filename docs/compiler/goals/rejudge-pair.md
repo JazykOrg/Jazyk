@@ -208,7 +208,7 @@ E.g.:
   Gate: a verdict in evidence (duplicate, contradiction, consistent), carried by a mutation or diagnostic.
   Hints: same document: no; no open diagnostic on the pair; skill judgment
 
-## Loaded (4.2k/24k chars)
+## Loaded (4.2k of 24k chars)
 - req:orders-6    full (revised: statement, quote)   docs/orders.md#/orders/holds
 - req:payment-9   full   docs/payment.md#/payment/holds
 - ent:order       stub (definition only)   [7 requirements loadable: h:ent:order:requirements]

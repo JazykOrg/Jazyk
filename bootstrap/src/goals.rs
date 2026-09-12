@@ -380,11 +380,6 @@ pub fn content_token_words(
     statement: &str,
     entities: &[String],
 ) -> Vec<(String, String)> {
-    const STOP: [&str; 30] = [
-        "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or", "and",
-        "if", "with", "by", "it", "its", "when", "then", "that", "which", "this", "system", "not",
-        "no", "only", "all", "each",
-    ];
     let mut name_toks: BTreeSet<String> = BTreeSet::new();
     for e in entities {
         if let Some(ent) = store.graph.entities.get(store.resolve_id(e)) {
@@ -397,9 +392,9 @@ pub fn content_token_words(
     }
     store::normalize_statement(statement)
         .split(' ')
-        .filter(|t| !t.is_empty() && !STOP.contains(t))
+        .filter(|t| store::is_content_token(t))
         .map(|t| (stem(t), t.to_string()))
-        .filter(|(stemmed, _)| !name_toks.contains(stemmed))
+        .filter(|(stemmed, _)| store::is_content_token(stemmed) && !name_toks.contains(stemmed))
         .collect()
 }
 

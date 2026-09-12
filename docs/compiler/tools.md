@@ -563,8 +563,10 @@ and `list_files` does not list it.
   earlier decision until an entity is generated, refused (`medium-settled`) after.
 - `record_generation({entity, factHash, manifest, choices?})`: record the entity
   generated. The worker writes the deliverable files itself; the `manifest` binds
-  them to the graph: `{files: [...], tests: [{requirement, kind, label, artifact, name,
-  run, cwd}], build?}`. Marking strips every single-line marker comment from the
+  them to the graph: `{files: [...], supportFiles?: [...], tests: [{requirement, kind,
+  label, artifact, name, run, cwd}], build?}`, `supportFiles` the deliverable-wide
+  files ownership never applies to
+  ([file ownership](../consumers/gen.md#file-ownership-and-conventions)). Marking strips every single-line marker comment from the
   manifest files and records each as an anchored site on its requirement's row
   ([traceability](../consumers/gen.md#traceability)), then updates both ledger maps
   and [prunes rows](../consumers/gen.md#deletion-prunes-the-ledger) whose requirement
@@ -634,9 +636,12 @@ only the ledger, never the graph.
 - `begin_verification({requirement})`: the package for one row: the statement, quote,
   and hash; the loaded set; the manifest files; and either the run command
   (`programmatic`) or the criteria and confirm-steps (`llm`).
-- `run_tests({requirements?})`: execute the recorded programmatic tests: the
+- `run_tests({requirements?, all?})`: execute the recorded programmatic tests: the
   [build](../consumers/gen.md#the-build) first, once, then each selected row's command.
-  Verdicts and evidence are recorded as a side effect and returned. `llm` rows are
+  `requirements` selects rows (requirement or entity ids); empty runs every
+  non-verified row; `all: true` reruns every programmatic row, verified ones included,
+  the green-light check a worker wants before it stops. Verdicts and evidence are
+  recorded as a side effect and returned. `llm` rows are
   skipped here; they go through `record_verdict`. This is how a worker verifies without
   hand-rolling the harness, and it serves in the generation toolset too.
 - `record_verdict({requirement, verdict, factHash?, evidence?})`: record a `pass` or

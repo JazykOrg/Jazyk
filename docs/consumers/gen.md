@@ -279,7 +279,8 @@ manifest.
   that cannot run is a generation defect; verification surfaces it as a failing row.
 - Support files belong to the deliverable, not to an entity. They are what makes the
   recorded commands runnable (a `package.json`, a `Cargo.toml`, the entry point a
-  build runs), and every session may rewrite one: a manifest that lists more parts than
+  build runs, a crate root such as `src/lib.rs` that every module must be declared
+  in), and every session may rewrite one: a manifest that lists more parts than
   the last session saw is exactly why the file exists. The ledger keeps them in their own
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.

@@ -343,13 +343,14 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_generation",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written; manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
+            description: "Record the task done. manifest.files lists every deliverable-relative file written for this entity; manifest.supportFiles lists deliverable-wide files ownership never applies to (Cargo.toml, a crate root such as src/lib.rs); manifest.tests binds each requirement to its test: {requirement, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run from the deliverable directory before any test; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: run_tests to verify.",
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
                     "factHash": {"type": "string"},
                     "manifest": {"type": "object", "properties": {
                         "files": {"type": "array", "items": {"type": "string"}},
+                        "supportFiles": {"type": "array", "items": {"type": "string"}},
                         "tests": {"type": "array", "items": {"type": "object"}},
                         "build": {"type": "object", "properties": {
                             "run": {"type": "string"},
@@ -405,8 +406,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "run_tests",
-            description: "Run the recorded programmatic tests: the build once, then each selected row's command, verdicts recorded as a side effect. requirements selects rows (requirement or entity ids); empty runs every non-verified row. llm rows are skipped here; judge them and record_verdict.",
-            parameters: obj(json!({"requirements": {"type": "array", "items": {"type": "string"}}}), &[]),
+            description: "Run the recorded programmatic tests: the build once, then each selected row's command, verdicts recorded as a side effect. requirements selects rows (requirement or entity ids); empty runs every non-verified row; all: true reruns every programmatic row, verified ones included (the green-light check). llm rows are skipped here; judge them and record_verdict.",
+            parameters: obj(json!({"requirements": {"type": "array", "items": {"type": "string"}}, "all": {"type": "boolean"}}), &[]),
         },
         ToolDef {
             name: "record_verdict",
@@ -5548,7 +5549,18 @@ impl ToolSession {
             }
             "run_tests" => {
                 let gs = self.gen_settings();
-                let targets = Self::str_list(args, "requirements");
+                let mut targets = Self::str_list(args, "requirements");
+                // all: every programmatic row, verified ones included.
+                // Mirrors docs/compiler/tools.md#verification-tools.
+                if targets.is_empty() && args["all"].as_bool() == Some(true) {
+                    let ledger = crate::gen::Ledger::load(&self.snapshot.out);
+                    targets = ledger
+                        .requirements
+                        .iter()
+                        .filter(|(_, row)| row.test.kind == "programmatic")
+                        .map(|(rid, _)| rid.clone())
+                        .collect();
+                }
                 crate::verify::run_selected(&self.snapshot, &gs, &targets)
                     .map_err(|e| ToolError::new("build-failed", e))
             }

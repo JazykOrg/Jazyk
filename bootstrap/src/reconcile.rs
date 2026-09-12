@@ -3311,6 +3311,51 @@ mod tests {
         assert!(hits[0].1.iter().any(|s| s == "req:a-1"));
     }
 
+    // Mirrors docs/compiler/compilation.md#checks: a requirement without a criterion is
+    // information without a deliverable and a warning with one; a restating criterion
+    // is a finding of its own.
+    #[test]
+    fn criterion_checks_follow_the_deliverable() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:one".into(), crate::model::Entity { name: "One".into(), ..Default::default() });
+        s.graph.requirements.insert(
+            "req:a-1".into(),
+            Requirement {
+                statement: "The system shall archive completed orders.".into(),
+                entities: vec!["ent:one".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:a-2".into(),
+            Requirement {
+                statement: "The system shall keep one copy.".into(),
+                entities: vec!["ent:one".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crate::model::Criterion {
+                requirement: "req:a-2".into(),
+                statement: "The system shall keep one copy".into(),
+                kind: "positive".into(),
+                ..Default::default()
+            },
+        );
+        let f = checks(&s, &Project::default());
+        let missing = rules_for(&f, "criterion-missing");
+        assert_eq!(missing.len(), 1, "{:?}", missing);
+        assert_eq!(missing[0].2, "info");
+        assert!(missing[0].1.iter().any(|x| x == "req:a-1"));
+        let restates = rules_for(&f, "criterion-restates");
+        assert_eq!(restates.len(), 1, "{:?}", restates);
+        let mut p = Project::default();
+        p.gen_deliverable = Some("product".into());
+        let f = checks(&s, &p);
+        assert_eq!(rules_for(&f, "criterion-missing")[0].2, "warning");
+    }
+
     #[test]
     fn normative_signals_catch_prose_without_shall() {
         assert!(looks_normative(

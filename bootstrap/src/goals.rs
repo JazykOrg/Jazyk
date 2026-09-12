@@ -5723,6 +5723,60 @@ pub(crate) mod tests {
         assert!(!node.hints.iter().any(|h| h.starts_with("namesake ent:cart")));
     }
 
+    // Mirrors docs/compiler/goals/derive-criteria.md#created-when: one goal per leading
+    // entity whose requirements owe criteria, only under a configured deliverable, and
+    // bind waits on the criterion (reconciler.md#tiers).
+    #[test]
+    fn derive_criteria_goals_follow_the_leading_entity_and_the_deliverable() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), Entity { name: "Sort".into(), ..Default::default() });
+        s.graph.entities.insert("ent:line".into(), Entity { name: "Line".into(), ..Default::default() });
+        for (id, st, ents) in [
+            ("req:a-1", "The utility sorts its lines.", vec!["ent:sort", "ent:line"]),
+            ("req:a-2", "A line is trimmed.", vec!["ent:line"]),
+            ("req:a-3", "The utility reads STDIN.", vec!["ent:sort"]),
+        ] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: st.into(),
+                    entities: ents.iter().map(|e| e.to_string()).collect(),
+                    ..Default::default()
+                },
+            );
+        }
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crate::model::Criterion {
+                requirement: "req:a-3".into(),
+                statement: "Two lines on STDIN are both read.".into(),
+                kind: "positive".into(),
+                provenance: Some(Provenance::Derived { from: vec!["req:a-3".into()], reasoning: "the input".into() }),
+                stale: true,
+                ..Default::default()
+            },
+        );
+        let mut gen = gen_settings();
+        gen.configured = false;
+        assert!(DeriveCriteria.derive_goals(&s, &gen).is_empty());
+        gen.configured = true;
+        let goals = DeriveCriteria.derive_goals(&s, &gen);
+        let mut targets: Vec<&str> = goals.iter().map(|g| g.target.as_str()).collect();
+        targets.sort();
+        assert_eq!(targets, vec!["ent:line", "ent:sort"], "{:?}", targets);
+        let sort = goals.iter().find(|g| g.target == "ent:sort").unwrap();
+        let listed: Vec<(String, String)> = sort.change["requirements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap().to_string(), r["reason"].as_str().unwrap().to_string()))
+            .collect();
+        assert_eq!(listed, vec![("req:a-1".to_string(), "none".to_string()), ("req:a-3".to_string(), "revised".to_string())]);
+        assert!(sort.hints.iter().any(|h| h == "skill criteria"));
+        assert_eq!(skills_for("derive-criteria", &s, "ent:sort"), vec!["criteria"]);
+        assert_eq!(tier("derive-criteria"), Some(3));
+    }
+
     // Mirrors docs/compiler/model/entity.md#fields: a word match a review judged stays
     // off the unreferenced list.
     #[test]

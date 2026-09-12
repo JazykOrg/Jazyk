@@ -839,6 +839,20 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
 
 // The GitHub anchor of the heading "### `req:x`" in a requirements document: the
 // backticks and the colon drop, the rest lowercases.
+// GitHub's heading anchor: lowercased, punctuation dropped, spaces to hyphens, so a
+// heading `main.ts` anchors as `maints`. Mirrors docs/consumers/docsgen.md#glossary.
+fn github_anchor(title: &str) -> String {
+    let mut out = String::new();
+    for c in title.trim().to_lowercase().chars() {
+        if c.is_alphanumeric() || c == '_' || c == '-' {
+            out.push(c);
+        } else if c.is_whitespace() {
+            out.push('-');
+        }
+    }
+    out
+}
+
 // A quote's relative links resolve from the source document; on the page they must
 // resolve from `docsgen/`, two levels under the project root when the out directory
 // sits where the default puts it. Mirrors docs/consumers/docsgen.md#the-requirements-document.
@@ -862,11 +876,16 @@ fn relink_quote(quote: &str, doc: &str, store: &Store) -> String {
             && !path.contains("://")
             && !path.starts_with('/')
             && !path.starts_with("mailto:");
-        match (relative, crate::md::resolve_rel(doc, path)) {
-            (true, Some(resolved)) => {
-                out.push_str(&format!("../../{}{}", resolved, anchor));
+        if path.is_empty() && !anchor.is_empty() {
+            // An anchor-only link points into the source document.
+            out.push_str(&format!("../../{}{}", doc, anchor));
+        } else {
+            match (relative, crate::md::resolve_rel(doc, path)) {
+                (true, Some(resolved)) => {
+                    out.push_str(&format!("../../{}{}", resolved, anchor));
+                }
+                _ => out.push_str(target),
             }
-            _ => out.push_str(target),
         }
         rest = &rest[close..];
     }
@@ -1827,9 +1846,14 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
     let section_link = |doc: &str, section: &str| -> String {
         let text = format!("{}#{}", doc, section);
         if default_out {
-            // A GitHub anchor is the heading alone, never the path: the last segment.
-            let heading = section.rsplit('/').next().unwrap_or(section);
-            format!("[{}](../../{}#{})", text, doc, crate::md::slug(heading))
+            // A GitHub anchor is the heading text alone, never the path.
+            let title = store
+                .docs
+                .get(doc)
+                .and_then(|d| d.sections.get(section))
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| section.rsplit('/').next().unwrap_or(section).to_string());
+            format!("[{}](../../{}#{})", text, doc, github_anchor(&title))
         } else {
             format!("`{}`", text)
         }
@@ -1986,7 +2010,30 @@ mod tests {
         );
         assert_eq!(
             relink_quote("see [the spec](https://x.org/a.md) and [top](#top)", "docs/backend.md", &s),
-            "see [the spec](https://x.org/a.md) and [top](#top)"
+            "see [the spec](https://x.org/a.md) and [top](../../docs/backend.md#top)"
+        );
+        assert_eq!(github_anchor("main.ts"), "maints");
+        assert_eq!(github_anchor("API Endpoints"), "api-endpoints");
+        let text = "# main.ts\n\nThe entry point.\n";
+        s.docs.insert(
+            "docs/main.js.md".into(),
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
+        );
+        s.graph.entities.insert(
+            "ent:sort".into(),
+            Entity {
+                name: "Sort".into(),
+                mentions: vec![SourceRef {
+                    doc: "docs/main.js.md".into(),
+                    section: "/main-ts".into(),
+                    quote: "The entry point.".into(),
+                }],
+                ..Default::default()
+            },
         );
         s.graph.entities.insert(
             "ent:backend".into(),
@@ -2006,6 +2053,11 @@ mod tests {
         let glossary = std::fs::read_to_string(dir.join("glossary.md")).unwrap();
         assert!(
             glossary.contains("[docs/main.md#/warehouse-erp/backend](../../docs/main.md#backend)"),
+            "{}",
+            glossary
+        );
+        assert!(
+            glossary.contains("[docs/main.js.md#/main-ts](../../docs/main.js.md#maints)"),
             "{}",
             glossary
         );

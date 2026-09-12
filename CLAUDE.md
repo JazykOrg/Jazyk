@@ -232,7 +232,9 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 
 ## Working norms
 
-- Always commit and push all changes when the work is done. Do not leave the tree dirty.
+- Always commit and push changes as you make them, one commit per coherent change, so
+  the history is a ledger of the work and nothing is lost between sessions. Never leave
+  the tree dirty at the end of a step.
 - Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and `jazyk-out` anywhere
   are gitignored.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. Pushing to master deploys

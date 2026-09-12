@@ -239,6 +239,20 @@ There is no write tool for relationships, state machines, or default views. They
 [derived data](./graph.md#derived-data), recomputed on every commit from requirement
 `edges` and `transition` facets and from the graph's structure.
 
+- `upsert_criterion({requirement, statement, kind, measure?, given?, when?, then?, entities?, section?, quote?, provenance?})`
+  → `{id, created}`: the observable evidence one requirement is met
+  ([criterion](./model/criterion.md)). Keys on `requirement` plus the
+  punctuation-insensitive `statement`. Exactly one of `section` plus `quote` (a stated
+  criterion: a test case, an example, a threshold bullet, quoted verbatim from its own
+  section) or `provenance: {derived: {from: [the requirement id], reasoning}}` (a
+  criterion the documents do not state, ratified toward prose). `kind` is `positive`,
+  `negative`, `boundary`, or `quality` with `measure`. Refused: a `requirement` that
+  does not resolve (`unknown-requirement`), a statement equal to the requirement's
+  after normalization (`criterion-restates`), a quote that does not locate.
+- `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?})`:
+  a wording or kind repair; the id and the owner stay.
+- `delete_criterion({id, reason})`: a criterion the documents no longer support.
+
 ### Grouping tools
 
 Two write tools in the graph group build and unbuild
@@ -720,8 +734,12 @@ Compile goals:
 - [`place-anchors`](./goals/place-anchors.md): `place_anchor`, `orphan_anchor`.
 - [`reconcile-section`](./goals/reconcile-section.md): `upsert_entity`,
   `update_entity`, `delete_entity`, `upsert_requirement`, `update_requirement`,
-  `delete_requirement`, `set_coverage`. No `report_diagnostic`: extraction records,
+  `delete_requirement`, `upsert_criterion`, `update_criterion`, `delete_criterion`
+  (the stated criteria: test cases, examples, thresholds), `set_coverage`. No `report_diagnostic`: extraction records,
   judgment goals judge.
+- [`derive-criteria`](./goals/derive-criteria.md): `upsert_criterion`,
+  `update_criterion`, `delete_criterion`, `report_diagnostic` (`invented-choice`,
+  `ambiguity`).
 - [`rejudge-pair`](./goals/rejudge-pair.md): `update_requirement`,
   `delete_requirement`, `update_entity` (a wording the pair's quotes settle, such as a
   nickname, lands as an alias instead of being dropped until a review), `report_diagnostic`

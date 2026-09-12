@@ -15,9 +15,11 @@ existed.
 ## The bind goal
 
 One requirement per goal, `g:bind:<requirement id>`
-([the bind goal](../compiler/goals/bind.md)). The goal's loaded set is the requirement in
-full: its `statement`, facets, edges, and transition, the verbatim quote, and its entity
-as a stub with its definition. The contract rides the `begin_binding` reply as
+([the bind goal](../compiler/goals/bind.md)), ready once the requirement carries at
+least one [criterion](../compiler/model/criterion.md)
+([tiers](../compiler/reconciler.md#tiers)). The goal's loaded set is the requirement in
+full: its `statement`, facets, edges, and transition, the verbatim quote, its criteria
+(id, kind, statement, quote or proposal), and its entity as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
 test name, the decided medium and build when they exist, the entity's recorded files,
 the ledger's recorded conventions (the run commands, the files other rows name), the
@@ -28,17 +30,18 @@ reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). The
 
 - Search the deliverable for an implementation, starting at the entity's recorded files.
   Record the carrying files, or record none. Absence is a finding, not a failure.
-- Search for an existing test that judges the statement. Bind to it when found; never
-  write a duplicate beside it. A test carrying this statement's hash in its name or marker
+- Search for an existing test per criterion. Bind to it when found; never write a
+  duplicate beside it. One test per criterion, keyed by the criterion id and its
+  statement hash; the requirement's row groups them. A test carrying this statement's hash in its name or marker
   under another requirement id is this requirement's test (ids renumber between
   compiles, the hash follows the statement): rename it to the suggested name and bind
   to it. A test named with this id but another hash belongs to the statement that hash
   names now.
-- When no test exists, write one. Both directions get one:
-  - Implementation found: the test pins the observed behavior against the statement.
+- When a criterion has no test, write one. Both directions get one:
+  - Implementation found: the test pins the observed behavior against the criterion.
     It should pass.
-  - Implementation absent: the test encodes the statement and fails by design. The
-    failing test is the spec, and it is the acceptance gate
+  - Implementation absent: the test encodes the criterion and fails by design. The
+    failing tests are the spec, and they are the acceptance gate
     [generation](./gen.md) later has to clear.
 - Run the test and record the binding with `record_binding`: the files, the test row,
   the verdict, the evidence.

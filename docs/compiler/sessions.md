@@ -149,6 +149,8 @@ attributes, coverage honesty), [`judgment`](./skills/judgment.md) (the review as
 duplicates, contradictions, verdict quality), [`flow-views`](./skills/flow-views.md)
 (ordering, branches, participants), [`structural-views`](./skills/structural-views.md)
 (class, component, and package membership, collapse, limits),
+[`criteria`](./skills/criteria.md) (stated and derived acceptance criteria: one
+condition, the boundary, the negative, the measure),
 [`abstraction`](./skills/abstraction.md) (splitting entities and views, containment,
 docs proposals), [`conformance`](./skills/conformance.md) (instances, attributes,
 links). Skill text is medium-neutral: the model adapts its wording to the medium it

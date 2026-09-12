@@ -36,6 +36,10 @@ The page, in order:
   `a → b (type, cardinality)`, the transition when one is declared, and the provenance:
   the verbatim quote with its source section for a quote-provenanced requirement, the
   upstream nodes and reasoning for a derived one, the author, time, and note for a decree.
+  Under the block, `Criteria:` lists the requirement's [criteria](../compiler/model/criterion.md),
+  one line each: id, `kind`, the statement, its quote's section or `proposed` for a derived
+  one, and the test verdict from the ledger when a row exists; a requirement with none
+  says `no criteria`.
   A relative link inside a quote is rewritten to resolve from the page (a bullet quoting
   `[User Management](./subsystems/user.md)` from `docs/backend.md` links to
   `../../docs/subsystems/user.md`; an anchor-only link such as `(#api-endpoints)` points

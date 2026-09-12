@@ -24,10 +24,12 @@ One persistent graph per project, edited in place, never regenerated. Ids are mi
 and immutable; natural keys make retries harmless; merges leave redirects; nothing enters
 without provenance. The runtime (see `docs/compiler/compiler.md`):
 
-- The graph: three authored node kinds (entity, requirement, view), two derived kinds
+- The graph: four authored node kinds (entity, requirement, criterion, view), two derived kinds
   (relationship, state machine), sections as structure, diagnostics as sticky judgment
   records. A requirement is a free-form `statement` with `entities`, plural directional
-  `edges`, an optional `transition`, and `facets`; an entity carries `stereotype`,
+  `edges`, an optional `transition`, and `facets`; a criterion is the observable
+  evidence one requirement is met (one condition, its outcome, concrete values), quoted
+  from a test case or example or derived with a proposal, and what tests bind to; an entity carries `stereotype`,
   `parent` (one containment tree), and `attributes`; a view stores what a diagram
   includes (kind, title, ordered members, query, collapse, exclusions), never how it
   looks. Every fact has exactly one provenance: `quote` (verbatim, located
@@ -122,7 +124,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   goal kind, and the
   generation payloads bind-contract.md, generate-contract.md,
   decompile-contract.md) and `docs/compiler/skills/` (extraction,
-  judgment, flow-views, structural-views, abstraction, conformance). Both are embedded
+  judgment, criteria, flow-views, structural-views, abstraction, conformance). Both are embedded
   into the binary at compile time (`include_str!`), so docs and code share the same
   bytes by construction. Edit the files, never reintroduce string constants in code.
   Both directories are excluded from the docs glob (they are instructions to a model,

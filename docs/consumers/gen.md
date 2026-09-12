@@ -357,18 +357,27 @@ contract). The `requirements-per-entity` limit (soft 50, hard 80) opens an
 entity into a containment subtree, and proposing that structure to the documents, stays
 a choice made in the graph, not an emergency at generation time.
 
-## Tests tie requirements to the deliverable
+## Tests tie criteria to the deliverable
 
-Each [requirement](../compiler/model/requirement.md) derives a test, keyed by the
-requirement id. The test is written when the requirement is [bound](./bind.md), before
-generation runs. A failing test names the requirement it verifies, and a changed
-requirement invalidates exactly the tests keyed to it. A requirement several entities
+Each [criterion](../compiler/model/criterion.md) derives a test, keyed by the criterion
+id; the requirement it belongs to is the row that groups them, and the requirement
+verifies when every criterion's test is green. The tests are written when the
+requirement is [bound](./bind.md), before generation runs. A failing test names the
+criterion it verifies and the requirement above it, and a changed criterion invalidates
+exactly the test keyed to it (`criterion-revised`), while a changed requirement statement
+marks its derived criteria revised and reaches the tests through them
+([change records](../compiler/graph.md#change-records)). A requirement with no criterion
+is not bound: `bind` waits on `derive-criteria`
+([tiers](../compiler/reconciler.md#tiers)). A requirement several entities
 share (an actor's statement about the tool it uses lists both) has one row and one
 test: the entity generated later finds the row in its package's `boundTests` and lists
 it unchanged, never a second test beside it.
 
-The requirement's [facets](../compiler/model/requirement.md#facets) and
-[transition](../compiler/model/requirement.md#transition) suggest the test shape:
+The criterion's `kind` names the test shape directly: `positive` a scenario on the
+stated input, `negative` the provoked failure path, `boundary` the edge value and the one
+past it, `quality` a measured check against `measure`. The requirement's
+[facets](../compiler/model/requirement.md#facets) and
+[transition](../compiler/model/requirement.md#transition) frame the arrangement:
 
 - `behavior` with a trigger → a scenario: arrange, trigger the event, assert the
   response.
@@ -453,8 +462,9 @@ metadata file. Two maps:
 - `entities`: generation state. What was generated for each entity, against which facts.
   Drives incremental regeneration.
 - `requirements`: the [bindings](./bind.md). How each requirement ties to the
-  deliverable and how it is verified. Rows are born by `record_binding` and updated by
-  `record_generation` and test runs.
+  deliverable and how it is verified: the implementing files and sites on the
+  requirement, one test per criterion under `tests`, keyed by criterion id. Rows are
+  born by `record_binding` and updated by `record_generation` and test runs.
 
 Four more keys sit beside them: `support`, the deliverable-wide files any session may
 rewrite; `medium`, the deliverable's
@@ -506,21 +516,25 @@ requirements:
       - file: src/catalog.rs              # markers (see traceability)
         line: 41                          # 1-based, in the stripped file
         head: "fn add(&mut self, i: Item) {"  # verbatim next significant line
-    test:
-      kind: programmatic                  # programmatic | llm
-      label: unit                         # freeform, the generator's own words
-      artifact: tests/catalog.rs          # deliverable-relative; for llm, criteria/req-catalog-3.md under gen/
-      name: req_catalog_3_a1b2c3d4        # embeds requirement id + hash prefix
-      run: cargo test req_catalog_3_a1b2c3d4    # for llm, jazyk test req:catalog-3
-      cwd: .                              # deliverable-relative working dir for run
+    tests:                                # one per criterion, keyed by criterion id
+      crit:catalog-2:
+        kind: programmatic                # programmatic | llm
+        label: unit                       # freeform, the generator's own words
+        artifact: tests/catalog.rs        # deliverable-relative; for llm, criteria/crit-catalog-2.md under gen/
+        name: crit_catalog_2_a1b2c3d4     # embeds criterion id + hash prefix
+        run: cargo test crit_catalog_2_a1b2c3d4    # for llm, jazyk test crit:catalog-2
+        cwd: .                            # deliverable-relative working dir for run
+        hashes:
+          criterion: <criterion statement hash>   # written at binding, never by a run
+          test: <hash of test artifact bytes>
+        verdict: none                     # none | pass | fail (last run outcome)
+        lastRun: 2026-07-03T18:40:00Z
+        exitCode: 0                       # programmatic runs only; absent for llm rows
+        evidence: "cargo test: 1 passed"  # or the llm verdict reasoning, short
     hashes:
       requirement: <full statement hash>  # written at generation and binding, never by a run
-      test: <hash of test artifact bytes>
       files: <hash over the manifest files, sorted, concatenated>
-    verdict: none                         # none | pass | fail (last run outcome)
-    lastRun: 2026-07-03T18:40:00Z
-    exitCode: 0                           # programmatic runs only; absent for llm rows
-    evidence: "cargo test: 1 passed"      # or the llm verdict reasoning, short
+    verdict: none                         # derived: pass when every test passes, fail when any fails
 ```
 
 ### Status is derived, never stored
@@ -622,14 +636,16 @@ they never run green over it silently:
 
 ## Criteria files for llm tests
 
-For `kind: llm` rows, generation writes a criteria file: front matter with the
-requirement id and the full statement hash; body with the `statement`, the verbatim
-quote, the manifest file paths, the steps to confirm, and the verdict contract (`PASS`
-or `FAIL` plus reasoning). It is the packaged setup for any harness: context, the
+The name predates acceptance criteria: a criteria file is the packaged setup of one
+`llm` test, not a [criterion](../compiler/model/criterion.md) of the graph. For
+`kind: llm` tests, generation writes one per criterion: front matter with the criterion
+id, its requirement, and the criterion statement hash; body with the criterion, the
+requirement's `statement`, the verbatim quotes, the manifest file paths, the steps to
+confirm, and the verdict contract (`PASS` or `FAIL` plus reasoning). It is the packaged setup for any harness: context, the
 location of the implemented product, and what to confirm. Editing it flips
 `stale-test` like any test artifact.
 
-The built-in worker writes it to `gen/criteria/req-<slug>.md` in the out directory
+The built-in worker writes it to `gen/criteria/crit-<slug>.md` in the out directory
 (metadata, not deliverable). An external worker has no reason to know the out
 directory and writes it where it writes everything else, under the deliverable. The
 recorded artifact path resolves against both homes, the out directory first, so

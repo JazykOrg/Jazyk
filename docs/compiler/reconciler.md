@@ -480,14 +480,17 @@ and wait for their cone instead.
 | 0 | `place-anchors` | always |
 | 1 | `reconcile-section` | no tier 0 goal is open or parked; the document's link level is reached; the document has no `alignment-pending` record |
 | 2 | `rejudge-pair`, `review-entity`, `retrace`, `conform-instance` | no tier 0 or 1 goal is open or parked |
-| 3 | `bind`, `generate`, `verify`, `ratify`, `answer` | no tier 0, 1, or 2 goal is open or parked |
+| 3 | `derive-criteria`, `bind`, `generate`, `verify`, `ratify`, `answer` | no tier 0, 1, or 2 goal is open or parked |
 
 - Open and parked goals hold the later tiers. Failed and blocked goals do not: a section
   the model could not reconcile, or a document awaiting a release, must not wedge every
   judgment behind it. They count in the [verdict](./compilation.md#convergence) instead.
-- Within tier 3, `generate` for an entity also waits until none of its requirements
-  owes a `bind` (the statement must be final before a test encodes it), and `verify`
-  waits until the row's entity is generated. `ratify` and `answer` are never ready for
+- Within tier 3, `bind` on a requirement waits until the requirement carries at least
+  one [criterion](./model/criterion.md) and its entity owes no `derive-criteria` (the
+  evidence must exist before a test encodes it; the goal is `blocked {on: criteria}`),
+  `generate` for an entity also waits until none of its requirements owes a `bind`
+  (the statement must be final before a test encodes it), and `verify` waits until the
+  row's entity is generated. `ratify` and `answer` are never ready for
   a session: they are `blocked {on: human}` and resolve through the human paths their
   pages describe.
 - A release gate ([modes and releases](./control-plane.md#modes-and-releases)) renders

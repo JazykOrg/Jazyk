@@ -136,7 +136,8 @@ what the session has staged:
 - A coverage mark is staged or recorded: `covered`, or `non-normative` with a note
   ([coverage](../compilation.md#coverage)).
 - A `covered` claim has a requirement sourced from the section behind it, staged in this
-  session or already recorded.
+  session or already recorded, or, for a test-case or examples section, a criterion
+  sourced from it ([criterion](../model/criterion.md)).
 - A `non-normative` note is not one of the three rejected reasons ("it states a fact,
   not a requirement", "it describes content or appearance, not behavior", "it is not a
   requirement on the system"). The `suspicious-non-normative` check judges the rest

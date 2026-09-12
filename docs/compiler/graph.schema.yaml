@@ -416,6 +416,59 @@ definitions:
       note:
         type: string
     additionalProperties: false
+  criterion:
+    description: >-
+      One entry in graph/criteria.yaml: the observable evidence one requirement is met.
+      Carries exactly one of source (the quote form) or provenance (derived or decree)
+    type: object
+    required:
+      - requirement
+      - statement
+      - kind
+    properties:
+      requirement:
+        type: string
+        pattern: '^req:'
+      statement:
+        type: string
+      given:
+        type: string
+      when:
+        type: string
+      then:
+        type: string
+      kind:
+        type: string
+        enum:
+          - positive
+          - negative
+          - boundary
+          - quality
+      measure:
+        type: string
+      entities:
+        type: array
+        items:
+          type: string
+      source:
+        description: The quote form of provenance on a criterion
+        $ref: '#/definitions/sourceRef'
+      provenance:
+        description: Derived or decree provenance. Never the quote form on a criterion
+        oneOf:
+          - $ref: '#/definitions/derivedProvenance'
+          - $ref: '#/definitions/decreeProvenance'
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+      reasoning:
+        type: string
+      created:
+        type: string
+      updated:
+        type: string
+
   view:
     description: >-
       One entry in graph/views.yaml. The stored half of a diagram: what it includes,

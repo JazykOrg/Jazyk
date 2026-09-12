@@ -164,6 +164,12 @@ Every check run journals a `checks` entry under its own generation.
   `unprocessed`; `suspicious-non-normative` for a `non-normative` section whose text
   still looks normative ([coverage](#coverage)).
 - `stale-provenance`: an anchor no session addressed, a quote that fails to locate.
+- Criteria: `criterion-missing` for a requirement with no
+  [criterion](./model/criterion.md), `warning` when the project configures a `[gen]`
+  deliverable (binding waits on it) and `info` otherwise; `criterion-restates` for a
+  criterion whose normalized text equals its requirement's statement. Neither holds the
+  verdict: criteria gate the ledger tier, not compile
+  ([tiers](./reconciler.md#tiers)).
 - `unused-entity`: an entity with no requirements and no children: a grouping that
   holds children is used as their container, so an area a front door names and never
   states a rule about draws no warning. `unreachable-entity`: an entity not

@@ -20,6 +20,7 @@ jazyk-out/
   graph/
     entities.yaml        # map: id -> entity
     requirements.yaml    # map: id -> requirement
+    criteria.yaml        # map: id -> criterion (absent reads as empty)
     views.yaml           # map: id -> view (curated views and the defaults the store derives)
     diagnostics.yaml     # map: id -> diagnostic
     redirects.yaml       # map: absorbed id -> surviving id
@@ -94,6 +95,7 @@ A mutation is one operation on the graph. The full set:
 
 - `upsert_entity`, `update_entity`, `delete_entity`, `merge_entities`
 - `upsert_requirement`, `update_requirement`, `delete_requirement`
+- `upsert_criterion`, `update_criterion`, `delete_criterion`
 - `upsert_view`, `update_view`, `delete_view`
 - `place_anchor`, `orphan_anchor`
 - `report_diagnostic`, `update_diagnostic`, `resolve_diagnostic`
@@ -120,7 +122,9 @@ Their semantics:
   `statement`, so a punctuation or spacing edit to a sentence matches its existing
   requirement and refreshes the `statement` and `quote` in place. A derived requirement
   keys on its punctuation-insensitive `statement` within its `from` set; a decreed one
-  keys on the statement alone. For views the natural key is `kind` plus `title`. An
+  keys on the statement alone. For criteria the natural key is the owning requirement
+  plus the punctuation-insensitive `statement`, whatever the provenance. For views the
+  natural key is `kind` plus `title`. An
   upsert that matches an existing node updates it instead of creating a duplicate. This
   makes retries harmless.
 - The store mints ids: `ent:<slug>`, `req:<doc-stem>-<n>` (`req:x-<n>` for derived and
@@ -430,6 +434,8 @@ The kinds, who writes them, and the goal each feeds:
 | `anchor-stale` | the `align` entry (a quote that stops locating) or a `reevaluate` placement | `reconcile-section` |
 | `alignment-pending` | the `align` entry (a proposal a document owes a decision on) | `place-anchors` |
 | `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
+| `criterion-created`, `criterion-revised` | a commit that creates or revises a criterion, or the sweep marking a derived criterion revised because its requirement's statement changed (`via: requirement`) | nothing on the board; the ledger comparison reads them and marks the test keyed to the criterion stale ([the ledger](../consumers/gen.md#the-ledger)) |
+| `criterion-deleted` | a commit or the sweep that deletes a criterion | nothing (trail; the ledger prunes the row) |
 | `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |
 | `entity-changed` | a commit that changes an entity's fact set | `review-entity` |
 | `node-deleted` | a delete or the sweep, one record per live node that still referenced the dead one (`via` names the edge) | `retrace` (a view, an instance, a derived fact); `rejudge-pair` (a surviving diagnostic subject) |
@@ -527,7 +533,11 @@ commit's reply lists the sweep's actions, so a serving or a frontend can say wha
 commit swept. Nothing waits for the next build: the graph is honest between builds.
 
 - A requirement whose source section disappeared and was not re-anchored during
-  reconcile is deleted by the store, journaled. An anchor named by a pending
+  reconcile is deleted by the store, journaled. Its criteria go with it, and a quoted
+  criterion whose own section disappeared goes the same way.
+- A requirement whose `statement` changed marks its derived criteria revised
+  (`criterion-revised`, via `requirement`): the evidence was written against the old
+  text. An anchor named by a pending
   [alignment proposal](./alignment.md#what-applies-and-what-is-proposed) is exempt until
   the `place-anchors` session decides it.
 - An entity mention is pruned when its section is gone or its quote no longer locates

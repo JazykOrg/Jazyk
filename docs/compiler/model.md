@@ -10,7 +10,7 @@ from scratch. See [identity](./concepts/identity.md).
 
 ## Node kinds
 
-The graph stores three authored kinds and derives the rest. Authored content enters through
+The graph stores four authored kinds and derives the rest. Authored content enters through
 write tools during sessions or through human edits. Derived content is recomputed by the
 store on every commit and has no write tool.
 
@@ -18,6 +18,7 @@ store on every commit and has no write tool.
 | --- | --- | --- | --- |
 | `ent:<slug>` | [entity](./model/entity.md) | authored | `name` + `scope` (+ `parent` when supplied) |
 | `req:<doc-stem>-<n>` | [requirement](./model/requirement.md) | authored | source section + statement |
+| `crit:<doc-stem>-<n>` | [criterion](./model/criterion.md) | authored | owning requirement + statement |
 | `view:<kind>/<slug>` | [view](./model/view.md) | authored (defaults derived) | `kind` + `title` |
 | `rel:<a>~<b>` | [relationship](./model/relationship.md) | derived from requirement `edges` | member pair |
 | `sm:<entity-slug>` | [state machine](./model/state-machine.md) | derived from requirement `transition` | subject entity |
@@ -28,6 +29,9 @@ store on every commit and has no write tool.
   `parent` in one containment tree, and `attributes`.
 - Requirement: one atomic obligation, a free-form `statement` about one or more entities,
   carrying the `edges`, the `transition`, and the `facets` the statement states.
+- Criterion: the observable evidence one requirement is met, one condition and its
+  outcome with concrete values, quoted from a test case or an example or derived with a
+  proposal; what a test encodes.
 - View: the stored half of a diagram: which nodes one diagram includes, never how it looks.
   Default views derive on every commit. Curated views are authored.
 - Relationship: the typed connections between two entities, grouped per direction and type,
@@ -140,6 +144,8 @@ change reaches exactly the nodes with a justification path through it. The
   slug can go stale. That is expected.
 - Requirement: `req:<doc-stem>-<n>`. E.g. `req:catalog-3`. A derived or decreed
   requirement has no document behind it: `req:x-<n>`.
+- Criterion: `crit:<doc-stem>-<n>` from the document its quote sits in, `crit:x-<n>` for
+  a derived or decreed one. E.g. `crit:catalog-2`.
 - View: `view:<kind>/<slug>`, the kind segment being the catalog kind with its hyphens
   removed (`use-case` → `usecase`) and the slug from the title at creation time. E.g.
   `view:sequence/checkout`, `view:usecase/checkout`.

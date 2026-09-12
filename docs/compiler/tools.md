@@ -216,6 +216,11 @@ a mutating reply previews the goals the mutation will open
   within one session replaces the earlier mark: a changeset carries at most one
   coverage mark per section. A `covered` claim requires a requirement sourced from
   that section; the `done` gate enforces it ([coverage](./compilation.md#coverage)).
+  A section reference naming a fenced block (`docs/steps.md#/steps/code-block-1`)
+  resolves to the section holding the block, in this tool and in every other: a block
+  owns no mark and derives no goal, its parent keeps the whole body, so the step
+  quotes anchor there and the parent's one mark covers the block
+  ([section tree](./parsing.md#section-tree)).
 
 There is no write tool for relationships, state machines, or default views. They are
 [derived data](./graph.md#derived-data), recomputed on every commit from requirement
@@ -310,8 +315,17 @@ clear or keep change records; they are not graph mutations
   [`verify`](./goals/verify.md#gate) claim a verdict standing on a current row; the
   rejection (`bind-gate`, `generate-gate`, `verify-gate`) names what is missing and
   the call that lands it. `evidence` carries what the gate reads for kinds
-  that ask for it, e.g. a verdict per neighbor for
-  [`rejudge-pair`](./goals/rejudge-pair.md). A goal outside the batch is rejected.
+  that ask for it, one shape per kind: [`rejudge-pair`](./goals/rejudge-pair.md)
+  `{verdict: duplicate | contradiction | consistent, carried_by?}`;
+  [`review-entity`](./goals/review-entity.md) `{definition: current | refreshed,
+  lookalikes: [{id, verdict: merged | separate, reason}], diagnostics: [{id, verdict:
+  stands | resolved | refiled}]}`; [`declare-edges`](./goals/declare-edges.md)
+  `declared` or `not-structural`; [`dedupe-candidates`](./goals/dedupe-candidates.md)
+  `merged` or `separate`; [`curate-view`](./goals/curate-view.md) one `added` or
+  `excluded` per matched node; [`conform-instance`](./goals/conform-instance.md) a
+  verdict per attribute; the other kinds read the staged work alone. The tool's
+  description carries the same list, so the shape is never guessed. A goal outside
+  the batch is rejected.
 - `settle_pairs({verdicts: [{goal, verdict, justification, severity?, message?,
   reasoning?, prompt?}]})`: one claim for several `rejudge-pair` goals, served in the
   [`rejudge-pair`](./goals/rejudge-pair.md#tools) slice only. Each entry is one

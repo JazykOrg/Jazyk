@@ -1085,17 +1085,35 @@ fn provider(store: &Store, id: &str) -> String {
 
 // A member's message: its first dependency edge (an untyped edge counts), else its
 // first edge, else a self-message on its first entity.
+// A requirement's edges in message order: the edges whose `a` is the statement's first
+// listed entity (its subject) first, then dependencies, then the rest, each group in
+// listed order. Mirrors docs/compiler/model/view.md#fields.
+fn ordered_edges<'a>(store: &Store, r: &'a Requirement) -> Vec<&'a ReqEdge> {
+    let subject = r
+        .entities
+        .first()
+        .map(|e| store.resolve_id(e).to_string());
+    let rank = |e: &ReqEdge| -> u8 {
+        if subject.as_deref() == Some(store.resolve_id(&e.a)) {
+            0
+        } else if e.rel_type.as_deref().map_or(true, |t| t == "dependency") {
+            1
+        } else {
+            2
+        }
+    };
+    let mut edges: Vec<&ReqEdge> = r.edges.iter().collect();
+    edges.sort_by_key(|e| rank(e));
+    edges
+}
+
 fn message_of(store: &Store, rid: &str) -> Option<Message> {
     let r = store.graph.requirements.get(rid)?;
     let live = |id: &str| -> Option<String> {
         let id = store.resolve_id(id).to_string();
         store.graph.entities.contains_key(&id).then_some(id)
     };
-    let edge = r
-        .edges
-        .iter()
-        .find(|e| e.rel_type.as_deref().map_or(true, |t| t == "dependency"))
-        .or_else(|| r.edges.first());
+    let edge = ordered_edges(store, r).into_iter().next();
     if let Some(e) = edge {
         if let (Some(a), Some(b)) = (live(&e.a), live(&e.b)) {
             return Some(Message {
@@ -1135,19 +1153,11 @@ fn messages(scene: &Scene) -> Vec<Message> {
                 let id = store.resolve_id(id).to_string();
                 store.graph.entities.contains_key(&id).then_some(id)
             };
-            // The candidate messages in the terms' order: dependencies first, then
-            // the other edges, then the self-message on the first entity. The
-            // first whose lifted ends differ is the level's message.
+            // The candidate messages in the terms' order: the subject's edges first,
+            // then dependencies, then the other edges, then the self-message on the
+            // first entity. The first whose lifted ends differ is the level's message.
             let mut candidates: Vec<(String, String)> = Vec::new();
-            let deps = r
-                .edges
-                .iter()
-                .filter(|e| e.rel_type.as_deref().map_or(true, |t| t == "dependency"));
-            let others = r
-                .edges
-                .iter()
-                .filter(|e| !e.rel_type.as_deref().map_or(true, |t| t == "dependency"));
-            for e in deps.chain(others) {
+            for e in ordered_edges(store, r) {
                 if let (Some(a), Some(b)) = (live(&e.a), live(&e.b)) {
                     candidates.push((lift(&a), lift(&provider(store, &b))));
                 }

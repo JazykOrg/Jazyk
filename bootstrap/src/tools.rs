@@ -437,7 +437,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads (a verdict per neighbor for rejudge-pair, per attribute for conform-instance). The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]}; declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view one added|excluded per matched node; conform-instance a verdict per attribute; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -3207,6 +3207,10 @@ impl ToolSession {
                 format!("unknown section `{}#{}`", doc, sec),
             ));
         }
+        // A fenced block resolves to the section holding it: the block owns no mark
+        // and no goal, and its parent keeps the whole body.
+        // Mirrors docs/compiler/tools.md#write-tools.
+        let sec = crate::goals::owning_section(&self.snapshot, &doc, &sec);
         Ok((doc, sec))
     }
 

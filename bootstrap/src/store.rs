@@ -3049,6 +3049,7 @@ impl Store {
                     }
                     let r = self.graph.requirements.get_mut(&rid).unwrap();
                     let before: Vec<String> = r.entities.clone();
+                    let edges_before = r.edges.clone();
                     let statement_before = r.statement.clone();
                     if let Some(e) = &statement {
                         if r.statement != *e {
@@ -3102,7 +3103,36 @@ impl Store {
                     }
                     r.updated = Some(build.clone());
                     let after = r.entities.clone();
-                    dirt.entities(before.iter().chain(after.iter()), m);
+                    // What the update dirtied: the fact itself (statement, transition,
+                    // facets, provenance) reopens every entity's review; a change to
+                    // the entity list alone reaches only the entities added or removed;
+                    // an edge change alone reaches the two ends of a new composition,
+                    // whose part may need its parent set, and nothing else.
+                    // Mirrors docs/compiler/goals/review-entity.md#created-when.
+                    let fact_changed = r.statement != statement_before
+                        || transition.is_some()
+                        || facets.is_some()
+                        || source.is_some()
+                        || provenance.is_some();
+                    if fact_changed {
+                        dirt.entities(before.iter().chain(after.iter()), m);
+                    } else {
+                        for e in before.iter().filter(|e| !after.contains(e)) {
+                            dirt.entity(e, m, "entities");
+                        }
+                        for e in after.iter().filter(|e| !before.contains(e)) {
+                            dirt.entity(e, m, "entities");
+                        }
+                        for e in r.edges.iter().filter(|e| {
+                            e.rel_type.as_deref() == Some("composition")
+                                && !edges_before.iter().any(|x| {
+                                    x.a == e.a && x.b == e.b && x.rel_type == e.rel_type
+                                })
+                        }) {
+                            dirt.entity(&e.a, m, "edges");
+                            dirt.entity(&e.b, m, "edges");
+                        }
+                    }
                     dirt.named(&rid, m);
                     applied.push(Op::UpdateRequirement {
                         id: rid,

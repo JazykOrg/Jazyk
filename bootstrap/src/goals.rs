@@ -314,6 +314,26 @@ fn build_goal(
 // block inside its fence, a preamble's its whole text (it has no heading line, so a
 // one-line preamble owes its mark). A code block follows its parent's mark.
 // Mirrors docs/compiler/compilation.md#coverage.
+// The section that owns a reference's goal and mark: a fenced block's holding section
+// (walking up through nested blocks), any other section itself.
+// Mirrors docs/compiler/parsing.md#section-tree.
+pub fn owning_section(store: &Store, doc: &str, sec: &str) -> String {
+    let mut cur = sec.to_string();
+    let Some(rec) = store.docs.get(doc) else {
+        return cur;
+    };
+    for _ in 0..16 {
+        match rec.sections.get(&cur) {
+            Some(s) if s.kind == "code-block" => match &s.parent {
+                Some(p) => cur = p.clone(),
+                None => break,
+            },
+            _ => break,
+        }
+    }
+    cur
+}
+
 pub fn section_has_body(sec: &Section) -> bool {
     if sec.kind == "code-block" {
         return false;
@@ -719,6 +739,9 @@ impl GoalKind for ReconcileSection {
             if !record.sections.contains_key(&sec) {
                 continue;
             }
+            // A fenced block's dirt is its holding section's: the block owns no goal.
+            // Mirrors docs/compiler/parsing.md#section-tree.
+            let sec = owning_section(store, &doc, &sec);
             if record
                 .coverage
                 .get(&sec)
@@ -726,7 +749,7 @@ impl GoalKind for ReconcileSection {
             {
                 continue;
             }
-            let w = work.entry(rec.subject.clone()).or_default();
+            let w = work.entry(format!("{}#{}", doc, sec)).or_default();
             w.dirty = Some(rec.detail.clone());
             w.causes.push(rec.cause());
         }
@@ -748,7 +771,8 @@ impl GoalKind for ReconcileSection {
             if anchors.is_empty() {
                 continue;
             }
-            let w = work.entry(rec.subject.clone()).or_default();
+            let sec = owning_section(store, &doc, &sec);
+            let w = work.entry(format!("{}#{}", doc, sec)).or_default();
             w.stale.extend(anchors);
             w.causes.push(rec.cause());
         }
@@ -772,7 +796,8 @@ impl GoalKind for ReconcileSection {
                 {
                     continue;
                 }
-                let full = format!("{}#{}", src.doc, src.section);
+                let sec = owning_section(store, &src.doc, &src.section);
+                let full = format!("{}#{}", src.doc, sec);
                 let w = work.entry(full).or_default();
                 if w.stale.insert(rid) && w.causes.is_empty() {
                     w.causes.push(Cause {

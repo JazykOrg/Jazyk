@@ -112,14 +112,17 @@ view:component/backend:
 
 Terms the flow kinds share:
 
-- A member's message follows its first `dependency` edge, or its first edge when it has
-  no dependency. The initiator is `a`. The receiver is `b`, resolved through
+- A member's message follows one of its edges. The initiator is `a`. The receiver is `b`, resolved through
   `realization` when `b` is an «interface»: the one entity realizing it is the receiver.
   Several realizers draw `provider-ambiguous`. A member with no edges is a self-message
-  on its first listed entity. In a [level's](#level-views) flow view the ends lift to
-  the level's members, and the message follows the first edge (dependencies first)
-  whose lifted ends differ; when every edge collapses into one member, the
-  self-message stays.
+  on its first listed entity. The message follows the statement's
+  subject: the first edge whose `a` is the requirement's first listed entity (the
+  entity the statement is about), then dependencies, then the other edges, so "When a
+  Customer submits an Order, the Shop sends a confirmation email" with `entities`
+  `[shop, customer, order]` draws the Shop's message, not the Customer's trigger. In a
+  [level's](#level-views) flow view the ends lift to the level's members, and the
+  message follows the first such edge whose lifted ends differ; when every edge
+  collapses into one member, the self-message stays.
 - The actors of a flow are the members' entities labeled `actor`. Where no member's entity
   carries that label, the use case draws no actor: a flow among the subject's own parts
   has no outside initiator, and drawing the first component as a stick figure (a

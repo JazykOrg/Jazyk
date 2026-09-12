@@ -1446,7 +1446,7 @@ pub(crate) fn status_report(
     let (mut total, mut covered) = (0usize, 0usize);
     for rec in store.docs.values() {
         for (r, sec) in &rec.sections {
-            if sec.raw.lines().skip(1).all(|l| l.trim().is_empty()) {
+            if !crate::goals::section_has_body(sec) {
                 continue;
             }
             total += 1;

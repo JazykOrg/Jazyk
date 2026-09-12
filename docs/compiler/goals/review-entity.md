@@ -23,7 +23,13 @@ on the entity. A commit or the sweep writes one when the entity's fact set chang
 
 - `entities`, `edges`, `transition`: a requirement referencing the entity was created,
   revised, or deleted, including the requirements the sweep prunes when their quotes
-  die.
+  die. An update that changes only the `entities` list writes the record for the
+  entities it added or removed, never for the ones already listed (their fact set did
+  not change); an update that changes only `edges` writes it for the two ends of a
+  newly declared `composition` edge alone (the part may need its `parent` set) and for
+  nothing else, since an arrow's type is declare-edges' and review-entity's own output
+  and re-reviewing every entity of the statement for it made a quarter of a run's
+  batches empty re-reviews.
 - `fields`: the entity's own `definition`, `aliases`, `stereotype`, `scope`, or
   `attributes` changed, or the entity was created. A move alone (`parent` and nothing
   else) is the parents' business: it writes `parent` on the parent it leaves and the

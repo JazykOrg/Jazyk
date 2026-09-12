@@ -151,7 +151,7 @@ Computed by the harness and rendered under the goal block:
   (`incomplete-build`, `ratification-pending`, `unstable-*`) are left out: the build
   settles them, and a review never resolves them
   ([lifecycle](../model/diagnostic.md#lifecycle-and-triage)).
-- `level views: <view id> (this entity), <view id> (its parent)`: the structural
+- `level views: <view id> (this entity), <view id> (the level above)`: the structural
   level view of the entity when it has children and of the level it sits in, so a
   review reads the drawing without guessing view ids
   ([level views](../model/view.md#level-views)).

@@ -65,7 +65,7 @@ Edges are plural, directional, typed, and carry cardinality:
 - Typed: `type` is one of the [relationship types](./relationship.md#types). An edge
   without `type` contributes `dependency`, the weakest type. The
   [`declare-edges` goal](../goals/declare-edges.md) is where the type gets judged.
-- Cardinality: `cardinality` is one of `1`, `0..1`, `1..*`, `*`, the multiplicity of `b`
+- Cardinality: `cardinality` is a UML multiplicity, `*`, a count (`1`, `4`), or a range (`0..1`, `1..*`, `2..3`), the multiplicity of `b`
   as seen from `a`. "A shopping cart holds one or more order items" yields
   `{a: ent:shopping-cart, b: ent:order-item, type: composition, cardinality: "1..*"}`.
 

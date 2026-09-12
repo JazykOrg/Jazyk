@@ -115,10 +115,13 @@ a mutating reply previews the goals the mutation will open
   article passes when a document writes it capitalized mid-sentence ("upstairs at The
   Lantern Room"), since the article is then part of a proper name. Omit `scope` unless the
   documents explicitly name a bounded context.
-- `update_entity({id, name?, definition?, add_aliases?, remove_aliases?, stereotype?, parent?, attributes?})`:
+- `update_entity({id, name?, definition?, add_aliases?, remove_aliases?, stereotype?, parent?, remove_parent?, attributes?})`:
   a rename keeps the id. `add_aliases` records a wording; `remove_aliases` takes one
   back, so a session repairs an alias it judged unsupported instead of leaving an
-  invented wording in the graph. `attributes` upserts by name; attributes not named
+  invented wording in the graph. `remove_parent: true` takes the entity out of the
+  containment tree: the judgment skill keeps a generic rule-carrier (Department beside
+  Operations, Sales, Finance) parentless, and a session that had set one could not
+  undo it, since the contract forbids an empty string as a value. `attributes` upserts by name; attributes not named
   stand.
   `parent` obeys the same gates as on create. No gate compares `parent` with committed
   `composition` edges: composition consistency is the `containment-mismatch`

@@ -795,6 +795,14 @@ The loop continued onto the org corpus and onto generation:
   non-normative, `sm:order`), and checklinks reports zero broken links on the
   generated pages after the docsgen anchor and quote-link fixes.
 
+- example-org rerun on the fixed binary: converged in 405 turns and $19.71 with 81 pair
+  verdicts (155, then 106, then 81 across the three runs), 38 entities, every trap
+  holding. Its feedback: `update_entity` could not clear a parent (`remove_parent`
+  now), the cardinality enum could not say "four departments" or "two or three" (a
+  multiplicity pattern now), the skill's "the event that creates the subject names its
+  initial state" read as a transition to record (the creating sentence records none),
+  and two hint wordings ("its parent" for the level above, "this session" for the open
+  batch).
 - example-novel, no answer key in the copy: converged after two driver rounds (eleven
   invocations, 1085 turns, $67.87, 132 minutes) at 100 percent coverage with 251
   requirements, 267 pair verdicts, and 47 entity reviews. The traps held: one Ines

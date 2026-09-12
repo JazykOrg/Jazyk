@@ -32,6 +32,9 @@ pub enum Op {
         stereotype: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        // Take the entity out of the containment tree (docs/compiler/tools.md#write-tools).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_parent: bool,
         // Replace the whole attribute list, or refresh by name.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         set_attributes: Option<Vec<Attribute>>,
@@ -2483,6 +2486,7 @@ impl Store {
                             definition: entity.definition,
                             add_aliases: Vec::new(),
                             remove_aliases: Vec::new(),
+                            clear_parent: false,
                             add_mention: None,
                             stereotype: entity.stereotype,
                             parent: None,
@@ -2522,6 +2526,7 @@ impl Store {
                     add_mention,
                     stereotype,
                     parent,
+                    clear_parent,
                     set_attributes,
                     add_attributes,
                     provenance,
@@ -2613,6 +2618,9 @@ impl Store {
                     if let Some(p) = &parent {
                         e.parent = Some(p.clone());
                     }
+                    if clear_parent {
+                        e.parent = None;
+                    }
                     if let Some(attrs) = &set_attributes {
                         e.attributes = attrs.clone();
                     }
@@ -2655,6 +2663,7 @@ impl Store {
                         definition,
                         add_aliases,
                         remove_aliases,
+                        clear_parent,
                         add_mention,
                         stereotype,
                         parent,
@@ -6035,6 +6044,7 @@ mod tests {
             definition: definition.map(String::from),
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
+            clear_parent: false,
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6104,6 +6114,7 @@ mod tests {
             definition: None,
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
+            clear_parent: false,
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),
@@ -6270,6 +6281,7 @@ mod tests {
                 definition: Some("a person who buys".into()),
                 add_aliases: Vec::new(),
                 remove_aliases: Vec::new(),
+                clear_parent: false,
                 add_mention: None,
                 stereotype: None,
                 parent: None,
@@ -6584,6 +6596,7 @@ mod tests {
             definition: None,
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
+            clear_parent: false,
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

@@ -114,7 +114,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_entity",
-            description: "Update an existing entity. A rename keeps the id. add_aliases records a wording, remove_aliases takes one back (a wording the documents turn out not to use). attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
+            description: "Update an existing entity. A rename keeps the id. add_aliases records a wording, remove_aliases takes one back (a wording the documents turn out not to use). remove_parent: true takes the entity out of the containment tree (a generic rule-carrier that should stand beside no parent). attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -122,6 +122,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "definition": {"type": "string"},
                     "add_aliases": {"type": "array", "items": {"type": "string"}},
                     "remove_aliases": {"type": "array", "items": {"type": "string"}},
+                    "remove_parent": {"type": "boolean"},
                     "stereotype": {"type": "string"},
                     "parent": {"type": "string"},
                     "attributes": {"type": "array", "items": attribute_schema()}
@@ -452,7 +453,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic filed in this session is its filing goal's evidence, not an entry here); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -672,7 +673,7 @@ fn edge_schema() -> Value {
             "a": {"type": "string"},
             "b": {"type": "string"},
             "type": {"type": "string", "enum": REL_TYPES},
-            "cardinality": {"type": "string", "enum": crate::model::CARDINALITIES, "description": "the multiplicity at b: how many b per a (Order o-- 1..* Product is one or more Products per Order)"}
+            "cardinality": {"type": "string", "pattern": "^(\\*|[0-9]+|[0-9]+\\.\\.([0-9]+|\\*))$", "description": "the multiplicity at b: how many b per a (Order o-- 1..* Product is one or more Products per Order); *, a count (1, 4), or a range (0..1, 1..*, 2..3)"}
         },
         "required": ["a", "b"]
     })
@@ -843,13 +844,12 @@ fn parse_edges(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if let Some(c) = &cardinality {
-            if !crate::model::CARDINALITIES.contains(&c.as_str()) {
+            if !crate::model::is_cardinality(c) {
                 return Err(ToolError::new(
                     "bad-cardinality",
                     format!(
-                        "unknown cardinality `{}`; one of: {}",
-                        c,
-                        crate::model::CARDINALITIES.join(", ")
+                        "unknown cardinality `{}`; a multiplicity: *, a count (1, 4), or a range (0..1, 1..*, 2..3)",
+                        c
                     ),
                 ));
             }
@@ -3943,6 +3943,7 @@ impl ToolSession {
                         add_mention,
                         stereotype,
                         parent,
+                        clear_parent,
                         set_attributes,
                         add_attributes,
                         ..
@@ -3973,6 +3974,9 @@ impl ToolSession {
                     }
                     if let Some(p) = parent {
                         e.parent = Some(p.clone());
+                    }
+                    if *clear_parent {
+                        e.parent = None;
                     }
                     if let Some(set) = set_attributes {
                         e.attributes = set.clone();
@@ -4259,6 +4263,7 @@ impl ToolSession {
                         definition: Self::opt_str(args, "definition"),
                         add_aliases: Self::str_list(args, "aliases"),
                         remove_aliases: Vec::new(),
+                        clear_parent: false,
                         add_mention: mention_ref,
                         stereotype,
                         parent,
@@ -4334,6 +4339,7 @@ impl ToolSession {
                     definition: Self::opt_str(args, "definition"),
                     add_aliases: Self::str_list(args, "add_aliases"),
                     remove_aliases: Self::str_list(args, "remove_aliases"),
+                    clear_parent: args["remove_parent"].as_bool() == Some(true),
                     add_mention: None,
                     stereotype: Self::opt_str(args, "stereotype"),
                     parent,
@@ -4602,6 +4608,7 @@ impl ToolSession {
                         definition: None,
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
+                        clear_parent: false,
                         add_mention: None,
                         stereotype: None,
                         parent: Some(id.clone()),
@@ -6383,6 +6390,7 @@ impl ToolSession {
                         definition,
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
+                        clear_parent: false,
                         add_mention: None,
                         stereotype,
                         parent,
@@ -6419,6 +6427,7 @@ impl ToolSession {
                         definition,
                         add_aliases: Vec::new(),
                         remove_aliases: Vec::new(),
+                        clear_parent: false,
                         add_mention: None,
                         stereotype,
                         parent,
@@ -7582,6 +7591,27 @@ mod tests {
         .unwrap();
         let v = t.dispatch("get_entity", &json!({"id": "ent:customer"})).unwrap();
         assert_eq!(v["aliases"], json!(["Shopper"]), "{}", v);
+    }
+
+    // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of
+    // the containment tree in the same session.
+    #[test]
+    fn update_entity_remove_parent_clears_the_parent() {
+        let mut t = session();
+        let id = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Shopping Cart", "parent": "ent:customer", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
+            )
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let v = t.dispatch("get_entity", &json!({"id": id})).unwrap();
+        assert_eq!(v["parent"], "ent:customer", "{}", v);
+        t.dispatch("update_entity", &json!({"id": id, "remove_parent": true})).unwrap();
+        let v = t.dispatch("get_entity", &json!({"id": id})).unwrap();
+        assert!(v["parent"].is_null(), "{}", v);
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: a name starting with an article is

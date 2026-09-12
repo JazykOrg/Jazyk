@@ -258,6 +258,19 @@ pub struct ReqEdge {
 // The cardinality forms an edge may carry.
 pub const CARDINALITIES: [&str; 4] = ["1", "0..1", "1..*", "*"];
 
+// A UML multiplicity: `*`, a count, or a range whose upper bound is a count or `*`.
+// Mirrors docs/compiler/model/requirement.md#edges.
+pub fn is_cardinality(s: &str) -> bool {
+    let digits = |x: &str| !x.is_empty() && x.chars().all(|c| c.is_ascii_digit());
+    if s == "*" || digits(s) {
+        return true;
+    }
+    match s.split_once("..") {
+        Some((lo, hi)) => digits(lo) && (hi == "*" || digits(hi)),
+        None => false,
+    }
+}
+
 // The state change a requirement describes. Mirrors docs/compiler/model/requirement.md#transition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transition {

@@ -1873,7 +1873,7 @@ impl GoalKind for ReviewEntity {
                     None => format!("{}{}", crate::board::SCOPE_TARGET_PREFIX, e.scope),
                 };
                 if let Some(v) = crate::derive::level_view_id(store, &level_target) {
-                    views.push(format!("{} (its parent)", v));
+                    views.push(format!("{} (the level above)", v));
                 }
                 if !views.is_empty() {
                     hints.push(format!("level views: {}", views.join(", ")));
@@ -5433,7 +5433,7 @@ pub(crate) mod tests {
         let parent = crate::derive::level_view_id(&s, "scope:public").unwrap();
         assert!(
             g.hints.contains(&format!(
-                "level views: {} (this entity), {} (its parent)",
+                "level views: {} (this entity), {} (the level above)",
                 own, parent
             )),
             "{:?}",
@@ -5581,6 +5581,7 @@ pub(crate) mod tests {
             definition: None,
             add_aliases: Vec::new(),
             remove_aliases: Vec::new(),
+            clear_parent: false,
             add_mention: None,
             stereotype: None,
             parent: Some(parent.into()),

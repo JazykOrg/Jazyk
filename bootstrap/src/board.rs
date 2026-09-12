@@ -1264,10 +1264,10 @@ impl Board {
         let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
         let mut waiting: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for g in &self.goals {
-            if !is_open(g) {
+            if matches!(g.state, GoalState::Failed { .. }) {
                 continue;
             }
-            if self.is_ready(&g.id) {
+            if is_open(g) && self.is_ready(&g.id) {
                 if !batched.contains(g.id.as_str()) {
                     ready_loose.push(json!({
                         "id": g.id, "kind": g.kind, "target": g.target, "mandatory": g.mandatory,
@@ -1275,6 +1275,8 @@ impl Board {
                 }
                 continue;
             }
+            // Open goals that are not ready and blocked goals (a release, a human
+            // answer) both land here, so the counts and the summary agree.
             *by_kind.entry(g.kind.clone()).or_insert(0) += 1;
             let reason = self
                 .readiness
@@ -2366,7 +2368,7 @@ pub(crate) mod tests {
     #[test]
     fn pair_batches_fill_across_node_localities() {
         let mut s = Store::default();
-        let text = "# T\n\nThe X serves the Y. The X also names the Y. The P serves the Q. The P also names the Q.\n";
+        let text = "# T\n\nThe X serves the Y nightly. The X also names the Y nightly. The P serves the Q nightly. The P also names the Q nightly.\n";
         let mut coverage = BTreeMap::new();
         for r in ["/t"] {
             coverage.insert(
@@ -2409,19 +2411,19 @@ pub(crate) mod tests {
         };
         s.graph.requirements.insert(
             "req:t-1".into(),
-            req("The X serves the Y.", &["ent:x", "ent:y"], "The X serves the Y."),
+            req("The X serves the Y nightly.", &["ent:x", "ent:y"], "The X serves the Y nightly."),
         );
         s.graph.requirements.insert(
             "req:t-2".into(),
-            req("The X also names the Y.", &["ent:x", "ent:y"], "The X also names the Y."),
+            req("The X also names the Y nightly.", &["ent:x", "ent:y"], "The X also names the Y nightly."),
         );
         s.graph.requirements.insert(
             "req:t-3".into(),
-            req("The P serves the Q.", &["ent:p", "ent:q"], "The P serves the Q."),
+            req("The P serves the Q nightly.", &["ent:p", "ent:q"], "The P serves the Q nightly."),
         );
         s.graph.requirements.insert(
             "req:t-4".into(),
-            req("The P also names the Q.", &["ent:p", "ent:q"], "The P also names the Q."),
+            req("The P also names the Q nightly.", &["ent:p", "ent:q"], "The P also names the Q nightly."),
         );
         s.status.generation = 5;
         for rid in ["req:t-1", "req:t-3"] {

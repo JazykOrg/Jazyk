@@ -78,6 +78,10 @@ pub struct LoadedSet {
     // The round each target was last named in a tool call's arguments.
     pub last_referenced: BTreeMap<String, u32>,
     pub round: u32,
+    // The rendered text of the initially loaded items, in load order: what the
+    // session prompt carries under the status block, so the set is read, not only
+    // listed. Mirrors docs/compiler/sessions.md#the-prompt.
+    pub initial_pack: Vec<String>,
     // The stored section bodies before this session's sync, read lazily from disk for
     // the dirty-section diff. None until first asked; Some(empty) when unavailable.
     prev_docs: Option<BTreeMap<String, BTreeMap<String, String>>>,
@@ -104,6 +108,7 @@ impl LoadedSet {
             high_water: (budget as f64 * crate::limits::LOADED_HIGH_WATER) as usize,
             last_referenced: BTreeMap::new(),
             round: 0,
+            initial_pack: Vec::new(),
             prev_docs: None,
         }
     }

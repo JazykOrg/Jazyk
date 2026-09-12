@@ -1498,12 +1498,14 @@ impl Store {
                 }
                 _ => false,
             };
-            // Two shared content tokens qualify, and so do two shared entities: a
-            // restatement built from the same entities can share every noun and
-            // still share no other token, because the shared names leave the token
-            // pool. Mirrors docs/compiler/reconciler.md#pairs.
+            // Two shared content tokens qualify, and so do two shared entities with
+            // one token: a restatement built from the same entities shares few other
+            // words, since the shared names leave the token pool, but two entities
+            // alone are what every statement of one page shares, and a same-entity
+            // restatement with no word in common is review-entity's catch.
+            // Mirrors docs/compiler/reconciler.md#pairs.
             let qualifies = shared >= token_bar
-                || shared_entities >= 2
+                || (shared_entities >= 2 && shared >= 1)
                 || same_transition
                 || (intro_restatement && shared >= 1);
             if qualifies {
@@ -7709,13 +7711,13 @@ mod tests {
             source: Some(mention("m.md", "/m", "q")),
             ..Default::default()
         };
-        // The f2 failure: a glossary definition restating an inventory rule shares
-        // both entities and, with their names out of the token pool, no other
-        // token. Two shared entities qualify the pair on their own.
+        // A glossary definition restating an inventory rule shares both entities
+        // and, with their names out of the token pool, one other word ("triggers"
+        // against "triggered"): two shared entities plus one token qualify the pair.
         s.graph.requirements.insert(
             "req:inv-3".into(),
             mk(
-                "When Stock falls below the Reorder point, the system creates a Restock task.",
+                "A Restock task is triggered when Stock falls below the Reorder point.",
                 &["ent:reorder-point", "ent:restock-task"],
             ),
         );
@@ -7733,9 +7735,19 @@ mod tests {
                 &["ent:restock-task"],
             ),
         );
+        // Two shared entities and no word in common are what every statement of one
+        // page shares: no pair (review-entity reads the entity's statements whole).
+        s.graph.requirements.insert(
+            "req:unrelated".into(),
+            mk(
+                "The Reorder point of a Restock task is set by hand.",
+                &["ent:reorder-point", "ent:restock-task"],
+            ),
+        );
         let n = s.requirement_neighbors("req:glos-3");
         assert!(n.contains(&"req:inv-3".to_string()), "{:?}", n);
         assert!(!n.contains(&"req:other".to_string()), "{:?}", n);
+        assert!(!n.contains(&"req:unrelated".to_string()), "{:?}", n);
     }
 
     // The example-org expenses shapes: an opening-paragraph sentence against a step

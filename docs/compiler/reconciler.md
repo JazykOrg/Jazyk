@@ -250,8 +250,12 @@ computed deterministically:
   the shared entities' own name tokens, reduced to crude stems, so "reverses" meets
   "reverse" and "sorting" meets "sort") plus the count of shared entities,
 - neighbors sharing at least two content tokens qualify, and so do neighbors sharing
-  at least two entities: a restatement built from the same entities can share every
-  noun and still share no other token, because the shared names leave the token pool.
+  at least two entities and one content token: a restatement built from the same
+  entities can share every noun and few other words, because the shared names leave
+  the token pool, but two entities alone are what every statement of one page shares
+  (Payment and Order sit together in each payment rule), and a same-entity
+  restatement with no word in common is review-entity's catch, which reads the
+  entity's statements whole and deletes the same-document duplicate.
 - a pair whose requirements both carry a `transition` with the same subject and the
   same `from` and `to` qualifies on its own and scores two more: a restated transition
   is the likeliest duplicate (`expenses-1` against `expenses-15`, one sentence in the

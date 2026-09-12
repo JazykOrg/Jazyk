@@ -437,7 +437,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]}; declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view one added|excluded per matched node; conform-instance a verdict per attribute; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (omit lookalikes and diagnostics when the hints list none); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view one added|excluded per matched node; conform-instance a verdict per attribute; other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -3248,7 +3248,7 @@ impl ToolSession {
         Err(ToolError::new(
             "quote-not-found",
             format!(
-                "quote not found in {}#{}; copy the sentence verbatim from the section",
+                "quote not found in {}#{}; copy the sentence verbatim from the section (a clause of a longer sentence is not in the document as written: when a statement is one fact of a sentence that states several, quote the whole sentence)",
                 doc, sec
             ),
         ))

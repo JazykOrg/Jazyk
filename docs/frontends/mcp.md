@@ -255,8 +255,9 @@ serving; what it claims is a batch:
   `instructions` (ending in the
   [`serving-protocol.md`](../compiler/goals/prompts/serving-protocol.md) line, since
   the batch is already claimed when the agent reads it), and returns the batch id,
-  its goals, and the initially
-  [loaded set](../compiler/context.md#the-loaded-set) as `package`. A
+  its goals, and the status block of the initially
+  [loaded set](../compiler/context.md#the-loaded-set) as `package` (the items' text
+  travels inside `instructions`, under `## Loaded`, as in every session prompt). A
   [`place-anchors`](../compiler/goals/place-anchors.md) goal carries the document's
   alignment proposals in its loaded set; a
   [`reconcile-section`](../compiler/goals/reconcile-section.md) goal stays blocked

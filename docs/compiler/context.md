@@ -30,7 +30,9 @@ Skills: extraction (active, 11.3k); judgment, flow-views, structural-views, abst
 Consider unloading: ent:customer (not referenced in 6 rounds, no open goal touches it)
 ```
 
-The set holds items of three depths: a node loaded in full, a stub (one line), and a
+In the session prompt the status block is followed by the rendered items themselves,
+the text `load` would return for each, so the initially loaded set is read, not only
+listed. The set holds items of three depths: a node loaded in full, a stub (one line), and a
 section body. Each item carries the handles at its frontier, the things that could be
 loaded next with a size estimate. The [skills](./sessions.md#skills) rendered this
 session ride in the same accounting.

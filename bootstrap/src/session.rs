@@ -1194,6 +1194,15 @@ pub fn session_prompt_elided(
     s.push('\n');
     let pinned: BTreeSet<String> = batch.iter().map(|g| g.target.clone()).collect();
     s.push_str(&loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned));
+    // The items themselves follow the status block: the set is read, not only listed.
+    // Mirrors docs/compiler/sessions.md#the-prompt.
+    if !loaded.initial_pack.is_empty() {
+        s.push_str("\nLoaded items, as load returns them:\n");
+        for t in &loaded.initial_pack {
+            s.push_str(t.trim_end());
+            s.push('\n');
+        }
+    }
     s.push('\n');
     let line = match protocol {
         Protocol::Worker => WORKER_PROTOCOL,
@@ -1245,7 +1254,7 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
                 .iter()
                 .any(|g| g.target == target || g.target.split('~').any(|part| part == target));
             if full && (primary || !loaded.over_high_water(0)) {
-                let _ = loaded.load(store, target, 1);
+                let text = loaded.load(store, target, 1).ok();
                 // The mark is a ceiling, not a suggestion: a supporting item that
                 // lands the set past it downgrades to a stub, and the model loads
                 // it back deliberately when it earns the budget. A goal's own
@@ -1253,6 +1262,9 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
                 if !primary && loaded.used() > loaded.high_water {
                     loaded.unload(target);
                     loaded.load_stub(store, target);
+                } else if let Some(t) = text {
+                    // What stays loaded in full is read in the prompt, not only listed.
+                    loaded.initial_pack.push(t);
                 }
             } else {
                 loaded.load_stub(store, target);

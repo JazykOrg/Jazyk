@@ -66,7 +66,11 @@ prompt, so it can be shown before it is spent. The parts, in order:
    the batch (`skill judgment`, the kind's tool advice) renders once, on the first goal
    that carries it.
 5. `## Loaded (x/y chars)`: the [status block](./context.md#rendering) of the loaded set,
-   then the skill index line.
+   then the skill index line, then the rendered items of the initially loaded set, the
+   same text `load` returns for each (section bodies with their diff marks, nodes in
+   full with their edges and stubs). What the block says is loaded is in the prompt:
+   a session starts working, never with a round of reads for text the harness already
+   chose.
 6. The protocol line, with `{target}` set to the batch id:
    [`worker-protocol.md`](./goals/prompts/worker-protocol.md) when the prompt travels
    ahead of the claim (an ACP session prompt, `jazyk preview`), which tells the agent

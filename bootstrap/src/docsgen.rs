@@ -579,7 +579,12 @@ fn crumb_links(store: &Store, crumbs: &[Crumb], from: &str, link_last: bool) -> 
                 return c.name.clone();
             }
             match crate::board::scope_target(&c.id) {
-                Some(_) => format!("[{}]({})", c.name, level_href(&c.id, from)),
+                // The scope root's page exists only when the root has a level view;
+                // a one-member scope has none (docsgen.md#entity-cards).
+                Some(_) if level_targets(store).iter().any(|t| t == &c.id) => {
+                    format!("[{}]({})", c.name, level_href(&c.id, from))
+                }
+                Some(_) => c.name.clone(),
                 None => card_link(store, &c.id, from),
             }
         })
@@ -2051,6 +2056,9 @@ mod tests {
         assert_eq!(n, 5);
         let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));
+        // A one-member scope has no level page: the card's breadcrumb names it plain.
+        let card = std::fs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+        assert!(card.contains("## Sits in\n\nPublic › Cart\n"), "{}", card);
         assert!(doc.contains("req:shop-1"));
         assert!(
             doc.contains("> holds items"),

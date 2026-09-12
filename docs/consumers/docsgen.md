@@ -191,8 +191,9 @@ The card, in order:
 - The header: the name, the `stereotype`, and the `definition` in one paragraph. A
   derived or decreed entity says so in one line with a link to its proposal.
 - `Sits in`: the breadcrumb from the scope root down to the parent, each a link to its
-  card (the scope root links to its [level page](#level-pages)), the entity itself
-  last and unlinked. This is the link up.
+  card (the scope root links to its [level page](#level-pages) when one exists; a
+  one-member scope has no page and names the root plain), the entity itself last and
+  unlinked. This is the link up.
 - `In context`: the structural [level view](../compiler/diagrams.md#level-views) of the
   parent's level (the scope root's for a parentless entity), embedded as an image, with
   the caption line under it: every drawn entity linked to its card, and a link to the

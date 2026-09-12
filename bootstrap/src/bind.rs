@@ -50,6 +50,48 @@ fn bind_reason(
 // declared name). Err names what is missing and the call that lands it, so a
 // mark_goal_done claim without the row is bounced with the repair in hand.
 // Mirrors docs/compiler/goals/bind.md#gate.
+// The deliverable files naming any of the needles, deliverable-relative, capped: the
+// walk skips build and dependency trees and files over 200k characters.
+fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serde_json::Value> {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, needles: &[String], out: &mut Vec<serde_json::Value>, depth: usize) {
+        if depth > 4 || out.len() >= 10 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || matches!(name.as_str(), "target" | "node_modules" | "dist" | "build") {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, root, needles, out, depth + 1);
+                continue;
+            }
+            let Ok(meta) = p.metadata() else { continue };
+            if meta.len() > 200_000 {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let hits: Vec<&String> = needles.iter().filter(|n| text.contains(n.as_str())).collect();
+            if !hits.is_empty() {
+                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
+                out.push(serde_json::json!({"file": rel, "names": hits}));
+            }
+            if out.len() >= 10 {
+                return;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(deliverable, deliverable, needles, &mut out, 0);
+    out
+}
+
 pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
     let rid = store.resolve_id(rid).to_string();
     let Some(r) = store.graph.requirements.get(&rid) else {
@@ -141,9 +183,23 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         None => "unbound",
         Some(row) => bind_reason(store, gs, &rid, r, row).unwrap_or("current"),
     };
+    // The deliverable files that already name this requirement: by id (a marker
+    // comment), by test-name slug (an earlier hash), or by statement hash (an earlier
+    // id). Mirrors docs/consumers/bind.md#the-bind-goal.
+    let suggested = crate::gen::test_name(&rid, &r.statement);
+    let (slug, hash8) = suggested
+        .rsplit_once('_')
+        .map(|(s, h)| (s.to_string(), h.to_string()))
+        .unwrap_or((suggested.clone(), String::new()));
+    let needles: Vec<String> = [rid.clone(), slug, hash8]
+        .into_iter()
+        .filter(|n| n.len() >= 6)
+        .collect();
+    let existing_tests = existing_tests(&gs.deliverable, &needles);
     Ok(json!({
         "requirement": rid,
         "entity": entity,
+        "existingTests": existing_tests,
         "reason": reason,
         "statement": r.statement,
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),

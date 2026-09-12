@@ -20,9 +20,11 @@ full: its `statement`, facets, edges, and transition, the verbatim quote, and it
 as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
 test name, the decided medium and build when they exist, the entity's recorded files,
-the ledger's recorded conventions (the run commands, the files other rows name), and
-the open error diagnostics naming the requirement
-([binding tools](../compiler/tools.md#binding-tools)). The steps:
+the ledger's recorded conventions (the run commands, the files other rows name), the
+open error diagnostics naming the requirement, and `existingTests`: the deliverable
+files that already name this requirement by id, by test-name slug, or by statement
+hash, so a test left under an earlier id or hash is found by the harness rather than
+reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). The steps:
 
 - Search the deliverable for an implementation, starting at the entity's recorded files.
   Record the carrying files, or record none. Absence is a finding, not a failure.

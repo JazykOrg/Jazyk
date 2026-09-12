@@ -590,7 +590,9 @@ tools; jazyk holds the ledger. These tools never mutate the graph.
   directions get a test, the two test kinds, falsifiability, the naming scheme), the
   statement, quote, and hash, the loaded set, the deliverable directory, the decided
   [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
-  and build when they exist, and the test conventions already recorded in the ledger.
+  and build when they exist, the test conventions already recorded in the ledger, and
+  `existingTests`, the deliverable files that name the requirement by id, slug, or
+  statement hash (a test left under an earlier id is found here, never by hand).
   Stateless on the server; the lease is the claim.
 - `record_binding({requirement, files, test, verdict, evidence?})`: record the row: the
   implementing files (an empty list is a finding), the test row

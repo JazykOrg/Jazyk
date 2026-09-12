@@ -164,7 +164,9 @@ Every check run journals a `checks` entry under its own generation.
   `unprocessed`; `suspicious-non-normative` for a `non-normative` section whose text
   still looks normative ([coverage](#coverage)).
 - `stale-provenance`: an anchor no session addressed, a quote that fails to locate.
-- `unused-entity`: an entity with no requirements. `unreachable-entity`: an entity not
+- `unused-entity`: an entity with no requirements and no children: a grouping that
+  holds children is used as their container, so an area a front door names and never
+  states a rule about draws no warning. `unreachable-entity`: an entity not
   reachable from the declared [roots](./project-settings.md#roots) over relationships,
   shared requirements, and containment (a child through its `parent` and back), so a
   level under a grouping is as reachable as the grouping.

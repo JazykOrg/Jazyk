@@ -229,12 +229,17 @@ Goal batches mutate the graph, so the serving holds an open changeset between ca
 exactly one at a time. The lifecycle has the same begin and done shape as every other
 serving; what it claims is a batch:
 
-- `goals({})` derives [the board](../compiler/reconciler.md#goal-derivation) from
-  disk: every goal with its kind, class, `mandatory`, target, `change`, `cause`,
-  state, hints, and [readiness](../compiler/reconciler.md#readiness) (`ready`, or the
-  blocking reason as a sentence), plus `gated` and `claimedBy`. The reply groups the
-  ready goals into the batches the scheduler would form, each with its id and its
-  resolved [executor](./acp.md#executors). A batch id is `b<generation>-<n>`: the
+- `goals({full?})` derives [the board](../compiler/reconciler.md#goal-derivation) from
+  disk. The default reply is compact: the counts, the batches the scheduler would form
+  (each with its id, its resolved [executor](./acp.md#executors), and its goals as
+  id, kind, target, `mandatory`), one line per ready goal outside a batch, and the
+  goals that are not ready summarized by kind and by blocking reason with their ids,
+  never their hints. `full: true` returns every goal whole: kind, class, `mandatory`,
+  target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
+  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. The
+  compact form exists because a thirty-goal board with forty-five gated bind goals
+  once answered with seventy-five thousand characters, most of them hints on goals
+  the agent could not claim. A batch id is `b<generation>-<n>`: the
   generation the board derives from and the batch's index within it. Batch ids are
   derived with the board, so a commit re-derives both and an id from an earlier
   generation names nothing. When no goal is open the reply carries the verdict with

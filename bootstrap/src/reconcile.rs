@@ -532,9 +532,15 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             }
         }
     }
-    // Entities no requirement references.
+    // Entities no requirement references and no child hangs under: a grouping is
+    // used as its children's container. Mirrors docs/compiler/compilation.md#checks.
     for id in store.graph.entities.keys() {
-        if store.requirements_referencing(id).is_empty() {
+        let has_children = store
+            .graph
+            .entities
+            .values()
+            .any(|e| e.parent.as_deref() == Some(id.as_str()));
+        if !has_children && store.requirements_referencing(id).is_empty() {
             f.push(finding(
                 "unused-entity",
                 id,

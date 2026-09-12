@@ -1250,6 +1250,52 @@ impl Board {
         })
     }
 
+    // The compact `goals` reply: the counts, the batches, the ready goals outside a
+    // batch, and the rest summarized by kind and blocking reason with their ids.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub fn answer_compact(&self) -> Value {
+        let mut full = self.answer();
+        let batched: BTreeSet<&str> = self
+            .batches
+            .iter()
+            .flat_map(|b| b.goals.iter().map(String::as_str))
+            .collect();
+        let mut ready_loose: Vec<Value> = Vec::new();
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+        let mut waiting: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for g in &self.goals {
+            if !is_open(g) {
+                continue;
+            }
+            if self.is_ready(&g.id) {
+                if !batched.contains(g.id.as_str()) {
+                    ready_loose.push(json!({
+                        "id": g.id, "kind": g.kind, "target": g.target, "mandatory": g.mandatory,
+                    }));
+                }
+                continue;
+            }
+            *by_kind.entry(g.kind.clone()).or_insert(0) += 1;
+            let reason = self
+                .readiness
+                .get(&g.id)
+                .and_then(|r| r.reason())
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| match &g.state {
+                    GoalState::Blocked { on } => format!("blocked on {}", on),
+                    _ => "not ready".to_string(),
+                });
+            waiting.entry(reason).or_default().push(g.id.clone());
+        }
+        full["goals"] = json!(ready_loose);
+        full["notReady"] = json!({"byKind": by_kind, "byReason": waiting});
+        full["note"] = json!(match full.get("note").and_then(Value::as_str) {
+            Some(n) => format!("{}; goals {{full: true}} lists every goal with its hints", n),
+            None => "compact board; goals {full: true} lists every goal with its hints".to_string(),
+        });
+        full
+    }
+
     // The `goals` reply: every goal with readiness, the batches the scheduler would
     // form, the counts, and the verdict with the diagnostic counts when nothing is
     // open. Mirrors docs/frontends/mcp.md#compilation-over-mcp.

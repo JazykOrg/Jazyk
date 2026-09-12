@@ -527,7 +527,7 @@ impl McpServer {
     // The `goals` tool: the board with readiness sentences, gated and claimedBy, the
     // batches the scheduler would form, and the verdict with its counts when nothing
     // is open. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
-    fn goals_answer(&self) -> Value {
+    fn goals_answer(&self, full: bool) -> Value {
         let mut board = crate::board::Board::compute(&self.project, &self.out);
         // An empty board with a stale `incomplete` verdict settles here: the tail is
         // deterministic and idempotent, and a lister that finds nothing to do may as
@@ -547,7 +547,7 @@ impl McpServer {
             );
             board = crate::board::Board::compute(&self.project, &self.out);
         }
-        let mut v = board.answer();
+        let mut v = if full { board.answer() } else { board.answer_compact() };
         if self.bridge.only.is_some() {
             if let Some(fin) = self.finished.lock().unwrap().as_ref() {
                 v["note"] = json!(format!(
@@ -1387,8 +1387,8 @@ impl McpServer {
                     tools.retain(|t| !LIFECYCLE.contains(&t["name"].as_str().unwrap_or_default()));
                     tools.push(json!({
                         "name": "goals",
-                        "description": "The goal board: every goal with its kind, class, readiness (ready, or the blocking reason as a sentence), gated and claimedBy, plus the batches the scheduler would form. Zero open goals carries the build verdict with its counts. Next: begin_goals.",
-                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+                        "description": "The goal board, compact: the counts, the batches the scheduler would form (each with its goals), the ready goals outside a batch, and the goals not ready summarized by kind and blocking reason with their ids. full: true lists every goal with its hints, change, cause, readiness, gated and claimedBy. Zero open goals carries the build verdict with its counts. Next: begin_goals.",
+                        "inputSchema": {"type": "object", "properties": {"full": {"type": "boolean", "description": "every goal whole, hints included"}}, "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "begin_goals",
@@ -1604,7 +1604,8 @@ impl McpServer {
                         return Ok(text_result(self.await_changes(params), false));
                     }
                     "goals" if self.modes.iter().any(|m| m == "compile" || m == "chat") => {
-                        let v = self.goals_answer();
+                        let full = params["arguments"]["full"].as_bool() == Some(true);
+                        let v = self.goals_answer(full);
                         let is_err = !v["error"].is_null();
                         return Ok(text_result(v, is_err));
                     }

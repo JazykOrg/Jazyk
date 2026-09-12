@@ -325,6 +325,42 @@ pub struct Requirement {
     pub updated: Option<String>,
 }
 
+// The observable evidence one requirement is met: one condition and its outcome, owned
+// by exactly one requirement. Mirrors docs/compiler/model/criterion.md.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Criterion {
+    pub requirement: String,
+    pub statement: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<String>,
+    // positive | negative | boundary | quality (docs/compiler/model/criterion.md#fields).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measure: Option<String>,
+    // Absent means the requirement's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated: Option<String>,
+}
+
+pub const CRITERION_KINDS: [&str; 4] = ["positive", "negative", "boundary", "quality"];
+
 impl Requirement {
     // The one provenance, whichever field carries it. None only on a requirement that
     // never got one (a fixture built from `Default`).
@@ -1210,6 +1246,7 @@ impl Status {
 pub struct Graph {
     pub entities: BTreeMap<String, Entity>,
     pub requirements: BTreeMap<String, Requirement>,
+    pub criteria: BTreeMap<String, Criterion>,
     pub views: BTreeMap<String, View>,
     pub relationships: BTreeMap<String, Relationship>,
     pub state_machines: BTreeMap<String, StateMachine>,

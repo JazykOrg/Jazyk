@@ -84,7 +84,7 @@ lets generation write one test per criterion.
 ## Checklist
 
 - [x] Phase 1 docs land and link-check clean.
-- [ ] Phase 2 store with tests.
+- [x] Phase 2 store with tests.
 - [ ] Phase 3 tools and extraction with tests and two loop runs.
 - [ ] Phase 4 goal kind and checks with tests and a loop run.
 - [ ] Phase 5 ledger with tests and two generation runs.

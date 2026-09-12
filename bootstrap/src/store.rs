@@ -98,6 +98,32 @@ pub enum Op {
         id: String,
         reason: String,
     },
+    // Criteria (docs/compiler/model/criterion.md).
+    CreateCriterion {
+        id: String,
+        criterion: Criterion,
+    },
+    UpdateCriterion {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        statement: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        measure: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        given: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        then: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        entities: Option<Vec<String>>,
+    },
+    DeleteCriterion {
+        id: String,
+        reason: String,
+    },
     CreateView {
         id: String,
         view: View,
@@ -265,6 +291,10 @@ pub const CHANGE_ALIGNMENT_PENDING: &str = "alignment-pending";
 pub const CHANGE_REQ_CREATED: &str = "requirement-created";
 pub const CHANGE_REQ_REVISED: &str = "requirement-revised";
 pub const CHANGE_REQ_DELETED: &str = "requirement-deleted";
+// Criteria (docs/compiler/graph.md#change-records).
+pub const CHANGE_CRIT_CREATED: &str = "criterion-created";
+pub const CHANGE_CRIT_REVISED: &str = "criterion-revised";
+pub const CHANGE_CRIT_DELETED: &str = "criterion-deleted";
 pub const CHANGE_ENTITY: &str = "entity-changed";
 pub const CHANGE_ENTITY_DELETED: &str = "entity-deleted";
 pub const CHANGE_NODE_DELETED: &str = "node-deleted";
@@ -646,6 +676,8 @@ fn write_yaml<T: Serialize>(path: &Path, value: &T) {
 fn id_kind(id: &str) -> &'static str {
     if id.starts_with("req:") {
         "requirement"
+    } else if id.starts_with("crit:") {
+        "criterion"
     } else if id.starts_with("ent:") {
         "entity"
     } else if id.starts_with("view:") {
@@ -859,6 +891,7 @@ impl Store {
             graph: Graph {
                 entities: yaml_to(&g.join("entities.yaml")).unwrap_or_default(),
                 requirements: yaml_to(&g.join("requirements.yaml")).unwrap_or_default(),
+                criteria: yaml_to(&g.join("criteria.yaml")).unwrap_or_default(),
                 views: yaml_to(&g.join("views.yaml")).unwrap_or_default(),
                 relationships: yaml_to(&g.join("relationships.yaml")).unwrap_or_default(),
                 state_machines: yaml_to(&g.join("state-machines.yaml")).unwrap_or_default(),
@@ -888,6 +921,9 @@ impl Store {
         let g = self.out.join("graph");
         write_yaml(&g.join("entities.yaml"), &self.graph.entities);
         write_yaml(&g.join("requirements.yaml"), &self.graph.requirements);
+        if !self.graph.criteria.is_empty() || g.join("criteria.yaml").exists() {
+            write_yaml(&g.join("criteria.yaml"), &self.graph.criteria);
+        }
         write_yaml(&g.join("views.yaml"), &self.graph.views);
         write_yaml(&g.join("relationships.yaml"), &self.graph.relationships);
         write_yaml(&g.join("state-machines.yaml"), &self.graph.state_machines);
@@ -1152,6 +1188,38 @@ impl Store {
     // The id stem of a requirement: its source document, or `x` without a quote.
     pub fn req_stem(r: &Requirement) -> &str {
         r.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+    }
+
+    // `crit:<doc-stem>-<n>`, the document its quote sits in, or `x` for a derived or
+    // decreed criterion (docs/compiler/model/criterion.md#identity).
+    pub fn mint_crit_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
+        let stem = doc.rsplit('/').next().unwrap_or(doc);
+        let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
+        let prefix = format!("crit:{}-", stem);
+        let mut max = 0usize;
+        for id in self.graph.criteria.keys().chain(taken.iter()) {
+            if let Some(rest) = id.strip_prefix(&prefix) {
+                if let Ok(n) = rest.parse::<usize>() {
+                    max = max.max(n);
+                }
+            }
+        }
+        format!("{}{}", prefix, max + 1)
+    }
+
+    pub fn crit_stem(c: &Criterion) -> &str {
+        c.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+    }
+
+    // The criteria of one requirement, in id order (docs/compiler/model/criterion.md).
+    pub fn criteria_of(&self, rid: &str) -> Vec<String> {
+        let rid = self.resolve_id(rid);
+        self.graph
+            .criteria
+            .iter()
+            .filter(|(_, c)| c.requirement == rid)
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     pub fn mint_view_id(&self, kind: &str, title: &str, taken: &BTreeSet<String>) -> String {
@@ -3173,6 +3241,18 @@ impl Store {
                         for ent in self.graph.entities.values_mut() {
                             ent.not_about.retain(|x| x != &rid);
                         }
+                        // The evidence was written against the old text
+                        // (docs/compiler/model/criterion.md#lifecycle).
+                        let derived: Vec<String> = self
+                            .graph
+                            .criteria
+                            .iter()
+                            .filter(|(_, c)| c.requirement == rid && c.source.is_none())
+                            .map(|(cid, _)| cid.clone())
+                            .collect();
+                        for cid in derived {
+                            dirt.revised(&cid, m, "requirement");
+                        }
                     }
                     let r = self.graph.requirements.get_mut(&rid).unwrap();
                     let before: Vec<String> = r.entities.clone();
@@ -3278,9 +3358,247 @@ impl Store {
                         Some(r) => {
                             dirt.entities(r.entities.iter(), m);
                             dirt.deleted(&rid, m);
+                            // The criteria go with their requirement
+                            // (docs/compiler/graph.md#the-sweep).
+                            let gone: Vec<String> = self
+                                .graph
+                                .criteria
+                                .iter()
+                                .filter(|(_, c)| c.requirement == rid)
+                                .map(|(cid, _)| cid.clone())
+                                .collect();
+                            for cid in gone {
+                                self.graph.criteria.remove(&cid);
+                                dirt.deleted(&cid, m);
+                                applied.push(Op::DeleteCriterion {
+                                    id: cid,
+                                    reason: format!("its requirement {} was deleted", rid),
+                                });
+                            }
                             applied.push(Op::DeleteRequirement { id: rid, reason });
                         }
                         None => skipped.push(format!("delete_requirement: unknown id {}", rid)),
+                    }
+                }
+                Op::CreateCriterion { id, mut criterion } => {
+                    // Mirrors docs/compiler/model/criterion.md and graph.md#mutations.
+                    criterion.requirement = resolve(&remap, self, &criterion.requirement);
+                    let Some(req) = self.graph.requirements.get(&criterion.requirement) else {
+                        skipped.push(format!(
+                            "create_criterion {}: unknown requirement {}",
+                            id, criterion.requirement
+                        ));
+                        continue;
+                    };
+                    if !CRITERION_KINDS.contains(&criterion.kind.as_str()) {
+                        skipped.push(format!(
+                            "create_criterion {}: kind `{}` is not one of {}",
+                            id,
+                            criterion.kind,
+                            CRITERION_KINDS.join(", ")
+                        ));
+                        continue;
+                    }
+                    if criterion.source.is_some() {
+                        criterion.provenance = None;
+                    }
+                    if criterion.source.is_none() && criterion.provenance.is_none() {
+                        skipped.push(format!(
+                            "create_criterion {}: no provenance (a quote source, a derivation, or a decree)",
+                            id
+                        ));
+                        continue;
+                    }
+                    if normalize_statement(&criterion.statement)
+                        == normalize_statement(&req.statement)
+                    {
+                        skipped.push(format!(
+                            "create_criterion {}: criterion-restates {} ({})",
+                            id, criterion.requirement, req.statement
+                        ));
+                        continue;
+                    }
+                    criterion.entities = criterion
+                        .entities
+                        .iter()
+                        .map(|e| resolve(&remap, self, e))
+                        .collect();
+                    if let Some(Provenance::Derived { from, .. }) = criterion.provenance.as_mut() {
+                        *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
+                    }
+                    let key = normalize_statement(&criterion.statement);
+                    let existing = self
+                        .graph
+                        .criteria
+                        .iter()
+                        .find(|(_, c)| {
+                            c.requirement == criterion.requirement
+                                && normalize_statement(&c.statement) == key
+                        })
+                        .map(|(cid, _)| cid.clone());
+                    if let Some(cid) = existing {
+                        remap.insert(id, cid.clone());
+                        let c = self.graph.criteria.get_mut(&cid).unwrap();
+                        let mut changed = false;
+                        if c.statement != criterion.statement {
+                            c.statement = criterion.statement.clone();
+                            changed = true;
+                        }
+                        if c.kind != criterion.kind {
+                            c.kind = criterion.kind.clone();
+                            changed = true;
+                        }
+                        if criterion.measure.is_some() && c.measure != criterion.measure {
+                            c.measure = criterion.measure.clone();
+                            changed = true;
+                        }
+                        if let Some(src) = criterion.source.as_ref() {
+                            if c.source.as_ref() != Some(src) {
+                                c.source = Some(src.clone());
+                                c.provenance = None;
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            c.updated = Some(build.clone());
+                            dirt.revised(&cid, m, "fields");
+                            applied.push(Op::UpdateCriterion {
+                                id: cid,
+                                statement: Some(criterion.statement),
+                                kind: Some(criterion.kind),
+                                measure: criterion.measure,
+                                given: None,
+                                when: None,
+                                then: None,
+                                entities: None,
+                            });
+                        }
+                        continue;
+                    }
+                    criterion.created = Some(build.clone());
+                    criterion.updated = Some(build.clone());
+                    // The store mints the id from the quote's document stem; a staged
+                    // id under another stem (a provisional one) is re-minted.
+                    let stem = Self::crit_stem(&criterion);
+                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(stem).strip_suffix(".md").unwrap_or(stem));
+                    let mut final_id = id.clone();
+                    if !final_id.starts_with(&format!("crit:{}-", stem_slug))
+                        || self.graph.criteria.contains_key(&final_id)
+                    {
+                        final_id = self.mint_crit_id(stem, &BTreeSet::new());
+                    }
+                    if final_id != id {
+                        remap.insert(id, final_id.clone());
+                    }
+                    dirt.created(&final_id, m);
+                    applied.push(Op::CreateCriterion {
+                        id: final_id.clone(),
+                        criterion: criterion.clone(),
+                    });
+                    self.graph.criteria.insert(final_id, criterion);
+                }
+                Op::UpdateCriterion {
+                    id,
+                    statement,
+                    kind,
+                    measure,
+                    given,
+                    when,
+                    then,
+                    entities,
+                } => {
+                    let cid = resolve(&remap, self, &id);
+                    let Some(c) = self.graph.criteria.get(&cid) else {
+                        skipped.push(format!("update_criterion: unknown id {}", cid));
+                        continue;
+                    };
+                    if let Some(k) = &kind {
+                        if !CRITERION_KINDS.contains(&k.as_str()) {
+                            skipped.push(format!(
+                                "update_criterion {}: kind `{}` is not one of {}",
+                                cid,
+                                k,
+                                CRITERION_KINDS.join(", ")
+                            ));
+                            continue;
+                        }
+                    }
+                    if let Some(st) = &statement {
+                        let restates = self
+                            .graph
+                            .requirements
+                            .get(&c.requirement)
+                            .is_some_and(|r| normalize_statement(&r.statement) == normalize_statement(st));
+                        if restates {
+                            skipped.push(format!(
+                                "update_criterion {}: criterion-restates {}",
+                                cid, c.requirement
+                            ));
+                            continue;
+                        }
+                    }
+                    let resolved_entities: Option<Vec<String>> = entities
+                        .as_ref()
+                        .map(|es| es.iter().map(|e| resolve(&remap, self, e)).collect());
+                    let c = self.graph.criteria.get_mut(&cid).unwrap();
+                    let mut changed = false;
+                    if let Some(st) = &statement {
+                        if c.statement != *st {
+                            c.statement = st.clone();
+                            changed = true;
+                        }
+                    }
+                    if let Some(k) = &kind {
+                        if c.kind != *k {
+                            c.kind = k.clone();
+                            changed = true;
+                        }
+                    }
+                    if measure.is_some() && c.measure != measure {
+                        c.measure = measure.clone();
+                        changed = true;
+                    }
+                    if given.is_some() && c.given != given {
+                        c.given = given.clone();
+                        changed = true;
+                    }
+                    if when.is_some() && c.when != when {
+                        c.when = when.clone();
+                        changed = true;
+                    }
+                    if then.is_some() && c.then != then {
+                        c.then = then.clone();
+                        changed = true;
+                    }
+                    if let Some(es) = resolved_entities {
+                        if c.entities != es {
+                            c.entities = es;
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        c.updated = Some(build.clone());
+                        dirt.revised(&cid, m, "fields");
+                        applied.push(Op::UpdateCriterion {
+                            id: cid,
+                            statement,
+                            kind,
+                            measure,
+                            given,
+                            when,
+                            then,
+                            entities,
+                        });
+                    }
+                }
+                Op::DeleteCriterion { id, reason } => {
+                    let cid = resolve(&remap, self, &id);
+                    match self.graph.criteria.remove(&cid) {
+                        Some(_) => {
+                            dirt.deleted(&cid, m);
+                            applied.push(Op::DeleteCriterion { id: cid, reason });
+                        }
+                        None => skipped.push(format!("delete_criterion: unknown id {}", cid)),
                     }
                 }
                 Op::CreateView { id, mut view } => {
@@ -4079,16 +4397,24 @@ impl Store {
                     "section",
                     serde_json::Value::Null,
                 );
+            } else if self.graph.criteria.contains_key(id) {
+                batch.push(*m, CHANGE_CRIT_CREATED, id, "requirement", serde_json::Value::Null);
             }
         }
         for (id, (m, via)) in &dirt.revised {
-            if self.graph.requirements.contains_key(id) && !dirt.created.contains_key(id) {
+            if dirt.created.contains_key(id) {
+                continue;
+            }
+            if self.graph.requirements.contains_key(id) {
                 batch.push(*m, CHANGE_REQ_REVISED, id, via, serde_json::Value::Null);
+            } else if self.graph.criteria.contains_key(id) {
+                batch.push(*m, CHANGE_CRIT_REVISED, id, via, serde_json::Value::Null);
             }
         }
         for (id, m) in &dirt.deleted {
             let kind = match id_kind(id) {
                 "requirement" => CHANGE_REQ_DELETED,
+                "criterion" => CHANGE_CRIT_DELETED,
                 "entity" => CHANGE_ENTITY_DELETED,
                 _ => continue,
             };
@@ -4958,6 +5284,31 @@ impl Store {
             actions.push(format!("deleted {} (source section gone)", id));
             deleted.insert(id, 0);
         }
+        // A criterion goes with its requirement, or with its own section
+        // (docs/compiler/graph.md#the-sweep).
+        let dead_crits: Vec<(String, &'static str)> = self
+            .graph
+            .criteria
+            .iter()
+            .filter_map(|(cid, c)| {
+                if !self.graph.requirements.contains_key(&c.requirement) {
+                    return Some((cid.clone(), "requirement gone"));
+                }
+                let section_gone = c.source.as_ref().is_some_and(|s| {
+                    !self
+                        .docs
+                        .get(&s.doc)
+                        .map(|d| d.sections.contains_key(&s.section))
+                        .unwrap_or(false)
+                });
+                section_gone.then(|| (cid.clone(), "source section gone"))
+            })
+            .collect();
+        for (cid, why) in dead_crits {
+            self.graph.criteria.remove(&cid);
+            actions.push(format!("deleted {} ({})", cid, why));
+            deleted.insert(cid, 0);
+        }
         // Mentions derived from a proposed requirement's source follow it when placed.
         let protected: Vec<SourceRef> = self
             .graph
@@ -5141,6 +5492,7 @@ impl Store {
             for (id, m) in &deleted {
                 let kind = match id_kind(id) {
                     "requirement" => CHANGE_REQ_DELETED,
+                    "criterion" => CHANGE_CRIT_DELETED,
                     _ => CHANGE_ENTITY_DELETED,
                 };
                 batch.push(*m, kind, id, "sweep", serde_json::Value::Null);
@@ -5384,6 +5736,101 @@ mod tests {
                 coverage: BTreeMap::new(),
             },
         );
+    }
+
+    // Mirrors docs/compiler/model/criterion.md: a criterion keys on its requirement plus
+    // statement, a restatement is refused, a statement change on the requirement marks
+    // its derived criteria revised, and a deleted requirement takes its criteria along.
+    #[test]
+    fn criteria_key_on_their_requirement_and_follow_it() {
+        let mut s = Store {
+            out: tmp(),
+            ..Default::default()
+        };
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\nThe sort utility outputs its lines in ascending order.\n\nGiven the lines 321, 654, 453 the utility outputs 321, 453, 654.\n",
+        );
+        let quoted = |st: &str| Criterion {
+            requirement: "req:t-1".into(),
+            statement: st.into(),
+            kind: "positive".into(),
+            source: Some(mention("t.md", "/t", "Given the lines 321, 654, 453")),
+            ..Default::default()
+        };
+        let ops = vec![
+            create("prov:1", "Sort"),
+            Op::CreateRequirement {
+                id: "req:t-1".into(),
+                requirement: Requirement {
+                    statement: "The sort utility outputs its lines in ascending order.".into(),
+                    entities: vec!["prov:1".into()],
+                    source: Some(mention("t.md", "/t", "outputs its lines in ascending order")),
+                    ..Default::default()
+                },
+            },
+            Op::CreateCriterion {
+                id: "crit:new-1".into(),
+                criterion: quoted("Given the lines 321, 654, 453, the utility outputs 321, 453, 654."),
+            },
+            Op::CreateCriterion {
+                id: "crit:new-2".into(),
+                criterion: Criterion {
+                    requirement: "req:t-1".into(),
+                    statement: "Given one line, the utility outputs that line unchanged.".into(),
+                    kind: "boundary".into(),
+                    provenance: Some(Provenance::Derived {
+                        from: vec!["req:t-1".into()],
+                        reasoning: "the edge of the ordering rule".into(),
+                    }),
+                    ..Default::default()
+                },
+            },
+            Op::CreateCriterion {
+                id: "crit:new-3".into(),
+                criterion: quoted("The sort utility outputs its lines in ascending order"),
+            },
+            Op::CreateCriterion {
+                id: "crit:new-4".into(),
+                criterion: quoted("Given the lines 321, 654, 453, the utility outputs 321, 453, 654"),
+            },
+        ];
+        let r = s.apply(ops, &wi().commit(3, 100));
+        assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
+        let ids: Vec<&String> = s.graph.criteria.keys().collect();
+        assert_eq!(ids, vec!["crit:t-1", "crit:x-1"], "{:?}", ids);
+        assert_eq!(s.criteria_of("req:t-1").len(), 2);
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:x-1"));
+        // The requirement's statement changes: the derived criterion is revised, the
+        // quoted one keeps its own quote.
+        s.apply(
+            vec![Op::UpdateRequirement {
+                id: "req:t-1".into(),
+                statement: Some("The sort utility outputs its lines in ascending order by default.".into()),
+                entities: None,
+                edges: None,
+                transition: None,
+                facets: None,
+                source: None,
+                provenance: None,
+            }],
+            &wi().commit(4, 100),
+        );
+        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:x-1"));
+        assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
+        // The requirement goes: its criteria go with it.
+        s.apply(
+            vec![Op::DeleteRequirement {
+                id: "req:t-1".into(),
+                reason: "gone".into(),
+            }],
+            &wi().commit(5, 100),
+        );
+        assert!(s.graph.criteria.is_empty());
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:x-1"));
     }
 
     // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes

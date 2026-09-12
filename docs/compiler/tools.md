@@ -327,8 +327,8 @@ clear or keep change records; they are not graph mutations
   stands | resolved | refiled}]}` (omit `lookalikes` and `diagnostics` when the hints
   list none; an empty list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
   `declared` or `not-structural`; [`dedupe-candidates`](./goals/dedupe-candidates.md)
-  `merged` or `separate`; [`curate-view`](./goals/curate-view.md) one `added` or
-  `excluded` per matched node; [`conform-instance`](./goals/conform-instance.md)
+  `merged` or `separate`; [`curate-view`](./goals/curate-view.md) `[{id, verdict: added | excluded}]`, one per
+  matched node; [`conform-instance`](./goals/conform-instance.md)
   `{attributes: [{name, verdict}], links: [{to, verdict, carried_by?}]}`; the other kinds read the staged work alone. The tool's
   description carries the same list, so the shape is never guessed. A goal outside
   the batch is rejected.

@@ -837,6 +837,14 @@ The loop continued onto the org corpus and onto generation:
   had set (the hint says it is the flat top level), and a 58k first reply spilled to a
   file (skills ship as `load_skill` pointers past 45k).
 
+- Acceptance criteria (2026-09-13, `plans/acceptance-criteria.md`): on example-sort the
+  first compile with the criterion tools served converged in 86 turns and $5.64 with
+  14 requirements and 24 criteria, two quoted from the test-case sections and 22 derived
+  by one `derive-criteria` session with a boundary or a negative for every conditional
+  and every collecting step, none restating its requirement; the requirements document
+  lists them and binding takes one test per criterion. The first attempt had found the
+  tools named in the contract but absent from the MCP serving, which a test now holds.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

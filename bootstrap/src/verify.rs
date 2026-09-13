@@ -692,8 +692,11 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
                 .diagnostics
                 .iter()
                 .filter(|(_, d)| {
+                    // Any judged finding or open question on the statement: a decision
+                    // or an invented choice names the documents as much as a
+                    // contradiction does.
                     d.lifecycle == "open"
-                        && crate::store::JUDGED_RULES.contains(&d.rule.as_str())
+                        && (crate::tools::REVIEW_RULES.contains(&d.rule.as_str()) || d.prompt.is_some())
                         && d.subjects.iter().any(|s| s == rid)
                 })
                 .map(|(did, d)| json!({"requirement": rid, "diagnostic": did, "rule": d.rule, "message": d.message}))
@@ -709,7 +712,7 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
         "next": if failed > 0 && !doc_diags.is_empty() {
             "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
         } else if failed > 0 {
-            "a failing row names its requirement; fix the deliverable or the test, then run_tests again"
+            "a failing row names its requirement; when its status reads failing (implementing files exist), it is a finding for the author that the failing-binding check files, not a row to regenerate; otherwise fix the deliverable or the test, then run_tests again"
         } else if runner_failed > 0 {
             "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
         } else if !skipped.is_empty() {

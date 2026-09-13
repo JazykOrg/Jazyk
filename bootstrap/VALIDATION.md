@@ -844,6 +844,16 @@ The loop continued onto the org corpus and onto generation:
   and every collecting step, none restating its requirement; the requirements document
   lists them and binding takes one test per criterion. The first attempt had found the
   tools named in the contract but absent from the MCP serving, which a test now holds.
+  On f2 the criteria compile converged in 356 turns and $14.17 (7.83 without criteria)
+  with 102 criteria for 53 requirements, three quoted and the rest derived, none
+  missing; the first attempt had packed twelve entities' criteria goals against one
+  64-mutation budget and failed three, so a criteria goal is a batch wall of its own
+  and raises the budget per requirement. Generation over that ledger bound 34 rows in
+  three invocations for $18.52, one test per criterion on most, and exposed that
+  regeneration dropped the criterion tests from a row, that a partly implemented
+  requirement had no status between unimplemented and failing (it reads `partial`
+  now), and that a failing binding could reach no author (the `failing-binding` check
+  files it).
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

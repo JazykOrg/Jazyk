@@ -15,7 +15,7 @@ import { startWasmBackend, crossOriginIsolated_ } from './lib/wasm-client'
 import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
 import type { ModelHost } from './lib/wasm-client'
 import { applyTheme, useApp } from './lib/store'
-import { pushTraceEvents } from './lib/events'
+import { pushTraceEvents, refreshAfterWrite } from './lib/events'
 import { FolderMirror, folderPickerAvailable, pickFolder, readFolder } from './lib/folder'
 import demoProject from './wasm-backend/demo-project.json'
 import './tokens.css'
@@ -177,7 +177,18 @@ async function boot() {
       pushTraceEvents(qc, events)
     },
   })
-  setBackend(backend)
+  // A write (a save, a build) is the only thing that moves the store, and there is
+  // no event stream to say so: refetch after every one.
+  setBackend({
+    ...backend,
+    async request(method, path, body) {
+      const reply = await backend.request(method, path, body)
+      if (method !== 'GET') {
+        refreshAfterWrite(qc)
+      }
+      return reply
+    },
+  })
   // There is no stream to drop: the backend is in this tab. The connection banners
   // are about a server that went away, and there is no server.
   useApp.getState().setConnected(true)

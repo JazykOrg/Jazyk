@@ -535,7 +535,8 @@ pub fn record(
         "note": match status.as_str() {
             "verified" => "the deliverable already satisfies the statement",
             "unimplemented" => "nothing implements the statement; the entity is generation work and this test is its acceptance gate",
-            "failing" => "implementing files exist but the test fails: the deliverable contradicts the statement; surface it to the author, never regenerate silently",
+            "partial" => "implementing files exist and some criterion tests pass while others fail: the entity is generation work for the failing criteria",
+            "failing" => "implementing files exist but the tests fail: the deliverable contradicts the statement; the failing-binding check files it for the author at the next check run, never regenerate silently",
             _ => "recorded",
         },
     });
@@ -813,6 +814,44 @@ mod tests {
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["reason"], "criterion-changed");
+    }
+
+    // Mirrors docs/consumers/gen.md#status-is-derived-never-stored: implementing files
+    // with the criterion tests split read partial, generation work, not a contradiction.
+    #[test]
+    fn split_criterion_tests_read_partial() {
+        let mut s = tmp_store();
+        for (id, st) in [("crit:shop-1", "Two items listed show two lines."), ("crit:shop-2", "A nameless item is refused.")] {
+            s.graph.criteria.insert(
+                id.into(),
+                crate::model::Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: st.into(),
+                    kind: "positive".into(),
+                    provenance: Some(crate::model::Provenance::Derived { from: vec!["req:shop-1".into()], reasoning: "evidence".into() }),
+                    ..Default::default()
+                },
+            );
+        }
+        let gs = GenSettings {
+            configured: true,
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        std::fs::write(gs.deliverable.join("src/shop.rs"), "pub fn list() {}\n").unwrap();
+        let n1 = crate::gen::crit_test_name("crit:shop-1", "Two items listed show two lines.");
+        let n2 = crate::gen::crit_test_name("crit:shop-2", "A nameless item is refused.");
+        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 0\n", n1, n2)).unwrap();
+        let tests = json!([
+            {"criterion": "crit:shop-1", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh", "verdict": "pass"},
+            {"criterion": "crit:shop-2", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n2, "run": "sh tests/shop.sh", "verdict": "fail"}
+        ]);
+        let v = record(&s, "req:shop-1", &["src/shop.rs".into()], &Value::Null, &tests, "", None, &gs).unwrap();
+        assert_eq!(v["status"], "partial", "{}", v);
+        assert_eq!(v["reason"], "criteria-failing");
     }
 
     #[test]

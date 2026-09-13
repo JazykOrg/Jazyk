@@ -549,6 +549,33 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             ));
         }
     }
+    // A binding whose implementing files exist and whose tests fail: the deliverable
+    // contradicts the statement, and the author hears it here, since the binding
+    // loop has no batch to file into (docs/consumers/bind.md#what-the-verdict-means).
+    {
+        let gs = crate::gen::GenSettings::resolve(proj);
+        let ledger = crate::gen::Ledger::load(&store.out);
+        for (rid, row) in &ledger.requirements {
+            if !store.graph.requirements.contains_key(rid) {
+                continue;
+            }
+            let (status, _) = crate::verify::status_of(store, rid, row, &gs);
+            if status == "failing" {
+                f.push(finding(
+                    "failing-binding",
+                    rid,
+                    "warning",
+                    format!(
+                        "{} is implemented in {} but its test `{}` fails: the deliverable contradicts the statement (the docs are wrong, or the code is); {}",
+                        rid,
+                        row.files.join(", "),
+                        row.test.name,
+                        row.evidence.as_deref().unwrap_or("no evidence recorded")
+                    ),
+                ));
+            }
+        }
+    }
     // Criteria: a requirement with none, and a criterion that restates its
     // requirement. Neither holds the verdict (docs/compiler/compilation.md#checks).
     let gen_configured = proj.gen_deliverable.is_some();

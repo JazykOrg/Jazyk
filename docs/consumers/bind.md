@@ -94,10 +94,15 @@ the requirement:
   functionality: the requirement's entity gains a `generate` goal
   ([incremental regeneration](./gen.md#incremental-regeneration)), and the bound test is
   what generation must make pass.
+- Implementing files named and the criterion tests split, some passing and some
+  failing → `partial`: implemented in part, the failing criteria are generation work
+  like an `unimplemented` row.
 - Test fails and the binding names implementing files → `failing`. The deliverable
   contradicts the statement. That is a
   [diagnostic](../compiler/model/diagnostic.md) for the author (the docs are wrong,
-  or the code is), never a silent regeneration: rewriting existing code because a
+  or the code is), filed by the `failing-binding`
+  [check](../compiler/compilation.md#checks) since the binding loop has no batch of
+  its own to file into, never a silent regeneration: rewriting existing code because a
   sentence disagrees with it is a decision, not a default.
 
 ## When binding runs

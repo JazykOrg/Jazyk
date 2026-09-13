@@ -2817,7 +2817,7 @@ impl GoalKind for Verify {
             .collect();
         crate::verify::pending(store, gen, Some("stale"), None)
             .into_iter()
-            .filter(|p| p["status"] != "unimplemented" && p["reason"] != "not-generated")
+            .filter(|p| p["status"] != "unimplemented" && p["status"] != "partial" && p["reason"] != "not-generated")
             .filter(|p| !bind_reqs.contains(p["requirement"].as_str().unwrap_or_default()))
             .filter_map(|p| {
                 let rid = p["requirement"].as_str()?.to_string();

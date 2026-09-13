@@ -34,6 +34,15 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if hash_files(gs, &row.files) != row.hashes.files {
         return ("stale-code".into(), "code-changed".into());
     }
+    // Criteria judged one by one: files present with some criterion tests green and
+    // some red is a partly implemented requirement, generation work like an
+    // unimplemented one, never a contradiction
+    // (docs/consumers/gen.md#status-is-derived-never-stored).
+    let crit_pass = row.tests.values().filter(|t| t.verdict == "pass").count();
+    let crit_fail = row.tests.values().filter(|t| t.verdict == "fail").count();
+    if !row.files.is_empty() && crit_pass > 0 && crit_fail > 0 {
+        return ("partial".into(), "criteria-failing".into());
+    }
     match row.verdict.as_str() {
         "pass" => ("verified".into(), "passed".into()),
         // A failing test with nothing implementing it is not a defect, it is a bound
@@ -77,6 +86,7 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
         ("unverified", "runner-failed") => format!("the last run could not execute the command; fix the runner, then `jazyk test {}`", rid),
         ("unverified", _) => format!("never run; `jazyk test {}`", rid),
         ("unimplemented", _) => format!("nothing implements it; generate: `{}`", gen),
+        ("partial", _) => format!("implemented in part, a criterion test fails; generate: `{}`", gen),
         ("failing", _) => "the deliverable contradicts the statement; a finding for the author (fix the docs or the code), never automatic regeneration".into(),
         ("verified", _) => "nothing; the last run passed against the current statement, test, and files".into(),
         _ => String::new(),
@@ -99,7 +109,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
     };
     let (status, reason) = status_of(store, &rid, row, gs);
     match status.as_str() {
-        "verified" | "failing" | "unimplemented" => Ok(()),
+        "verified" | "failing" | "unimplemented" | "partial" => Ok(()),
         "unverified" => Err(format!(
             "no verdict on `{}` ({}): run_tests for a programmatic row, or begin_verification then record_verdict with the package's factHash for an llm row",
             rid, reason
@@ -154,13 +164,13 @@ pub fn pending(
         let actionable = match filter.unwrap_or("stale") {
             "all" => true,
             "failing" => status == "failing",
-            "runnable" => status != "verified" && status != "unimplemented",
+            "runnable" => status != "verified" && status != "unimplemented" && status != "partial",
             // Default: everything that needs a verifier's hand. Verified rows are
             // done; unimplemented rows are generation work, their bound test is the
             // acceptance gate (docs/consumers/bind.md#what-the-verdict-means); a
             // failing row is a finding for the author, re-verified only when its
             // test or files change (docs/compiler/goals/verify.md#created-when).
-            _ => status != "verified" && status != "unimplemented" && status != "failing",
+            _ => status != "verified" && status != "unimplemented" && status != "partial" && status != "failing",
         };
         if !actionable {
             continue;
@@ -838,10 +848,15 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 test: hash_file(path),
                 files: hash_files(gs, &files),
             };
+            let tests = ledger
+                .requirements
+                .get(rid.as_str())
+                .map(|row| row.tests.clone())
+                .unwrap_or_default();
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
-                    tests: std::collections::BTreeMap::new(),
+                    tests,
                     entity: owner,
                     files,
                     sites: Vec::new(),

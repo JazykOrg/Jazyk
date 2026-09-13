@@ -6004,13 +6004,26 @@ impl ToolSession {
             }
             "binding_tasks" => {
                 let gs = self.gen_settings();
-                let tasks = crate::bind::pending(&self.snapshot, &gs);
+                let mut tasks = crate::bind::pending(&self.snapshot, &gs);
                 if tasks.is_empty() {
                     return Ok(
                         json!({"tasks": [], "note": "every requirement is bound; generation_tasks lists what binding left unimplemented"}),
                     );
                 }
-                Ok(json!({"tasks": tasks, "next": "begin_binding on one requirement"}))
+                // Generation works per entity: the rows come grouped by the entity
+                // they unblock (docs/compiler/tools.md#binding-tools).
+                tasks.sort_by(|a, b| {
+                    a["entity"].as_str().cmp(&b["entity"].as_str()).then(a["requirement"].as_str().cmp(&b["requirement"].as_str()))
+                });
+                let mut by_entity: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                for t in &tasks {
+                    *by_entity.entry(t["entity"].as_str().unwrap_or("").to_string()).or_insert(0) += 1;
+                }
+                Ok(json!({
+                    "tasks": tasks,
+                    "byEntity": by_entity,
+                    "next": "begin_binding on one requirement; an entity's generation task becomes useful once every row of that entity is bound, so bind an entity's rows together",
+                }))
             }
             "begin_binding" => {
                 let rid = Self::str_arg(args, "requirement")?;

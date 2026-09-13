@@ -998,7 +998,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                 ledger
                     .requirements
                     .get(*rid)
-                    .map(|row| crate::verify::status_of(store, rid, row, gs).0 == "unimplemented")
+                    .map(|row| matches!(crate::verify::status_of(store, rid, row, gs).0.as_str(), "unimplemented" | "partial"))
                     .unwrap_or(false)
             })
             .collect();
@@ -1683,10 +1683,17 @@ pub fn mark(
                 ),
                 None => ("none".into(), None, None, None),
             };
+            // The criterion tests binding recorded ride along: generation touches the
+            // implementing files, never the evidence (docs/consumers/gen.md#the-ledger).
+            let tests = ledger
+                .requirements
+                .get(&rid)
+                .map(|row| row.tests.clone())
+                .unwrap_or_default();
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
-                    tests: std::collections::BTreeMap::new(),
+                    tests,
                     entity: owner,
                     files: row_files,
                     sites: sites_by_rid.remove(&rid).unwrap_or_default(),
@@ -2236,7 +2243,7 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         );
     }
     for p in crate::verify::pending(store, gs, Some("stale"), None) {
-        if p["status"] == "unimplemented" || p["reason"] == "not-generated" {
+        if p["status"] == "unimplemented" || p["status"] == "partial" || p["reason"] == "not-generated" {
             continue;
         }
         if bind_owed.contains(p["requirement"].as_str().unwrap_or_default()) {

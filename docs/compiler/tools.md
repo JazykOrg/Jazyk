@@ -611,7 +611,9 @@ and `list_files` does not list it.
 work from. Same worker model as generation: the agent searches and edits with its own
 tools; jazyk holds the ledger. These tools never mutate the graph.
 
-- `binding_tasks({})`: requirements owing a binding, the targets of the open
+- `binding_tasks({})` (rows sorted by entity with a `byEntity` count, since generation
+  works per entity and a session once bound an entity's rows by hand to make its task
+  useful): requirements owing a binding, the targets of the open
   [`bind`](./goals/bind.md) goals, with a `reason` (`unbound`, `requirement-changed`,
   `artifact-gone`). Deterministic; no model involved.
 - `begin_binding({requirement})`: the package for one requirement: the instructions

@@ -380,6 +380,20 @@ pub fn mark(
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
     row.hashes.files = hash_files(gs, &row.files);
+    // The headline is a criterion's own test when criteria exist: its verdict is that
+    // criterion's too, or the row reads partial against a stale entry forever
+    // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
+    let headline_run = row.test.run.clone();
+    let headline_name = row.test.name.clone();
+    for t in row.tests.values_mut() {
+        if t.test.run == headline_run || t.test.name == headline_name {
+            t.verdict = verdict.to_string();
+            t.exit_code = exit_code;
+            t.last_run = row.last_run.clone();
+            t.evidence = row.evidence.clone();
+            t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
+        }
+    }
     let stale = match fact_hash_seen {
         Some(h) => store
             .graph

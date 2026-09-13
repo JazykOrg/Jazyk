@@ -852,6 +852,13 @@ mod tests {
         let v = record(&s, "req:shop-1", &["src/shop.rs".into()], &Value::Null, &tests, "", None, &gs).unwrap();
         assert_eq!(v["status"], "partial", "{}", v);
         assert_eq!(v["reason"], "criteria-failing");
+        // The headline is crit:shop-1's test: a pass recorded on the row lands on it.
+        let row = Ledger::load(&s.out).requirements["req:shop-1"].clone();
+        assert_eq!(row.test.name, n1);
+        crate::verify::mark(&s, "req:shop-1", "pass", None, Some("green"), Some(0), &gs).unwrap();
+        let row = Ledger::load(&s.out).requirements["req:shop-1"].clone();
+        assert_eq!(row.tests["crit:shop-1"].verdict, "pass");
+        assert_eq!(row.tests["crit:shop-2"].verdict, "fail");
     }
 
     #[test]

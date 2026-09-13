@@ -190,7 +190,7 @@ answer:
 | checks | `quality-unmeasured` | warning | a `quality` facet without a `measure` |
 | [reconciler](../compilation.md#convergence) | `incomplete-build` | warning | goals parked when a build budget ran out |
 | the store | `ratification-pending` | warning | a `derived` or `decree` fact with no sentence in the documents; the `prompt` proposes one |
-| [generation](../../consumers/gen.md) | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |
+| [generation](../../consumers/gen.md), [`derive-criteria`](../goals/derive-criteria.md) sessions | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |
 | [decompilation](../../consumers/decompile.md#ratification) | `unratified` | info | a drafted document no human has edited since the draft landed |
 | [project settings](../project-settings.md) | lint rules | configurable | project-specific lint over the graph |
 

@@ -593,7 +593,7 @@ A batch is labeled by the key most of its goals share (a document, an entity, a
 requirement), never by the representative of the locality group it was cut from: the
 group of every pair over two characters once labeled forty-one batches with a scene
 none of them touched. The batch fills until the budget says stop. A locality group is
-where a batch starts, not where it must end: the document and ledger localities are walls (two documents
+where a batch starts, not where it must end: the document, criteria, and ledger localities are walls (two documents
 never share a batch, nor two component subtrees), but the node, view, and level
 localities of one class, tier, and executor pack on into the same batch, neighborhood
 after neighborhood in locality order, until the budget is spent. A corpus of hundreds

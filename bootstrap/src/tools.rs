@@ -594,7 +594,7 @@ pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
 // See docs/compiler/tools.md#chat-tools.
 pub const CHAT_TOOLS: [&str; 1] = ["edit_fact"];
 // The judged rules a session may file. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const REVIEW_RULES: [&str; 8] = [
+pub const REVIEW_RULES: [&str; 9] = [
     "contradiction",
     "duplicate-entity",
     "duplicate-requirement",
@@ -603,6 +603,9 @@ pub const REVIEW_RULES: [&str; 8] = [
     "lint",
     "decision",
     "nonconformant-instance",
+    // A derive-criteria session's value the documents do not give
+    // (docs/compiler/goals/derive-criteria.md#gate).
+    "invented-choice",
 ];
 // Feedback about jazyk itself, not about the graph: served in every toolset, read-only
 // MCP included. See docs/compiler/tools.md#feedback-tool.
@@ -1133,6 +1136,10 @@ impl GoalScope {
                 .filter_map(|l| l["count"].as_u64())
                 .max()
                 .unwrap_or(0) as usize
+        } else if g.kind == "derive-criteria" {
+            // Three criteria per listed requirement, the density the skill asks for
+            // (docs/compiler/sessions.md#budgets).
+            3 * g.change["requirements"].as_array().map(|a| a.len()).unwrap_or(0)
         } else {
             0
         };
@@ -3794,7 +3801,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "mutation-budget",
                 format!(
-                    "turn mutation budget ({}) exhausted; call done",
+                    "the changeset's mutation budget ({}) is exhausted; mark the goals whose work landed, call done, and the rest continue in the next batch",
                     self.mutation_limit
                 ),
             ));
@@ -4945,7 +4952,7 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "mutation-budget",
                         format!(
-                            "turn mutation budget ({}) cannot fit a grouping of {} members; call done",
+                            "the changeset's mutation budget ({}) cannot fit a grouping of {} members; call done",
                             self.mutation_limit,
                             members.len()
                         ),

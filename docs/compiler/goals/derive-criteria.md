@@ -17,7 +17,10 @@ when the project configures a `[gen]` deliverable
   were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
 
 The `change` lists the requirements by id with the reason (`none` or `revised`); the
-`cause` is the newest record among them. A project without a deliverable derives none:
+`cause` is the newest record among them. Each goal is a batch wall of its own
+([batching](../reconciler.md#batching)), and the changeset's mutation budget grows by
+three per listed requirement ([budgets](../sessions.md#budgets)): a batch that packed
+twelve entities' goals against one budget once failed three of them unstaged. A project without a deliverable derives none:
 stated criteria still enter through extraction, and the `criterion-missing` check
 reports the gaps as information ([checks](../compilation.md#checks)).
 

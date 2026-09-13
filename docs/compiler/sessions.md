@@ -410,7 +410,9 @@ Budgets are registry constants built into the binary, not settings
   [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 64
   plus that count: a split of ninety-six statements stages one move per grouped
   statement, and a budget the split cannot fit fails every honest session (the first
-  caps split measured ran out at 64 with three sub-entities staged empty). Enforced by
+  caps split measured ran out at 64 with three sub-entities staged empty). A
+  [`derive-criteria`](./goals/derive-criteria.md) goal raises it by three per listed
+  requirement, the density the criteria skill asks for. Enforced by
   the tool serving.
 - Context: 24000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).

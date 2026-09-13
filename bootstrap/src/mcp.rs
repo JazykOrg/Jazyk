@@ -866,7 +866,17 @@ impl McpServer {
                     .iter()
                     .filter(|g| !g.mandatory && graph_kinds.contains(&g.kind.as_str()))
                     .count();
-                let mut parts: Vec<String> = vec!["compilation converged".to_string()];
+                // Failed goals stand between the board and convergence: say so
+                // instead of "converged" (docs/frontends/mcp.md#compilation-over-mcp).
+                let failed = s2.status.failed.len();
+                let mut parts: Vec<String> = vec![if failed > 0 {
+                    format!(
+                        "compilation incomplete: {} failed goal(s) stand (jazyk retry <goal> reopens one; the failure reasons are on the goals)",
+                        failed
+                    )
+                } else {
+                    "compilation converged".to_string()
+                }];
                 if optional_ready > 0 {
                     parts.push(format!(
                         "{} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the next batch when you want it, and stopping here is right when your instruction was to converge (the verdict does not wait for them)",

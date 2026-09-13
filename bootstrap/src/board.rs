@@ -412,6 +412,10 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
             }
         }
         "review-entity" => 1_500 + 140 * store.requirements_referencing(&g.target).len(),
+        // The listed requirements load full and each yields two or three criteria.
+        "derive-criteria" => {
+            900 + 700 * g.change["requirements"].as_array().map(|a| a.len()).unwrap_or(0)
+        }
         // The caps variant loads the node's requirements; the fan-out variant loads
         // the level as stubs (docs/compiler/goals/abstract-entity.md#fan-out-hints).
         "abstract-entity" => {
@@ -1010,7 +1014,12 @@ impl Board {
             self.goal(id).is_some_and(|g| {
                 matches!(
                     g.kind.as_str(),
-                    "place-anchors" | "reconcile-section" | "bind" | "generate" | "verify"
+                    "place-anchors"
+                        | "reconcile-section"
+                        | "derive-criteria"
+                        | "bind"
+                        | "generate"
+                        | "verify"
                 )
             })
         };

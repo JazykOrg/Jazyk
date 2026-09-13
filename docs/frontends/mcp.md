@@ -290,7 +290,10 @@ serving; what it claims is a batch:
   coverage contract, stale anchors), commits atomically, writes the journal entry
   with `resolved_goals` and `opened_goals`, and re-derives the board. A gate failure
   leaves the changeset open and names the repair. The reply is `{committed, next}`,
-  `next` naming the next ready batch by id with its goals. `beginNext: true` claims
+  `next` naming the next ready batch by id with its goals, and a `ratificationNote`
+  when the commit landed derived facts, saying how many ratify goals they opened and
+  that they wait on a human (a session once watched the blocked count climb from 17 to
+  46 across three criteria batches with no word why). `beginNext: true` claims
   that batch in the same call and carries its `instructions` and `package` in the
   reply, saving a round trip per batch; the default reply only names it. A `beganNote`
   beside the claim says that `abandon_goals` releases the batch untouched, since a

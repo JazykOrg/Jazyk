@@ -1210,8 +1210,19 @@ impl Store {
         format!("{}{}", prefix, max + 1)
     }
 
-    pub fn crit_stem(c: &Criterion) -> &str {
-        c.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+    // The id stem of a criterion: its quote's document, else its requirement's, so a
+    // derived criterion reads as its requirement's kin (crit:slide-about-3), and `x`
+    // only when neither has a document (docs/compiler/model/criterion.md#identity).
+    pub fn crit_stem(&self, c: &Criterion) -> String {
+        if let Some(s) = c.source.as_ref() {
+            return s.doc.clone();
+        }
+        self.graph
+            .requirements
+            .get(&c.requirement)
+            .and_then(|r| r.source.as_ref())
+            .map(|s| s.doc.clone())
+            .unwrap_or_else(|| "x".to_string())
     }
 
     // The criteria of one requirement, in id order (docs/compiler/model/criterion.md).
@@ -3491,13 +3502,13 @@ impl Store {
                     criterion.updated = Some(build.clone());
                     // The store mints the id from the quote's document stem; a staged
                     // id under another stem (a provisional one) is re-minted.
-                    let stem = Self::crit_stem(&criterion);
-                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(stem).strip_suffix(".md").unwrap_or(stem));
+                    let stem = self.crit_stem(&criterion);
+                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(&stem).strip_suffix(".md").unwrap_or(stem.rsplit('/').next().unwrap_or(&stem)));
                     let mut final_id = id.clone();
                     if !final_id.starts_with(&format!("crit:{}-", stem_slug))
                         || self.graph.criteria.contains_key(&final_id)
                     {
-                        final_id = self.mint_crit_id(stem, &BTreeSet::new());
+                        final_id = self.mint_crit_id(&stem, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
@@ -5846,10 +5857,10 @@ mod tests {
         let r = s.apply(ops, &wi().commit(3, 100));
         assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
-        assert_eq!(ids, vec!["crit:t-1", "crit:x-1"], "{:?}", ids);
+        assert_eq!(ids, vec!["crit:t-1", "crit:t-2"], "{:?}", ids);
         assert_eq!(s.criteria_of("req:t-1").len(), 2);
         assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-2"));
         // The requirement's statement changes: the derived criterion is revised, the
         // quoted one keeps its own quote.
         s.apply(
@@ -5865,7 +5876,7 @@ mod tests {
             }],
             &wi().commit(4, 100),
         );
-        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-2"));
         assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
         // The requirement goes: its criteria go with it.
         s.apply(
@@ -5877,7 +5888,7 @@ mod tests {
         );
         assert!(s.graph.criteria.is_empty());
         assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-2"));
     }
 
     // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes

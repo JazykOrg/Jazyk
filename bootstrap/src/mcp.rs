@@ -1008,6 +1008,20 @@ impl McpServer {
                 cause: g.cause.clone().unwrap_or_default(),
             })
             .collect();
+        // Derived facts this commit landed carry ratification proposals: the ratify goals
+        // they open wait on a human and swell the blocked count, so the reply says so
+        // (docs/frontends/mcp.md#compilation-over-mcp).
+        let ratify_new = board
+            .goals
+            .iter()
+            .filter(|g| g.kind == "ratify" && !o.known_open.contains(&g.id))
+            .count();
+        if ratify_new > 0 {
+            reply["ratificationNote"] = json!(format!(
+                "{} derived fact(s) this commit landed (criteria, groupings, sub-entities) carry ratification proposals: {} ratify goal(s) wait on a human and join the blocked count; nothing is wrong with them",
+                ratify_new, ratify_new
+            ));
+        }
         if !opened.is_empty() {
             reply["opened"] = json!(opened.iter().map(|x| x.goal.clone()).collect::<Vec<_>>());
             if let Some(g) = generation {

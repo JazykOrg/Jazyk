@@ -1473,9 +1473,11 @@ impl ToolSession {
         let mut last = self.last_condensed.borrow_mut();
         if *last == full {
             return format!(
-                "## Loaded: unchanged ({} items, {} chars; graph_status renders it in full)",
+                "## Loaded: unchanged ({} items, {} of {} chars; skills {} besides, uncounted; graph_status renders it in full)",
                 self.loaded.items.len(),
-                self.loaded.used() + self.skills.rendered_chars()
+                crate::context::fmt_k(self.loaded.used()),
+                crate::context::fmt_k(self.loaded.budget),
+                crate::context::fmt_k(self.skills.rendered_chars())
             );
         }
         *last = full.clone();
@@ -1694,11 +1696,24 @@ impl ToolSession {
             if from.is_empty() {
                 from.push(rid.clone());
             }
-            (
-                None,
-                Some(Provenance::Derived { from, reasoning }),
-                "x".to_string(),
-            )
+            // A derived criterion takes its requirement's document stem
+            // (docs/compiler/model/criterion.md#identity).
+            let stem = self
+                .snapshot
+                .graph
+                .requirements
+                .get(&rid)
+                .and_then(|r| r.source.as_ref().map(|s| s.doc.clone()))
+                .or_else(|| {
+                    self.staged.iter().find_map(|o| match o {
+                        Op::CreateRequirement { id, requirement } if *id == rid => {
+                            requirement.source.as_ref().map(|s| s.doc.clone())
+                        }
+                        _ => None,
+                    })
+                })
+                .unwrap_or_else(|| "x".to_string());
+            (None, Some(Provenance::Derived { from, reasoning }), stem)
         };
         let mut entities: Vec<String> = Vec::new();
         for e in Self::str_list(args, "entities") {
@@ -8115,7 +8130,7 @@ mod tests {
                         "provenance": {"derived": {"from": [rid], "reasoning": "the lower edge of holding items"}}}),
             )
             .unwrap();
-        assert_eq!(derived["id"], "crit:x-1", "{}", derived);
+        assert_eq!(derived["id"], "crit:shop-2", "{}", derived);
         assert!(t
             .dispatch("upsert_criterion", &json!({"requirement": "req:nope-1", "statement": "x y z", "kind": "positive", "section": "/shop", "quote": "intro text"}))
             .is_err());

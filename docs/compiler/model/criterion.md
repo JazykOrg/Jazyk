@@ -44,7 +44,9 @@ An Order paid on day 5 is never cancelled for non-payment.
 
 ## Identity
 
-`crit:<doc-stem>-<n>` for a quoted criterion, `crit:x-<n>` for a derived or decreed one
+`crit:<doc-stem>-<n>`, the stem from the quote's document for a stated criterion and from
+the requirement's document for a derived one (a session once read `crit:x-1` as an
+unfilled placeholder); `crit:x-<n>` only when neither has a document
 ([identifiers](../model.md#identifiers)). The natural key is the owning requirement plus
 the punctuation-insensitive `statement`, so a retried upsert lands on the same node and a
 reworded sentence refreshes it in place ([mutations](../graph.md#mutations)).

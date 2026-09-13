@@ -1330,7 +1330,7 @@ mod tests {
 
     #[test]
     fn renders_and_escapes() {
-        let out = std::env::temp_dir().join(format!("jazyk-viewer-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-viewer-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(out.join("diagrams/class")).unwrap();
         crate::vfs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
@@ -1696,7 +1696,7 @@ mod tests {
     // section carries the breadcrumb and the members.
     #[test]
     fn walk_runs_inside_the_file_with_the_rendering_inline() {
-        let out = std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(out.join("diagrams/component")).unwrap();
         crate::vfs::write(

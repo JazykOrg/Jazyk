@@ -2170,7 +2170,7 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             return 2;
         }
     };
-    runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
     let store = Store::load(&out);
     let gs = crate::gen::GenSettings::resolve(&proj);
     // Render the worker events on the historical CLI output format.
@@ -2530,7 +2530,7 @@ mod tests {
 
     // A one-document project in a temp dir: the smallest board with a ready batch.
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -2646,7 +2646,7 @@ mod tests {
     #[test]
     fn ripple_renders_a_three_generation_cascade() {
         use crate::model::{Cause, JournalEntry, OpenedGoal, Resolved};
-        let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         let sec = "g:reconcile-section:docs/orders.md#/orders/holds";

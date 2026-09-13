@@ -177,55 +177,97 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             }
         }
 
-        // The documents the tab is compiling, and their text.
+        // The matched documents with their on-disk hash, the reconciled hash,
+        // staleness, open diagnostics by severity, and open goals counted by kind.
         ("GET", "/docs") => {
             let p = project();
             let store = Store::load(&p.out);
-            let files = p.doc_files();
-            let docs: Vec<Value> = files
+            let by_doc = super::status::diag_counts_by_doc(&store);
+            let board = crate::board::Board::compute(&p, &p.out);
+            let mut goals_by_doc: std::collections::BTreeMap<
+                String,
+                std::collections::BTreeMap<String, usize>,
+            > = Default::default();
+            for g in board.open_goals() {
+                if let Some(doc) = crate::board::target_doc(&g.target) {
+                    *goals_by_doc
+                        .entry(doc)
+                        .or_default()
+                        .entry(g.kind.clone())
+                        .or_default() += 1;
+                }
+            }
+            let docs: Vec<Value> = p
+                .doc_files()
                 .iter()
                 .map(|f| {
                     let rel = super::status::rel_doc(&p.root, f);
                     let text = crate::vfs::read_to_string(f).unwrap_or_default();
+                    let hash = crate::model::hash_hex(&text);
+                    let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                     json!({
                         "path": rel,
-                        "bytes": text.len(),
-                        "reconciled": store.docs.contains_key(&rel),
+                        "contentHash": hash,
+                        "graphHash": graph_hash,
+                        "stale": graph_hash.as_deref() != Some(hash.as_str()),
+                        "diagnostics": by_doc.get(&rel),
+                        "goals": goals_by_doc.get(&rel),
                     })
                 })
                 .collect();
             ok(json!({ "docs": docs }))
         }
 
-        ("GET", "/docs/file") => {
+        ("GET", "/docs/content") => {
             let rel = param(&q, "path").unwrap_or_default();
-            let p = project();
-            match crate::vfs::read_to_string(p.root.join(&rel)) {
-                Ok(text) => ok(json!({ "path": rel, "text": text })),
-                Err(e) => err(404, format!("{}: {}", rel, e)),
+            match super::docs::doc_content(&project(), &rel) {
+                super::docs::DocRead::Found(v) => ok(v),
+                super::docs::DocRead::Missing(m) => err(404, m),
+                super::docs::DocRead::Invalid(m) => err(400, m),
             }
         }
 
-        ("PUT", "/docs/file") => {
-            let rel = body["path"].as_str().unwrap_or_default().to_string();
-            let text = body["text"].as_str().unwrap_or_default().to_string();
-            if rel.is_empty() {
-                return err(400, "pass path and text");
-            }
-            let p = project();
-            match crate::vfs::write(p.root.join(&rel), text.as_bytes()) {
-                Ok(()) => ok(json!({ "path": rel, "bytes": text.len() })),
-                Err(e) => err(500, format!("{}: {}", rel, e)),
+        ("PUT", "/docs/content") => {
+            let rel = param(&q, "path").unwrap_or_default();
+            let text = body["text"].as_str().unwrap_or_default();
+            let base = body["baseHash"].as_str();
+            match super::docs::doc_write(&project(), &rel, text, base) {
+                super::docs::DocWrite::Written(v) => ok(v),
+                super::docs::DocWrite::Conflict(v) => reply(409, v),
+                super::docs::DocWrite::Invalid(m) => err(400, m),
+                super::docs::DocWrite::Failed(m) => err(500, m),
             }
         }
 
-        // One build, synchronous: the tab is already running it on a worker.
-        ("POST", "/compile") => {
+        ("GET", "/docs/baseline") => {
+            let rel = param(&q, "path").unwrap_or_default();
+            match super::docs::doc_baseline(&Store::load(&out()), &rel) {
+                Some(v) => ok(v),
+                None => err(404, format!("{} has never reconciled", rel)),
+            }
+        }
+
+        // A build, synchronous. The server runs one on its job manager and answers
+        // immediately; here the worker is the job, and the reply is the report. The
+        // trace streams to the page as it is emitted, so the wait is watchable.
+        ("POST", "/jobs") | ("POST", "/compile") => {
+            let kind = body["kind"].as_str().unwrap_or("compile");
+            if kind != "compile" {
+                return err(
+                    501,
+                    format!("the browser backend runs no {} job: it has no shell", kind),
+                );
+            }
             let p = project();
             let llm = crate::wasm::llm();
             let trace = crate::wasm::trace();
             let report = crate::reconcile::compile(&p, &llm, &p.out, &trace);
-            ok(serde_json::to_value(&report).unwrap_or(Value::Null))
+            ok(json!({
+                "id": 1,
+                "kind": "compile",
+                "state": "finished",
+                "report": serde_json::to_value(&report).unwrap_or(Value::Null),
+            }))
         }
 
         // The whole graph, as the shards hold it.

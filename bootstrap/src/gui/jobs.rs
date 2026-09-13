@@ -387,7 +387,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
-            runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+            runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
             let store = crate::store::Store::load(&st.out);
             // Binding first, same as `jazyk gen`: owed binds classify each requirement
             // and the bound tests become the acceptance gates.

@@ -2518,7 +2518,7 @@ pub(crate) mod tests {
     fn compute_derives_from_changed_documents_without_writing() {
         let root = std::env::temp_dir().join(format!(
             "jazyk-board-compute-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             crate::verify::now_iso().replace([':', '.'], "-")
         ));
         let docs = root.join("docs");

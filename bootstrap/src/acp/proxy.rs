@@ -664,7 +664,7 @@ fn start_sink(state: &Arc<ProxyState>) {
     use std::io::{BufRead, BufReader, Write};
     let path = state
         .out
-        .join(format!("acp-edit-sink-{}.sock", std::process::id()));
+        .join(format!("acp-edit-sink-{}.sock", crate::sys::process_id()));
     let _ = crate::vfs::remove_file(&path);
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
         return;
@@ -860,7 +860,7 @@ fn run_command(
                 };
                 st.building
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+                runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
                 let _ = crate::bind::run_all(&store, &runner, &gs, &[], &trace);
                 crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {

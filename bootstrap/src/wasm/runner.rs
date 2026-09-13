@@ -26,6 +26,19 @@ pub struct InPageRunner {
     build_token: Cell<Option<String>>,
 }
 
+trait TakeClone {
+    fn take_clone(&self) -> Option<String>;
+}
+
+impl TakeClone for Cell<Option<String>> {
+    // Read a Cell<Option<String>> without moving out of it.
+    fn take_clone(&self) -> Option<String> {
+        let v = self.take();
+        self.set(v.clone());
+        v
+    }
+}
+
 impl InPageRunner {
     pub fn start(project: &Project, llm: &Llm, out: &Path) -> Result<InPageRunner, String> {
         Ok(InPageRunner {
@@ -76,11 +89,23 @@ impl SessionRunner for InPageRunner {
             resolved: Vec::new(),
         };
 
-        let server = McpServer::new(
+        // The same flags the native runner gives its injected serving: it belongs
+        // to this one batch (so the long poll is not offered, and end of input with
+        // an open batch runs the implicit finish), it claims only this batch, and it
+        // runs under the build's token so the build lease does not refuse it. The
+        // prompt is not pre-packaged: begin_goals answers with it, and the loop
+        // opens on that.
+        let server = McpServer::with_bridge(
             self.project.clone(),
             self.out.clone(),
             vec!["compile".to_string()],
             true,
+            crate::mcp::BridgeFlags {
+                ephemeral: true,
+                only: Some(batch.id.clone()),
+                build_token: self.build_token.take_clone(),
+                ..Default::default()
+            },
         );
         if let Err(e) = server.handle(
             "initialize",

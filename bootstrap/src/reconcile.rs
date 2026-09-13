@@ -3014,7 +3014,7 @@ mod tests {
     #[test]
     fn drift_check_flags_missing_literals_with_a_question() {
         use crate::gen::{Ledger, ReqRow, RowHashes, TestRef};
-        let dir = std::env::temp_dir().join(format!("jazyk-drift-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-drift-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("product")).unwrap();
         crate::vfs::write(
@@ -3154,7 +3154,7 @@ mod tests {
     // Mirrors docs/compiler/parsing.md#format-handlers.
     #[test]
     fn unsupported_format_and_parse_error_are_filed_and_resolve() {
-        let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
@@ -3679,7 +3679,7 @@ mod tests {
     fn journal_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-flip-test-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -4245,7 +4245,7 @@ mod tests {
         use crate::tools::{ToolSession, WorkScope};
 
         let out =
-            std::env::temp_dir().join(format!("jazyk-levels-loop-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-levels-loop-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).ok();
         let mut s = Store {

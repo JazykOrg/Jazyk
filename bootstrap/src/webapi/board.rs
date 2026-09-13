@@ -158,7 +158,7 @@ mod tests {
 
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
         let root =
-            std::env::temp_dir().join(format!("jazyk-gui-board-{}-{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-gui-board-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write(

@@ -16,6 +16,7 @@ import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './l
 import type { ModelHost } from './lib/wasm-client'
 import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents } from './lib/events'
+import { FolderMirror, folderPickerAvailable, pickFolder, readFolder } from './lib/folder'
 import demoProject from './wasm-backend/demo-project.json'
 import './tokens.css'
 import './app.css'
@@ -102,19 +103,87 @@ class ErrorBoundary extends React.Component<
   }
 }
 
+// The two ways in: the bundled project in memory, or a folder on this computer,
+// which needs the File System Access API (Chromium browsers have it).
+function Chooser({ onDemo, onFolder }: { onDemo: () => void; onFolder: () => void }) {
+  const canPick = folderPickerAvailable()
+  return (
+    <div style={{ padding: '2rem', fontFamily: 'ui-monospace, monospace', lineHeight: 1.7, maxWidth: 640 }}>
+      <h1 style={{ fontSize: '1.1rem', margin: '0 0 1rem' }}>jazyk in the browser</h1>
+      <p>
+        The compiler runs in this tab as WebAssembly, against a model that runs on your GPU.
+        Nothing leaves the machine.
+      </p>
+      <p>
+        <button onClick={onDemo}>open the demo project</button>{' '}
+        <span style={{ opacity: 0.7 }}>a small shop, already compiled, held in memory</span>
+      </p>
+      <p>
+        <button onClick={onFolder} disabled={!canPick}>open a folder on this computer</button>{' '}
+        <span style={{ opacity: 0.7 }}>
+          {canPick
+            ? 'a directory with a jazyk.toml; edits and builds write back into it'
+            : 'this browser has no File System Access API'}
+        </span>
+      </p>
+    </div>
+  )
+}
+
+type Source =
+  | { kind: 'demo' }
+  | { kind: 'folder'; files: Record<string, Uint8Array>; mirror: FolderMirror; name: string }
+
+function chooseSource(): Promise<Source> {
+  return new Promise((resolve) => {
+    const onFolder = async () => {
+      try {
+        const handle = await pickFolder()
+        const files = await readFolder(handle)
+        if (!('jazyk.toml' in files)) {
+          root.render(<Splash lines={[`${handle.name} has no jazyk.toml at its top; pick a project directory`]} />)
+          window.setTimeout(() => root.render(<Chooser onDemo={() => resolve({ kind: 'demo' })} onFolder={onFolder} />), 2500)
+          return
+        }
+        resolve({ kind: 'folder', files, mirror: new FolderMirror(handle, '/project'), name: handle.name })
+      } catch (e) {
+        // The picker was dismissed, or refused: back to the choice.
+        console.info('[jazyk folder]', e)
+      }
+    }
+    root.render(<Chooser onDemo={() => resolve({ kind: 'demo' })} onFolder={onFolder} />)
+  })
+}
+
 async function boot() {
-  const lines: string[] = ['starting the compiler']
+  const source = await chooseSource()
+  const lines: string[] = [
+    source.kind === 'demo' ? 'starting the compiler on the demo project' : `starting the compiler on ${source.name}`,
+  ]
   root.render(<Splash lines={lines} />)
 
   const backend = await startWasmBackend({
-    files: demoProject as Record<string, string>,
+    files: source.kind === 'demo' ? (demoProject as Record<string, string>) : source.files,
+    mirror: source.kind === 'folder' ? source.mirror : undefined,
     model,
-    onTrace: (events) => pushTraceEvents(qc, events),
+    onTrace: (events) => {
+      // The trace is also on the console, so a build is followable without the
+      // activity panel open.
+      const buf = ((window as unknown as { jazykTrace?: unknown[] }).jazykTrace ??= [])
+      for (const e of events) {
+        buf.push(e)
+        console.info('[jazyk trace]', JSON.stringify(e))
+      }
+      pushTraceEvents(qc, events)
+    },
   })
   setBackend(backend)
   // There is no stream to drop: the backend is in this tab. The connection banners
   // are about a server that went away, and there is no server.
   useApp.getState().setConnected(true)
+  // The backend answers the same envelope over the console, which is how a person
+  // (or a test) pokes at it without the app in the way.
+  ;(window as unknown as { jazyk: unknown }).jazyk = backend
 
   root.render(
     <React.StrictMode>

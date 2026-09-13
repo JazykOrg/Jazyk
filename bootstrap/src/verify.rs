@@ -1015,7 +1015,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
     #[test]
     fn requirement_gone_rows_are_not_actionable() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // The row exists; then the requirement is deleted from the graph.
@@ -1033,7 +1033,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     #[test]
     fn a_runner_failure_is_not_a_failing_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
 
@@ -1075,7 +1075,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     #[test]
     fn run_selected_routes_runner_failures() {
-        let out = std::env::temp_dir().join(format!("jazyk-runsel-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-runsel-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         {
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn status_matrix_and_cascade() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
 
@@ -1165,7 +1165,7 @@ mod tests {
 
     #[test]
     fn audit_never_launders_stale_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
@@ -1195,7 +1195,7 @@ mod tests {
     // name is not in it. Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn missing_rows_surface_and_audit_rebuilds() {
-        let out = std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // Wipe the ledger: the row must surface as missing/not-generated with a repair.
@@ -1254,7 +1254,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn audit_drops_a_verdict_whose_bytes_moved() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-reset-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-audit-reset-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
@@ -1279,7 +1279,7 @@ mod tests {
     // rerun could not resolve. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
     #[test]
     fn a_renamed_test_is_bind_work_not_a_rerun() {
-        let out = std::env::temp_dir().join(format!("jazyk-name-lost-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-name-lost-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
@@ -1308,7 +1308,7 @@ mod tests {
     // other state names the call that lands it. Mirrors docs/compiler/goals/verify.md#gate.
     #[test]
     fn the_verify_gate_reads_the_landed_verdict() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();

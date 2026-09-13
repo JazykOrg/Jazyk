@@ -719,7 +719,7 @@ mod tests {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let out =
-            std::env::temp_dir().join(format!("jazyk-bind-test-{}-{}", std::process::id(), n));
+            std::env::temp_dir().join(format!("jazyk-bind-test-{}-{}", crate::sys::process_id(), n));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = Store {

@@ -4,6 +4,7 @@
 // See docs/frontends/wasm.md#one-api-two-transports.
 pub mod board;
 pub mod card;
+pub mod docs;
 pub mod status;
 pub mod views;
 pub mod workers;

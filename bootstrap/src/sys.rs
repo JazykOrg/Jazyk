@@ -101,4 +101,51 @@ mod imp {
     pub fn sleep(_d: Duration) {}
 }
 
+// A monotonic instant. Natively `std::time::Instant`; in a tab the page's clock in
+// milliseconds, which `std::time::Instant` cannot answer at all there. Carries only
+// what the crate does with one: take it, subtract two, add a duration, compare.
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+pub struct Instant(
+    #[cfg(not(target_arch = "wasm32"))] std::time::Instant,
+    #[cfg(target_arch = "wasm32")] f64,
+);
+
+impl Instant {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn now() -> Instant {
+        Instant(std::time::Instant::now())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn now() -> Instant {
+        Instant(imp::now_millis())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn duration_since(&self, earlier: Instant) -> Duration {
+        self.0.saturating_duration_since(earlier.0)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn duration_since(&self, earlier: Instant) -> Duration {
+        Duration::from_secs_f64(((self.0 - earlier.0).max(0.0)) / 1000.0)
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        Instant::now().duration_since(*self)
+    }
+}
+
+impl std::ops::Add<Duration> for Instant {
+    type Output = Instant;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn add(self, d: Duration) -> Instant {
+        Instant(self.0 + d)
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn add(self, d: Duration) -> Instant {
+        Instant(self.0 + d.as_secs_f64() * 1000.0)
+    }
+}
+
 pub use imp::*;

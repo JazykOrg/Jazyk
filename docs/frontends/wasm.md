@@ -67,8 +67,32 @@ before the backend boots:
 - `list_files()` answers every path, for a host that wants to persist or download
   what the session produced.
 
-The tree lives as long as the tab. Nothing is written through to the machine; a
-reload starts from the seed again unless the host saved the files itself.
+The tree lives as long as the tab. In the demo's in-memory mode nothing is written
+through to the machine and a reload starts from the seed again. With
+[a folder on disk](#a-folder-on-disk) open, every mutation is mirrored into it.
+
+### A folder on disk
+
+Where the browser has the File System Access API (Chromium browsers), the page can
+open a directory on the computer as the project instead of the bundled demo.
+
+- The page reads the whole folder once (`.git`, `node_modules`, and `target`
+  skipped) and seeds the tree with it, bytes as they are. The folder must hold a
+  `jazyk.toml` at its top.
+- `enable_fs_sink()` turns on the write-through. From then on every `write`,
+  `remove_file`, `remove_dir`, and `remove_dir_all` the backend makes is also posted
+  to the page with the path and the bytes, and the page applies it to the folder
+  through the directory handle. Seeding does not post: those bytes came from the
+  folder.
+- The page applies mutations one after another in the order they arrived, so a
+  write and the remove that follows it never race. A mutation that fails to land
+  is logged; the tree in the worker is still the truth the compiler reads.
+- Reads never touch the disk again. An edit made outside the tab is not seen until
+  the folder is opened again. Nothing watches the folder.
+
+So a build in a tab lands in the same `jazyk-out/` the native binary would write,
+with the same shards and the same journal, and the two can be used on the same
+project in turn.
 
 ## Sessions
 
@@ -154,9 +178,11 @@ This is why the demo ships a project whose diagrams are already rendered: the
 
 ## The demo
 
-`bootstrap/gui/demo.html` is the same app with a different entry. It seeds the
-bundled project, loads the model, installs the wasm backend, and hands over to the
-app, which cannot tell the difference.
+`bootstrap/gui/demo.html` is the same app with a different entry. It offers two ways
+in: the bundled project in memory, or a [folder on this computer](#a-folder-on-disk).
+It seeds the backend with the choice, installs it, and hands over to the app, which
+cannot tell the difference. The model loads behind the app, because every read works
+without one and only a build needs it.
 
 The fixture is `bootstrap/example/f1` compiled to convergence: its documents, its
 `jazyk.toml`, and its whole `jazyk-out` (the shards, the journal, the coverage, the

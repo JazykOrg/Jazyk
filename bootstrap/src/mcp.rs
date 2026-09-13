@@ -288,12 +288,16 @@ impl McpServer {
             .collect();
         let start_gen = Store::load(&self.out).status.generation;
         let deadline = (timeout > 0).then(|| {
-            std::time::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600))
+            crate::sys::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600))
         });
         let mut changed_docs: Vec<String> = Vec::new();
         let mut changed = false;
-        while deadline.is_none_or(|d| std::time::Instant::now() < d) {
-            std::thread::sleep(std::time::Duration::from_secs(2));
+        // A tab has one thread and nothing else that could move the graph while it
+        // waits, so the poll answers at once with what it sees now.
+        #[cfg(target_arch = "wasm32")]
+        let deadline = Some(crate::sys::Instant::now());
+        while deadline.is_none_or(|d| crate::sys::Instant::now() < d) {
+            crate::sys::sleep(std::time::Duration::from_secs(2));
             let store = Store::load(&self.out);
             if store.status.generation != start_gen {
                 changed = true;
@@ -522,7 +526,7 @@ impl McpServer {
             .unwrap()
             .as_ref()
             .map(|h| h.id().to_string())
-            .unwrap_or_else(|| format!("agent-{}", std::process::id()))
+            .unwrap_or_else(|| format!("agent-{}", crate::sys::process_id()))
     }
 
     // The `goals` tool: the board with readiness sentences, gated and claimedBy, the
@@ -1112,7 +1116,7 @@ impl McpServer {
         };
         let tmp = std::env::temp_dir().join(format!(
             "jazyk-mcp-bench-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             case.name
         ));
         crate::vfs::remove_dir_all(&tmp).ok();
@@ -1425,14 +1429,21 @@ impl McpServer {
                         Some(h) => h.set_client(&client),
                         None => {
                             *w = Some(crate::control::register(&self.out, "agent", &client));
-                            let wref = self.worker.clone();
-                            std::thread::spawn(move || loop {
-                                std::thread::sleep(std::time::Duration::from_secs(30));
-                                match wref.lock().unwrap().as_mut() {
-                                    Some(h) => h.refresh(None),
-                                    None => break,
-                                }
-                            });
+                            // The heartbeat keeps the worker registration fresh so
+                            // the sweep does not call it stale. A browser tab has one
+                            // backend and no thread to spare, and nothing sweeps it
+                            // (docs/frontends/wasm.md#the-seams).
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let wref = self.worker.clone();
+                                std::thread::spawn(move || loop {
+                                    std::thread::sleep(std::time::Duration::from_secs(30));
+                                    match wref.lock().unwrap().as_mut() {
+                                        Some(h) => h.refresh(None),
+                                        None => break,
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -2676,7 +2687,7 @@ mod tests {
     }
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -2782,7 +2793,7 @@ mod tests {
     fn revise_requirement_commits_prose_and_graph_without_redirtying() {
         use crate::model::{Entity, Provenance, Requirement, SourceRef};
         use crate::store::{Commit, Op};
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -2883,7 +2894,7 @@ mod tests {
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     #[test]
     fn begin_goals_claims_the_next_batch_and_done_wants_marks() {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -2941,7 +2952,7 @@ mod tests {
     // Mirrors docs/compiler/tools.md#toolsets.
     #[test]
     fn compile_serving_lists_goal_and_view_tools_and_gates_writes() {
-        let dir = std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -3007,7 +3018,7 @@ mod tests {
     // Mirrors docs/frontends/acp.md#project-tools.
     #[test]
     fn project_tools_follow_the_project_state() {
-        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&base).ok();
         let bare = base.join("bare");
         let proj = base.join("proj");

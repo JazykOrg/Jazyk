@@ -17,6 +17,7 @@ pub trait VPathExt {
     fn vexists(&self) -> bool;
     fn vis_dir(&self) -> bool;
     fn vis_file(&self) -> bool;
+    fn vcanonicalize(&self) -> io::Result<PathBuf>;
 }
 
 impl VPathExt for Path {
@@ -29,6 +30,9 @@ impl VPathExt for Path {
     fn vis_file(&self) -> bool {
         is_file(self)
     }
+    fn vcanonicalize(&self) -> io::Result<PathBuf> {
+        canonicalize(self)
+    }
 }
 
 impl VPathExt for PathBuf {
@@ -40,6 +44,9 @@ impl VPathExt for PathBuf {
     }
     fn vis_file(&self) -> bool {
         is_file(self.as_path())
+    }
+    fn vcanonicalize(&self) -> io::Result<PathBuf> {
+        canonicalize(self.as_path())
     }
 }
 
@@ -150,6 +157,17 @@ mod imp {
         }
         Ok(out.into_iter())
     }
+    // Create a file only if it does not exist, writing `contents`. This is the
+    // exclusive create a lock file is built on: it must fail when the file is there.
+    pub fn create_new(p: impl AsRef<Path>, contents: &str) -> io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(p)?;
+        f.write_all(contents.as_bytes())
+    }
+
     // Append one line to a file, creating it. The crate's logs are append-only.
     pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {
         use std::io::Write;
@@ -225,7 +243,8 @@ mod imp {
         if let Some(parent) = p.parent() {
             create_dir_all(parent)?;
         }
-        FILES.with(|f| f.borrow_mut().insert(p, c.as_ref().to_vec()));
+        FILES.with(|f| f.borrow_mut().insert(p.clone(), c.as_ref().to_vec()));
+        crate::wasm::fs_bridge::wrote(&p, c.as_ref());
         Ok(())
     }
 
@@ -252,11 +271,15 @@ mod imp {
         FILES
             .with(|f| f.borrow_mut().remove(&p))
             .map(|_| ())
-            .ok_or_else(|| not_found(&p))
+            .ok_or_else(|| not_found(&p))?;
+        crate::wasm::fs_bridge::removed(&p, false);
+        Ok(())
     }
 
     pub fn remove_dir(p: impl AsRef<Path>) -> io::Result<()> {
-        DIRS.with(|d| d.borrow_mut().remove(&norm(p.as_ref())));
+        let p = norm(p.as_ref());
+        DIRS.with(|d| d.borrow_mut().remove(&p));
+        crate::wasm::fs_bridge::removed(&p, true);
         Ok(())
     }
 
@@ -267,6 +290,7 @@ mod imp {
             let keep: Vec<PathBuf> = d.borrow().iter().filter(|k| !k.starts_with(&p)).cloned().collect();
             *d.borrow_mut() = keep.into_iter().collect();
         });
+        crate::wasm::fs_bridge::removed(&p, true);
         Ok(())
     }
 
@@ -358,6 +382,17 @@ mod imp {
         Ok(out.into_iter())
     }
 
+    pub fn create_new(p: impl AsRef<Path>, contents: &str) -> io::Result<()> {
+        let p = p.as_ref();
+        if is_file(p) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} exists", p.display()),
+            ));
+        }
+        write(p, contents)
+    }
+
     pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {
         let p = p.as_ref();
         let mut buf = read(p).unwrap_or_default();
@@ -376,7 +411,11 @@ mod imp {
     // Seeding and draining the tree. The wasm backend fills it from the bundled
     // demo project on boot and hands edited documents back to the page.
     pub fn seed(path: &Path, bytes: Vec<u8>) {
-        let _ = write(path, bytes);
+        let p = norm(path);
+        if let Some(parent) = p.parent() {
+            let _ = create_dir_all(parent);
+        }
+        FILES.with(|f| f.borrow_mut().insert(p, bytes));
     }
 
     pub fn list_all() -> Vec<PathBuf> {

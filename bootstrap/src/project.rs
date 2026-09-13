@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn generated_dirs_are_never_doc_input() {
-        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         for d in [
             "docs",
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn default_deliverable_is_root_and_docs_glob_whitelists() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::create_dir_all(dir.join("src")).unwrap();
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn redirect_delegates_to_nested_project() {
-        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("inner")).unwrap();
         crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
@@ -739,7 +739,7 @@ mod discovery_tests {
     #[test]
     fn redirect_above_is_a_boundary_not_a_capture() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("inner")).unwrap();
         crate::vfs::create_dir_all(dir.join("inner/deep")).unwrap();
@@ -991,7 +991,7 @@ mod settings_tests {
 
     #[test]
     fn settings_roundtrip_preserves_secret_and_redirect() {
-        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         crate::vfs::write(

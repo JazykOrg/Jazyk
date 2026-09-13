@@ -20,7 +20,14 @@ extern "C" {
 
 pub fn chat(body: &str) -> Result<String, String> {
     chat_sync(body).map_err(|e| {
-        e.as_string()
+        // What comes back is a JS Error, whose text is on `message`; `as_string`
+        // answers None for it and would throw away the only thing worth reading.
+        if let Some(s) = e.as_string() {
+            return s;
+        }
+        js_sys::Reflect::get(&e, &JsValue::from_str("message"))
+            .ok()
+            .and_then(|m| m.as_string())
             .unwrap_or_else(|| "the page did not answer the model call".to_string())
     })
 }

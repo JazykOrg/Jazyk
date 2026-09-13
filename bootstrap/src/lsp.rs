@@ -1405,7 +1405,7 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn requirement_card_links_the_requirement_code_and_test() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
         let out = root.join("jazyk-out");
@@ -1518,7 +1518,7 @@ mod tests {
     // No ledger row: the requirement still shows, the other two parts say so.
     #[test]
     fn requirement_card_without_a_ledger_row() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1559,7 +1559,7 @@ mod tests {
     fn prompted_diagnostic_publishes_offers_actions_and_applies() {
         use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
         use crate::store::Op;
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
@@ -1727,7 +1727,7 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn entity_hover_renders_the_card_in_short_with_its_level() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1775,7 +1775,7 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1825,7 +1825,7 @@ mod tests {
     #[test]
     fn entity_hover_on_a_derived_grouping_names_its_proposal() {
         use crate::model::{Diagnostic, Entity, Provenance};
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1890,7 +1890,7 @@ mod tests {
     // defining mention. Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn type_definition_opens_the_card() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
@@ -1953,7 +1953,7 @@ mod tests {
     #[test]
     fn requirement_card_embeds_the_smallest_flow_view_and_statement() {
         use crate::model::View;
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();

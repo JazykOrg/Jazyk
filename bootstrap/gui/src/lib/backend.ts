@@ -13,10 +13,6 @@ export interface Reply {
 export interface Backend {
   kind: BackendKind
   request(method: string, path: string, body?: unknown): Promise<Reply>
-  // The trace of a running build. The server streams it over SSE; the wasm backend
-  // buffers it and the page drains it between turns.
-  drainTrace?(): Promise<unknown[]>
-  ready?: Promise<void>
 }
 
 // The server backend: a plain fetch, with the session token on every request.

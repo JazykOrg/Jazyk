@@ -121,7 +121,7 @@ pub fn run() -> i32 {
                 async move |req: NewSessionRequest, responder, _cx| {
                     let id = format!(
                         "sess-{}-{}",
-                        std::process::id(),
+                        crate::sys::process_id(),
                         counter.fetch_add(1, Ordering::Relaxed)
                     );
                     let cwd = req.cwd.clone();

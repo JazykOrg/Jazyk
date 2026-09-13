@@ -2316,7 +2316,7 @@ mod tests {
 
     #[test]
     fn mark_strips_markers_into_sites() {
-        let out = std::env::temp_dir().join(format!("jazyk-sites-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-sites-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -2360,7 +2360,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#rows-recorded-over-an-open-contradiction.
     #[test]
     fn a_row_over_an_open_error_diagnostic_is_flagged_contradicted() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-contra-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-contra-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let diag = |severity: &str, lifecycle: &str| Diagnostic {
@@ -2487,7 +2487,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
     #[test]
     fn mark_warns_when_run_commands_diverge_from_the_medium() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(&out).ok();
@@ -2534,7 +2534,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-build.
     #[test]
     fn build_is_recorded_once_and_carried_into_later_packages() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-build-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-build-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         assert!(task_package(&s, "ent:cart", &gs).unwrap()["build"].is_null());
@@ -2613,7 +2613,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn extra_files_are_classified_by_the_manifest() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-extra-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-extra-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -2645,7 +2645,7 @@ mod tests {
 
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let mut ledger = Ledger::load(&out);
@@ -2690,7 +2690,7 @@ mod tests {
     // verified is never generated over. Mirrors docs/compiler/goals/generate.md#created-when.
     #[test]
     fn pending_diff_and_mark_lifecycle() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         assert!(pending(&s, &gs).is_empty(), "unbound: bind first");
@@ -2787,7 +2787,7 @@ mod tests {
     // Any record buries them. Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
     #[test]
     fn mark_prunes_rows_whose_requirement_left_the_graph() {
-        let out = std::env::temp_dir().join(format!("jazyk-prune-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-prune-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
@@ -2829,7 +2829,7 @@ mod tests {
     // Mirrors docs/compiler/goals/generate.md#gate.
     #[test]
     fn the_generate_gate_reads_the_landed_record() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-gate-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-gate-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
@@ -2864,7 +2864,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#file-ownership-and-conventions.
     #[test]
     fn manifest_paths_are_confined_to_the_deliverable() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-confine-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-confine-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -2908,7 +2908,7 @@ mod tests {
     // rejected naming the row and the fix. Mirrors docs/compiler/goals/generate.md#gate.
     #[test]
     fn record_generation_rejects_a_test_its_artifact_does_not_carry() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
@@ -2947,7 +2947,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#incremental-regeneration.
     #[test]
     fn a_record_removes_the_files_its_manifest_omits() {
-        let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         s.graph.entities.insert("ent:shelf".into(), Entity { name: "Shelf".into(), ..Default::default() });
@@ -3048,7 +3048,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-ledger.
     #[test]
     fn fact_hash_flips_on_stereotype_attributes_and_edges() {
-        let out = std::env::temp_dir().join(format!("jazyk-facthash-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-facthash-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, _gs) = fixture(&out);
         let h0 = fact_hash(&s, "ent:cart");
@@ -3093,7 +3093,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#invented-choices.
     #[test]
     fn invented_choices_stage_one_graded_diagnostic_per_scope() {
-        let out = std::env::temp_dir().join(format!("jazyk-choice-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-choice-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         s.docs.insert(
@@ -3206,7 +3206,7 @@ mod tests {
     // Mirrors docs/consumers/gen.md#the-unattached-remainder.
     #[test]
     fn unattached_remainder_counts_unnamed_files_and_lines_outside_site_runs() {
-        let out = std::env::temp_dir().join(format!("jazyk-unattached-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-unattached-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
@@ -3256,7 +3256,7 @@ mod tests {
     // Mirrors docs/compiler/goals/bind.md#created-when.
     #[test]
     fn an_unbound_requirement_yields_a_ledger_stale_record() {
-        let out = std::env::temp_dir().join(format!("jazyk-stale-rec-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-stale-rec-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let records = ledger_stale_records(&s, &gs);

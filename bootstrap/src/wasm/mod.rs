@@ -1,10 +1,17 @@
 // The WebAssembly backend: the same compiler the native binary runs, answering the
 // same API, against an in-memory filesystem and the model in the page.
 // See docs/frontends/wasm.md.
+pub mod fs_bridge;
 pub mod llm_bridge;
 pub mod runner;
 
 use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(module = "/src/wasm/trace.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = emitTrace)]
+    fn emit_trace(json: &str);
+}
 
 // The project the tab is serving. One per module instance, set by `boot`.
 thread_local! {
@@ -56,6 +63,13 @@ pub fn boot(root_path: &str) -> String {
     .to_string()
 }
 
+// Turn on the write-through: from here every mutation of the tree is also posted
+// to the page, which mirrors it into the folder it opened.
+#[wasm_bindgen]
+pub fn enable_fs_sink() {
+    fs_bridge::enable();
+}
+
 // Every file in the tree, for the host to persist or download.
 #[wasm_bindgen]
 pub fn list_files() -> String {
@@ -93,30 +107,19 @@ pub fn set_model(name: &str) {
     MODEL.with(|m| *m.borrow_mut() = name.to_string());
 }
 
-// The trace of the running build. Every event the compiler emits lands here and the
-// host drains it between turns, which is how the tab shows the same live trace
-// `jazyk compile` prints (docs/frontends/wasm.md#the-trace).
-thread_local! {
-    static TRACE: std::cell::RefCell<Vec<serde_json::Value>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
+// The trace of the running build. A build runs synchronously inside the worker, so
+// there is no moment between events at which the page could poll: each event is
+// posted to the page as the compiler emits it (docs/frontends/wasm.md#the-trace).
 pub fn trace() -> crate::session::Trace {
     crate::session::Trace::to_sink(
         crate::session::TraceLevel::Normal,
         std::sync::Arc::new(|ev: &crate::session::TraceEvent| {
-            if let Ok(v) = serde_json::to_value(ev) {
-                TRACE.with(|t| t.borrow_mut().push(v));
+            if let Ok(s) = serde_json::to_string(ev) {
+                emit_trace(&s);
             }
         }),
         Default::default(),
     )
-}
-
-// Every event since the last drain, oldest first.
-#[wasm_bindgen]
-pub fn drain_trace() -> String {
-    let events = TRACE.with(|t| std::mem::take(&mut *t.borrow_mut()));
-    serde_json::json!(events).to_string()
 }
 
 // One request, the same shape the native server answers over HTTP: a method, a path

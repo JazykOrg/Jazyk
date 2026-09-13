@@ -4,7 +4,6 @@
 // Mirrors docs/compiler/tools.md#feedback-tool.
 use serde::Serialize;
 use serde_json::Value;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // The caller's references, so a record says who and what called it. Set by the harness
@@ -115,7 +114,7 @@ mod tests {
 
     #[test]
     fn appended_lines_read_back_newest_first() {
-        let dir = std::env::temp_dir().join(format!("jazyk-fb-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-fb-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         for (i, msg) in ["first", "second"].iter().enumerate() {
             append(

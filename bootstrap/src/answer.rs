@@ -495,7 +495,7 @@ mod tests {
     // stages it), with the ratification proposal the decree filed.
     fn seed_decree(label: &str) -> (Project, PathBuf, String) {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-{}-{}", label, std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-answer-{}-{}", label, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -697,7 +697,7 @@ mod tests {
     fn ratification_retract_deletes_a_decree_created_fact() {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-answer-retract-created-{}",
-            std::process::id()
+            crate::sys::process_id()
         ));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
@@ -791,7 +791,7 @@ mod tests {
     // applied, and the diagnostic resolves in the same changeset.
     #[test]
     fn edit_answer_is_a_dual_write_that_resolves() {
-        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn edit_answer_lands_in_its_own_section() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(

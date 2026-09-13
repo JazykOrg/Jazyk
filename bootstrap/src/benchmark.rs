@@ -1310,7 +1310,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     use crate::model::GoalState;
     let tmp = std::env::temp_dir().join(format!(
         "jazyk-snippet-{}-{}",
-        std::process::id(),
+        crate::sys::process_id(),
         crate::md::slug(goal_id)
     ));
     crate::vfs::remove_dir_all(&tmp).ok();
@@ -1554,7 +1554,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             llm::set_tools_mode(mode);
             let tmp = std::env::temp_dir().join(format!(
                 "jazyk-bench-{}-{}",
-                std::process::id(),
+                crate::sys::process_id(),
                 case.name
             ));
             crate::vfs::remove_dir_all(&tmp).ok();
@@ -2151,7 +2151,7 @@ mod tests {
     }
 
     fn own_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("jazyk-bench-test-{}-{}", std::process::id(), name));
+        let d = std::env::temp_dir().join(format!("jazyk-bench-test-{}-{}", crate::sys::process_id(), name));
         crate::vfs::remove_dir_all(&d).ok();
         d
     }
@@ -2439,7 +2439,7 @@ mod tests {
 
     #[test]
     fn results_file_updates_in_place_per_model() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         write_results(
             &tmp,

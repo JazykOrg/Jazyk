@@ -554,7 +554,7 @@ impl Trace {
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
-        let stem = format!("{}-{}-cli{}", compact, kind, std::process::id());
+        let stem = format!("{}-{}-cli{}", compact, kind, crate::sys::process_id());
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

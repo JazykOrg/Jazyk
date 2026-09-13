@@ -10,11 +10,10 @@ use super::http::HttpServing;
 use super::translate::UpdateTranslator;
 use crate::mcp::BridgeFlags;
 use crate::llm::Llm;
-use crate::model::Goal;
 use crate::project::Project;
 use crate::session::{Trace, TraceEvent};
 use crate::tools::WorkScope;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

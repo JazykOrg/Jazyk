@@ -247,7 +247,7 @@ mod tests {
     fn fixture() -> (crate::project::Project, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-mcp-http-test-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

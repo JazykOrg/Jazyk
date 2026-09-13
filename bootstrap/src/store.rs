@@ -5671,17 +5671,9 @@ impl FileLock {
         let path = out.join(".lock");
         crate::vfs::create_dir_all(out).ok();
         for _ in 0..100 {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    use std::io::Write;
-                    write!(f, "{}", std::process::id()).ok();
-                    return FileLock { path };
-                }
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            match crate::vfs::create_new(&path, &crate::sys::process_id().to_string()) {
+                Ok(()) => return FileLock { path },
+                Err(_) => crate::sys::sleep(std::time::Duration::from_millis(100)),
             }
         }
         eprintln!(
@@ -5703,7 +5695,7 @@ mod tests {
     use super::*;
 
     fn tmp() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-store-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-store-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir
@@ -5712,7 +5704,7 @@ mod tests {
     // A directory of its own for a test that reloads from disk (the shared tmp dir is
     // stomped by parallel tests).
     fn own_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir

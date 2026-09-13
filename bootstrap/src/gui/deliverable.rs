@@ -114,8 +114,8 @@ fn safe_under(root_dir: &Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     let abs = root_dir.join(rel);
-    let root = root_dir.canonicalize().ok()?;
-    let canon = abs.canonicalize().ok()?;
+    let root = root_dir.vcanonicalize().ok()?;
+    let canon = abs.vcanonicalize().ok()?;
     if !canon.starts_with(&root) {
         return None;
     }
@@ -257,7 +257,7 @@ mod tests {
 
     fn temp_deliv(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-gui-deliv-{}-{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-gui-deliv-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("product/src")).unwrap();
         crate::vfs::write(dir.join("product/src/lib.rs"), "fn main() {}\n").unwrap();

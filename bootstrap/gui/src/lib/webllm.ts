@@ -10,6 +10,7 @@ import type { ModelHost } from './wasm-client'
 // A small instruct model with tool calling, so a first visit downloads ~2GB rather
 // than ~5GB. The weights cache in the browser, so a second visit is instant.
 export const DEFAULT_MODEL = 'Hermes-3-Llama-3.2-3B-q4f16_1-MLC'
+export const CONTEXT_WINDOW = 16384
 
 export interface LoadProgress {
   text: string
@@ -24,9 +25,14 @@ export async function loadModel(
   model: string,
   onProgress: (p: LoadProgress) => void,
 ): Promise<ModelHost> {
-  const engine = await webllm.CreateMLCEngine(model, {
-    initProgressCallback: (r) => onProgress({ text: r.text, progress: r.progress }),
-  })
+  // A session prompt is several thousand tokens before the model says a word, and
+  // the engine's default window is 4k. The model itself takes far more; the KV cache
+  // is what the window costs, and 16k fits beside the weights on a laptop GPU.
+  const engine = await webllm.CreateMLCEngine(
+    model,
+    { initProgressCallback: (r) => onProgress({ text: r.text, progress: r.progress }) },
+    { context_window_size: CONTEXT_WINDOW },
+  )
 
   return {
     name: () => model,

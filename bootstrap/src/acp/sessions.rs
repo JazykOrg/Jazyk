@@ -195,7 +195,7 @@ mod tests {
     // Mirrors docs/frontends/acp.md#session-store.
     #[test]
     fn a_conversation_is_written_read_and_listed() {
-        let out = std::env::temp_dir().join(format!("jazyk-sess-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-sess-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let cwd = std::path::Path::new("/tmp/project");
 
@@ -245,7 +245,7 @@ mod tests {
     // Pruning keeps the conversations a person is most likely to want.
     #[test]
     fn pruning_keeps_the_newest() {
-        let out = std::env::temp_dir().join(format!("jazyk-sess-prune-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-sess-prune-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let cwd = std::path::Path::new("/tmp/project");
         for (i, at) in [("a", "100"), ("b", "200"), ("c", "300")] {

@@ -601,7 +601,7 @@ mod tests {
     // with the list rather than written anywhere.
     #[test]
     fn config_set_edits_known_keys_only() {
-        let dir = std::env::temp_dir().join(format!("jazyk-cmd-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-cmd-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         crate::vfs::write(

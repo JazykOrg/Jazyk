@@ -4,24 +4,33 @@
 // blocks on Atomics.wait until the page answers.
 // See docs/frontends/wasm.md#the-worker.
 
-import init, {
-  boot,
-  drain_trace,
-  list_files,
-  request,
-  seed_file,
-  set_model,
-} from './jazyk.js'
+import init, { boot, enable_fs_sink, list_files, request, seed_file, set_model } from './jazyk.js'
 import { installBridge } from './bridge.js'
 
 const ROOT = '/project'
 const encoder = new TextEncoder()
 
+// A worker's console does not reach the page, and a panic in the wasm module writes
+// its message there before it throws. Forward it, or every panic reads as
+// "unreachable" with nothing behind it.
+const realError = console.error.bind(console)
+console.error = (...args: unknown[]) => {
+  realError(...args)
+  self.postMessage({ kind: 'log', level: 'error', text: args.map(String).join(' ') })
+}
+
 type Req =
   | { id: number; kind: 'install'; control: SharedArrayBuffer; reply: SharedArrayBuffer }
-  | { id: number; kind: 'seed'; files: Record<string, string>; model: string }
+  // Files arrive as text (the bundled demo) or as bytes (a folder read off disk).
+  // `mirror` turns on the write-through to the page for the folder case.
+  | {
+      id: number
+      kind: 'seed'
+      files: Record<string, string | Uint8Array>
+      model: string
+      mirror?: boolean
+    }
   | { id: number; kind: 'request'; method: string; path: string; body?: unknown }
-  | { id: number; kind: 'trace' }
   | { id: number; kind: 'files' }
 
 let ready: Promise<void> | null = null
@@ -29,6 +38,9 @@ let ready: Promise<void> | null = null
 function post(id: number, ok: unknown, error?: string) {
   self.postMessage({ kind: 'reply', id, ok, error })
 }
+
+// Trace events reach the page through self.postMessage from inside the build, so
+// they are already flowing by the time a request answers. Nothing to do here.
 
 self.onmessage = async (e: MessageEvent<Req>) => {
   const msg = e.data
@@ -44,10 +56,12 @@ self.onmessage = async (e: MessageEvent<Req>) => {
 
     switch (msg.kind) {
       case 'seed': {
-        for (const [rel, text] of Object.entries(msg.files)) {
-          seed_file(`${ROOT}/${rel}`, encoder.encode(text))
+        for (const [rel, content] of Object.entries(msg.files)) {
+          const bytes = typeof content === 'string' ? encoder.encode(content) : content
+          seed_file(`${ROOT}/${rel}`, bytes)
         }
         set_model(msg.model)
+        if (msg.mirror) enable_fs_sink()
         post(msg.id, JSON.parse(boot(ROOT)))
         break
       }
@@ -58,9 +72,6 @@ self.onmessage = async (e: MessageEvent<Req>) => {
         post(msg.id, JSON.parse(out))
         break
       }
-      case 'trace':
-        post(msg.id, JSON.parse(drain_trace()))
-        break
       case 'files':
         post(msg.id, JSON.parse(list_files()))
         break

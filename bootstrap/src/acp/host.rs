@@ -824,7 +824,7 @@ mod tests {
             return;
         }
         let (url, _listener) = fake_endpoint("hello from the fake endpoint");
-        let dir = std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
 
         let agent = ResolvedAgent {

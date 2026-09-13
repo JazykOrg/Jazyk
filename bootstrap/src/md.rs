@@ -490,7 +490,7 @@ mod tests {
         assert!(supported_format(Path::new("docs/A.MARKDOWN")));
         assert!(!supported_format(Path::new("docs/a.txt")));
         assert!(!supported_format(Path::new("docs/README")));
-        let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", crate::sys::process_id()));
         crate::vfs::create_dir_all(&dir).unwrap();
         let good = dir.join("good.md");
         crate::vfs::write(&good, "# T\nbody\n").unwrap();

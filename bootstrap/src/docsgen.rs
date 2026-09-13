@@ -2030,7 +2030,7 @@ mod tests {
     fn quoted_links_relink_and_section_anchors_take_the_heading() {
         let mut s = Store::default();
         let out = std::env::temp_dir()
-            .join(format!("jazyk-docsgen-links-{}", std::process::id()))
+            .join(format!("jazyk-docsgen-links-{}", crate::sys::process_id()))
             .join("jazyk-out");
         crate::vfs::create_dir_all(&out).unwrap();
         s.out = out.clone();
@@ -2096,7 +2096,7 @@ mod tests {
 
     #[test]
     fn renders_and_prunes() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),
@@ -2172,7 +2172,7 @@ mod tests {
     #[test]
     fn showcase_page_embeds_images_and_cross_links() {
         let out =
-            std::env::temp_dir().join(format!("jazyk-docsgen-showcase-{}", std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-docsgen-showcase-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2266,7 +2266,7 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#level-pages.
     #[test]
     fn level_pages_nest_as_the_containment_tree() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2397,7 +2397,7 @@ mod tests {
     // docs/consumers/docsgen.md#diagram-pages.
     #[test]
     fn cards_and_diagram_pages_walk_the_graph() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
@@ -2593,7 +2593,7 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#ratification-proposals.
     #[test]
     fn ratification_proposal_renders_as_a_prompt() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", std::process::id()));
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),

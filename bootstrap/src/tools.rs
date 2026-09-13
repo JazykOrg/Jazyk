@@ -3145,7 +3145,7 @@ impl ToolSession {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| root.clone());
         }
-        let mut resolved = probe.canonicalize().unwrap_or(probe);
+        let mut resolved = probe.vcanonicalize().unwrap_or(probe);
         if !resolved.starts_with(&root) {
             return Err(ToolError::new(
                 "bad-path",
@@ -3166,7 +3166,7 @@ impl ToolSession {
     fn deliverable_root(&self) -> std::path::PathBuf {
         self.gen
             .deliverable
-            .canonicalize()
+            .vcanonicalize()
             .unwrap_or_else(|_| self.gen.deliverable.clone())
     }
 
@@ -3248,7 +3248,7 @@ impl ToolSession {
                         }
                         // A link pointing out of the deliverable is not listed:
                         // what cannot be read is not offered.
-                        if p.canonicalize().is_ok_and(|c| !c.starts_with(&base)) {
+                        if p.vcanonicalize().is_ok_and(|c| !c.starts_with(&base)) {
                             continue;
                         }
                         if p.vis_dir() {
@@ -8695,7 +8695,7 @@ mod tests {
 
     #[test]
     fn feedback_logs_with_its_caller_and_stages_nothing() {
-        let dir = std::env::temp_dir().join(format!("jazyk-tool-fb-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("jazyk-tool-fb-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         let mut t = session();
         t.snapshot.out = dir.clone();
@@ -9546,7 +9546,7 @@ mod tests {
     fn mark_goal_done_on_ledger_goals_reads_the_ledger() {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-ledger-gate-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             crate::verify::now_iso().replace([':', '.'], "-")
         ));
         crate::vfs::create_dir_all(&dir).unwrap();
@@ -9601,7 +9601,7 @@ mod tests {
     fn deliverable_paths_resolve_symlinks_before_trusting_them() {
         let base = std::env::temp_dir().join(format!(
             "jazyk-sandbox-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             crate::verify::now_iso().replace([':', '.'], "-")
         ));
         let deliverable = base.join("deliverable");

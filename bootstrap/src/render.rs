@@ -2984,7 +2984,7 @@ mod tests {
 
     fn tmp(label: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, std::process::id()));
+            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, crate::sys::process_id()));
         let _ = crate::vfs::remove_dir_all(&dir);
         crate::vfs::create_dir_all(&dir).unwrap();
         dir

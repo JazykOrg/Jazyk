@@ -4,6 +4,7 @@
 // See docs/frontends/wasm.md#the-worker.
 
 import type { Backend, Reply } from './backend'
+import type { FolderMirror } from './folder'
 
 // The shared control block the worker blocks on: [0] state, [1] reply length.
 const CONTROL_INTS = 2
@@ -17,9 +18,14 @@ export interface ModelHost {
 }
 
 export interface WasmBackendOptions {
-  files: Record<string, string>
+  // The project, one entry per file: text for the bundled demo, bytes for a folder
+  // read off disk.
+  files: Record<string, string | Uint8Array>
   model: ModelHost
+  // Called with each trace event as the build emits it.
   onTrace?: (events: unknown[]) => void
+  // When set, every mutation the backend makes is mirrored into this folder.
+  mirror?: FolderMirror
 }
 
 export function crossOriginIsolated_(): boolean {
@@ -56,6 +62,20 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<Backen
 
   worker.onmessage = (e: MessageEvent) => {
     const msg = e.data
+    if (msg?.kind === 'fs') {
+      if (msg.op === 'write') opts.mirror?.write(msg.path, msg.bytes)
+      else if (msg.op === 'remove') opts.mirror?.remove(msg.path, !!msg.dir)
+      return
+    }
+    if (msg?.kind === 'log') {
+      console.error('[jazyk backend]', msg.text)
+      return
+    }
+    if (msg?.kind === 'trace') {
+      // Emitted from inside a running build, one event at a time.
+      opts.onTrace?.([JSON.parse(msg.event)])
+      return
+    }
     if (msg?.kind === 'llm') {
       // The worker is blocked until this answers, so every path must answer.
       opts.model
@@ -84,29 +104,13 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<Backen
   if (control && replyBuf) {
     await send({ kind: 'install', control, reply: replyBuf })
   }
-  await send({ kind: 'seed', files: opts.files, model: opts.model.name() })
-
-  // A build runs synchronously inside the worker, so the trace only arrives after it
-  // returns unless the page drains it while the worker is between calls. The poll is
-  // cheap and stops when nothing is running.
-  let draining: number | null = null
-  const startDraining = () => {
-    if (draining !== null || !opts.onTrace) return
-    draining = window.setInterval(async () => {
-      const events = await send<unknown[]>({ kind: 'trace' })
-      if (events.length) opts.onTrace?.(events)
-    }, 400)
-  }
-  startDraining()
+  await send({ kind: 'seed', files: opts.files, model: opts.model.name(), mirror: !!opts.mirror })
 
   return {
     kind: 'wasm',
     async request(method, path, body): Promise<Reply> {
       const out = await send<Reply>({ kind: 'request', method, path, body })
       return out
-    },
-    async drainTrace() {
-      return send<unknown[]>({ kind: 'trace' })
     },
   }
 }

@@ -8,10 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::sys::now_unix()
 }
 
 // A worker file older than this (seconds since its heartbeat) is stale and swept.
@@ -159,12 +156,12 @@ pub struct WorkerHandle {
 }
 
 pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
-    let id = format!("{}-{}", std::process::id(), now() % 100_000);
+    let id = format!("{}-{}", crate::sys::process_id(), now() % 100_000);
     let worker = Worker {
         id,
         kind: kind.to_string(),
         client: client.to_string(),
-        pid: std::process::id(),
+        pid: crate::sys::process_id(),
         started_at: now(),
         heartbeat_at: now(),
         task: String::new(),
@@ -320,16 +317,8 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
         goals: goals.to_vec(),
     };
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut f) => {
-            use std::io::Write;
-            f.write_all(text.as_bytes()).ok();
-            Ok(())
-        }
+    match crate::vfs::create_new(&path, &text) {
+        Ok(()) => Ok(()),
         // Lost the race to another claimant between the check and the create.
         Err(_) => Err(read_lease(&path)
             .map(|l| l.worker)
@@ -400,12 +389,18 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
     claim(
         out,
         BUILD_LEASE,
-        &format!("internal-{}", std::process::id()),
+        &format!("internal-{}", crate::sys::process_id()),
     )
     .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (out2, stop2) = (out.to_path_buf(), stop.clone());
+    // The heartbeat keeps a long build's lease fresh so a watchdog does not reclaim
+    // it. A browser tab runs one backend on one thread, with nothing to reclaim it
+    // and no thread to spare (docs/frontends/wasm.md#the-seams).
+    #[cfg(target_arch = "wasm32")]
+    let _ = (&out2, &stop2);
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(move || {
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(30));
@@ -443,7 +438,7 @@ mod tests {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
             "jazyk-control-test-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         crate::vfs::create_dir_all(&d).unwrap();

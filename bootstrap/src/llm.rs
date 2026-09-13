@@ -101,7 +101,7 @@ fn semaphore() -> &'static Semaphore {
 }
 // Minimum gap between request starts, so tight failure loops cannot hammer an endpoint.
 // Tunable with JAZYK_MIN_INTERVAL_MS; default 500.
-static LAST_REQUEST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static LAST_REQUEST: Mutex<Option<crate::sys::Instant>> = Mutex::new(None);
 fn pace() {
     let min_ms = std::env::var("JAZYK_MIN_INTERVAL_MS")
         .ok()
@@ -112,7 +112,7 @@ fn pace() {
     }
     let wait = {
         let mut last = LAST_REQUEST.lock().unwrap();
-        let now = std::time::Instant::now();
+        let now = crate::sys::Instant::now();
         let wait = match *last {
             Some(t) => Duration::from_millis(min_ms).saturating_sub(now.duration_since(t)),
             None => Duration::ZERO,
@@ -121,7 +121,7 @@ fn pace() {
         wait
     };
     if !wait.is_zero() {
-        std::thread::sleep(wait);
+        crate::sys::sleep(wait);
     }
 }
 
@@ -338,7 +338,7 @@ impl Llm {
     ) -> Result<(Value, u64), String> {
         let max = max_retries();
         let mut last = String::new();
-        let started = std::time::Instant::now();
+        let started = crate::sys::Instant::now();
         if verbose() {
             eprintln!("[jazyk] → {} {}", label, step);
         }
@@ -474,7 +474,7 @@ impl Llm {
                                 truncate(&last, 120)
                             ),
                         }
-                        std::thread::sleep(Duration::from_secs(wait));
+                        crate::sys::sleep(Duration::from_secs(wait));
                     } else {
                         break;
                     }
@@ -645,12 +645,12 @@ impl Llm {
         // The same wall clock the stream path enforces: per-read timeouts bound the
         // gap between bytes, this bounds the whole body, so no call outlives
         // JAZYK_CALL_TIMEOUT by more than one read.
-        let deadline = std::time::Instant::now() + call_timeout();
+        let deadline = crate::sys::Instant::now() + call_timeout();
         let mut reader = resp.into_reader().take(64 * 1024 * 1024);
         let mut bytes: Vec<u8> = Vec::new();
         let mut buf = [0u8; 65536];
         loop {
-            if std::time::Instant::now() > deadline {
+            if crate::sys::Instant::now() > deadline {
                 return Err(format!(
                     "call timeout: no complete response within {}s (JAZYK_CALL_TIMEOUT)",
                     call_timeout().as_secs()
@@ -707,7 +707,7 @@ fn read_stream_message<R: BufRead>(
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
     let mut finish_reason: Option<String> = None;
-    let started = std::time::Instant::now();
+    let started = crate::sys::Instant::now();
     // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
     // still bounding a server that ignores `max_tokens`.
     let cap_chars = (cap_tokens as usize).saturating_mul(6);

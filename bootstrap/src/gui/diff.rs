@@ -162,7 +162,7 @@ fn replay_to(
             }
         }
         let f = out.join("journal").join(format!("g{}.yaml", g));
-        let Ok(text) = std::fs::read_to_string(&f) else {
+        let Ok(text) = crate::vfs::read_to_string(&f) else {
             continue;
         };
         let Ok(entry) = serde_norway::from_str::<Value>(&text) else {

@@ -54,7 +54,7 @@ impl Control {
 
     // Load the live control state; absent fields fall back to the project defaults.
     pub fn load(proj: &Project, out: &Path) -> Control {
-        let mut c: Control = std::fs::read_to_string(Self::path(out))
+        let mut c: Control = crate::vfs::read_to_string(Self::path(out))
             .ok()
             .and_then(|t| serde_norway::from_str(&t).ok())
             .unwrap_or_default();
@@ -71,11 +71,11 @@ impl Control {
     }
 
     pub fn save(&self, out: &Path) {
-        std::fs::create_dir_all(out).ok();
+        crate::vfs::create_dir_all(out).ok();
         if let Ok(text) = serde_norway::to_string(self) {
             let tmp = Self::path(out).with_extension("yaml.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                std::fs::rename(&tmp, Self::path(out)).ok();
+            if crate::vfs::write(&tmp, text).is_ok() {
+                crate::vfs::rename(&tmp, Self::path(out)).ok();
             }
         }
     }
@@ -123,7 +123,7 @@ pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
                 .strip_prefix(&proj.root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            std::fs::read_to_string(f)
+            crate::vfs::read_to_string(f)
                 .ok()
                 .map(|t| (rel, crate::model::hash_hex(&t)))
         })
@@ -179,9 +179,9 @@ pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
 
 impl WorkerHandle {
     fn write(&self) {
-        std::fs::create_dir_all(workers_dir(&self.out)).ok();
+        crate::vfs::create_dir_all(workers_dir(&self.out)).ok();
         if let Ok(text) = serde_norway::to_string(&self.worker) {
-            std::fs::write(
+            crate::vfs::write(
                 workers_dir(&self.out).join(format!("{}.yaml", self.worker.id)),
                 text,
             )
@@ -210,7 +210,7 @@ impl WorkerHandle {
 
 impl Drop for WorkerHandle {
     fn drop(&mut self) {
-        std::fs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id))).ok();
+        crate::vfs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id))).ok();
     }
 }
 
@@ -218,19 +218,19 @@ impl Drop for WorkerHandle {
 // side effect: dead sessions disappear instead of haunting the panel.
 pub fn workers(out: &Path) -> Vec<Worker> {
     let mut v = Vec::new();
-    let Ok(entries) = std::fs::read_dir(workers_dir(out)) else {
+    let Ok(entries) = crate::vfs::read_dir(workers_dir(out)) else {
         return v;
     };
     for e in entries.flatten() {
-        let Ok(text) = std::fs::read_to_string(e.path()) else {
+        let Ok(text) = crate::vfs::read_to_string(e.path()) else {
             continue;
         };
         let Ok(w) = serde_norway::from_str::<Worker>(&text) else {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         };
         if now().saturating_sub(w.heartbeat_at) > WORKER_STALE_SECS {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         }
         v.push(w);
@@ -302,7 +302,7 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
 // Claim a goal batch: the lease names the goals it holds, so the board shows
 // claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
-    std::fs::create_dir_all(leases_dir(out)).ok();
+    crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
     if let Some(l) = read_lease(&path) {
         // Re-entrant for the same worker: a retry after its own failed attempt
@@ -310,7 +310,7 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
         if l.expires_at > now() && l.worker != worker {
             return Err(l.worker);
         }
-        std::fs::remove_file(&path).ok();
+        crate::vfs::remove_file(&path).ok();
     }
     let lease = Lease {
         task: task.to_string(),
@@ -342,32 +342,32 @@ pub fn refresh_lease(out: &Path, task: &str) {
     if let Some(mut l) = read_lease(&path) {
         l.expires_at = now() + LEASE_TTL_SECS;
         if let Ok(text) = serde_norway::to_string(&l) {
-            std::fs::write(&path, text).ok();
+            crate::vfs::write(&path, text).ok();
         }
     }
 }
 
 pub fn release_lease(out: &Path, task: &str) {
-    std::fs::remove_file(lease_file(out, task)).ok();
+    crate::vfs::remove_file(lease_file(out, task)).ok();
 }
 
 fn read_lease(path: &Path) -> Option<Lease> {
-    serde_norway::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    serde_norway::from_str(&crate::vfs::read_to_string(path).ok()?).ok()
 }
 
 // The live leases by task. Expired files are swept.
 pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
     let mut m = BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(leases_dir(out)) else {
+    let Ok(entries) = crate::vfs::read_dir(leases_dir(out)) else {
         return m;
     };
     for e in entries.flatten() {
         let Some(l) = read_lease(&e.path()) else {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         };
         if l.expires_at <= now() {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         }
         m.insert(l.task.clone(), l);
@@ -446,7 +446,7 @@ mod tests {
             std::process::id(),
             N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&d).unwrap();
+        crate::vfs::create_dir_all(&d).unwrap();
         d
     }
 
@@ -461,7 +461,7 @@ mod tests {
             task_leases(&out).get("docs/a.md").map(|l| l.worker.clone()),
             Some("w2".into())
         );
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The lease file name is injective: a goal id with `:` and `/` round-trips, and
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(all["b3-1"].goals, vec![id.to_string()]);
         release_lease(&out, "b3-1");
         assert!(leases(&out).is_empty());
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
@@ -499,7 +499,7 @@ mod tests {
             assert_eq!(ws[0].task, "docs/a.md");
         }
         assert!(workers(&out).is_empty());
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
@@ -514,6 +514,6 @@ mod tests {
         let c = Control::load(&proj, &out);
         assert_eq!(c.released.generate, 0);
         assert_eq!(c.compile, "manual");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }

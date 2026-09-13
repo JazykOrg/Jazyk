@@ -81,7 +81,7 @@ pub fn append(out: &Path, entry: &Entry) {
     if out.as_os_str().is_empty() {
         return;
     }
-    std::fs::create_dir_all(out).ok();
+    crate::vfs::create_dir_all(out).ok();
     let Ok(line) = serde_json::to_string(entry) else {
         return;
     };
@@ -98,7 +98,7 @@ pub fn append(out: &Path, entry: &Entry) {
 // The log newest first, capped. Malformed lines are skipped, not fatal: the file is
 // appended by concurrent processes.
 pub fn read(out: &Path, limit: usize) -> Vec<Value> {
-    let Ok(text) = std::fs::read_to_string(path(out)) else {
+    let Ok(text) = crate::vfs::read_to_string(path(out)) else {
         return Vec::new();
     };
     let mut entries: Vec<Value> = text
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn appended_lines_read_back_newest_first() {
         let dir = std::env::temp_dir().join(format!("jazyk-fb-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
         for (i, msg) in ["first", "second"].iter().enumerate() {
             append(
                 &dir,
@@ -149,6 +149,6 @@ mod tests {
         assert_eq!(got[0]["message"], "second");
         assert_eq!(got[0]["run"], "r1");
         assert!(got[0].get("client").is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

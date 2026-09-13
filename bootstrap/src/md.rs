@@ -85,7 +85,7 @@ pub fn supported_format(path: &std::path::Path) -> bool {
 // Read a document for its handler: the text, or why it cannot be read (unreadable, or
 // not valid UTF-8), the message a `parse-error` diagnostic carries.
 pub fn read_doc(path: &std::path::Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
+    let bytes = crate::vfs::read(path).map_err(|e| format!("cannot read the file: {}", e))?;
     String::from_utf8(bytes).map_err(|e| format!("not valid UTF-8: {}", e.utf8_error()))
 }
 
@@ -491,17 +491,17 @@ mod tests {
         assert!(!supported_format(Path::new("docs/a.txt")));
         assert!(!supported_format(Path::new("docs/README")));
         let dir = std::env::temp_dir().join(format!("jazyk-read-doc-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::vfs::create_dir_all(&dir).unwrap();
         let good = dir.join("good.md");
-        std::fs::write(&good, "# T\nbody\n").unwrap();
+        crate::vfs::write(&good, "# T\nbody\n").unwrap();
         assert_eq!(read_doc(&good).unwrap(), "# T\nbody\n");
         let bad = dir.join("bad.md");
-        std::fs::write(&bad, b"# T\n\xff\xfe not utf-8\n").unwrap();
+        crate::vfs::write(&bad, b"# T\n\xff\xfe not utf-8\n").unwrap();
         let err = read_doc(&bad).unwrap_err();
         assert!(err.contains("not valid UTF-8"), "{}", err);
         let missing = dir.join("missing.md");
         assert!(read_doc(&missing).unwrap_err().contains("cannot read"));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]

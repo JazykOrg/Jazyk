@@ -291,7 +291,7 @@ pub(crate) fn edit_fact_core(
             }
         }
         let path = proj.root.join(&doc);
-        let old_full = std::fs::read_to_string(&path)
+        let old_full = crate::vfs::read_to_string(&path)
             .map_err(|e| bad(format!("cannot read {}: {}", doc, e)))?;
         let section_raw = Store::load(out)
             .docs
@@ -377,9 +377,9 @@ mod tests {
     fn fixture(name: &str) -> (Project, std::path::PathBuf) {
         let root =
             std::env::temp_dir().join(format!("jazyk-gui-facts-{}-{}", name, std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&root).ok();
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        crate::vfs::write(
             root.join("docs/shop.md"),
             "# Shop\n\nThe shop stores orders. The shop is small.\n",
         )
@@ -459,7 +459,7 @@ mod tests {
         .expect("phase 2 succeeds");
         assert_eq!(v2["path"], json!("dual-write"));
         assert_eq!(v2["committed"], json!(true));
-        let text = std::fs::read_to_string(proj.root.join("docs/shop.md")).unwrap();
+        let text = crate::vfs::read_to_string(proj.root.join("docs/shop.md")).unwrap();
         assert!(
             text.contains("The shop stores every order."),
             "the prose moved"
@@ -474,7 +474,7 @@ mod tests {
         // The commit absorbed the new hash: the document is not dirty against the graph.
         let rec = store.docs.get("docs/shop.md").unwrap();
         assert_eq!(rec.content_hash, crate::model::hash_hex(&text));
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 
     // A stale proposal (the document changed since) is refused with a conflict.
@@ -489,7 +489,7 @@ mod tests {
         )
         .unwrap();
         // The document changes under the proposal.
-        std::fs::write(
+        crate::vfs::write(
             proj.root.join("docs/shop.md"),
             "# Shop\n\nThe shop keeps orders now. The shop is small.\n",
         )
@@ -505,7 +505,7 @@ mod tests {
         )
         .expect_err("a moved document conflicts");
         assert_eq!(err.0, 409);
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 
     // decree: true lands graph-only with decree provenance and queues the
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn a_decree_lands_graph_only_and_queues_ratification() {
         let (proj, out) = fixture("decree");
-        let doc_before = std::fs::read_to_string(proj.root.join("docs/shop.md")).unwrap();
+        let doc_before = crate::vfs::read_to_string(proj.root.join("docs/shop.md")).unwrap();
         let v = edit_fact_core(
             &proj,
             &out,
@@ -531,11 +531,11 @@ mod tests {
             Some(crate::model::Provenance::Decree { .. })
         ));
         assert_eq!(
-            std::fs::read_to_string(proj.root.join("docs/shop.md")).unwrap(),
+            crate::vfs::read_to_string(proj.root.join("docs/shop.md")).unwrap(),
             doc_before,
             "the prose never moved"
         );
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 
     // limits.<limit> stages a bump on the node, a decree in the journal.
@@ -565,6 +565,6 @@ mod tests {
         )
         .expect_err("unknown limit");
         assert_eq!(err.0, 400);
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 }

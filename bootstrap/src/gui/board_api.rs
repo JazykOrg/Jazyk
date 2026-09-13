@@ -256,9 +256,9 @@ mod tests {
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
         let root =
             std::env::temp_dir().join(format!("jazyk-gui-board-{}-{}", name, std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&root).ok();
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        crate::vfs::write(
             root.join("docs/a.md"),
             "# Shop\n\nThe shop stores orders. An order holds items.\n",
         )
@@ -293,7 +293,7 @@ mod tests {
         assert!(v["verdict"].is_string());
         assert!(v["summary"].as_str().unwrap().starts_with("compile:"));
         assert!(v["batches"].is_array());
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 
     // In compile: manual, before any release, the goals a document opens are gated
@@ -311,7 +311,7 @@ mod tests {
         assert!(v["batch"]["id"].as_str().unwrap_or_default().starts_with('b'));
         assert!(v["prompt"].as_str().expect("a prompt").contains("## Goals"));
         assert!(v["note"].as_str().unwrap().contains("awaiting release"));
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 
     // A preview names the batch, assembles the prompt, and lists the toolset,
@@ -339,6 +339,6 @@ mod tests {
             .collect();
         assert!(toolset.contains(&"done"));
         assert!(toolset.contains(&"load"));
-        std::fs::remove_dir_all(&proj.root).ok();
+        crate::vfs::remove_dir_all(&proj.root).ok();
     }
 }

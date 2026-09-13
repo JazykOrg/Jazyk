@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The deliverable browser: the generated product listed with the graph nodes the
 // ledger binds to each file, and the ledger's anchored sites resolved against the
 // current file text. Read-only. Mirrors docs/frontends/gui.md#api (deliverable).
@@ -13,7 +14,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(rd) = crate::vfs::read_dir(dir) else {
         return;
     };
     for e in rd.flatten() {
@@ -28,7 +29,7 @@ fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
         {
             continue;
         }
-        if p.is_dir() {
+        if p.vis_dir() {
             walk(&p, base, out);
         } else if let Ok(rel) = p.strip_prefix(base) {
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
@@ -186,7 +187,7 @@ pub async fn baseline(State(st): State<SharedState>, Query(p): Query<FileQ>) -> 
         let Some(abs) = safe_under(&root, &path) else {
             return Err((StatusCode::NOT_FOUND, format!("no baseline for {}", path)));
         };
-        let bytes = std::fs::read(&abs)
+        let bytes = crate::vfs::read(&abs)
             .map_err(|_| (StatusCode::NOT_FOUND, format!("no baseline for {}", path)))?;
         match String::from_utf8(bytes) {
             Ok(text) => Ok(json!({ "path": path, "text": text })),
@@ -208,7 +209,7 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
         let Some(abs) = safe_path(&gs, &path) else {
             // A path that leaves the deliverable (lexically, or through a symlink
             // that exists) is 400; one that validates but names nothing is 404.
-            if !lexical_ok(&path) || gs.deliverable.join(&path).exists() {
+            if !lexical_ok(&path) || gs.deliverable.join(&path).vexists() {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     format!("invalid deliverable path {}", path),
@@ -216,10 +217,10 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Resp
             }
             return Err((StatusCode::NOT_FOUND, format!("no file {}", path)));
         };
-        if abs.is_dir() {
+        if abs.vis_dir() {
             return Err((StatusCode::NOT_FOUND, format!("{} is a directory", path)));
         }
-        let bytes = std::fs::read(&abs).map_err(|e| {
+        let bytes = crate::vfs::read(&abs).map_err(|e| {
             (
                 StatusCode::NOT_FOUND,
                 format!("cannot read {}: {}", path, e),
@@ -257,11 +258,11 @@ mod tests {
     fn temp_deliv(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("jazyk-gui-deliv-{}-{}", name, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("product/src")).unwrap();
-        std::fs::write(dir.join("product/src/lib.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(dir.join("product/.env"), "SECRET=1\n").unwrap();
-        std::fs::write(dir.join("outside.txt"), "outside\n").unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("product/src")).unwrap();
+        crate::vfs::write(dir.join("product/src/lib.rs"), "fn main() {}\n").unwrap();
+        crate::vfs::write(dir.join("product/.env"), "SECRET=1\n").unwrap();
+        crate::vfs::write(dir.join("outside.txt"), "outside\n").unwrap();
         dir
     }
 
@@ -282,8 +283,8 @@ mod tests {
         // Missing but well formed: lexically fine, resolves to nothing.
         assert!(lexical_ok("src/missing.rs"));
         assert!(safe_under(&root, "src/missing.rs").is_none());
-        assert!(!root.join("src/missing.rs").exists());
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(!root.join("src/missing.rs").vexists());
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The listing skips hidden entries and the compiler's own output directories.
@@ -291,10 +292,10 @@ mod tests {
     fn listing_skips_hidden_and_output_directories() {
         let dir = temp_deliv("list");
         let root = dir.join("product");
-        std::fs::create_dir_all(root.join("jazyk-out/graph")).unwrap();
-        std::fs::write(root.join("jazyk-out/graph/entities.yaml"), "x").unwrap();
-        std::fs::create_dir_all(root.join("target")).unwrap();
-        std::fs::write(root.join("target/bin"), "x").unwrap();
+        crate::vfs::create_dir_all(root.join("jazyk-out/graph")).unwrap();
+        crate::vfs::write(root.join("jazyk-out/graph/entities.yaml"), "x").unwrap();
+        crate::vfs::create_dir_all(root.join("target")).unwrap();
+        crate::vfs::write(root.join("target/bin"), "x").unwrap();
         let mut files = Vec::new();
         walk(&root, &root, &mut files);
         files.sort();
@@ -302,6 +303,6 @@ mod tests {
             files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
             vec!["src/lib.rs"]
         );
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

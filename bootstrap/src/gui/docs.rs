@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Document read/write for the GUI: path validation and the conditional write.
 // The write path is the security-sensitive surface; every rule here has a test.
 use super::api::err;
@@ -57,7 +58,7 @@ pub fn safe_doc_path(proj: &Project, rel: &str) -> Option<PathBuf> {
     // Symlink guard: the deepest existing ancestor must canonicalize inside the root.
     let root = proj.root.canonicalize().ok()?;
     let mut anc: &Path = abs.parent()?;
-    while !anc.exists() {
+    while !anc.vexists() {
         anc = anc.parent()?;
     }
     let canon = anc.canonicalize().ok()?;
@@ -92,7 +93,7 @@ pub async fn doc_write(
             format!("invalid document path {}", p.path),
         );
     };
-    let on_disk = std::fs::read_to_string(&abs)
+    let on_disk = crate::vfs::read_to_string(&abs)
         .ok()
         .map(|t| crate::model::hash_hex(&t));
     if on_disk != body.base_hash {
@@ -106,14 +107,14 @@ pub async fn doc_write(
             .into_response();
     }
     if let Some(parent) = abs.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Err(e) = crate::vfs::create_dir_all(parent) {
             return err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("cannot create {}: {}", parent.display(), e),
             );
         }
     }
-    if let Err(e) = std::fs::write(&abs, &body.text) {
+    if let Err(e) = crate::vfs::write(&abs, &body.text) {
         return err(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("cannot write {}: {}", p.path, e),
@@ -143,21 +144,21 @@ pub async fn doc_rename(State(st): State<SharedState>, Json(body): Json<DocRenam
             format!("invalid document path {}", body.to),
         );
     };
-    if !from.exists() {
+    if !from.vexists() {
         return err(StatusCode::NOT_FOUND, format!("no document {}", body.from));
     }
-    if to.exists() {
+    if to.vexists() {
         return err(StatusCode::CONFLICT, format!("{} already exists", body.to));
     }
     if let Some(parent) = to.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Err(e) = crate::vfs::create_dir_all(parent) {
             return err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("cannot create {}: {}", parent.display(), e),
             );
         }
     }
-    if let Err(e) = std::fs::rename(&from, &to) {
+    if let Err(e) = crate::vfs::rename(&from, &to) {
         return err(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("cannot rename: {}", e),
@@ -175,10 +176,10 @@ pub async fn doc_delete(State(st): State<SharedState>, Query(p): Query<DocPathQ>
             format!("invalid document path {}", p.path),
         );
     };
-    if !abs.exists() {
+    if !abs.vexists() {
         return err(StatusCode::NOT_FOUND, format!("no document {}", p.path));
     }
-    if let Err(e) = std::fs::remove_file(&abs) {
+    if let Err(e) = crate::vfs::remove_file(&abs) {
         return err(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("cannot delete {}: {}", p.path, e),
@@ -202,9 +203,9 @@ mod tests {
     #[test]
     fn doc_path_safety_matrix() {
         let dir = std::env::temp_dir().join(format!("jazyk-gui-docs-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(dir.join("docs/a.md"), "# A\n").unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
         let p = proj(&dir);
 
         assert!(safe_doc_path(&p, "docs/a.md").is_some());
@@ -225,7 +226,7 @@ mod tests {
         assert!(safe_doc_path(&p, "").is_none());
         assert!(safe_doc_path(&p, "docs\\a.md").is_none());
 
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[cfg(unix)]
@@ -235,14 +236,14 @@ mod tests {
             std::env::temp_dir().join(format!("jazyk-gui-symlink-test-{}", std::process::id()));
         let outside =
             std::env::temp_dir().join(format!("jazyk-gui-outside-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::remove_dir_all(&outside).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&outside).ok();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        crate::vfs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, dir.join("linked")).unwrap();
         let p = proj(&dir);
         assert!(safe_doc_path(&p, "linked/escape.md").is_none());
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::remove_dir_all(&outside).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&outside).ok();
     }
 }

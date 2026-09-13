@@ -145,7 +145,7 @@ pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>
         }
         let text = crate::project::settings_render(&root, &body["settings"])
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-        std::fs::write(root.join("jazyk.toml"), &text)
+        crate::vfs::write(root.join("jazyk.toml"), &text)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("cannot write jazyk.toml: {}", e)))?;
         Ok(crate::project::settings_read(&root))
     })
@@ -572,7 +572,7 @@ pub async fn journal(State(st): State<SharedState>, Query(p): Query<JournalQ>) -
         let mut g = to;
         while g >= from && (entries.len() as u64) < limit {
             let f = out.join("journal").join(format!("g{}.yaml", g));
-            if let Ok(text) = std::fs::read_to_string(&f) {
+            if let Ok(text) = crate::vfs::read_to_string(&f) {
                 if let Ok(mut v) = serde_norway::from_str::<Value>(&text) {
                     v["generation"] = json!(g);
                     entries.push(v);
@@ -658,7 +658,7 @@ pub async fn docs(State(st): State<SharedState>) -> Json<Value> {
             let mut list: Vec<Value> = Vec::new();
             for f in proj.doc_files() {
                 let rel = rel_doc(&proj.root, &f);
-                let text = std::fs::read_to_string(&f).unwrap_or_default();
+                let text = crate::vfs::read_to_string(&f).unwrap_or_default();
                 let hash = crate::model::hash_hex(&text);
                 let graph_hash = store.docs.get(&rel).map(|r| r.content_hash.clone());
                 let stale = graph_hash.as_deref() != Some(hash.as_str());
@@ -690,7 +690,7 @@ pub async fn doc_content(State(st): State<SharedState>, Query(p): Query<DocQ>) -
             format!("invalid document path {}", p.path),
         );
     };
-    match std::fs::read_to_string(&abs) {
+    match crate::vfs::read_to_string(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);
             Json(json!({ "path": p.path, "text": text, "hash": hash })).into_response()
@@ -797,7 +797,7 @@ pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<Strin
         .out
         .join("docsgen")
         .join(format!("{}.md", slug.trim_end_matches(".md")));
-    match std::fs::read_to_string(&f) {
+    match crate::vfs::read_to_string(&f) {
         Ok(text) => Json(json!({ "slug": slug, "text": text })).into_response(),
         Err(_) => err(
             StatusCode::NOT_FOUND,

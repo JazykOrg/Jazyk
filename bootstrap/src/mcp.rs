@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The MCP server: the tool registry served over stdio as line-delimited JSON-RPC.
 // `jazyk mcp <toolsets>` names what the serving is for (compile, generate, verify,
 // graph); compilation claims goal batches and holds an open changeset between calls,
@@ -210,7 +211,7 @@ impl McpServer {
     // Whether this serving stands in a project or in a bare directory. Decides which
     // project tools exist. Mirrors docs/frontends/acp.md#project-tools.
     fn initialized(&self) -> bool {
-        self.project.root.join("jazyk.toml").exists()
+        self.project.root.join("jazyk.toml").vexists()
     }
 
     pub fn new(
@@ -1107,7 +1108,7 @@ impl McpServer {
             std::process::id(),
             case.name
         ));
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
         let store = crate::benchmark::sandbox(case, &tmp);
         let gs = crate::gen::GenSettings {
             configured: true,
@@ -1115,7 +1116,7 @@ impl McpServer {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(&gs.deliverable).ok();
+        crate::vfs::create_dir_all(&gs.deliverable).ok();
         let item = WorkItem {
             task: case.task_type.clone(),
             target: case.target.clone(),
@@ -1263,7 +1264,7 @@ impl McpServer {
             passed as f64 / case.checks.len() as f64
         };
         let efficiency = (case.par_rounds as f64 / o.calls.max(1) as f64).min(1.0);
-        std::fs::remove_dir_all(&o.tmp).ok();
+        crate::vfs::remove_dir_all(&o.tmp).ok();
         let entry = json!({
             "name": case.name,
             "tier": case.tier,
@@ -2094,7 +2095,7 @@ impl McpServer {
             }
             // Nothing listening: fall through to the direct write.
         }
-        std::fs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
+        crate::vfs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
     }
 
     // A tool session for one chat call over a synced snapshot (the prose edit already
@@ -2192,7 +2193,7 @@ impl McpServer {
                 p["section"].as_str().unwrap_or_default().to_string(),
             );
             let path = self.project.root.join(&doc);
-            let old_full = match std::fs::read_to_string(&path) {
+            let old_full = match crate::vfs::read_to_string(&path) {
                 Ok(t) => t,
                 Err(e) => {
                     return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
@@ -2315,7 +2316,7 @@ impl McpServer {
             .map(|s| s.raw.clone());
         drop(store);
         let path = self.project.root.join(&doc);
-        let old_full = match std::fs::read_to_string(&path) {
+        let old_full = match crate::vfs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
                 return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
@@ -2359,7 +2360,7 @@ impl McpServer {
             return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; compile first", doc, section)}});
         };
         let path = self.project.root.join(&doc);
-        let old_full = match std::fs::read_to_string(&path) {
+        let old_full = match crate::vfs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
                 return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
@@ -2420,7 +2421,7 @@ impl McpServer {
         let (doc, section, old_quote) = (src.doc.clone(), src.section.clone(), src.quote.clone());
         drop(store);
         let path = self.project.root.join(&doc);
-        let old_full = match std::fs::read_to_string(&path) {
+        let old_full = match crate::vfs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
                 return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
@@ -2459,10 +2460,10 @@ impl McpServer {
 
     fn init_project(&self) -> Value {
         let root = &self.project.root;
-        if root.join("jazyk.toml").exists() {
+        if root.join("jazyk.toml").vexists() {
             return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
         }
-        if let Err(e) = std::fs::write(root.join("jazyk.toml"), crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write(root.join("jazyk.toml"), crate::cli::INIT_TOML) {
             return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
         }
         let made = match crate::cli::init_scaffold(root) {
@@ -2492,7 +2493,7 @@ impl McpServer {
                 "no jazyk.toml here to edit; call init_project first"}});
         }
         let path = self.project.root.join("jazyk.toml");
-        let old_full = std::fs::read_to_string(&path).unwrap_or_default();
+        let old_full = crate::vfs::read_to_string(&path).unwrap_or_default();
         let mut full = old_full.clone();
         for (key, value) in settings {
             if !KEYS.contains(&key.as_str()) {
@@ -2627,9 +2628,9 @@ mod tests {
 
     fn bare_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-mcp-{}-{}", tag, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
@@ -2663,7 +2664,7 @@ mod tests {
         assert!(!with.iter().any(|n| n == "write_text_file"), "{:?}", with);
         let without = tool_names(&serve(false));
         assert!(!without.iter().any(|n| n == "read_text_file"), "{:?}", without);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // Every serving lists each tool name once: the catalog's `done` and the
@@ -2700,7 +2701,7 @@ mod tests {
                 assert!(names.iter().any(|n| n == "done"), "{:?}", names);
             }
         }
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The chat serving carries the compilation lifecycle beside the ledger
@@ -2721,7 +2722,7 @@ mod tests {
             assert!(names.iter().any(|n| n == t), "{} missing from {:?}", t, names);
         }
         assert!(!names.iter().any(|n| n == "upsert_entity"), "{:?}", names);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // A chat dual write moves the prose and the graph in one changeset and absorbs
@@ -2733,14 +2734,14 @@ mod tests {
         use crate::model::{Entity, Provenance, Requirement, SourceRef};
         use crate::store::{Commit, Op};
         let dir = std::env::temp_dir().join(format!("jazyk-mcp-revise-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/pay.md"),
             "# Pay\n\nAn Order is paid within 30 days.\n",
         )
@@ -2786,7 +2787,7 @@ mod tests {
             &json!({"id": "req:pay-1", "new_text": new_text, "statement": new_text}),
         );
         assert_eq!(v["committed"], true, "{}", v);
-        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap();
         assert!(text.contains(new_text), "{}", text);
         let mut s = Store::load(&out);
         assert_eq!(s.status.generation, before + 1, "one changeset");
@@ -2824,7 +2825,7 @@ mod tests {
         // The prose form is refused now that the fact is decreed.
         let v = server.revise_requirement(&json!({"id": "req:pay-1", "new_text": "x"}));
         assert_eq!(v["error"]["rule"], "not-quoted");
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The compile serving claims goal batches: begin_goals claims the next ready
@@ -2834,17 +2835,17 @@ mod tests {
     #[test]
     fn begin_goals_claims_the_next_batch_and_done_wants_marks() {
         let dir = std::env::temp_dir().join(format!("jazyk-mcp-goals-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
         let project = crate::project::Project::load(&dir);
         let out = project.out.clone();
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         let control = crate::control::Control {
             compile: "auto".into(),
             ..Default::default()
@@ -2883,7 +2884,7 @@ mod tests {
         let a = server.abandon_goals(&json!({"arguments": {"reason": "test"}}));
         assert_eq!(a["abandoned"], json!(batch));
         assert!(crate::control::leases(&out).is_empty());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The compile serving lists the goal lifecycle, the view tools, and the goal
@@ -2892,9 +2893,9 @@ mod tests {
     #[test]
     fn compile_serving_lists_goal_and_view_tools_and_gates_writes() {
         let dir = std::env::temp_dir().join(format!("jazyk-mcp-toolset-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
@@ -2948,7 +2949,7 @@ mod tests {
             "{}",
             text
         );
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // A project tool is offered only where it can do something: scaffolding in a bare
@@ -2958,12 +2959,12 @@ mod tests {
     #[test]
     fn project_tools_follow_the_project_state() {
         let base = std::env::temp_dir().join(format!("jazyk-mcp-init-{}", std::process::id()));
-        std::fs::remove_dir_all(&base).ok();
+        crate::vfs::remove_dir_all(&base).ok();
         let bare = base.join("bare");
         let proj = base.join("proj");
-        std::fs::create_dir_all(&bare).unwrap();
-        std::fs::create_dir_all(&proj).unwrap();
-        std::fs::write(
+        crate::vfs::create_dir_all(&bare).unwrap();
+        crate::vfs::create_dir_all(&proj).unwrap();
+        crate::vfs::write(
             proj.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
@@ -3002,6 +3003,6 @@ mod tests {
         let r =
             chat_server(&bare).update_project_settings(&json!({"settings": {"llm.model": "x"}}));
         assert_eq!(r["error"]["rule"], "not-a-project");
-        std::fs::remove_dir_all(&base).ok();
+        crate::vfs::remove_dir_all(&base).ok();
     }
 }

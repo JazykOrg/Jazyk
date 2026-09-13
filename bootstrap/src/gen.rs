@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Generation: the shared contract between every generation worker, the built-in
 // `jazyk gen` and external MCP agents alike. One task per entity produces the entity's
 // part of the deliverable and the tests for its requirements; the ledger binds them to
@@ -327,7 +328,7 @@ pub fn run_build(
     let missing: Vec<&String> = b
         .produces
         .iter()
-        .filter(|p| !gs.deliverable.join(p).exists())
+        .filter(|p| !gs.deliverable.join(p).vexists())
         .collect();
     if !missing.is_empty() {
         let names = missing
@@ -546,7 +547,7 @@ impl Ledger {
     }
 
     pub fn load(out: &Path) -> Ledger {
-        std::fs::read_to_string(Self::path(out))
+        crate::vfs::read_to_string(Self::path(out))
             .ok()
             .and_then(|t| serde_norway::from_str(&t).ok())
             .unwrap_or_default()
@@ -555,10 +556,10 @@ impl Ledger {
     pub fn save(&self, out: &Path) {
         let path = Self::path(out);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
+            crate::vfs::create_dir_all(parent).ok();
         }
         if let Ok(text) = serde_norway::to_string(self) {
-            std::fs::write(&path, text).ok();
+            crate::vfs::write(&path, text).ok();
         }
     }
 }
@@ -572,11 +573,11 @@ pub fn artifact_path(out: &Path, gs: &GenSettings, test: &TestRef) -> PathBuf {
         // deliverable. The recorded path resolves against both, out first, so neither
         // home reads as a gone artifact.
         let in_out = out.join("gen").join(&test.artifact);
-        if in_out.exists() {
+        if in_out.vexists() {
             return in_out;
         }
         let in_deliverable = gs.deliverable.join(&test.artifact);
-        if in_deliverable.exists() {
+        if in_deliverable.vexists() {
             return in_deliverable;
         }
         in_out
@@ -586,7 +587,7 @@ pub fn artifact_path(out: &Path, gs: &GenSettings, test: &TestRef) -> PathBuf {
 }
 
 pub fn hash_file(path: &Path) -> String {
-    std::fs::read(path)
+    crate::vfs::read(path)
         .map(|b| hash_hex(&String::from_utf8_lossy(&b)))
         .unwrap_or_default()
 }
@@ -762,10 +763,10 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
         if depth > 2 || out.len() >= 40 {
             return;
         }
-        let Ok(rd) = std::fs::read_dir(dir) else {
+        let Ok(rd) = crate::vfs::read_dir(dir) else {
             return;
         };
-        let mut entries: Vec<std::fs::DirEntry> = rd.flatten().collect();
+        let mut entries: Vec<crate::vfs::DirEntry> = rd.flatten().collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             if out.len() >= 40 {
@@ -776,7 +777,7 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
                 continue;
             }
             let p = e.path();
-            if p.is_dir() {
+            if p.vis_dir() {
                 walk(&p, root, out, depth + 1);
             } else if let Ok(rel) = p.strip_prefix(root) {
                 out.push(rel.to_string_lossy().to_string());
@@ -1011,7 +1012,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                 let gone: Vec<&String> = e
                     .files
                     .iter()
-                    .filter(|f| !gs.deliverable.join(f).exists())
+                    .filter(|f| !gs.deliverable.join(f).vexists())
                     .collect();
                 // A record with no files is an entity carried by other entities' files
                 // (an actor whose statements the tool implements); nothing of its own
@@ -1065,7 +1066,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let gone: Vec<&String> = e
         .files
         .iter()
-        .filter(|f| !gs.deliverable.join(f).is_file())
+        .filter(|f| !gs.deliverable.join(f).vis_file())
         .collect();
     if !gone.is_empty() {
         return Err(format!(
@@ -1084,7 +1085,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
                 !ledger
                     .requirements
                     .get(rid)
-                    .is_some_and(|row| gs.deliverable.join(&row.test.artifact).is_file())
+                    .is_some_and(|row| gs.deliverable.join(&row.test.artifact).vis_file())
             })
             .collect();
         if !missing.is_empty() {
@@ -1157,11 +1158,11 @@ fn build_entry(ledger: &Ledger, gs: &GenSettings) -> Value {
             continue;
         }
         let candidate = dir.join(token);
-        if candidate.is_file() {
+        if candidate.vis_file() {
             let rel = norm_rel(
                 &pathdiff(&candidate, &gs.deliverable).unwrap_or_else(|| token.to_string()),
             );
-            let content = std::fs::read_to_string(&candidate).unwrap_or_default();
+            let content = crate::vfs::read_to_string(&candidate).unwrap_or_default();
             return json!({"path": rel, "content": crate::llm::truncate(&content, 12_000)});
         }
     }
@@ -1284,7 +1285,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                     .iter()
                     .filter(|f| !f.contains("test"))
                     .filter_map(|f| {
-                        std::fs::read_to_string(gs.deliverable.join(f))
+                        crate::vfs::read_to_string(gs.deliverable.join(f))
                             .ok()
                             .map(|c| (f.clone(), crate::llm::truncate(&c, 4_000)))
                     })
@@ -1507,7 +1508,7 @@ pub fn mark(
                     .map_err(|e| format!("test row for {}: cwd {}", rid, e))?,
             };
             let path = artifact_path(&store.out, gs, &test);
-            if !path.is_file() {
+            if !path.vis_file() {
                 return Err(format!(
                     "test row for {} names artifact `{}` but no such file exists under the deliverable{}; write it before recording, or fix the path",
                     rid,
@@ -1516,7 +1517,7 @@ pub fn mark(
                 ));
             }
             if kind == "programmatic"
-                && !std::fs::read_to_string(&path)
+                && !crate::vfs::read_to_string(&path)
                     .map(|c| c.contains(&test.name))
                     .unwrap_or(false)
             {
@@ -1548,7 +1549,7 @@ pub fn mark(
     let mut marker_warnings: Vec<String> = Vec::new();
     for f in &files {
         let path = gs.deliverable.join(f);
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
             continue;
         };
         let (clean, raw) = strip_markers(&text);
@@ -1563,7 +1564,7 @@ pub fn mark(
         if raw.is_empty() {
             continue;
         }
-        std::fs::write(&path, clean).map_err(|e| e.to_string())?;
+        crate::vfs::write(&path, clean).map_err(|e| e.to_string())?;
         for s in raw {
             let rid = store.resolve_id(&s.rid).to_string();
             sites_by_rid.entry(rid).or_default().push(Site {
@@ -1726,11 +1727,11 @@ pub fn mark(
                 .as_ref()
                 .map(|b| b.produces.contains(f))
                 .unwrap_or(false);
-        if claimed || !gs.deliverable.join(f).is_file() {
+        if claimed || !gs.deliverable.join(f).vis_file() {
             continue;
         }
         snapshot_baseline(&store.out, gs, f, &mut baselined);
-        if std::fs::remove_file(gs.deliverable.join(f)).is_ok() {
+        if crate::vfs::remove_file(gs.deliverable.join(f)).is_ok() {
             removed.push(f.clone());
         }
     }
@@ -1813,7 +1814,7 @@ pub fn measure_unattached(ledger: &Ledger, gs: &GenSettings, slug: &str) -> Unat
         if artifacts.contains(f.as_str()) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(gs.deliverable.join(f)) else {
+        let Ok(text) = crate::vfs::read_to_string(gs.deliverable.join(f)) else {
             continue;
         };
         let covered_from = first_site.get(f.as_str()).copied();
@@ -2320,17 +2321,17 @@ mod tests {
     #[test]
     fn mark_strips_markers_into_sites() {
         let out = std::env::temp_dir().join(format!("jazyk-sites-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("src/cart.rs"),
             "// req:shop-1 hash:12345678\nfn hold(i: Item) {}\n",
         )
         .ok();
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("// req:shop-1 hash:12345678\nfn {}() {{}}\n", name),
         )
@@ -2345,7 +2346,7 @@ mod tests {
         });
         mark(&s, "ent:cart", None, &manifest, &gs).unwrap();
         // The written files are clean; the ledger row carries the anchored sites.
-        let product = std::fs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap();
+        let product = crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap();
         assert_eq!(product, "fn hold(i: Item) {}\n");
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
@@ -2364,7 +2365,7 @@ mod tests {
     #[test]
     fn a_row_over_an_open_error_diagnostic_is_flagged_contradicted() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-contra-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let diag = |severity: &str, lifecycle: &str| Diagnostic {
             rule: "contradiction".into(),
@@ -2396,10 +2397,10 @@ mod tests {
         assert_eq!(open[0]["rule"], "contradiction");
         assert_eq!(pkg["contradicted"], json!(["req:shop-1"]));
 
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
-        std::fs::write(
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("fn {}() {{}}\n", name),
         )
@@ -2491,9 +2492,9 @@ mod tests {
     #[test]
     fn mark_warns_when_run_commands_diverge_from_the_medium() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-diverge-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).ok();
         let mut ledger = Ledger::default();
         ledger.medium = Some(Medium {
             form: "Python package".into(),
@@ -2502,10 +2503,10 @@ mod tests {
             artifact: String::new(),
         });
         ledger.save(&out);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
-        std::fs::write(
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn hold() {}\n").ok();
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("fn {}() {{}}\n", name),
         )
@@ -2538,12 +2539,12 @@ mod tests {
     #[test]
     fn build_is_recorded_once_and_carried_into_later_packages() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-build-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         assert!(task_package(&s, "ent:cart", &gs).unwrap()["build"].is_null());
 
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
         mark(
             &s,
             "ent:cart",
@@ -2576,7 +2577,7 @@ mod tests {
             Ledger::load(&out).build.unwrap().run,
             "python build_deck.py"
         );
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // A built medium makes the build an obligation: a manifest without one is
@@ -2617,11 +2618,11 @@ mod tests {
     #[test]
     fn extra_files_are_classified_by_the_manifest() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-extra-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
         for f in ["src/cart.rs", "src/cart_util.rs", "build.rs", "Cargo.toml"] {
-            std::fs::write(gs.deliverable.join(f), "// x").ok();
+            crate::vfs::write(gs.deliverable.join(f), "// x").ok();
         }
         // The task wrote its part plus three more; the manifest calls two of them the
         // deliverable's (one as support, one as the build's entry).
@@ -2643,13 +2644,13 @@ mod tests {
         let mine = &ledger.entities["cart"].files;
         assert!(mine.contains(&"src/cart_util.rs".to_string()), "{:?}", mine);
         assert!(!mine.contains(&"Cargo.toml".to_string()), "{:?}", mine);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
     fn built_medium_demands_a_build_that_names_the_artifact() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-medium-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let mut ledger = Ledger::load(&out);
         ledger.medium = Some(Medium {
@@ -2664,8 +2665,8 @@ mod tests {
         assert_eq!(task["medium"]["produced"], "built");
         assert_eq!(task["medium"]["artifact"], "jazyk.pptx");
 
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
         let no_build = serde_json::json!({"files": ["src/cart.rs"], "tests": []});
         let err = mark(&s, "ent:cart", None, &no_build, &gs).unwrap_err();
         assert!(err.contains("no build is recorded"), "{}", err);
@@ -2685,7 +2686,7 @@ mod tests {
         .unwrap();
         let b = Ledger::load(&out).build.unwrap();
         assert_eq!(b.produces, vec!["jazyk.pptx".to_string()]);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // An entity with no ledger entry is generation work through an unimplemented
@@ -2694,16 +2695,16 @@ mod tests {
     #[test]
     fn pending_diff_and_mark_lifecycle() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         assert!(pending(&s, &gs).is_empty(), "unbound: bind first");
         assert!(skip_reason(&s, &gs, "ent:cart").contains("owe a bind"));
 
         // Binding finds nothing: the row reads unimplemented and the entity is work.
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("// req:shop-1\nfn {}() {{}}", name),
         )
@@ -2716,7 +2717,7 @@ mod tests {
         assert_eq!(p[0]["changed"][0], "req:shop-1");
 
         // Binding that found the code verified: adopted, nothing to generate.
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
         crate::bind::record(&s, "req:shop-1", &["src/cart.rs".into()], &bound, &json!([]), "pass", None, &gs)
             .unwrap();
         assert!(pending(&s, &gs).is_empty(), "adopted code is not generation work");
@@ -2746,14 +2747,14 @@ mod tests {
         );
 
         // A recorded file deleted by hand is generation work under its own name.
-        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        crate::vfs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
         let p = pending(&s, &gs);
         assert_eq!(p[0]["reason"], "files-gone");
         assert_eq!(p[0]["changed"][0], "src/cart.rs");
         let rec = ledger_stale_records(&s, &gs);
         let g = rec.iter().find(|c| c.detail["goal"] == "generate").unwrap();
         assert_eq!(g.detail["reason"], "files-gone");
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").ok();
 
         // A new requirement reappears as a precise diff.
         let mut s2 = s.clone();
@@ -2791,11 +2792,11 @@ mod tests {
     #[test]
     fn mark_prunes_rows_whose_requirement_left_the_graph() {
         let out = std::env::temp_dir().join(format!("jazyk-prune-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("// req:shop-1\nfn {}() {{}}", name),
         )
@@ -2833,15 +2834,15 @@ mod tests {
     #[test]
     fn the_generate_gate_reads_the_landed_record() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-gate-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
         assert!(err.contains("record_generation has not landed"), "{}", err);
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
         let manifest = json!({"files": ["src/cart.rs", "tests/cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": "true", "files": ["src/cart.rs"]}]});
@@ -2851,14 +2852,14 @@ mod tests {
         assert!(err.contains("run_tests has not run") && err.contains("req:shop-1"), "{}", err);
         crate::verify::run_selected(&s, &gs, &[]).unwrap();
         gate(&s, &gs, "ent:cart", true).unwrap();
-        std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
+        crate::vfs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();
         let err = gate(&s, &gs, "ent:cart", true).unwrap_err();
         assert!(err.contains("do not exist") && err.contains("src/cart.rs"), "{}", err);
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "fn a() {}\n").unwrap();
         s.graph.entities.get_mut("ent:cart").unwrap().definition = Some("moved".into());
         let err = gate(&s, &gs, "ent:cart", false).unwrap_err();
         assert!(err.contains("facts moved"), "{}", err);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // Every path a manifest names is confined before any side effect: an absolute
@@ -2868,15 +2869,15 @@ mod tests {
     #[test]
     fn manifest_paths_are_confined_to_the_deliverable() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-confine-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         // A file beside the deliverable that a climbing path could reach.
-        std::fs::write(out.join("secret.txt"), "// req:shop-1 hash:deadbeef\nkeep\n").unwrap();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// req:shop-1 hash:deadbeef\nfn a() {}\n").unwrap();
+        crate::vfs::write(out.join("secret.txt"), "// req:shop-1 hash:deadbeef\nkeep\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// req:shop-1 hash:deadbeef\nfn a() {}\n").unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
         let row = json!({
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
@@ -2890,11 +2891,11 @@ mod tests {
         ] {
             let err = mark(&s, "ent:cart", None, &bad, &gs).unwrap_err();
             assert!(err.contains(field), "{}: {}", field, err);
-            assert!(!Ledger::path(&out).exists(), "a rejected record writes no ledger");
+            assert!(!Ledger::path(&out).vexists(), "a rejected record writes no ledger");
         }
         // No side effect reached either file: the markers are still there.
-        assert!(std::fs::read_to_string(out.join("secret.txt")).unwrap().contains("hash:"));
-        assert!(std::fs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap().contains("hash:"));
+        assert!(crate::vfs::read_to_string(out.join("secret.txt")).unwrap().contains("hash:"));
+        assert!(crate::vfs::read_to_string(gs.deliverable.join("src/cart.rs")).unwrap().contains("hash:"));
         // The clean spellings are normalized on record.
         let ok = json!({"files": ["./src/cart.rs", "src//cart.rs"], "tests": [row]});
         mark(&s, "ent:cart", None, &ok, &gs).unwrap();
@@ -2903,7 +2904,7 @@ mod tests {
         assert!(confine_rel("C:/x").is_err());
         assert!(confine_rel(".").is_err());
         assert_eq!(confine_cwd("").unwrap(), ".");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The record applies the artifact gate binding applies: a row whose artifact is
@@ -2912,11 +2913,11 @@ mod tests {
     #[test]
     fn record_generation_rejects_a_test_its_artifact_does_not_carry() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-artgate-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
-        std::fs::write(gs.deliverable.join("cart.rs"), "fn a() {}\n").unwrap();
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), "fn something_else() {}\n").unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::write(gs.deliverable.join("cart.rs"), "fn a() {}\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn something_else() {}\n").unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
         let absent = json!({"files": ["cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "programmatic", "artifact": "tests/cart.rs",
@@ -2937,10 +2938,10 @@ mod tests {
             .unwrap_err()
             .contains("`programmatic`"));
         // The criteria file under the out directory satisfies an llm row.
-        std::fs::create_dir_all(out.join("gen/criteria")).unwrap();
-        std::fs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
+        crate::vfs::create_dir_all(out.join("gen/criteria")).unwrap();
+        crate::vfs::write(out.join("gen/criteria/req-shop-1.md"), "---\nrequirement: req:shop-1\n---\n").unwrap();
         mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap();
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // A regeneration replaces the file set through the record itself, whichever
@@ -2951,16 +2952,16 @@ mod tests {
     #[test]
     fn a_record_removes_the_files_its_manifest_omits() {
         let out = std::env::temp_dir().join(format!("jazyk-gen-remove-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         s.graph.entities.insert("ent:shelf".into(), Entity { name: "Shelf".into(), ..Default::default() });
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         for f in ["src/cart.rs", "src/cart_old.rs", "src/shared.rs", "Cargo.toml", "src/cart_v2.rs"] {
-            std::fs::write(gs.deliverable.join(f), format!("// {}\n", f)).unwrap();
+            crate::vfs::write(gs.deliverable.join(f), format!("// {}\n", f)).unwrap();
         }
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}\n", name)).unwrap();
         let row = json!({
             "requirement": "req:shop-1", "kind": "programmatic", "label": "unit",
             "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name),
@@ -2976,13 +2977,13 @@ mod tests {
             "files": ["src/cart_v2.rs", "tests/cart.rs"], "tests": [row],
         }), &gs).unwrap();
         assert_eq!(r["removed"], json!(["src/cart.rs", "src/cart_old.rs"]), "{}", r);
-        assert!(!gs.deliverable.join("src/cart_old.rs").exists());
-        assert!(!gs.deliverable.join("src/cart.rs").exists());
-        assert!(gs.deliverable.join("src/shared.rs").exists(), "another entity records it");
-        assert!(gs.deliverable.join("Cargo.toml").exists(), "support files are the deliverable's");
-        assert!(gs.deliverable.join("tests/cart.rs").exists());
-        assert!(out.join("deliverable-baseline/src/cart_old.rs").exists(), "snapshotted before removal");
-        std::fs::remove_dir_all(&out).ok();
+        assert!(!gs.deliverable.join("src/cart_old.rs").vexists());
+        assert!(!gs.deliverable.join("src/cart.rs").vexists());
+        assert!(gs.deliverable.join("src/shared.rs").vexists(), "another entity records it");
+        assert!(gs.deliverable.join("Cargo.toml").vexists(), "support files are the deliverable's");
+        assert!(gs.deliverable.join("tests/cart.rs").vexists());
+        assert!(out.join("deliverable-baseline/src/cart_old.rs").vexists(), "snapshotted before removal");
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // Part before whole: a parent's children generate first, and a system's direct
@@ -3052,7 +3053,7 @@ mod tests {
     #[test]
     fn fact_hash_flips_on_stereotype_attributes_and_edges() {
         let out = std::env::temp_dir().join(format!("jazyk-facthash-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, _gs) = fixture(&out);
         let h0 = fact_hash(&s, "ent:cart");
         s.graph.entities.get_mut("ent:cart").unwrap().stereotype = Some("service".into());
@@ -3088,7 +3089,7 @@ mod tests {
             });
         let h3 = fact_hash(&s, "ent:cart");
         assert_ne!(h2, h3, "an edge change flips the hash");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // One invented-choice diagnostic per manifest entry, graded by the scope of the
@@ -3097,7 +3098,7 @@ mod tests {
     #[test]
     fn invented_choices_stage_one_graded_diagnostic_per_scope() {
         let out = std::env::temp_dir().join(format!("jazyk-choice-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         s.docs.insert(
             "shop.md".into(),
@@ -3121,8 +3122,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "fn hold() {}\n").ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "fn hold() {}\n").ok();
         // Distinct subject sets: the store's sticky rule merges open diagnostics
         // with one rule and one subject set, so the requirements a choice fills in
         // are what keep its diagnostic its own.
@@ -3201,7 +3202,7 @@ mod tests {
         assert!(mark(&s, "ent:cart", None, &bad, &gs)
             .unwrap_err()
             .contains("scope"));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The unattached remainder on a two-file fixture: one owned file no row names,
@@ -3210,24 +3211,24 @@ mod tests {
     #[test]
     fn unattached_remainder_counts_unnamed_files_and_lines_outside_site_runs() {
         let out = std::env::temp_dir().join(format!("jazyk-unattached-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
-        std::fs::create_dir_all(gs.deliverable.join("src")).ok();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         // Two significant lines sit before the first site's run.
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("src/cart.rs"),
             "// header comment\nuse std::fmt;\nfn helper() {}\n// req:shop-1 hash:12345678\nfn hold(i: Item) {}\nfn hold_more() {}\n",
         )
         .ok();
         // A second owned file no requirement row names: unattached whole.
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("src/extra.rs"),
             "fn extra() {}\n\n// note\nfn more() {}\n",
         )
         .ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("fn {}() {{}}\n", name),
         )
@@ -3251,7 +3252,7 @@ mod tests {
         assert_eq!(u.files, 1);
         assert_eq!(u.lines, 4);
         assert!(u.ratio > 0.5 && u.ratio < 1.0, "{}", u.ratio);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // An unbound requirement yields a ledger-stale change record naming its goal,
@@ -3260,7 +3261,7 @@ mod tests {
     #[test]
     fn an_unbound_requirement_yields_a_ledger_stale_record() {
         let out = std::env::temp_dir().join(format!("jazyk-stale-rec-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         let records = ledger_stale_records(&s, &gs);
         let bind = records
@@ -3280,9 +3281,9 @@ mod tests {
             records.iter().map(|r| r.detail.clone()).collect::<Vec<_>>()
         );
         // Bound and unimplemented: the entity is generation work under that reason.
-        std::fs::create_dir_all(gs.deliverable.join("tests")).ok();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).ok();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), format!("fn {}() {{}}", name)).ok();
         let bound = json!({"kind": "programmatic", "artifact": "tests/cart.rs", "name": name, "run": format!("cargo test {}", name)});
         crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
         let records = ledger_stale_records(&s, &gs);
@@ -3293,7 +3294,7 @@ mod tests {
         assert_eq!(g.subject, "ent:cart");
         assert_eq!(g.detail["reason"], "unimplemented");
         assert_eq!(g.detail["changed"][0], "req:shop-1");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }
 
@@ -3356,7 +3357,7 @@ pub fn run_all(
     // (docs/consumers/gen.md#grouping-by-component).
     let ordered = generation_order(store, &targets);
 
-    std::fs::create_dir_all(&gs.deliverable).ok();
+    crate::vfs::create_dir_all(&gs.deliverable).ok();
     let pending_set: std::collections::BTreeSet<String> = pending(store, gs)
         .iter()
         .filter_map(|p| p["entity"].as_str().map(String::from))
@@ -3599,15 +3600,15 @@ fn snapshot_baseline(
         return;
     }
     let dst = out.join("deliverable-baseline").join(rel);
-    match std::fs::read(gs.deliverable.join(rel)) {
+    match crate::vfs::read(gs.deliverable.join(rel)) {
         Ok(bytes) => {
             if let Some(p) = dst.parent() {
-                std::fs::create_dir_all(p).ok();
+                crate::vfs::create_dir_all(p).ok();
             }
-            std::fs::write(&dst, bytes).ok();
+            crate::vfs::write(&dst, bytes).ok();
         }
         Err(_) => {
-            std::fs::remove_file(&dst).ok();
+            crate::vfs::remove_file(&dst).ok();
         }
     }
 }
@@ -3778,10 +3779,10 @@ pub fn gen_one(
                 }
                 let full = gs.deliverable.join(&p);
                 if let Some(parent) = full.parent() {
-                    std::fs::create_dir_all(parent).ok();
+                    crate::vfs::create_dir_all(parent).ok();
                 }
                 snapshot_baseline(&store.out, gs, &p, &mut baselined);
-                if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
+                if crate::vfs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
                     extra_written.push(p);
                 }
             }
@@ -3818,10 +3819,10 @@ pub fn gen_one(
     }
     let product_path = gs.deliverable.join(&product_rel);
     if let Some(p) = product_path.parent() {
-        std::fs::create_dir_all(p).ok();
+        crate::vfs::create_dir_all(p).ok();
     }
     snapshot_baseline(&store.out, gs, &product_rel, &mut baselined);
-    std::fs::write(&product_path, &code).map_err(|e| e.to_string())?;
+    crate::vfs::write(&product_path, &code).map_err(|e| e.to_string())?;
 
     // Tests: the model names the file too, or declares nothing programmatic.
     let all_reqs: Vec<serde_json::Value> = groups
@@ -3866,10 +3867,10 @@ pub fn gen_one(
                     }
                     let full = gs.deliverable.join(&p);
                     if let Some(parent) = full.parent() {
-                        std::fs::create_dir_all(parent).ok();
+                        crate::vfs::create_dir_all(parent).ok();
                     }
                     snapshot_baseline(&store.out, gs, &p, &mut baselined);
-                    if std::fs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
+                    if crate::vfs::write(&full, format!("{}\n", content.trim_end())).is_ok() {
                         extra_written.push(p);
                     }
                 }
@@ -3916,10 +3917,10 @@ pub fn gen_one(
             tests_code = body;
             let tests_path = gs.deliverable.join(&tests_rel);
             if let Some(p) = tests_path.parent() {
-                std::fs::create_dir_all(p).ok();
+                crate::vfs::create_dir_all(p).ok();
             }
             snapshot_baseline(&store.out, gs, &tests_rel, &mut baselined);
-            std::fs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
+            crate::vfs::write(&tests_path, &tests_code).map_err(|e| e.to_string())?;
             files.push(tests_rel.clone());
         }
     }
@@ -4078,7 +4079,7 @@ pub fn gen_one(
             .or_else(|| {
                 entry_path
                     .as_ref()
-                    .and_then(|p| std::fs::read_to_string(gs.deliverable.join(p)).ok())
+                    .and_then(|p| crate::vfs::read_to_string(gs.deliverable.join(p)).ok())
                     .or_else(|| task["buildEntry"]["content"].as_str().map(String::from))
             });
         if let (Some(entry), Some(content)) = (&entry_path, &entry_content) {
@@ -4185,10 +4186,10 @@ pub fn gen_one(
             }
             let p = gs.deliverable.join(path);
             if let Some(parent) = p.parent() {
-                std::fs::create_dir_all(parent).ok();
+                crate::vfs::create_dir_all(parent).ok();
             }
             snapshot_baseline(&store.out, gs, path, &mut baselined);
-            std::fs::write(&p, content).map_err(|e| e.to_string())?;
+            crate::vfs::write(&p, content).map_err(|e| e.to_string())?;
             support_files.push(path.to_string());
         }
     }
@@ -4240,7 +4241,7 @@ pub fn gen_one(
             let crit_rel = r["criteriaPath"].as_str().unwrap_or_default().to_string();
             let crit_path = store.out.join("gen").join(&crit_rel);
             if let Some(p) = crit_path.parent() {
-                std::fs::create_dir_all(p).ok();
+                crate::vfs::create_dir_all(p).ok();
             }
             let criteria = format!(
                 "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n- {}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
@@ -4251,7 +4252,7 @@ pub fn gen_one(
                 r["quote"].as_str().unwrap_or_default(),
                 product_rel,
             );
-            std::fs::write(&crit_path, criteria).ok();
+            crate::vfs::write(&crit_path, criteria).ok();
             tests_manifest.push(serde_json::json!({
                 "requirement": rid, "kind": "llm",
                 "label": row.and_then(|t| t["label"].as_str()).unwrap_or("llm"),

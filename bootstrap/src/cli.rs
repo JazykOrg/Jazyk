@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // CLI command implementations. Mirrors docs/frontends/cli.md.
 use crate::context;
 use crate::llm::{self, Llm};
@@ -110,14 +111,14 @@ pub fn run_init(opts: &Options) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let path = cwd.join("jazyk.toml");
     let mut wrote_something = false;
-    if path.exists() {
+    if path.vexists() {
         eprintln!(
             "jazyk: jazyk.toml already exists in {}; leaving it unchanged",
             cwd.display()
         );
     } else {
         let previous = project::find_root(&cwd);
-        if let Err(e) = std::fs::write(&path, INIT_TOML) {
+        if let Err(e) = crate::vfs::write(&path, INIT_TOML) {
             eprintln!("jazyk: cannot write {}: {}", path.display(), e);
             return 1;
         }
@@ -217,19 +218,19 @@ pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String
     let mut made = Vec::new();
     for dir in ["docs", "deliverable"] {
         let path = cwd.join(dir);
-        if !path.exists() {
-            std::fs::create_dir(&path)
+        if !path.vexists() {
+            crate::vfs::create_dir(&path)
                 .map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
             made.push(format!("{}/", dir));
         }
     }
     let readme = cwd.join("docs/README.md");
-    if !readme.exists() {
+    if !readme.vexists() {
         let content = "# TODO: name the project\n\n\
                        TODO: describe what this project is and what the deliverable should be. This\n\
                        file is the root document: the compiler reads it first, and every other\n\
                        document under `docs/` should be reachable from it.\n";
-        std::fs::write(&readme, content)
+        crate::vfs::write(&readme, content)
             .map_err(|e| format!("cannot write {}: {}", readme.display(), e))?;
         made.push("docs/README.md".to_string());
     }
@@ -287,7 +288,7 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
         ));
     };
     let path = cwd.join(rel);
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+    let mut root: serde_json::Value = match crate::vfs::read_to_string(&path) {
         Ok(text) => {
             serde_json::from_str(&text).map_err(|e| format!("{} is not valid JSON: {}", rel, e))?
         }
@@ -319,11 +320,11 @@ fn init_mcp(cwd: &std::path::Path, flag: Option<&str>) -> Result<bool, String> {
     }
     servers["jazyk"] = entry;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        crate::vfs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
     }
     let text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
+    crate::vfs::write(&path, text + "\n").map_err(|e| format!("cannot write {}: {}", rel, e))?;
     println!(
         "jazyk: wrote a `jazyk` MCP server (`jazyk mcp all`) into {} for {}",
         rel, name
@@ -523,7 +524,7 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
         );
         return false;
     };
-    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let old = crate::vfs::read_to_string(&path).unwrap_or_default();
     let mut full = crate::mcp::toml_set(&old, "acp", "agent", agent.0);
     // An external agent needs its command line recorded; the embedded one is built in.
     if !agent.2.is_empty() {
@@ -584,7 +585,7 @@ fn init_agent(cwd: &std::path::Path, flag: Option<&str>) -> bool {
     if full == old {
         return false;
     }
-    match std::fs::write(&path, &full) {
+    match crate::vfs::write(&path, &full) {
         Ok(()) => {
             println!("jazyk: agent {} recorded in {}", agent.0, path.display());
             true
@@ -2406,9 +2407,9 @@ pub fn run_viewer(opts: &Options) -> i32 {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| out.join("graph.html"));
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        crate::vfs::create_dir_all(parent).ok();
     }
-    match std::fs::write(&path, html) {
+    match crate::vfs::write(&path, html) {
         Ok(()) => {
             println!("jazyk: wrote {}", path.display());
             0
@@ -2498,7 +2499,7 @@ mod tests {
     // options the parser accepts for it. Mirrors docs/frontends/cli.md#help.
     #[test]
     fn help_lists_the_goal_commands() {
-        let usage = crate::top_usage();
+        let usage = crate::launcher::top_usage();
         for cmd in ["preview", "explain", "ripple", "acp", "monitor", "release", "answer"] {
             assert!(usage.contains(cmd), "`{}` missing from the top usage", cmd);
         }
@@ -2509,12 +2510,12 @@ mod tests {
         let start = usage.find("start here:").expect("start here group");
         let ides = usage.find("run by IDEs and agents").expect("IDE group");
         assert!(start < ides, "{}", usage);
-        for (line, _) in crate::COMMAND_GROUPS.iter().flat_map(|(_, cs)| cs.iter()) {
+        for (line, _) in crate::launcher::COMMAND_GROUPS.iter().flat_map(|(_, cs)| cs.iter()) {
             let Some(cmd) = line.split_whitespace().next() else {
                 continue; // bare `jazyk`, the launcher
             };
-            let (_, extra) = crate::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
-            let u = crate::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
+            let (_, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
+            let u = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);
             for opt in extra.iter() {
                 assert!(
@@ -2530,17 +2531,17 @@ mod tests {
     // A one-document project in a temp dir: the smallest board with a ready batch.
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe body.\n").unwrap();
         let project = Project::load(&dir);
         let out = project.out.clone();
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         crate::control::Control {
             compile: "auto".into(),
             ..Default::default()
@@ -2579,7 +2580,7 @@ mod tests {
         assert!(by_doc.contains(&batch.id), "{}", by_doc);
         assert!(preview_text(&store, &control, &board, "b0-99", &lint).is_err());
         assert!(preview_text(&store, &control, &board, "ent:ghost", &lint).is_err());
-        std::fs::remove_dir_all(proj.root).ok();
+        crate::vfs::remove_dir_all(proj.root).ok();
     }
 
     // `jazyk status` closes with what to do next: on a fresh project the first build,
@@ -2602,7 +2603,7 @@ mod tests {
         assert!(text.starts_with("store: version"), "{}", text);
         assert!(text.contains("\nnext: "), "{}", text);
         assert!(text.contains("shape: "), "{}", text);
-        std::fs::remove_dir_all(proj.root).ok();
+        crate::vfs::remove_dir_all(proj.root).ok();
     }
 
     // The verdict line the build prints last carries the counts, in both shapes.
@@ -2646,8 +2647,8 @@ mod tests {
     fn ripple_renders_a_three_generation_cascade() {
         use crate::model::{Cause, JournalEntry, OpenedGoal, Resolved};
         let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("journal")).unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         let sec = "g:reconcile-section:docs/orders.md#/orders/holds";
         let pair = "g:rejudge-pair:req:orders-6~req:payment-9";
         let g1 = JournalEntry {
@@ -2700,7 +2701,7 @@ mod tests {
             ..Default::default()
         };
         for (n, e) in [(1, &g1), (2, &g2), (3, &g3)] {
-            std::fs::write(
+            crate::vfs::write(
                 dir.join("journal").join(format!("g{}.yaml", n)),
                 serde_norway::to_string(e).unwrap(),
             )
@@ -2735,7 +2736,7 @@ mod tests {
         assert_eq!(ripple_text_for(&store, None, false).unwrap(), text);
         // An unknown root is an error, not an empty tree.
         assert!(ripple_text_for(&store, Some("ent:ghost"), false).is_err());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The shape line: nodes per depth, then the fan-out histogram in the bands the

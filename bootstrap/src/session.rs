@@ -548,7 +548,7 @@ impl Trace {
     ) -> Trace {
         use std::io::Write;
         let dir = out.join("trace");
-        std::fs::create_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).ok();
         let started = crate::verify::now_iso();
         let compact: String = started
             .chars()

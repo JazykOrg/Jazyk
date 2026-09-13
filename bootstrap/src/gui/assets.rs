@@ -32,7 +32,7 @@ fn load(st: &SharedState, path: &str) -> Option<Vec<u8>> {
             if path.split('/').any(|c| c == "..") {
                 return None;
             }
-            std::fs::read(dir.join(path)).ok()
+            crate::vfs::read(dir.join(path)).ok()
         }
         None => DIST.get_file(path).map(|f| f.contents().to_vec()),
     }

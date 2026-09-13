@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The reconciler: compares the documents (desired state) against the graph (observed
 // state), derives the goal board, and runs sessions one batch at a time until no goal
 // is ready or the budget is spent. Then the deterministic tail: the checks, flip
@@ -195,7 +196,7 @@ fn drift_checks(store: &Store, proj: &Project) -> Vec<Finding> {
         }
         let mut contents = String::new();
         for f in &files {
-            if let Ok(t) = std::fs::read_to_string(gs.deliverable.join(f)) {
+            if let Ok(t) = crate::vfs::read_to_string(gs.deliverable.join(f)) {
                 contents.push_str(&t);
                 contents.push('\n');
             }
@@ -489,7 +490,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         for sec in rec.sections.values() {
             for target in md::doc_links(&sec.raw, doc) {
                 if store.docs.contains_key(&target)
-                    || proj.root.join(&target).exists()
+                    || proj.root.join(&target).vexists()
                     || !reported.insert(target.clone())
                 {
                     continue;
@@ -3005,14 +3006,14 @@ mod tests {
     fn drift_check_flags_missing_literals_with_a_question() {
         use crate::gen::{Ledger, ReqRow, RowHashes, TestRef};
         let dir = std::env::temp_dir().join(format!("jazyk-drift-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("product")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("product")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n\n[gen]\ndeliverable = \"./product\"\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("product/gw.rs"),
             "fn log() { /* writes to /tmp/other.log */ }\n",
         )
@@ -3064,7 +3065,7 @@ mod tests {
         let mut ledger = Ledger::default();
         ledger.requirements.insert("req:gw-1".into(), row(()));
         ledger.requirements.insert("req:gw-2".into(), row(()));
-        std::fs::create_dir_all(&proj.out).unwrap();
+        crate::vfs::create_dir_all(&proj.out).unwrap();
         ledger.save(&proj.out);
 
         let f = drift_checks(&store, &proj);
@@ -3082,7 +3083,7 @@ mod tests {
         let p = prompt.as_ref().expect("the finding carries its question");
         assert_eq!(p.options.len(), 2);
         assert!(p.freeform);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // Mirrors docs/compiler/compilation.md#checks: containment counts in the
@@ -3145,11 +3146,11 @@ mod tests {
     #[test]
     fn unsupported_format_and_parse_error_are_filed_and_resolve() {
         let dir = std::env::temp_dir().join(format!("jazyk-format-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
-        std::fs::write(dir.join("docs/notes.txt"), "plain notes\n").unwrap();
-        std::fs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(dir.join("docs/good.md"), "# Good\nThe system shall respond.\n").unwrap();
+        crate::vfs::write(dir.join("docs/notes.txt"), "plain notes\n").unwrap();
+        crate::vfs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
         let proj = Project {
             root: dir.clone(),
             out: dir.join("jazyk-out"),
@@ -3187,13 +3188,13 @@ mod tests {
         assert_eq!(open(&s, "unsupported-format"), 1);
         assert_eq!(open(&s, "parse-error"), 1);
         assert_eq!(s.graph.diagnostics.len(), 2);
-        std::fs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
-        std::fs::remove_file(dir.join("docs/notes.txt")).unwrap();
+        crate::vfs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
+        crate::vfs::remove_file(dir.join("docs/notes.txt")).unwrap();
         s.reconcile_check_diags(checks(&s, &proj));
         assert_eq!(open(&s, "unsupported-format"), 0);
         assert_eq!(open(&s, "parse-error"), 0);
         assert!(s.graph.diagnostics.values().all(|d| d.lifecycle == "resolved"));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -3675,7 +3676,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(dir.join("journal")).unwrap();
+        crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         dir
     }
 
@@ -3702,7 +3703,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        std::fs::write(
+        crate::vfs::write(
             dir.join("journal").join(format!("g{}.yaml", generation)),
             serde_norway::to_string(&entry).unwrap(),
         )
@@ -3761,7 +3762,7 @@ mod tests {
                 .collect()
         );
         assert!(parked.iter().all(|g| g.state == GoalState::Parked));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // A two-level tree with every level view in place: two «system» roots (the scope
@@ -4073,7 +4074,7 @@ mod tests {
         assert_eq!(f.len(), 1, "{:?}", f);
         assert!(f[0].3.contains("regrouped"), "{}", f[0].3);
         assert_eq!(parked[0].id, "g:abstract-entity:ent:backend");
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -4096,7 +4097,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        std::fs::write(
+        crate::vfs::write(
             dir.join("journal/g87.yaml"),
             serde_norway::to_string(&edit).unwrap(),
         )
@@ -4125,7 +4126,7 @@ mod tests {
             tokens: 9_800,
             ..Default::default()
         };
-        std::fs::write(
+        crate::vfs::write(
             dir.join("journal/g88.yaml"),
             serde_norway::to_string(&session).unwrap(),
         )
@@ -4140,7 +4141,7 @@ mod tests {
             evidence: Value::Null,
         }];
         session.opened_goals = Vec::new();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("journal/g89.yaml"),
             serde_norway::to_string(&session).unwrap(),
         )
@@ -4179,7 +4180,7 @@ mod tests {
         assert_eq!(back.root.children[0].generation, 88);
         assert!(ripple(&s, "docs/orders.md", false).is_some());
         assert!(ripple(&s, "g4000", false).is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -4236,8 +4237,8 @@ mod tests {
 
         let out =
             std::env::temp_dir().join(format!("jazyk-levels-loop-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).ok();
         let mut s = Store {
             out,
             ..Default::default()

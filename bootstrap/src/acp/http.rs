@@ -253,13 +253,13 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/main.md"),
             "# Main\n\nThe store keeps every order.\n",
         )
@@ -372,7 +372,7 @@ mod tests {
         assert!(matches!(r, Err(ureq::Error::Status(405, _))));
 
         serving.stop();
-        std::fs::remove_dir_all(&root).ok();
+        crate::vfs::remove_dir_all(&root).ok();
     }
 
     // The token gate refuses a call without the token and one with another token,
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(status, 200);
         assert!(ok["result"]["tools"].is_array());
         serving.stop();
-        std::fs::remove_dir_all(&root).ok();
+        crate::vfs::remove_dir_all(&root).ok();
     }
 
     // The serving outlives the drain bound while nothing stopped it (a session runs
@@ -405,6 +405,6 @@ mod tests {
         serving.stop();
         let r = ureq::post(&url).send_string("{}");
         assert!(matches!(r, Err(ureq::Error::Transport(_))), "{:?}", r);
-        std::fs::remove_dir_all(&root).ok();
+        crate::vfs::remove_dir_all(&root).ok();
     }
 }

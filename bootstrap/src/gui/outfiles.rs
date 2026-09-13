@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Read-only access to the out directory: the generated pages the markdown preview
 // loads and the renderings it embeds as images. No write verb exists here; the out
 // directory is build output. Mirrors docs/frontends/gui.md#api (the out directory).
@@ -63,7 +64,7 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<OutQ>) -> Respo
         // A path that leaves the out directory (lexically, or through a symlink that
         // exists) is 400; a path that validates but names nothing is 404.
         let Some(abs) = safe_out_path(&out, &path) else {
-            if !lexical_ok(&path) || out.join(&path).exists() {
+            if !lexical_ok(&path) || out.join(&path).vexists() {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     format!("invalid out path {}", path),
@@ -71,10 +72,10 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<OutQ>) -> Respo
             }
             return Err((StatusCode::NOT_FOUND, format!("no file {}", path)));
         };
-        if abs.is_dir() {
+        if abs.vis_dir() {
             return Err((StatusCode::NOT_FOUND, format!("{} is a directory", path)));
         }
-        std::fs::read(&abs).map_err(|e| {
+        crate::vfs::read(&abs).map_err(|e| {
             (
                 StatusCode::NOT_FOUND,
                 format!("cannot read {}: {}", path, e),
@@ -98,7 +99,7 @@ pub async fn file(State(st): State<SharedState>, Query(p): Query<OutQ>) -> Respo
 }
 
 fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(rd) = crate::vfs::read_dir(dir) else {
         return;
     };
     for e in rd.flatten() {
@@ -107,7 +108,7 @@ fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>) {
         if name.starts_with('.') {
             continue;
         }
-        if p.is_dir() {
+        if p.vis_dir() {
             walk(&p, base, acc);
         } else if let Ok(rel) = p.strip_prefix(base) {
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
@@ -128,10 +129,10 @@ pub async fn list(State(st): State<SharedState>, Query(p): Query<OutQ>) -> Respo
             .map_err(|_| "no out directory".to_string())?;
         let mut files = Vec::new();
         match safe_out_path(&out, &path) {
-            Some(dir) if dir.is_dir() => walk(&dir, &root, &mut files),
+            Some(dir) if dir.vis_dir() => walk(&dir, &root, &mut files),
             Some(_) => return Err(format!("{} is not a directory", path)),
             None => {
-                if !lexical_ok(&path) || out.join(&path).exists() {
+                if !lexical_ok(&path) || out.join(&path).vexists() {
                     return Err(format!("invalid out path {}", path));
                 }
             }
@@ -159,13 +160,13 @@ mod tests {
 
     fn temp_out(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-gui-out-{}-{}", name, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("jazyk-out/docsgen/entities")).unwrap();
-        std::fs::create_dir_all(dir.join("jazyk-out/diagrams/class")).unwrap();
-        std::fs::write(dir.join("jazyk-out/docsgen/entities/funds.md"), "# Funds\n").unwrap();
-        std::fs::write(dir.join("jazyk-out/diagrams/class/funds.svg"), "<svg/>").unwrap();
-        std::fs::write(dir.join("jazyk-out/.hidden.md"), "x").unwrap();
-        std::fs::write(dir.join("secret.md"), "outside\n").unwrap();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("jazyk-out/docsgen/entities")).unwrap();
+        crate::vfs::create_dir_all(dir.join("jazyk-out/diagrams/class")).unwrap();
+        crate::vfs::write(dir.join("jazyk-out/docsgen/entities/funds.md"), "# Funds\n").unwrap();
+        crate::vfs::write(dir.join("jazyk-out/diagrams/class/funds.svg"), "<svg/>").unwrap();
+        crate::vfs::write(dir.join("jazyk-out/.hidden.md"), "x").unwrap();
+        crate::vfs::write(dir.join("secret.md"), "outside\n").unwrap();
         dir
     }
 
@@ -186,7 +187,7 @@ mod tests {
         assert!(safe_out_path(&out, ".hidden.md").is_none());
         assert!(safe_out_path(&out, "").is_none());
         assert!(safe_out_path(&out, "docsgen/entities/missing.md").is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[cfg(unix)]
@@ -198,7 +199,7 @@ mod tests {
         std::os::unix::fs::symlink(&dir, out.join("up")).unwrap();
         assert!(safe_out_path(&out, "linked.md").is_none());
         assert!(safe_out_path(&out, "up/secret.md").is_none());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -225,6 +226,6 @@ mod tests {
         let mut all = Vec::new();
         walk(&root, &root, &mut all);
         assert!(all.iter().all(|(p, _)| !p.contains("/.") && !p.starts_with('.')));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

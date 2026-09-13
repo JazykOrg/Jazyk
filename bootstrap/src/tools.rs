@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The tool registry: the graph's only interface for models. One registry, served
 // in-process to the turn harness and over stdio as the MCP server.
 // Mirrors docs/compiler/tools.md.
@@ -3134,7 +3135,7 @@ impl ToolSession {
         let joined = root.join(rel);
         let mut probe = joined.clone();
         let mut tail: Vec<std::ffi::OsString> = Vec::new();
-        while !probe.exists() {
+        while !probe.vexists() {
             let Some(name) = probe.file_name().map(|n| n.to_os_string()) else {
                 break;
             };
@@ -3174,7 +3175,7 @@ impl ToolSession {
             "read_text_file" => {
                 let rel = Self::str_arg(args, "path")?;
                 let path = self.deliverable_path(&rel)?;
-                let text = std::fs::read_to_string(&path).map_err(|e| {
+                let text = crate::vfs::read_to_string(&path).map_err(|e| {
                     ToolError::new(
                         "not-found",
                         format!("cannot read `{}`: {}; list_files shows what exists", rel, e),
@@ -3214,9 +3215,9 @@ impl ToolSession {
                     ));
                 }
                 if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).ok();
+                    crate::vfs::create_dir_all(parent).ok();
                 }
-                std::fs::write(&path, &content).map_err(|e| {
+                crate::vfs::write(&path, &content).map_err(|e| {
                     ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e))
                 })?;
                 Ok(json!({"written": rel, "bytes": content.len()}))
@@ -3232,7 +3233,7 @@ impl ToolSession {
                 let mut out: Vec<String> = Vec::new();
                 let mut stack = vec![root.clone()];
                 while let Some(dir) = stack.pop() {
-                    let Ok(entries) = std::fs::read_dir(&dir) else {
+                    let Ok(entries) = crate::vfs::read_dir(&dir) else {
                         continue;
                     };
                     for e in entries.flatten() {
@@ -3250,7 +3251,7 @@ impl ToolSession {
                         if p.canonicalize().is_ok_and(|c| !c.starts_with(&base)) {
                             continue;
                         }
-                        if p.is_dir() {
+                        if p.vis_dir() {
                             stack.push(p);
                         } else if let Ok(r) = p.strip_prefix(&base) {
                             out.push(r.to_string_lossy().replace('\\', "/"));
@@ -8695,7 +8696,7 @@ mod tests {
     #[test]
     fn feedback_logs_with_its_caller_and_stages_nothing() {
         let dir = std::env::temp_dir().join(format!("jazyk-tool-fb-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
         let mut t = session();
         t.snapshot.out = dir.clone();
         t.caller = crate::feedback::Caller {
@@ -8744,7 +8745,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(crate::feedback::read(&dir, 99).len(), FEEDBACK_LIMIT);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The per-kind goal pages state what the model sees; a toolset change that
@@ -9548,7 +9549,7 @@ mod tests {
             std::process::id(),
             crate::verify::now_iso().replace([':', '.'], "-")
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::vfs::create_dir_all(&dir).unwrap();
         let mut s = Store {
             out: dir.clone(),
             ..Default::default()
@@ -9590,7 +9591,7 @@ mod tests {
             assert!(err.message.contains(repair), "{}", err.message);
             assert!(err.message.contains(id), "{}", err.message);
         }
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The file tools' sandbox holds after symlinks resolve: a link inside the
@@ -9605,10 +9606,10 @@ mod tests {
         ));
         let deliverable = base.join("deliverable");
         let outside = base.join("outside");
-        std::fs::create_dir_all(deliverable.join("src")).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(deliverable.join("src").join("ok.txt"), "fine\n").unwrap();
-        std::fs::write(outside.join("secret.txt"), "no\n").unwrap();
+        crate::vfs::create_dir_all(deliverable.join("src")).unwrap();
+        crate::vfs::create_dir_all(&outside).unwrap();
+        crate::vfs::write(deliverable.join("src").join("ok.txt"), "fine\n").unwrap();
+        crate::vfs::write(outside.join("secret.txt"), "no\n").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, deliverable.join("link")).unwrap();
         let mut t = session();
@@ -9631,7 +9632,7 @@ mod tests {
                 )
                 .unwrap_err();
             assert_eq!(err.rule, "bad-path");
-            assert!(!outside.join("new.txt").exists());
+            assert!(!outside.join("new.txt").vexists());
             let list = t.dispatch("list_files", &json!({})).unwrap();
             let files: Vec<String> = list["files"]
                 .as_array()
@@ -9646,7 +9647,7 @@ mod tests {
             .dispatch("read_text_file", &json!({"path": "../outside/secret.txt"}))
             .unwrap_err();
         assert_eq!(err.rule, "bad-path");
-        std::fs::remove_dir_all(&base).ok();
+        crate::vfs::remove_dir_all(&base).ok();
     }
 
     // The fan-out variant faces its level's count at mark_goal_done even when the

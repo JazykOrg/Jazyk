@@ -753,7 +753,7 @@ fn journal_diff(out: &Path, from: u64, to: u64, goal_ids: &[String]) -> (usize, 
     let mut resolved: Vec<String> = Vec::new();
     for g in (from + 1)..=to {
         let path = out.join("journal").join(format!("g{}.yaml", g));
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
             continue;
         };
         let Ok(entry) = serde_norway::from_str::<crate::model::JournalEntry>(&text) else {

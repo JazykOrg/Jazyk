@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Registering jazyk as an ACP agent in the editors that host one. Every client
 // spawns the agent as a child process over stdio, so a registration is always the
 // same three facts (a name, a command, its arguments) written wherever that client
@@ -170,7 +171,7 @@ fn vscode_settings(home: &std::path::Path) -> PathBuf {
 // Mirrors docs/frontends/acp.md#registration.
 pub fn spawn_command() -> String {
     let exe = std::env::current_exe().ok();
-    let canonical = exe.as_ref().and_then(|p| std::fs::canonicalize(p).ok());
+    let canonical = exe.as_ref().and_then(|p| crate::vfs::canonicalize(p).ok());
     let argv0 = std::env::args().next().unwrap_or_default();
     let name = std::path::Path::new(&argv0)
         .file_name()
@@ -179,7 +180,7 @@ pub fn spawn_command() -> String {
         .unwrap_or("jazyk")
         .to_string();
     if let (Some(found), Some(canonical)) = (which(&name), canonical.as_ref()) {
-        if std::fs::canonicalize(&found).ok().as_ref() == Some(canonical) {
+        if crate::vfs::canonicalize(&found).ok().as_ref() == Some(canonical) {
             return name;
         }
     }
@@ -191,7 +192,7 @@ fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|d| d.join(name))
-        .find(|p| p.is_file())
+        .find(|p| p.vis_file())
 }
 
 pub fn install(ide_id: &str) -> i32 {
@@ -250,15 +251,15 @@ pub fn merge_into(
     name: &str,
     entry: &Value,
 ) -> Result<Merge, String> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let text = crate::vfs::read_to_string(path).unwrap_or_default();
     let updated = splice(&text, key, name, entry)?;
     let Some(updated) = updated else {
         return Ok(Merge::Unchanged);
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        crate::vfs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, updated).map_err(|e| e.to_string())?;
+    crate::vfs::write(path, updated).map_err(|e| e.to_string())?;
     Ok(Merge::Written)
 }
 

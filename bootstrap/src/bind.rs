@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Binding: tie one requirement to the deliverable before generation runs. The bind
 // task searches for an implementation, finds or writes the test, runs it, and records
 // the ledger row; the verdict classifies the requirement (verified, unimplemented,
@@ -33,11 +34,11 @@ fn bind_reason(
         return Some("requirement-changed");
     }
     let artifact = artifact_path(&store.out, gs, &row.test);
-    if !artifact.exists() {
+    if !artifact.vexists() {
         return Some("artifact-gone");
     }
     if row.test.kind == "programmatic"
-        && !std::fs::read_to_string(&artifact)
+        && !crate::vfs::read_to_string(&artifact)
             .map(|c| !row.test.name.trim().is_empty() && c.contains(&row.test.name))
             .unwrap_or(false)
     {
@@ -53,7 +54,7 @@ fn bind_reason(
                 if t.criterion_hash != hash_hex(&c.statement) {
                     return Some("criterion-changed");
                 }
-                if !artifact_path(&store.out, gs, &t.test).exists() {
+                if !artifact_path(&store.out, gs, &t.test).vexists() {
                     return Some("artifact-gone");
                 }
             }
@@ -94,7 +95,7 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
         if depth > 4 || out.len() >= 10 {
             return;
         }
-        let Ok(rd) = std::fs::read_dir(dir) else {
+        let Ok(rd) = crate::vfs::read_dir(dir) else {
             return;
         };
         let mut entries: Vec<_> = rd.flatten().collect();
@@ -105,7 +106,7 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
             if name.starts_with('.') || matches!(name.as_str(), "target" | "node_modules" | "dist" | "build") {
                 continue;
             }
-            if p.is_dir() {
+            if p.vis_dir() {
                 walk(&p, root, needles, out, depth + 1);
                 continue;
             }
@@ -113,7 +114,7 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
             if meta.len() > 200_000 {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = crate::vfs::read_to_string(&p) else { continue };
             let hits: Vec<&String> = needles.iter().filter(|n| text.contains(n.as_str())).collect();
             if !hits.is_empty() {
                 let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
@@ -322,14 +323,14 @@ fn parse_test_ref(store: &Store, gs: &GenSettings, test: &Value, label: &str) ->
             .map_err(|e| format!("{}.cwd: {}", label, e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
-    if !path.exists() {
+    if !path.vexists() {
         return Err(format!(
             "test artifact `{}` does not exist; write it before recording",
             tref.artifact
         ));
     }
     if kind == "programmatic" {
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = crate::vfs::read_to_string(&path).unwrap_or_default();
         let bare = name.rsplit("::").next().unwrap_or(&name);
         if !content.contains(bare) {
             return Err(format!(
@@ -449,7 +450,7 @@ pub fn record(
             .map_err(|e| format!("test.cwd: {}", e))?,
     };
     let path = artifact_path(&store.out, gs, &tref);
-    if !path.exists() {
+    if !path.vexists() {
         return Err(format!(
             "test artifact `{}` does not exist; write it before recording",
             tref.artifact
@@ -459,7 +460,7 @@ pub fn record(
         // The name a runner addresses may carry a module path (`tests::req_x` for a
         // Rust test inside `mod tests`); the artifact holds the function, so the last
         // path segment is what must be found. Mirrors docs/compiler/goals/generate.md#gate.
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = crate::vfs::read_to_string(&path).unwrap_or_default();
         let bare = name.rsplit("::").next().unwrap_or(&name);
         if !content.contains(bare) {
             return Err(format!(
@@ -478,7 +479,7 @@ pub fn record(
     files.sort();
     files.dedup();
     for f in &files {
-        if !gs.deliverable.join(f).is_file() {
+        if !gs.deliverable.join(f).vis_file() {
             return Err(format!("implementing file `{}` does not exist under the deliverable; an unimplemented requirement records an empty files list", f));
         }
     }
@@ -605,7 +606,7 @@ pub fn unclaimed(proj: &crate::project::Project, store: &Store, gs: &GenSettings
 }
 
 fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::vfs::read_dir(dir) else {
         return;
     };
     for e in entries.flatten() {
@@ -618,7 +619,7 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
         {
             continue;
         }
-        if p.is_dir() {
+        if p.vis_dir() {
             if name == "target" || name == "node_modules" {
                 continue;
             }
@@ -653,7 +654,7 @@ pub fn run_all(
     if owed.is_empty() {
         return Ok(json!({"bound": 0, "failures": 0, "note": "every requirement is bound"}));
     }
-    std::fs::create_dir_all(&gs.deliverable).ok();
+    crate::vfs::create_dir_all(&gs.deliverable).ok();
     let (mut bound, mut failures) = (0u64, 0u64);
     for t in &owed {
         if trace.is_cancelled() {
@@ -719,8 +720,8 @@ mod tests {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let out =
             std::env::temp_dir().join(format!("jazyk-bind-test-{}-{}", std::process::id(), n));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut s = Store {
             out,
             ..Default::default()
@@ -793,8 +794,8 @@ mod tests {
         let n1 = crate::gen::crit_test_name("crit:shop-1", "Two items listed show two lines.");
         let n2 = crate::gen::crit_test_name("crit:shop-2", "An empty shop shows no line.");
         assert!(n1.starts_with("crit_shop_1_"), "{}", n1);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
-        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 1\n", n1, n2)).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 1\n", n1, n2)).unwrap();
         let headline = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh"});
         let err = record(&s, "req:shop-1", &[], &headline, &json!([]), "fail", None, &gs).unwrap_err();
         assert!(err.contains("criteria without a test") && err.contains("crit:shop-1"), "{}", err);
@@ -824,9 +825,9 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/shop.sh"),
             format!("# {}\nexit 1\n", name),
         )
@@ -857,10 +858,10 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
-        std::fs::write(gs.deliverable.join("shop.sh"), "echo items\n").unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(gs.deliverable.join("shop.sh"), "echo items\n").unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/shop.sh"),
             format!("# {}\nexit 0\n", name),
         )
@@ -909,9 +910,9 @@ mod tests {
             artifact: String::new(),
         });
         ledger.save(&s.out);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/shop.rs"),
             format!("fn {}() {{}}\n", name),
         )
@@ -970,10 +971,10 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
-        std::fs::write(s.out.join("outside.sh"), "echo secret\n").unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::write(s.out.join("outside.sh"), "echo secret\n").unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/shop.sh"),
             format!("# {}\nexit 0\n", name),
         )
@@ -1012,17 +1013,17 @@ mod tests {
         };
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("record_binding has not landed"), "{}", err);
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
-        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
         let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
         record(&s, "req:shop-1", &[], &test, &json!([]), "fail", None, &gs).unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
         // The test renamed by hand: the row names a test that is not there.
-        std::fs::write(gs.deliverable.join("tests/shop.sh"), "# renamed\nexit 1\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), "# renamed\nexit 1\n").unwrap();
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("does not contain the name"), "{}", err);
-        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\nexit 1\n", name)).unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
         // The statement reworded: the row judges a dropped sentence.
         s.graph.requirements.get_mut("req:shop-1").unwrap().statement = "The shop shall list items, sorted.".into();
@@ -1053,8 +1054,8 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(&gs.deliverable).unwrap();
-        std::fs::write(gs.deliverable.join("orphan.sh"), "echo lonely\n").unwrap();
+        crate::vfs::create_dir_all(&gs.deliverable).unwrap();
+        crate::vfs::write(gs.deliverable.join("orphan.sh"), "echo lonely\n").unwrap();
         let mut proj = crate::project::Project::default();
         proj.root = s.out.clone();
         let un = unclaimed(&proj, &s, &gs);

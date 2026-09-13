@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The graph store: persistent home of the semantic graph. Owns identifiers, enforces
 // invariants at commit, recomputes derived data, records every change, and writes the
 // typed dirtiness each commit causes. Mirrors docs/compiler/graph.md.
@@ -530,7 +531,7 @@ impl ProseEdit {
 
 // Cheap generation read: one line of status.yaml, no shard parsing.
 pub fn read_generation(out: &Path) -> u64 {
-    std::fs::read_to_string(out.join("status.yaml"))
+    crate::vfs::read_to_string(out.join("status.yaml"))
         .ok()
         .and_then(|t| {
             t.lines()
@@ -661,16 +662,16 @@ pub fn text_contains(hay: &str, needle: &str) -> bool {
 }
 
 fn yaml_to<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = crate::vfs::read_to_string(path).ok()?;
     serde_norway::from_str(&text).ok()
 }
 
 fn write_yaml<T: Serialize>(path: &Path, value: &T) {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        crate::vfs::create_dir_all(parent).ok();
     }
     if let Ok(text) = serde_norway::to_string(value) {
-        std::fs::write(path, text).ok();
+        crate::vfs::write(path, text).ok();
     }
 }
 
@@ -851,7 +852,7 @@ impl Store {
     // replaced) and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
     pub fn open_for_build(out: &Path) -> Store {
         let status_path = out.join("status.yaml");
-        if status_path.exists() {
+        if status_path.vexists() {
             let version = yaml_to::<Status>(&status_path)
                 .map(|s| s.version)
                 .unwrap_or(0);
@@ -861,8 +862,8 @@ impl Store {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "jazyk-out".to_string());
                 let bak = out.with_file_name(format!("{}.bak", name));
-                std::fs::remove_dir_all(&bak).ok();
-                match std::fs::rename(out, &bak) {
+                crate::vfs::remove_dir_all(&bak).ok();
+                match crate::vfs::rename(out, &bak) {
                     Ok(()) => eprintln!(
                         "[jazyk] store version {} is not {}; archived {} to {} and starting empty",
                         version,
@@ -923,7 +924,7 @@ impl Store {
         let g = self.out.join("graph");
         write_yaml(&g.join("entities.yaml"), &self.graph.entities);
         write_yaml(&g.join("requirements.yaml"), &self.graph.requirements);
-        if !self.graph.criteria.is_empty() || g.join("criteria.yaml").exists() {
+        if !self.graph.criteria.is_empty() || g.join("criteria.yaml").vexists() {
             write_yaml(&g.join("criteria.yaml"), &self.graph.criteria);
         }
         write_yaml(&g.join("views.yaml"), &self.graph.views);
@@ -998,7 +999,7 @@ impl Store {
     // Every journal entry on disk, oldest first.
     fn journal_entries(&self) -> Vec<JournalEntry> {
         let dir = self.out.join("journal");
-        let Ok(read) = std::fs::read_dir(&dir) else {
+        let Ok(read) = crate::vfs::read_dir(&dir) else {
             return Vec::new();
         };
         let mut gens: Vec<u64> = read
@@ -2186,7 +2187,7 @@ impl Store {
         let put = |text: &str, old: &str, new: &str| -> Result<(), String> {
             match write {
                 Some(w) => w(&edit.doc, old, new, text),
-                None => std::fs::write(&path, text)
+                None => crate::vfs::write(&path, text)
                     .map_err(|e| format!("write {}: {}", path.display(), e)),
             }
         };
@@ -5120,7 +5121,7 @@ impl Store {
         self.prune_records();
         if persist {
             for doc in &removed_docs {
-                std::fs::remove_file(self.out.join("docs").join(format!("{}.yaml", doc))).ok();
+                crate::vfs::remove_file(self.out.join("docs").join(format!("{}.yaml", doc))).ok();
             }
             for entry in &entries {
                 self.write_journal(entry);
@@ -5648,10 +5649,10 @@ impl Store {
 }
 
 fn collect_yaml(dir: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(rd) = std::fs::read_dir(dir) {
+    if let Ok(rd) = crate::vfs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.is_dir() {
+            if p.vis_dir() {
                 collect_yaml(&p, out);
             } else if p.extension().map(|e| e == "yaml").unwrap_or(false) {
                 out.push(p);
@@ -5668,7 +5669,7 @@ struct FileLock {
 impl FileLock {
     fn acquire(out: &Path) -> FileLock {
         let path = out.join(".lock");
-        std::fs::create_dir_all(out).ok();
+        crate::vfs::create_dir_all(out).ok();
         for _ in 0..100 {
             match std::fs::OpenOptions::new()
                 .write(true)
@@ -5693,7 +5694,7 @@ impl FileLock {
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        std::fs::remove_file(&self.path).ok();
+        crate::vfs::remove_file(&self.path).ok();
     }
 }
 
@@ -5703,8 +5704,8 @@ mod tests {
 
     fn tmp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-store-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).ok();
         dir
     }
 
@@ -5712,8 +5713,8 @@ mod tests {
     // stomped by parallel tests).
     fn own_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).ok();
         dir
     }
 
@@ -5882,7 +5883,7 @@ mod tests {
 
     fn journal_entry(s: &Store, generation: u64) -> JournalEntry {
         let path = s.out.join("journal").join(format!("g{}.yaml", generation));
-        serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+        serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
     }
 
     // A dual write lands the prose and the graph as one changeset, absorbs its own
@@ -5893,8 +5894,8 @@ mod tests {
     fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
         let root = own_dir("dual-write");
         let text = "# Pay\n\nAn Order is paid within 30 days.\n";
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(root.join("docs/pay.md"), text).unwrap();
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        crate::vfs::write(root.join("docs/pay.md"), text).unwrap();
         let mut s = Store {
             out: root.join("jazyk-out"),
             ..Default::default()
@@ -5961,7 +5962,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(report.generation, before + 1, "one changeset");
-        let on_disk = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        let on_disk = crate::vfs::read_to_string(root.join("docs/pay.md")).unwrap();
         assert!(on_disk.contains("within 21 days"), "{}", on_disk);
         assert_eq!(s.docs["docs/pay.md"].content_hash, hash_hex(&on_disk));
         let r = &s.graph.requirements["req:pay-1"];
@@ -6010,7 +6011,7 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("edit-stale"), "{}", err);
         assert_eq!(
-            std::fs::read_to_string(root.join("docs/pay.md")).unwrap(),
+            crate::vfs::read_to_string(root.join("docs/pay.md")).unwrap(),
             on_disk
         );
         assert!(s.graph.requirements.contains_key("req:pay-1"));
@@ -6019,7 +6020,7 @@ mod tests {
             .dual_write(&root, &edit, Vec::new(), &Commit::store("dual-write"), None)
             .is_err());
         // An empty old_text appends the sentence to the section's body.
-        let on_disk = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        let on_disk = crate::vfs::read_to_string(root.join("docs/pay.md")).unwrap();
         let raw = s.docs["docs/pay.md"].sections["/pay"].raw.clone();
         let insert = ProseEdit::locate(
             "docs/pay.md",
@@ -6037,7 +6038,7 @@ mod tests {
             "{}",
             insert.full
         );
-        std::fs::remove_dir_all(&root).ok();
+        crate::vfs::remove_dir_all(&root).ok();
     }
 
     // A commit writes the change records its mutations caused, each with its cause;
@@ -7469,32 +7470,32 @@ mod tests {
         s.apply(vec![create("ent:cart", "Cart")], &session());
         assert_eq!(Store::open_for_build(&dir).graph.entities.len(), 1);
         // Rewrite status.yaml without a version, as an older store would have it.
-        std::fs::write(dir.join("status.yaml"), "generation: 7\n").unwrap();
+        crate::vfs::write(dir.join("status.yaml"), "generation: 7\n").unwrap();
         let read = Store::load(&dir);
         assert!(read.graph.entities.is_empty());
         assert_eq!(read.status.generation, 0);
-        assert!(dir.join("graph").join("entities.yaml").exists());
+        assert!(dir.join("graph").join("entities.yaml").vexists());
         let bak = dir.with_file_name(format!(
             "{}.bak",
             dir.file_name().unwrap().to_string_lossy()
         ));
-        std::fs::remove_dir_all(&bak).ok();
+        crate::vfs::remove_dir_all(&bak).ok();
         let fresh = Store::open_for_build(&dir);
         assert!(fresh.graph.entities.is_empty());
-        assert!(!dir.join("status.yaml").exists());
-        assert!(bak.join("graph").join("entities.yaml").exists());
+        assert!(!dir.join("status.yaml").vexists());
+        assert!(bak.join("graph").join("entities.yaml").vexists());
         // A second archive replaces the first.
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("status.yaml"), "version: 1\ngeneration: 2\n").unwrap();
-        std::fs::write(dir.join("marker"), "second").unwrap();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        crate::vfs::write(dir.join("status.yaml"), "version: 1\ngeneration: 2\n").unwrap();
+        crate::vfs::write(dir.join("marker"), "second").unwrap();
         let fresh = Store::open_for_build(&dir);
         assert!(fresh.graph.entities.is_empty());
-        assert!(bak.join("marker").exists());
-        assert!(!bak.join("graph").exists());
+        assert!(bak.join("marker").vexists());
+        assert!(!bak.join("graph").vexists());
         // A fresh directory is simply empty: nothing to archive.
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
         assert!(Store::open_for_build(&dir).graph.entities.is_empty());
-        assert!(!dir.join("status.yaml").exists());
+        assert!(!dir.join("status.yaml").vexists());
     }
 
     // A derived requirement mints under stem x, lands a provenance-pending record, and
@@ -7809,7 +7810,7 @@ mod tests {
             .out
             .join("journal")
             .join(format!("g{}.yaml", before + 1))
-            .exists());
+            .vexists());
     }
 
     // A save that dirtied sections is a generation of its own with its records.
@@ -9565,6 +9566,6 @@ mod tests {
             .iter()
             .find(|c| c.subject == "req:p02")
             .is_some_and(|c| c.judged().is_empty()));
-        std::fs::remove_dir_all(&s.out).ok();
+        crate::vfs::remove_dir_all(&s.out).ok();
     }
 }

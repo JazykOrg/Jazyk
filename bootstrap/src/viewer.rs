@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The viewer: render the graph store into one self-contained HTML file. Reads the same
 // shards every frontend reads; never compiles. The walk of the docsgen pages (level
 // pages, entity cards, diagram pages) runs inside the one file as anchors, and each
@@ -425,14 +426,14 @@ fn svg_path(store: &Store, view_id: &str) -> Option<(String, String, std::path::
         .join("diagrams")
         .join(kind)
         .join(format!("{}.svg", slug));
-    path.exists()
+    path.vexists()
         .then(|| (kind.to_string(), slug.to_string(), path))
 }
 
 // The figure a view card embeds: the sanitized rendering, capped at its own width.
 fn figure(store: &Store, view_id: &str) -> Option<String> {
     let (_, _, path) = svg_path(store, view_id)?;
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::vfs::read_to_string(path).ok()?;
     let svg = inline_svg(&raw)?;
     let cap = svg
         .width
@@ -1330,9 +1331,9 @@ mod tests {
     #[test]
     fn renders_and_escapes() {
         let out = std::env::temp_dir().join(format!("jazyk-viewer-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(out.join("diagrams/class")).unwrap();
-        std::fs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(out.join("diagrams/class")).unwrap();
+        crate::vfs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
         let mut s = Store {
             out: out.clone(),
             ..Default::default()
@@ -1452,7 +1453,7 @@ mod tests {
         );
         assert!(html.contains("<table>"));
         assert!(!html.contains("<script>alert"));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     fn gs() -> GenSettings {
@@ -1696,9 +1697,9 @@ mod tests {
     #[test]
     fn walk_runs_inside_the_file_with_the_rendering_inline() {
         let out = std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(out.join("diagrams/component")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(out.join("diagrams/component")).unwrap();
+        crate::vfs::write(
             out.join("diagrams/component/shop.svg"),
             concat!(
                 "<?xml version=\"1.0\" encoding=\"us-ascii\"?><?plantuml 1.2026.2?>",
@@ -1802,7 +1803,7 @@ mod tests {
         assert!(html.contains("<a class=\"k\" href=\"#l-ent:shop\">2 children</a>"), "{}", html);
         // Nothing inside the file points outside it but the svg file link.
         assert!(!html.contains("docsgen/entities/"), "{}", html);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]

@@ -148,12 +148,20 @@ backend still serves every read; only a build is refused, with the reason. The s
 holds without WebGPU: there is no model to call, and the page says so instead of
 hanging.
 
-The model the page loads is a small instruct model with tool calling, so a first
-visit downloads gigabytes rather than tens of gigabytes, and the weights cache in the
-browser. A model this size is well under what the
-[benchmark](../benchmark/benchmark.md) asks for: the harness holds (gates bounce bad
-calls, junk never lands), but the judgment the sessions produce is poor. The demo
-shows the machinery, not the quality.
+The backend speaks the text codec in a tab, set once at boot (the same effect as
+`JAZYK_CODEC=text`). WebLLM's native tool calling is whitelisted to a few 8B builds
+and refuses a custom system prompt beside it, so the first-round probe would fail
+every session before falling back. The text codec renders the compile serving's tool
+schemas into the prompt, about 19k tokens before the model says a word, so the
+engine's context window is set to 32k. The window is paid for in KV cache: for a 3B
+model about 3.5GB beside 2GB of weights, which a laptop with unified memory carries.
+
+The model the page loads is a small instruct model, so a first visit downloads
+gigabytes rather than tens of gigabytes, and the weights cache in the browser. A
+model this size is well under what the [benchmark](../benchmark/benchmark.md) asks
+for: the harness holds (gates bounce bad calls, junk never lands), but the judgment
+the sessions produce is poor, and a turn takes a minute or more. The demo shows the
+machinery, not the quality.
 
 ## The trace
 

@@ -51,6 +51,11 @@ pub fn boot(root_path: &str) -> String {
         })
         .to_string();
     }
+    // The page's model speaks the text codec: WebLLM offers native tool calling
+    // only for a short whitelist of models and refuses a custom system prompt with
+    // it, so the first-round probe would fail every session before falling back.
+    // Sticky, like a JAZYK_CODEC=text (docs/frontends/wasm.md#the-model).
+    crate::llm::set_tools_mode(2);
     let p = crate::project::Project::load(&root);
     serde_json::json!({
         "ok": true,

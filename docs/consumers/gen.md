@@ -374,7 +374,8 @@ test: the entity generated later finds the row in its package's `boundTests` and
 it unchanged, never a second test beside it.
 
 A run of the row's headline test records its verdict on the criterion entry that is
-the same test (same command or name), so the first criterion's entry never stays at
+the same test (the same test name; two criteria may share one runner command), so the
+first criterion's entry never stays at
 its binding-time verdict while the row moves. The criterion's `kind` names the test shape directly: `positive` a scenario on the
 stated input, `negative` the provoked failure path, `boundary` the edge value and the one
 past it, `quality` a measured check against `measure`. The requirement's

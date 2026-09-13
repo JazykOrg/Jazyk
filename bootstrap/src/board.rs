@@ -1377,7 +1377,21 @@ impl Board {
         });
         if self.open_goals().is_empty() {
             v["verdict"] = json!(self.verdict.to_string());
-            v["note"] = json!("nothing to compile; the graph reflects the docs");
+            // Optional batches may still be listed: say what they are, since a
+            // reader once weighed "converged" against a next line inviting a claim
+            // (docs/frontends/mcp.md#compilation-over-mcp).
+            if let Some(b) = self.batches.first() {
+                let optional: usize = self.batches.iter().map(|b| b.goals.len()).sum();
+                v["note"] = json!(format!(
+                    "nothing mandatory to compile; the graph reflects the docs. {} optional goal(s) in {} batch(es) stay claimable (begin_goals takes {}); the verdict does not wait for them",
+                    optional,
+                    self.batches.len(),
+                    b.id
+                ));
+                v["next"] = json!(format!("optional: begin_goals claims {} or stop here", b.id));
+            } else {
+                v["note"] = json!("nothing to compile; the graph reflects the docs");
+            }
         } else if self.batches.is_empty() {
             v["note"] = json!("no goal is ready; blockedBy says why");
         } else {

@@ -242,6 +242,10 @@ serving; what it claims is a batch:
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
   (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. The
+  On a converged board that still lists optional batches, the note says how many
+  optional goals stay claimable and `next` reads `optional: begin_goals claims <batch>
+  or stop here`, since a reader once weighed the verdict against a line inviting a
+  claim. The
   compact form exists because a thirty-goal board with forty-five gated bind goals
   once answered with seventy-five thousand characters, most of them hints on goals
   the agent could not claim. A batch id is `b<generation>-<n>`: the

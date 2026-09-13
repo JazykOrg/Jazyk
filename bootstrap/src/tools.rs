@@ -2101,14 +2101,21 @@ impl ToolSession {
                         }
                     }
                     Some("open-question") => {
+                        // Any open question naming the requirement backs the verdict:
+                        // a standing contradiction with its prompt is the question
+                        // (docs/compiler/goals/derive-criteria.md#gate).
+                        let asks = |rule: &str, prompt: &Option<crate::model::DiagnosticPrompt>| {
+                            rule == "invented-choice"
+                                || (prompt.is_some() && matches!(rule, "contradiction" | "decision" | "ambiguity"))
+                        };
                         let prompted = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
-                            if diagnostic.rule == "invented-choice" && diagnostic.subjects.iter().any(|s| s == &rid)))
-                            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && d.rule == "invented-choice" && d.subjects.iter().any(|s| s == &rid));
+                            if asks(&diagnostic.rule, &diagnostic.prompt) && diagnostic.subjects.iter().any(|s| s == &rid)))
+                            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && asks(&d.rule, &d.prompt) && d.subjects.iter().any(|s| s == &rid));
                         if !prompted {
                             return Err(ToolError::new(
                                 "unbacked-question",
                                 format!(
-                                    "{} claims {} open-question, but no invented-choice diagnostic names it; report_diagnostic rule invented-choice with a prompt carrying the options",
+                                    "{} claims {} open-question, but no open diagnostic with a prompt names it; report_diagnostic rule invented-choice with a prompt carrying the options, unless a standing contradiction, decision, or ambiguity already asks",
                                     goal, rid
                                 ),
                             ));

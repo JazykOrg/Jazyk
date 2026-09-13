@@ -42,8 +42,12 @@ runs first by construction.
 - `stated-only`: the documents state criteria and the session added none; at least one
   criterion exists.
 - `open-question`: the requirement's evidence depends on a value the documents do not
-  give, and an `invented-choice` prompt is staged naming the requirement
-  ([invented choices](../../consumers/gen.md#invented-choices)). The requirement keeps
+  give, or give twice, and an open diagnostic with a prompt names the requirement: an
+  `invented-choice` staged here for a value nobody stated
+  ([invented choices](../../consumers/gen.md#invented-choices)), or a standing
+  `contradiction`, `decision`, or `ambiguity` whose prompt already carries the
+  question (the 21 versus 30 day deadline is that case; filing a second question
+  would be a twin). The requirement keeps
   no criterion until the answer; `bind` stays blocked on it.
 - Every derived criterion staged carries `from` naming the requirement, `reasoning`, and
   a ratification proposal sentence toward the requirement's section

@@ -856,7 +856,10 @@ The loop continued onto the org corpus and onto generation:
   files it). On example-erp the criteria compile converged with 86 criteria for 39
   requirements (54 positive, 32 negative, none quoted: the corpus states no cases or
   examples), eight criteria goals done, for about $20 across a run the usage limit cut
-  and its resume.
+  and its resume. Generation over that ledger on an empty deliverable bound 34
+  requirements with 73 criterion tests and generated the backend and the frontend as
+  an npm workspace, every test green, with no tool error and no feedback entry in 148
+  turns ($16.16).
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

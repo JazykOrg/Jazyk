@@ -2938,6 +2938,13 @@ impl GoalKind for Ratify {
                         .get(subject)
                         .and_then(|e| e.provenance.clone())
                 })
+                .or_else(|| {
+                    store
+                        .graph
+                        .criteria
+                        .get(subject)
+                        .and_then(|c| c.provenance.clone())
+                })
         };
         let hints_for =
             |subject: &str, prov: Option<&Provenance>, proposal: Option<&(String, &Diagnostic)>| {
@@ -3025,6 +3032,7 @@ impl GoalKind for Ratify {
             }
             if !store.graph.entities.contains_key(subject)
                 && !store.graph.requirements.contains_key(subject)
+                && !store.graph.criteria.contains_key(subject)
             {
                 continue;
             }

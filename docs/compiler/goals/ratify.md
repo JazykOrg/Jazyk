@@ -24,6 +24,10 @@ written by the commit that lands a fact with `derived` or `decree` provenance:
 - A GC session stages sub-entities and the statements it writes for them
   ([`abstract-entity`](./abstract-entity.md)): each new fact carries
   `derived: {from, reasoning}`.
+- A [`derive-criteria`](./derive-criteria.md) session writes a
+  [criterion](../model/criterion.md) the documents do not state: the proposal offers
+  the criterion's sentence under its requirement's section, and accepting it flips the
+  criterion to the quote form like any fact.
 - A human edits a derived fact, adds a fact with no prose behind it, or edits a
   quoted fact without accepting a proposed rewrite: `edit_fact` records a `decree`
   ([edit paths](../compilation.md#edit-paths),

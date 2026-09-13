@@ -272,6 +272,18 @@ fn ratify_ops(s: &Store, did: &str, subject: &str, source: &SourceRef, reworded:
             provenance: None,
         });
     }
+    if reworded && s.graph.criteria.contains_key(&sid) {
+        ops.push(Op::UpdateCriterion {
+            id: sid.clone(),
+            statement: Some(source.quote.clone()),
+            kind: None,
+            measure: None,
+            given: None,
+            when: None,
+            then: None,
+            entities: None,
+        });
+    }
     ops.push(Op::RatifyProvenance {
         id: sid,
         source: source.clone(),

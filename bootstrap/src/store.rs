@@ -1382,7 +1382,9 @@ impl Store {
 
     // Whether a node id names an existing entity or requirement.
     fn node_exists(&self, id: &str) -> bool {
-        self.graph.entities.contains_key(id) || self.graph.requirements.contains_key(id)
+        self.graph.entities.contains_key(id)
+            || self.graph.requirements.contains_key(id)
+            || self.graph.criteria.contains_key(id)
     }
 
     // Deterministic search over names and aliases: exact, then substring, then token overlap.
@@ -3500,6 +3502,11 @@ impl Store {
                         remap.insert(id, final_id.clone());
                     }
                     dirt.created(&final_id, m);
+                    // A derived criterion carries a ratification proposal like any
+                    // derived fact (docs/compiler/model/criterion.md#lifecycle).
+                    if let Some(p) = criterion.provenance.as_ref() {
+                        dirt.pending(&final_id, m, p);
+                    }
                     applied.push(Op::CreateCriterion {
                         id: final_id.clone(),
                         criterion: criterion.clone(),
@@ -3867,6 +3874,15 @@ impl Store {
                         e.provenance = None;
                         e.updated = Some(build.clone());
                         dirt.entity(&rid, m, "mentions");
+                    } else if let Some(c) = self.graph.criteria.get_mut(&rid) {
+                        if c.source.is_some() {
+                            skipped.push(format!("ratify_provenance {}: already quoted", rid));
+                            continue;
+                        }
+                        c.source = Some(source.clone());
+                        c.provenance = None;
+                        c.stale = false;
+                        c.updated = Some(build.clone());
                     } else if self.graph.views.contains_key(&rid) {
                         skipped.push(format!("ratify_provenance {}: views are not ratified", rid));
                         continue;
@@ -4037,6 +4053,15 @@ impl Store {
                             continue;
                         }
                         self.graph.views.remove(&rid);
+                        dirt.deleted(&rid, m);
+                    } else if self.graph.criteria.contains_key(&rid) {
+                        // A derived criterion retracted goes; its requirement stands
+                        // (docs/compiler/goals/ratify.md#created-when).
+                        if !pending(&self.graph.criteria[&rid].provenance) {
+                            skipped.push(format!("retract_decree {}: not a decree", rid));
+                            continue;
+                        }
+                        self.graph.criteria.remove(&rid);
                         dirt.deleted(&rid, m);
                     } else {
                         skipped.push(format!("retract_decree: unknown id {}", rid));
@@ -4516,6 +4541,14 @@ impl Store {
                     sentence,
                     e.provenance.clone(),
                     e.parent.clone().into_iter().collect(),
+                )
+            } else if let Some(c) = self.graph.criteria.get(&id) {
+                // The sentence lands under the owning requirement's section
+                // (docs/compiler/model/criterion.md#lifecycle).
+                (
+                    c.statement.clone(),
+                    c.provenance.clone(),
+                    vec![c.requirement.clone()],
                 )
             } else {
                 continue;

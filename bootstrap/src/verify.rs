@@ -461,9 +461,17 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
         return Vec::new();
     };
     let headline_run = row.test.run.clone();
+    let headline_name = row.test.name.clone();
+    let headline_verdict = row.verdict.clone();
     let mut lines = Vec::new();
     let mut any_fail = false;
     for (cid, t) in row.tests.iter_mut() {
+        if t.test.name == headline_name {
+            // The headline is this criterion's test: its verdict is the row's, and
+            // the list says so instead of leaving the criterion out.
+            lines.push(json!({"requirement": rid, "criterion": cid, "verdict": headline_verdict, "note": "the row's headline test"}));
+            continue;
+        }
         if t.test.kind != "programmatic" || t.test.run == headline_run {
             continue;
         }
@@ -591,7 +599,7 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     let mut held: Vec<(String, ProgRun)> = Vec::new();
     for rid in &selected {
         let Some(row) = ledger.requirements.get(rid) else {
-            skipped.push(json!({"requirement": rid, "reason": "no ledger row; generate first"}));
+            skipped.push(json!({"requirement": rid, "reason": "no ledger row: the requirement is not bound yet; binding_tasks lists it, begin_binding then record_binding"}));
             continue;
         };
         if row.test.kind != "programmatic" {

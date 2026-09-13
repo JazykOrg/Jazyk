@@ -6,6 +6,7 @@ pub mod board;
 pub mod card;
 pub mod status;
 pub mod views;
+pub mod workers;
 
 #[cfg(target_arch = "wasm32")]
 pub mod dispatch;

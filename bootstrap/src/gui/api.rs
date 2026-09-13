@@ -2,6 +2,10 @@
 use super::state::SharedState;
 use crate::store::Store;
 pub use crate::webapi::status::{diag_counts_by_doc, rel_doc, status_value};
+// The state-bound form every GUI caller uses; the values live in crate::webapi.
+pub fn workers_snapshot(st: &SharedState) -> serde_json::Value {
+    crate::webapi::workers::workers_snapshot(&st.proj(), &st.out, &st.gs(), &st.control())
+}
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -299,33 +303,6 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 
 // The control plane snapshot the workers strip renders: modes, registered workers,
 // live leases, gated counts. Mirrors docs/frontends/gui.md#workers.
-pub fn workers_snapshot(st: &SharedState) -> Value {
-    let c = st.control();
-    let board = crate::board::Board::compute(&st.proj(), &st.out);
-    let graph_kinds = crate::board::Board::graph_kinds();
-    let store = crate::store::Store::load(&st.out);
-    let unclaimed = crate::bind::unclaimed(&st.proj(), &store, &st.gs());
-    json!({
-        "workflow": {"compile": c.compile, "generate": c.generate, "worker": c.worker},
-        "workers": crate::control::workers(&st.out),
-        "leases": crate::control::leases(&st.out).values().collect::<Vec<_>>(),
-        "gated": {
-            "compile": board.gated_of(&graph_kinds),
-            // Bind goals gate under the generate release beside generation.
-            "generate": board.gated_of(&["generate", "bind"]),
-        },
-        "actionable": {
-            "compile": board.ready_of(&graph_kinds),
-            "bind": board.ready_of(&["bind"]),
-            "generate": board.ready_of(&["generate"]),
-            "verify": board.ready_of(&["verify"]),
-        },
-        "board": board.counts(),
-        // The unclaimed report: the decompile worklist.
-        "unclaimed": unclaimed.len(),
-        "decompileReleased": c.released.decompile,
-    })
-}
 
 pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
     Json(workers_snapshot(&st))

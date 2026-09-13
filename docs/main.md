@@ -149,6 +149,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 - [Language Server](./frontends/lsp.md)
 - [Viewer](./frontends/viewer.md)
 - [GUI](./frontends/gui.md)
+- [Browser Backend](./frontends/wasm.md)
 
 ## Consumers
 

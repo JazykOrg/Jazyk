@@ -1,5 +1,6 @@
 // The typed API client. The session token arrives in the URL fragment
 // (#token=...), is stored per origin, and travels as a bearer header.
+import { backend } from './backend'
 import { useApp } from './store'
 
 let token: string | null = null
@@ -33,28 +34,17 @@ export function tokenParam(): string {
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
+  const res = await backend().request(method, path, body)
+  if (res.status < 200 || res.status >= 300) {
     // A stale token blocks the app with the token prompt instead of failing quietly.
     if (res.status === 401) useApp.getState().setAuthRequired(true)
     let msg = `${res.status}`
-    try {
-      const j = await res.json()
-      if (j.error) msg = j.error
-      if (res.status === 409) throw Object.assign(new Error(msg), { conflict: true, body: j })
-    } catch (e) {
-      if ((e as { conflict?: boolean }).conflict) throw e
-    }
+    const j = res.body as { error?: string } | null
+    if (j && typeof j === 'object' && j.error) msg = j.error
+    if (res.status === 409) throw Object.assign(new Error(msg), { conflict: true, body: j })
     throw Object.assign(new Error(msg), { status: res.status })
   }
-  return res.json()
+  return res.body as T
 }
 
 // A read where absence is an answer, not an error (e.g. a missing diff baseline).
@@ -70,21 +60,21 @@ export async function getOr404<T>(path: string): Promise<T | null> {
 // A read that answers with the file's text rather than JSON (the out directory's
 // files). The same token and the same 401 handling as the JSON reads.
 export async function getText(path: string): Promise<string> {
-  const headers: Record<string, string> = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(path, { headers })
-  if (!res.ok) {
+  const res = await backend().request('GET', path)
+  if (res.status < 200 || res.status >= 300) {
     if (res.status === 401) useApp.getState().setAuthRequired(true)
-    let msg = `${res.status}`
-    try {
-      const j = (await res.json()) as { error?: string }
-      if (j.error) msg = j.error
-    } catch {
-      // no JSON body
-    }
+    const j = res.body as { error?: string } | null
+    const msg = j && typeof j === 'object' && j.error ? j.error : `${res.status}`
     throw Object.assign(new Error(msg), { status: res.status })
   }
-  return res.text()
+  // The server answers a file with its bytes; the wasm backend wraps it in the
+  // envelope every reply travels in.
+  const b = res.body
+  if (typeof b === 'string') return b
+  if (b && typeof b === 'object' && typeof (b as { text?: string }).text === 'string') {
+    return (b as { text: string }).text
+  }
+  return JSON.stringify(b)
 }
 
 export const get = <T = unknown,>(path: string) => req<T>('GET', path)

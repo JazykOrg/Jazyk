@@ -228,9 +228,140 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             ok(serde_json::to_value(&report).unwrap_or(Value::Null))
         }
 
-        ("GET", "/journal") => {
+        // The whole graph, as the shards hold it.
+        ("GET", "/graph") => {
             let store = Store::load(&out());
-            ok(json!({ "generation": store.status.generation }))
+            ok(json!({
+                "generation": store.status.generation,
+                "entities": store.graph.entities,
+                "requirements": store.graph.requirements,
+                "views": store.graph.views,
+                "relationships": store.graph.relationships,
+                "stateMachines": store.graph.state_machines,
+                "diagnostics": store.graph.diagnostics,
+                "redirects": store.graph.redirects,
+            }))
+        }
+
+        ("GET", "/coverage") => ok(json!(Store::load(&out()).docs)),
+
+        ("GET", "/overview") => {
+            let p = project();
+            let store = Store::load(&p.out);
+            let statuses = crate::verify::status_map(&store, &crate::gen::GenSettings::resolve(&p));
+            let mut by_status: std::collections::BTreeMap<String, usize> = Default::default();
+            for v in statuses.values() {
+                *by_status
+                    .entry(v["status"].as_str().unwrap_or("unknown").to_string())
+                    .or_default() += 1;
+            }
+            let mut v = super::status::status_value(&store);
+            v["verification"] = json!(by_status);
+            ok(v)
+        }
+
+        ("GET", "/journal") => {
+            let out = out();
+            let generation = Store::load(&out).status.generation;
+            let to = param(&q, "to")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(generation)
+                .min(generation);
+            let limit = param(&q, "limit")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(50)
+                .clamp(1, 500);
+            let from = param(&q, "from")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(1)
+                .max(1);
+            // Generations without a journal file exist (checks and GC entries are
+            // sparse), so the range walks down and `limit` caps the count.
+            let mut entries: Vec<Value> = Vec::new();
+            let mut g = to;
+            while g >= from && (entries.len() as u64) < limit {
+                let f = out.join("journal").join(format!("g{}.yaml", g));
+                if let Ok(text) = crate::vfs::read_to_string(&f) {
+                    if let Ok(mut v) = serde_norway::from_str::<Value>(&text) {
+                        v["generation"] = json!(g);
+                        entries.push(v);
+                    }
+                }
+                if g == 0 {
+                    break;
+                }
+                g -= 1;
+            }
+            ok(json!({ "generation": generation, "entries": entries }))
+        }
+
+        ("GET", "/search") => {
+            let store = Store::load(&out());
+            let hits: Vec<Value> = store
+                .search(&param(&q, "q").unwrap_or_default())
+                .into_iter()
+                .map(|(id, name, definition)| {
+                    json!({ "id": id, "name": name, "definition": definition })
+                })
+                .collect();
+            ok(json!({ "hits": hits }))
+        }
+
+        ("GET", p) if p.starts_with("/requirements/") => {
+            let id = decode(p.trim_start_matches("/requirements/"));
+            let store = Store::load(&out());
+            let id = store.resolve_id(&id).to_string();
+            match store.graph.requirements.get(&id) {
+                Some(r) => ok(json!(r)),
+                None => err(404, format!("no requirement {}", id)),
+            }
+        }
+
+        ("GET", "/feedback") => {
+            let limit = param(&q, "limit")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(200)
+                .clamp(1, 2000);
+            ok(json!({ "entries": crate::feedback::read(&out(), limit) }))
+        }
+
+        // Nothing in a tab holds work the way the server's job manager does: a build
+        // runs inside one request. The shapes stay valid so the panels render empty.
+        ("GET", "/jobs") => ok(json!({ "jobs": [] })),
+        ("GET", "/workers") => {
+            let p = project();
+            let c = crate::control::Control::load(&p, &p.out);
+            ok(super::workers::workers_snapshot(
+                &p,
+                &p.out,
+                &crate::gen::GenSettings::resolve(&p),
+                &c,
+            ))
+        }
+        ("GET", "/questions") => ok(json!({ "questions": [] })),
+        ("GET", "/gen/pending") => ok(json!({ "pending": [] })),
+        ("GET", "/verify/pending") => ok(json!({ "pending": [] })),
+        ("GET", "/verify/matrix") => ok(json!({ "rows": [] })),
+        ("GET", "/benchmarks") => ok(json!({ "runs": [] })),
+        ("GET", "/benchmarks/models") => ok(json!({ "models": [] })),
+        ("GET", "/deliverable") => ok(json!({ "files": [] })),
+        ("GET", "/trace") => ok(json!({ "traces": [] })),
+
+        ("GET", "/watch") => ok(json!({ "watch": false })),
+        ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
+
+        ("GET", "/out/list") => {
+            let out = out();
+            let mut files: Vec<Value> = Vec::new();
+            for p in crate::vfs::list_all() {
+                if let Ok(rel) = p.strip_prefix(&out) {
+                    files.push(json!({
+                        "path": rel.to_string_lossy().replace('\\', "/"),
+                        "size": crate::vfs::read(&p).map(|b| b.len()).unwrap_or(0),
+                    }));
+                }
+            }
+            ok(json!({ "files": files }))
         }
 
         ("GET", "/out/file") => {

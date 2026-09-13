@@ -909,6 +909,8 @@ pub struct ProjectBlock {
     pub here: usize,
     pub elsewhere: usize,
     pub blocked: usize,
+    // Open ratification proposals: derived facts awaiting a human, not defects.
+    pub ratification: usize,
     // The batch id: names the session and the protocol line's {target}.
     pub batch: String,
     // The project's lint rules with their severities, so a `lint` diagnostic names a
@@ -934,6 +936,12 @@ impl ProjectBlock {
             generation: store.status.generation,
             mode: mode.to_string(),
             diagnostics: store.open_diag_counts(),
+            ratification: store
+                .graph
+                .diagnostics
+                .values()
+                .filter(|d| d.lifecycle == "open" && d.rule == "ratification-pending")
+                .count(),
             here,
             elsewhere: total.saturating_sub(here),
             blocked,
@@ -966,13 +974,28 @@ impl ProjectBlock {
                 .map(|(sev, n)| format!("{} {}(s)", n, sev))
                 .collect();
             s.push_str(&format!(
-                "- diagnostics: {} (the build's checks file theirs at the tail)\n",
-                parts.join(", ")
+                "- diagnostics: {} (the build's checks file theirs at the tail){}\n",
+                parts.join(", "),
+                if self.ratification > 0 {
+                    format!(
+                        "; {} of them ratification proposals for derived facts (criteria, groupings), nothing wrong: a human accepts or retracts them",
+                        self.ratification
+                    )
+                } else {
+                    String::new()
+                }
             ));
         }
         s.push_str(&format!(
-            "- board: {} goal(s) in this session; {} elsewhere; {} blocked on human answers\n",
-            self.here, self.elsewhere, self.blocked
+            "- board: {} goal(s) in this session; {} elsewhere; {} blocked on human answers{}\n",
+            self.here,
+            self.elsewhere,
+            self.blocked,
+            if self.ratification > 0 {
+                format!(" ({} ratification proposals among them)", self.ratification)
+            } else {
+                String::new()
+            }
         ));
         let rules: Vec<String> = self
             .lint

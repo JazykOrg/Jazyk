@@ -92,7 +92,7 @@ shortened here; the real ones are the payload files):
 ## Project
 - generation 413, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
-- board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers
+- board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers (2 ratification proposals among them)
 - lint: warning: An em dash appears in prose. Use commas, periods, parentheses, or colons instead.
 
 ## Goals
@@ -121,6 +121,10 @@ Skills: judgment (active, 6.4k); extraction, flow-views, structural-views, abstr
 
 PROTOCOL: the `jazyk` tools carry this batch, b413-3. First call `begin_goals` with {"batch": "b413-3"} ...
 ```
+
+The diagnostics line names how many of its counts are ratification proposals for
+derived facts (criteria, groupings), so a session that just committed fourteen derived
+criteria does not read fourteen new warnings as defects of its own making.
 
 Contract paragraphs are short and imperative: what the goal means, what evidence the
 gate wants, what not to do, and that justifications and failure reasons are one or two

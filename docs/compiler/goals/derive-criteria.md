@@ -39,8 +39,8 @@ runs first by construction.
 - `complete`: at least one criterion is staged or recorded on the requirement, and no
   staged criterion has the same normalized text as the requirement's statement
   (`criterion-restates` otherwise).
-- `stated-only`: the documents state criteria and the session added none; at least one
-  criterion exists.
+- `stated-only`: the documents' own criteria cover the requirement and the session
+  added none; at least one criterion exists.
 - `open-question`: the requirement's evidence depends on a value the documents do not
   give, or give twice, and an open diagnostic with a prompt names the requirement: an
   `invented-choice` staged here for a value nobody stated

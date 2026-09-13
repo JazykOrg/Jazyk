@@ -19,6 +19,8 @@ Concrete, from the documents. Values come from the statement, the quote, or a se
 
 Never restate. A criterion whose normalized text equals the statement is refused (`criterion-restates`). "The Shop sends a confirmation email when an Order is submitted" is the requirement; "A Customer submitting an Order for one in-stock Product receives one confirmation email" is a criterion.
 
+Verdicts. `complete`: the criteria cover the requirement's shape, derived or stated. `stated-only`: the documents' own criteria cover it and you added none. `open-question`: a value nobody stated keeps a criterion from being written, and the question stands as a prompt.
+
 Density. Two to five per requirement is usual. One is the floor binding waits for. A constraint that is one check ("Each user email is unique") takes one positive and one negative criterion. Do not pad: a criterion that adds no situation the others lack is noise a test will repeat.
 
 Wording. Present tense, the actor first when there is one, the values in the sentence, backticks around literal identifiers and values that must match verbatim. Optional `given`, `when`, `then` split the same sentence for a test writer; `statement` stays the one line.

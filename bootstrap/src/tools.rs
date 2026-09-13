@@ -1336,6 +1336,8 @@ pub struct ToolSession {
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
     feedback_count: usize,
+    // What a review's word-match verdicts staged, said once on the mark's reply.
+    review_staged_note: Option<String>,
     mutation_limit: usize,
     default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this session's own creates.
@@ -1390,6 +1392,7 @@ impl ToolSession {
             repeats: Default::default(),
             refusals: 0,
             feedback_count: 0,
+            review_staged_note: None,
             mutation_limit,
             default_budget,
             staged_entities: Default::default(),
@@ -2053,6 +2056,10 @@ impl ToolSession {
                     }
                 }
                 if !word_matches.is_empty() {
+                    self.review_staged_note = Some(format!(
+                        "the word-match verdicts stage one update on {} (its not_about list); done counts it as applied",
+                        target
+                    ));
                     self.stage(Op::UpdateEntity {
                         id: target,
                         name: None,
@@ -2148,7 +2155,11 @@ impl ToolSession {
             .filter(|g| !self.outcomes.contains_key(&g.goal))
             .map(|g| g.goal.as_str())
             .collect();
-        Ok(json!({"marked": goal, "open": open}))
+        let mut reply = json!({"marked": goal, "open": open});
+        if let Some(n) = self.review_staged_note.take() {
+            reply["note"] = json!(n);
+        }
+        Ok(reply)
     }
 
     // The batch claim of a pair session: one entry per rejudge-pair goal, each doing

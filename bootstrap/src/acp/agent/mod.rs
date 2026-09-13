@@ -3,7 +3,7 @@
 // offers their tools to the model, and streams updates. It knows nothing about jazyk;
 // the same session against an external agent carries the same prompt and tools.
 // Mirrors docs/frontends/acp.md#the-embedded-agent.
-pub mod agent_loop;
+pub use crate::agent_loop;
 pub mod mcp_client;
 
 use agent_client_protocol::schema::v1::{

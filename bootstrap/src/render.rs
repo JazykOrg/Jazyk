@@ -27,6 +27,12 @@ impl std::error::Error for RenderError {}
 
 // PlantUML text to SVG. In process through plantuml-little; the official native binary
 // named by JAZYK_PLANTUML is the authorized swap. Mirrors docs/compiler/diagrams.md#the-renderer.
+//
+// The conversion links Graphviz as a C archive, so it is the one part of rendering
+// that stays native. In the browser backend the emitters still run and every view
+// still emits its `.puml`; the `.svg` beside it is whatever the project was seeded
+// with. See docs/frontends/wasm.md#diagrams.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn render_svg(puml: &str) -> Result<String, RenderError> {
     match std::env::var("JAZYK_PLANTUML") {
         Ok(bin) if !bin.trim().is_empty() => native_svg(bin.trim(), puml),
@@ -39,6 +45,7 @@ pub fn render_svg(puml: &str) -> Result<String, RenderError> {
 // as part of the name (a class takes its alias as its label, an actor splits in two)
 // and never emits an anchor, so the links come off before conversion and go back on
 // as anchors after; the official binary behind JAZYK_PLANTUML does both itself.
+#[cfg(not(target_arch = "wasm32"))]
 fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     match std::panic::catch_unwind(|| plantuml_little::convert(&plain)) {
@@ -55,6 +62,21 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn render_svg(_puml: &str) -> Result<String, RenderError> {
+    Err(RenderError(
+        "the browser backend does not convert PlantUML: Graphviz is a C archive".to_string(),
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn render_png(_svg: &str) -> Result<Vec<u8>, RenderError> {
+    Err(RenderError(
+        "the browser backend does not rasterize: resvg needs the native fonts".to_string(),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -88,6 +110,7 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
 }
 
 // The system fonts, loaded once per process: text measures as a viewer would draw it.
+#[cfg(not(target_arch = "wasm32"))]
 fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
     static FONTS: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
     FONTS
@@ -100,6 +123,7 @@ fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
 }
 
 // SVG to PNG bytes through resvg.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fonts();

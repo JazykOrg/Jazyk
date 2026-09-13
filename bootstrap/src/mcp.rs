@@ -1049,6 +1049,7 @@ impl McpServer {
     // ---- the agent-run benchmark ----
     // Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn benchmark_cases(&self) -> Value {
         let cases = crate::benchmark::parse_cases();
         let b = self.bench.lock().unwrap();
@@ -1084,6 +1085,12 @@ impl McpServer {
         })
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn benchmark_cases(&self) -> Value {
+        json!({"error": "the browser backend does not serve the benchmark"})
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn begin_case(&self, params: &Value) -> Value {
         let cases = crate::benchmark::parse_cases();
         let mut b = self.bench.lock().unwrap();
@@ -1183,6 +1190,12 @@ impl McpServer {
         reply
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn begin_case(&self, params: &Value) -> Value {
+        json!({"error": "the browser backend does not serve the benchmark"})
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn finish_case(&self, params: &Value) -> Value {
         let cases = crate::benchmark::parse_cases();
         let mut b = self.bench.lock().unwrap();
@@ -1288,6 +1301,12 @@ impl McpServer {
         })
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn finish_case(&self, params: &Value) -> Value {
+        json!({"error": "the browser backend does not serve the benchmark"})
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn benchmark_report(&self, params: &Value) -> Value {
         let mut b = self.bench.lock().unwrap();
         if b.open.is_some() {
@@ -1375,7 +1394,12 @@ impl McpServer {
         })
     }
 
-    fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    #[cfg(target_arch = "wasm32")]
+    fn benchmark_report(&self, params: &Value) -> Value {
+        json!({"error": "the browser backend does not serve the benchmark"})
+    }
+
+    pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
@@ -2232,6 +2256,7 @@ impl McpServer {
     // the answer engine (through this serving's edit sink when the proxy listens);
     // any other answer is recorded and the handling contract returns to the calling
     // agent. Mirrors docs/frontends/acp.md#questions-in-chat.
+    #[cfg(not(target_arch = "wasm32"))]
     fn answer_diagnostic(&self, args: &Value) -> Value {
         let id = args["id"].as_str().unwrap_or_default().to_string();
         let reply = if let Some(i) = args["option"].as_u64() {
@@ -2254,6 +2279,11 @@ impl McpServer {
             }
             Err(e) => json!({"error": {"rule": "answer-failed", "message": e}}),
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn answer_diagnostic(&self, args: &Value) -> Value {
+        json!({"error": "the browser backend does not answer diagnostics"})
     }
 
     // Maintain the question on a finding, through a ToolSession so the same gates
@@ -2458,6 +2488,7 @@ impl McpServer {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn init_project(&self) -> Value {
         let root = &self.project.root;
         if root.join("jazyk.toml").vexists() {
@@ -2472,6 +2503,11 @@ impl McpServer {
         };
         json!({"initialized": root.display().to_string(), "created": made,
                "next": "edit docs/README.md, then compile"})
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn init_project(&self) -> Value {
+        json!({"error": "the browser backend does not scaffold a project"})
     }
 
     fn update_project_settings(&self, args: &Value) -> Value {
@@ -2561,6 +2597,7 @@ pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
 
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
 // Mirrors docs/frontends/acp.md#doc-edit-delegation.
+#[cfg(not(target_arch = "wasm32"))]
 fn sink_write(
     sink: &str,
     path: &std::path::Path,
@@ -2588,6 +2625,18 @@ fn sink_write(
             .unwrap_or("sink refused the edit")
             .to_string())
     }
+}
+
+// A tab has no unix socket, so there is no editor to hand the edit to.
+#[cfg(target_arch = "wasm32")]
+fn sink_write(
+    sink: &str,
+    path: &std::path::Path,
+    old_text: &str,
+    new_text: &str,
+    full: &str,
+) -> Result<(), String> {
+    Err("the browser backend has no editor sink".to_string())
 }
 
 // The reply pretty-printed, one field per line, so the agent's user reads the tool

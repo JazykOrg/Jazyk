@@ -3,9 +3,18 @@
 // model stops calling tools. Carries the codec machinery (native tool calls, the text
 // fallback, the first-round probe) that used to live in the turn harness; nothing
 // here knows anything about jazyk. Mirrors docs/frontends/acp.md#the-embedded-agent.
-use super::mcp_client::GenericTool;
 use crate::llm::{self, Llm};
 use serde_json::{json, Value};
+
+// One tool as the model sees it. The name, what it is for, and its JSON Schema.
+// Whoever drives the session fills these in: the ACP serving from an MCP handshake,
+// the browser backend straight from the tool registry.
+#[derive(Clone, Debug)]
+pub struct GenericTool {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
 
 // What the loop reports outward; the serving maps these onto ACP session updates.
 pub enum AgentEvent {

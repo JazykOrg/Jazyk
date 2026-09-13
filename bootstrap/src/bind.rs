@@ -636,7 +636,7 @@ fn collect_code_files(dir: &Path, out_dir: &Path, out: &mut Vec<std::path::PathB
 // with the current statement hash. Mirrors docs/consumers/bind.md#when-binding-runs.
 pub fn run_all(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     targets: &[String],
     trace: &crate::session::Trace,
@@ -680,7 +680,7 @@ pub fn run_all(
             "bind",
             &format!("{} ({})", rid, t["reason"].as_str().unwrap_or("")),
         );
-        let batch = crate::acp::runner::BatchRun::single(crate::model::Goal {
+        let batch = crate::runner::BatchRun::single(crate::model::Goal {
             id: format!("g:bind:{}", rid),
             kind: "bind".into(),
             class: "compile".into(),

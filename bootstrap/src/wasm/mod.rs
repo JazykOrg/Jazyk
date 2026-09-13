@@ -1,1 +1,127 @@
-// The WebAssembly backend. Placeholder while the core is brought up.
+// The WebAssembly backend: the same compiler the native binary runs, answering the
+// same API, against an in-memory filesystem and the model in the page.
+// See docs/frontends/wasm.md.
+pub mod llm_bridge;
+pub mod runner;
+
+use wasm_bindgen::prelude::*;
+
+// The project the tab is serving. One per module instance, set by `boot`.
+thread_local! {
+    static ROOT: std::cell::RefCell<std::path::PathBuf> =
+        std::cell::RefCell::new(std::path::PathBuf::from("/project"));
+}
+
+pub fn root() -> std::path::PathBuf {
+    ROOT.with(|r| r.borrow().clone())
+}
+
+// A panic in a tab is a blank page unless it says something, so the first thing the
+// module does is route panics to the console.
+#[wasm_bindgen(start)]
+pub fn start() {
+    console_error_panic_hook::set_once();
+}
+
+// Write one file into the in-memory tree. The host calls this once per file of the
+// seeded project before `boot` (docs/frontends/wasm.md#filesystem).
+#[wasm_bindgen]
+pub fn seed_file(path: &str, bytes: &[u8]) {
+    crate::vfs::seed(std::path::Path::new(path), bytes.to_vec());
+}
+
+// Adopt the seeded tree as the project. Answers the resolved project as JSON, or an
+// error naming what the tree is missing.
+#[wasm_bindgen]
+pub fn boot(root_path: &str) -> String {
+    let root = std::path::PathBuf::from(root_path);
+    ROOT.with(|r| *r.borrow_mut() = root.clone());
+    use crate::vfs::VPathExt;
+    if !root.join("jazyk.toml").vexists() {
+        return serde_json::json!({
+            "ok": false,
+            "error": format!("no jazyk.toml under {}", root.display()),
+        })
+        .to_string();
+    }
+    let p = crate::project::Project::load(&root);
+    serde_json::json!({
+        "ok": true,
+        "root": p.root.to_string_lossy(),
+        "out": p.out.to_string_lossy(),
+        "docsGlob": p.docs_glob,
+        "roots": p.roots,
+        "files": crate::vfs::list_all().len(),
+    })
+    .to_string()
+}
+
+// Every file in the tree, for the host to persist or download.
+#[wasm_bindgen]
+pub fn list_files() -> String {
+    serde_json::json!(crate::vfs::list_all()
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>())
+    .to_string()
+}
+
+// The model the page holds. The host names it at boot; the base url is the bridge,
+// not an endpoint, so `Llm` carries a marker where a URL would go.
+thread_local! {
+    static MODEL: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+}
+
+pub fn model_name() -> String {
+    MODEL.with(|m| m.borrow().clone())
+}
+
+// The client every session uses. Its transport is the bridge to the page.
+pub fn llm() -> crate::llm::Llm {
+    crate::llm::Llm {
+        base_url: "in-page".to_string(),
+        model: model_name(),
+        api_key: String::new(),
+        temperature: Some(0.0),
+        trace: None,
+    }
+}
+
+// Name the model the page loaded, so traces and the project reply say which one ran.
+#[wasm_bindgen]
+pub fn set_model(name: &str) {
+    MODEL.with(|m| *m.borrow_mut() = name.to_string());
+}
+
+// The trace of the running build. Every event the compiler emits lands here and the
+// host drains it between turns, which is how the tab shows the same live trace
+// `jazyk compile` prints (docs/frontends/wasm.md#the-trace).
+thread_local! {
+    static TRACE: std::cell::RefCell<Vec<serde_json::Value>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn trace() -> crate::session::Trace {
+    crate::session::Trace::to_sink(
+        crate::session::TraceLevel::Normal,
+        std::sync::Arc::new(|ev: &crate::session::TraceEvent| {
+            if let Ok(v) = serde_json::to_value(ev) {
+                TRACE.with(|t| t.borrow_mut().push(v));
+            }
+        }),
+        Default::default(),
+    )
+}
+
+// Every event since the last drain, oldest first.
+#[wasm_bindgen]
+pub fn drain_trace() -> String {
+    let events = TRACE.with(|t| std::mem::take(&mut *t.borrow_mut()));
+    serde_json::json!(events).to_string()
+}
+
+// One request, the same shape the native server answers over HTTP: a method, a path
+// under /api, and a JSON body. See docs/frontends/wasm.md#one-api-two-transports.
+#[wasm_bindgen]
+pub fn request(method: &str, path: &str, body: &str) -> String {
+    crate::webapi::dispatch::request(method, path, body)
+}

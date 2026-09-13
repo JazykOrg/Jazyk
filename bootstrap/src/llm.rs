@@ -270,6 +270,17 @@ impl Llm {
     // unexpected) is not an error: the configured model is the only one on offer,
     // which is exactly the state of the world before asking.
     // Mirrors docs/frontends/acp.md#choosing-a-model.
+    #[cfg(target_arch = "wasm32")]
+    pub fn list_models(&self) -> Vec<String> {
+        // The page holds the model; there is no endpoint to enumerate.
+        if self.model.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.model.clone()]
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn list_models(&self) -> Vec<String> {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(5))
@@ -555,6 +566,38 @@ impl Llm {
         }
         let body = payload.to_string();
 
+        // One transport call: the bytes of a reply, or the assembled message when the
+        // endpoint streamed it. Native speaks HTTP; the browser backend speaks to the
+        // in-page model (docs/frontends/wasm.md#the-model).
+        let resp_body = match self.transport(&body, streaming)? {
+            Transported::Message(m) => return Ok(m),
+            Transported::Body(b) => b,
+        };
+        let v: Value = serde_json::from_str(&resp_body)
+            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
+        let mut msg = v["choices"][0]["message"].clone();
+        if msg.is_null() {
+            return Err(format!(
+                "no message in response :: {}",
+                truncate(&resp_body, 300)
+            ));
+        }
+        // The finish reason rides on the message for the loop to read (a `length`
+        // finish is a reply the completion cap cut); the loop strips it before the
+        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
+        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
+            msg["finish_reason"] = Value::String(f.to_string());
+        }
+        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
+            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
+        });
+        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+        Ok((msg, tokens))
+    }
+
+    // The HTTP transport. Everything above it is protocol, shared by both targets.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn transport(&self, body: &str, streaming: bool) -> Result<Transported, String> {
         // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
         pace();
@@ -595,7 +638,8 @@ impl Llm {
                 BufReader::new(resp.into_reader()),
                 max_completion_tokens(),
                 call_timeout(),
-            );
+            )
+            .map(Transported::Message);
         }
 
         // The same wall clock the stream path enforces: per-read timeouts bound the
@@ -619,27 +663,23 @@ impl Llm {
             }
         }
         let resp_body = String::from_utf8_lossy(&bytes).to_string();
-        let v: Value = serde_json::from_str(&resp_body)
-            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
-        let mut msg = v["choices"][0]["message"].clone();
-        if msg.is_null() {
-            return Err(format!(
-                "no message in response :: {}",
-                truncate(&resp_body, 300)
-            ));
-        }
-        // The finish reason rides on the message for the loop to read (a `length`
-        // finish is a reply the completion cap cut); the loop strips it before the
-        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
-        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
-            msg["finish_reason"] = Value::String(f.to_string());
-        }
-        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
-            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
-        });
-        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-        Ok((msg, tokens))
+        Ok(Transported::Body(resp_body))
     }
+
+    // The browser transport. The page holds the model, so a call hands the same
+    // OpenAI-shaped request out to the host and blocks until the host hands a reply
+    // back. Streaming has no transport to stream over: the host answers once.
+    #[cfg(target_arch = "wasm32")]
+    fn transport(&self, body: &str, _streaming: bool) -> Result<Transported, String> {
+        crate::wasm::llm_bridge::chat(body).map(Transported::Body)
+    }
+}
+
+// What a transport hands back: the bytes of a reply, or, when the endpoint streamed,
+// the message already assembled from the chunks.
+enum Transported {
+    Body(String),
+    Message((Value, u64)),
 }
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content

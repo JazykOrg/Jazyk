@@ -85,14 +85,7 @@ pub fn append(out: &Path, entry: &Entry) {
     let Ok(line) = serde_json::to_string(entry) else {
         return;
     };
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path(out))
-    {
-        let _ = writeln!(f, "{}", line);
-        let _ = f.flush();
-    }
+    let _ = crate::vfs::append_line(path(out), &line);
 }
 
 // The log newest first, capped. Malformed lines are skipped, not fatal: the file is

@@ -150,6 +150,17 @@ mod imp {
         }
         Ok(out.into_iter())
     }
+    // Append one line to a file, creating it. The crate's logs are append-only.
+    pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)?;
+        writeln!(f, "{}", line)?;
+        f.flush()
+    }
+
     pub fn entry_metadata(p: &Path) -> io::Result<super::Metadata> {
         let md = std::fs::metadata(p)?;
         Ok(super::Metadata {
@@ -345,6 +356,14 @@ mod imp {
             .map(|(path, is_dir)| Ok(DirEntry { path, is_dir }))
             .collect();
         Ok(out.into_iter())
+    }
+
+    pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {
+        let p = p.as_ref();
+        let mut buf = read(p).unwrap_or_default();
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+        write(p, buf)
     }
 
     pub fn entry_metadata(p: &Path) -> io::Result<super::Metadata> {

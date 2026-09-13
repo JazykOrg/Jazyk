@@ -400,13 +400,9 @@ pub struct ProgRun {
 // Run one programmatic test reference under the deliverable.
 fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
     let cwd = gs.deliverable.join(&t.cwd);
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&t.run)
-        .current_dir(&cwd)
-        .output()
+    let out = crate::sys::run_shell(&t.run, &cwd)
         .map_err(|e| format!("failed to run `{}` in {}: {}", t.run, cwd.display(), e))?;
-    let pass = out.status.success();
+    let pass = out.success;
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
     let tail: String = evidence
@@ -421,7 +417,7 @@ fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, St
     let tail = crate::llm::truncate(&tail, 300);
     Ok(ProgRun {
         pass,
-        code: out.status.code().unwrap_or(-1),
+        code: out.code,
         evidence: format!("{}: {}", t.run, tail),
         tail,
     })
@@ -495,11 +491,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
         ));
     }
     let cwd = gs.deliverable.join(&row.test.cwd);
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&row.test.run)
-        .current_dir(&cwd)
-        .output()
+    let out = crate::sys::run_shell(&row.test.run, &cwd)
         .map_err(|e| {
             format!(
                 "failed to run `{}` in {}: {}",
@@ -508,7 +500,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
                 e
             )
         })?;
-    let pass = out.status.success();
+    let pass = out.success;
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
     let tail: String = evidence
@@ -523,7 +515,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     let tail = crate::llm::truncate(&tail, 300);
     Ok(ProgRun {
         pass,
-        code: out.status.code().unwrap_or(-1),
+        code: out.code,
         evidence: format!("{}: {}", row.test.run, tail),
         tail,
     })
@@ -905,10 +897,7 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
 // UTC ISO 8601 from the system clock, no dependencies. Civil-from-days per Howard
 // Hinnant's algorithm.
 pub fn now_iso() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0) as i64;
+    let secs = crate::sys::now_unix() as i64;
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -1390,7 +1379,7 @@ pub fn select_rows(
 // Mirrors docs/consumers/gen.md#runners.
 pub fn run_all(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     targets: &[String],
     kind: Option<&str>,

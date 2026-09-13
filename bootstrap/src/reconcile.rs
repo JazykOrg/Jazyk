@@ -2040,14 +2040,23 @@ pub fn compile_with(
         Ok(g) => g,
         Err(e) => return refused(e),
     };
-    // Every session runs as an ACP worker session against the configured agent; the
-    // agent process lives for the run and spawns on the first session.
+    // Every session runs against a runner: natively an ACP worker session against the
+    // configured agent, whose process lives for the run and spawns on the first
+    // session; in a browser tab the loop in this same module
+    // (docs/frontends/wasm.md#sessions).
+    #[cfg(not(target_arch = "wasm32"))]
     let runner = match crate::acp::runner::AcpRunner::start(proj, llm, out) {
         Ok(r) => r,
         Err(e) => return refused(e),
     };
-    runner.set_build_token(Some(format!("internal-{}", std::process::id())));
-    trace.line("build", &format!("agent: {}", runner.agent().name));
+    #[cfg(target_arch = "wasm32")]
+    let runner = match crate::wasm::runner::InPageRunner::start(proj, llm, out) {
+        Ok(r) => r,
+        Err(e) => return refused(e),
+    };
+    let runner: &dyn crate::runner::SessionRunner = &runner;
+    runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
+    trace.line("build", &format!("agent: {}", runner.agent_name()));
 
     let mut store = Store::open_for_build(out);
     store.status.costs = Costs::default();
@@ -2191,7 +2200,7 @@ pub fn compile_with(
             .unwrap_or_default();
         // One session per batch: the runner resolves the executor, ships the
         // assembled prompt, and the serving commits under its own gates.
-        let run = crate::acp::runner::BatchRun {
+        let run = crate::runner::BatchRun {
             id: batch.id.clone(),
             goals: batch
                 .goals

@@ -250,7 +250,7 @@ pub fn submit(
 pub fn run_all(
     proj: &Project,
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     scopes_wanted: &[String],
     trace: &crate::session::Trace,

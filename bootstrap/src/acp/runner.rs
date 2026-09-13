@@ -1,3 +1,4 @@
+use crate::runner::{journal_diff, BatchRun, SessionReport, SessionRunner};
 // The session runner: executes one goal batch as an ACP worker session against the
 // batch's resolved executor. Jazyk stays the client and sole initiator; the session
 // gets one injected `jazyk mcp` serving scoped to the batch, the prompt is the
@@ -17,70 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-// What one session left behind: the mutations its commits applied, the goals they
-// resolved (from the journal), and whether the batch landed.
-pub struct SessionReport {
-    pub applied: usize,
-    pub rounds: u32,
-    pub tokens: u64,
-    pub failed: Option<String>,
-    // Goal ids the batch's journal entries resolved.
-    pub resolved: Vec<String>,
-}
-
-// One session's worth of work: the batch id, its goals, and the scheduler's executor
-// hint. The reconciler builds one per board batch; the ledger workers build
-// single-goal batches per row.
-pub struct BatchRun {
-    pub id: String,
-    pub goals: Vec<Goal>,
-    pub executor: Option<String>,
-}
-
-impl BatchRun {
-    pub fn single(goal: Goal) -> BatchRun {
-        BatchRun {
-            id: goal.id.clone(),
-            goals: vec![goal],
-            executor: None,
-        }
-    }
-
-    fn goal_ids(&self) -> Vec<String> {
-        self.goals.iter().map(|g| g.id.clone()).collect()
-    }
-
-    fn kind(&self) -> String {
-        self.goals
-            .first()
-            .map(|g| g.kind.clone())
-            .unwrap_or_default()
-    }
-
-    fn class(&self) -> String {
-        self.goals
-            .first()
-            .map(|g| g.class.clone())
-            .unwrap_or_else(|| "compile".to_string())
-    }
-
-    // The serving the batch's goal kinds need: bind and generate work the ledger and
-    // the deliverable, verify judges rows, everything else works the graph.
-    fn serving_mode(&self) -> &'static str {
-        let kinds: BTreeSet<&str> = self.goals.iter().map(|g| g.kind.as_str()).collect();
-        if !kinds.is_empty() && kinds.iter().all(|k| matches!(*k, "bind" | "generate")) {
-            "generate"
-        } else if !kinds.is_empty() && kinds.iter().all(|k| *k == "verify") {
-            "verify"
-        } else {
-            "compile"
-        }
-    }
-
-    fn is_ledger(&self) -> bool {
-        self.serving_mode() != "compile"
-    }
-}
 
 // The serving one session gets, before its transport is known: the toolsets and the
 // bridge flags. Rendered as the `jazyk mcp` command line for a stdio entry, or
@@ -748,29 +685,6 @@ impl AcpRunner {
 // Attribute the journal entries between two generations to the batch, and read what
 // they resolved. The exact semantics live in the store's commit; this reads what it
 // wrote. Mirrors docs/frontends/acp.md#worker-sessions.
-fn journal_diff(out: &Path, from: u64, to: u64, goal_ids: &[String]) -> (usize, Vec<String>) {
-    let mut applied = 0usize;
-    let mut resolved: Vec<String> = Vec::new();
-    for g in (from + 1)..=to {
-        let path = out.join("journal").join(format!("g{}.yaml", g));
-        let Ok(text) = crate::vfs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(entry) = serde_norway::from_str::<crate::model::JournalEntry>(&text) else {
-            continue;
-        };
-        if entry.kind != "session" || !entry.batch.iter().any(|g| goal_ids.contains(g)) {
-            continue;
-        }
-        applied += entry.mutations.len();
-        for r in &entry.resolved_goals {
-            if !resolved.contains(&r.goal) {
-                resolved.push(r.goal.clone());
-            }
-        }
-    }
-    (applied, resolved)
-}
 
 // The terminal line of a compile attempt whose session returned: `sessionDone` when
 // the batch landed, `sessionEnded` when it did not because the build was cancelled
@@ -947,5 +861,30 @@ mod tests {
         let t = terminals(&events.lock().unwrap(), "g:generate:ent:cart");
         assert_eq!(t.len(), 1);
         assert!(t[0].1.starts_with("the ledger judges"));
+    }
+}
+
+impl SessionRunner for AcpRunner {
+    fn agent_name(&self) -> String {
+        self.agent().name.clone()
+    }
+    fn set_build_token(&self, token: Option<String>) {
+        AcpRunner::set_build_token(self, token)
+    }
+    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
+        AcpRunner::run_item(self, batch, trace)
+    }
+    fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
+        AcpRunner::ask(self, system, user, label, step)
+    }
+    fn ask_traced(
+        &self,
+        system: &str,
+        user: &str,
+        label: &str,
+        step: &str,
+        trace: Option<&Trace>,
+    ) -> Result<String, String> {
+        AcpRunner::ask_traced(self, system, user, label, step, trace)
     }
 }

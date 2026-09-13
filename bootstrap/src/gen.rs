@@ -299,11 +299,7 @@ pub fn run_build(
     };
     let cwd = gs.deliverable.join(&b.cwd);
     trace.line(label, &format!("build: {} (in {})", b.run, cwd.display()));
-    let done = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&b.run)
-        .current_dir(&cwd)
-        .output()
+    let done = crate::sys::run_shell(&b.run, &cwd)
         .map_err(|e| {
             format!(
                 "build `{}` could not start in {}: {}",
@@ -312,7 +308,7 @@ pub fn run_build(
                 e
             )
         })?;
-    if !done.status.success() {
+    if !done.success {
         let mut evidence = String::from_utf8_lossy(&done.stdout).to_string();
         evidence.push_str(&String::from_utf8_lossy(&done.stderr));
         // The next generation task needs to see this; printing it here only reaches
@@ -321,7 +317,7 @@ pub fn run_build(
         return Err(format!(
             "build `{}` failed ({}). Output:\n{}",
             b.run,
-            done.status,
+            done.status(),
             crate::llm::truncate(evidence.trim(), 2000)
         ));
     }
@@ -795,7 +791,7 @@ fn list_existing_files(dir: &Path) -> Vec<String> {
 // Mirrors docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated.
 pub fn decide_medium(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     deliverable: &Path,
 ) -> Result<Medium, String> {
     // Every statement in the graph, capped: the medium is stated somewhere in the
@@ -3307,7 +3303,7 @@ mod tests {
 // unless forced. Returns {regenerated, skipped, failures}.
 pub fn run_all(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     entities: &[String],
     force: bool,
@@ -3467,7 +3463,7 @@ pub fn run_all(
 // Mirrors docs/compiler/sessions.md#generation-sessions.
 fn gen_session(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     root: &str,
     ids: &[String],
@@ -3489,7 +3485,7 @@ fn gen_session(
         })
         .collect();
     // The group root labels the session; a group of one keeps its goal id.
-    let batch = crate::acp::runner::BatchRun {
+    let batch = crate::runner::BatchRun {
         id: format!("g:generate:{}", root),
         goals,
         executor: None,
@@ -3633,7 +3629,7 @@ fn medium_directive(medium: &Option<Medium>) -> String {
 
 pub fn gen_one(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     id: &str,
     task: &serde_json::Value,

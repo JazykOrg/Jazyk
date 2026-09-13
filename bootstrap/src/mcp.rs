@@ -899,6 +899,11 @@ impl McpServer {
             let began = self.begin_goals(&json!({"arguments": {}}));
             if began["error"].is_null() {
                 reply["began"] = began;
+                // A session that reached its own stopping point after the claim
+                // releases the batch untouched (docs/frontends/mcp.md#compilation-over-mcp).
+                reply["beganNote"] = json!(
+                    "the next batch is claimed; if this commit was your last, abandon_goals releases it untouched and leaves no trace"
+                );
                 return reply;
             }
         }

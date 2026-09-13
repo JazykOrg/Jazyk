@@ -288,8 +288,10 @@ serving; what it claims is a batch:
   leaves the changeset open and names the repair. The reply is `{committed, next}`,
   `next` naming the next ready batch by id with its goals. `beginNext: true` claims
   that batch in the same call and carries its `instructions` and `package` in the
-  reply, saving a round trip per batch; the default reply only names it. The claim
-  stops at convergence: when the commit leaves only optional goals ready, the reply
+  reply, saving a round trip per batch; the default reply only names it. A `beganNote`
+  beside the claim says that `abandon_goals` releases the batch untouched, since a
+  session capped at a number of commits once found itself holding a batch it had not
+  meant to take. The claim stops at convergence: when the commit leaves only optional goals ready, the reply
   carries the verdict and says so in words (`beginNext stops at convergence, so
   begin_goals takes the next batch when you want it`), since an agent told to converge
   once held an optional batch it had not asked for, and an agent that wanted it once

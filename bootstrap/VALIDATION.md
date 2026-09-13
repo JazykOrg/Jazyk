@@ -859,7 +859,10 @@ The loop continued onto the org corpus and onto generation:
   and its resume. Generation over that ledger on an empty deliverable bound 34
   requirements with 73 criterion tests and generated the backend and the frontend as
   an npm workspace, every test green, with no tool error and no feedback entry in 148
-  turns ($16.16).
+  turns ($16.16). example-slides with a deliverable converged with 31 criteria for 14
+  requirements ($5.30 against $2.40 without them); example-f1 without a deliverable
+  derives no criteria goals and converges as before ($2.55), its missing criteria
+  riding as information.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

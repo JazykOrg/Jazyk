@@ -853,7 +853,10 @@ The loop continued onto the org corpus and onto generation:
   regeneration dropped the criterion tests from a row, that a partly implemented
   requirement had no status between unimplemented and failing (it reads `partial`
   now), and that a failing binding could reach no author (the `failing-binding` check
-  files it).
+  files it). On example-erp the criteria compile converged with 86 criteria for 39
+  requirements (54 positive, 32 negative, none quoted: the corpus states no cases or
+  examples), eight criteria goals done, for about $20 across a run the usage limit cut
+  and its resume.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

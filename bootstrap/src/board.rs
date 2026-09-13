@@ -1375,11 +1375,11 @@ impl Board {
             "batches": self.batches.iter().map(|b| self.batch_json(b)).collect::<Vec<_>>(),
             "counts": counts,
         });
-        if self.open_goals().is_empty() {
+        // No mandatory goal open: the verdict stands, and any batch still listed holds
+        // optional goals only. Say so, since a reader once weighed "converged" against
+        // a next line inviting a claim (docs/frontends/mcp.md#compilation-over-mcp).
+        if self.open_mandatory() == 0 {
             v["verdict"] = json!(self.verdict.to_string());
-            // Optional batches may still be listed: say what they are, since a
-            // reader once weighed "converged" against a next line inviting a claim
-            // (docs/frontends/mcp.md#compilation-over-mcp).
             if let Some(b) = self.batches.first() {
                 let optional: usize = self.batches.iter().map(|b| b.goals.len()).sum();
                 v["note"] = json!(format!(

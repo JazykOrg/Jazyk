@@ -383,10 +383,10 @@ pub fn mark(
     // The headline is a criterion's own test when criteria exist: its verdict is that
     // criterion's too, or the row reads partial against a stale entry forever
     // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
-    let headline_run = row.test.run.clone();
+    // Matched by name: two criteria may share one runner command.
     let headline_name = row.test.name.clone();
     for t in row.tests.values_mut() {
-        if t.test.run == headline_run || t.test.name == headline_name {
+        if t.test.name == headline_name {
             t.verdict = verdict.to_string();
             t.exit_code = exit_code;
             t.last_run = row.last_run.clone();

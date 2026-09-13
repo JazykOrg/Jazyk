@@ -1,8 +1,10 @@
 name: Deploy site
 
-# Publishes site/ to GitHub Pages on every push to master that
-# touches the site. The site is plain static HTML (Tailwind via CDN), so there
-# is no build step: the directory is uploaded as-is.
+# Publishes site/ to the jazyk.org S3 bucket behind CloudFront on every push to
+# master that touches the site. The site is plain static HTML (Tailwind via CDN),
+# so there is no build step: site/deploy.sh syncs the directory as-is and
+# invalidates the distribution. Credentials come from the jazyk-site-deploy IAM
+# role through GitHub's OIDC provider; no AWS secret is stored in this repository.
 
 on:
   push:
@@ -14,25 +16,21 @@ on:
 
 permissions:
   contents: read
-  pages: write
   id-token: write
 
 # Allow one concurrent deployment, never cancel an in-progress one.
 concurrency:
-  group: pages
+  group: site
   cancel-in-progress: false
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          role-to-assume: arn:aws:iam::750984813907:role/jazyk-site-deploy
+          aws-region: us-east-1
+      - name: Deploy
+        run: ./site/deploy.sh

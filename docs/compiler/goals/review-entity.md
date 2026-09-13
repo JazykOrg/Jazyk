@@ -202,9 +202,11 @@ The initially loaded set for the batch holds:
   stubs with edge counts. An over-budget list becomes a handle
   (`h:ent:order:requirements`, `h:ent:order:related`).
 - The lookalike candidates as stubs.
-- The unreferenced statements, each with its id, statement, and section, omitting the
-  ones the entity's `not_about` already holds (judged word matches in an earlier
-  review).
+- The unreferenced statements, each with its id, statement, and section: the ones
+  whose quote (the document's own text, never the session's wording, which a
+  paraphrase could have decorated with the name) names the entity without referencing
+  it, omitting the ones the entity's `not_about` already holds (judged word matches in
+  an earlier review).
 - The open diagnostics naming the entity or its requirements.
 
 E.g.:

@@ -984,7 +984,9 @@ impl GoalKind for ReconcileSection {
             if known_count > 8 {
                 known.push(format!("and {} more", known_count - 8));
             }
-            hints.push(if known_count == 0 {
+            hints.push(if store.graph.entities.is_empty() {
+                "the graph holds no entity yet: create what the section states, no search can find anything".to_string()
+            } else if known_count == 0 {
                 format!(
                     "no known entity is named in the document; {} in the graph; search before creating",
                     store.graph.entities.len()
@@ -1710,7 +1712,15 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
         if e.not_about.contains(rid) || r.entities.iter().any(|x| store.resolve_id(x) == id) {
             continue;
         }
-        let text = blank_code(&r.statement);
+        // The quote is the document's own text; a statement is the session's wording,
+        // and a paraphrase that added the name would otherwise raise its own hint
+        // (docs/compiler/goals/review-entity.md#hints).
+        let text = blank_code(
+            r.source
+                .as_ref()
+                .map(|s| s.quote.as_str())
+                .unwrap_or(&r.statement),
+        );
         if names.iter().any(|n| word_bounded(&text, n)) {
             out.push((rid.clone(), r.statement.clone()));
             if out.len() >= 6 {

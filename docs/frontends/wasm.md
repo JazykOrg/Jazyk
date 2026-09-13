@@ -166,11 +166,27 @@ machinery, not the quality.
 ## The trace
 
 The native server streams [trace events](../compiler/sessions.md#trace-events) over
-SSE. The browser backend has no stream: a build runs synchronously inside the worker,
-so the events buffer and `drain_trace()` hands over everything since the last drain.
-The page polls it while a build runs and pushes each event through the same path a
-streamed one takes, so the workbench renders a browser build exactly as it renders a
-server one.
+SSE. The browser backend has no stream and no moment to poll: a build runs
+synchronously inside the worker, and the worker answers nothing until it returns.
+So each event is posted to the page the instant the compiler emits it, from inside
+the running build, and the page pushes it through the same path a streamed event
+takes. The workbench renders a browser build exactly as it renders a server one,
+and the page's console carries the same events one line each.
+
+The model host logs one line per call (messages, characters, tools) and one per
+reply (tokens in and out, the finish reason, the tools called, the first words),
+and a progress line every hundred chunks while a slow model works, because the
+backend is blocked on the answer and can say nothing itself.
+
+## A measured run
+
+On an Apple laptop with Hermes-3-Llama-3.2-3B on WebGPU, one `reconcile-section`
+session over the demo project: 15451 tokens in, prefill about 85 seconds, decode
+about 4 tokens a second, 1023 tokens out and cut by the cap. The model answered
+with the text codec's JSON object rather than a tool call, the session ended with
+nothing committed, and the reconciler retried the batch, then parked the goal. The
+gates held and nothing landed. A model of this size shows the machinery; the
+[benchmark](../benchmark/benchmark.md) says what a model needs to do the work.
 
 ## Diagrams
 

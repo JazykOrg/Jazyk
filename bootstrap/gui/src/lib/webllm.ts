@@ -49,13 +49,39 @@ export async function loadModel(
       const started = performance.now()
       const msgs = Array.isArray(req.messages) ? (req.messages as unknown[]).length : 0
       console.info(`[jazyk model] call: ${msgs} messages, ${body.length} chars, tools=${Array.isArray(req.tools) ? (req.tools as unknown[]).length : 0}`)
+      // Streamed from the engine and assembled here into the one-shot shape the
+      // backend expects, so progress is visible while a slow model works: the
+      // backend is blocked on the answer and can say nothing itself.
       let reply: webllm.ChatCompletion
       try {
-        reply = await engine.chat.completions.create({
+        const stream = await engine.chat.completions.create({
           ...req,
           model,
-          stream: false,
-        } as webllm.ChatCompletionRequestNonStreaming)
+          stream: true,
+          stream_options: { include_usage: true },
+        } as webllm.ChatCompletionRequestStreaming)
+        let content = ''
+        let finish: string | null = null
+        let usage: webllm.CompletionUsage | undefined
+        let n = 0
+        for await (const chunk of stream) {
+          const delta = chunk.choices?.[0]?.delta?.content
+          if (delta) {
+            content += delta
+            n += 1
+            if (n % 100 === 0) console.info(`[jazyk model] … ${n} chunks, ${((performance.now() - started) / 1000).toFixed(0)}s`)
+          }
+          if (chunk.choices?.[0]?.finish_reason) finish = chunk.choices[0].finish_reason
+          if (chunk.usage) usage = chunk.usage
+        }
+        reply = {
+          id: 'in-page',
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: finish ?? 'stop', logprobs: null }],
+          usage,
+        } as webllm.ChatCompletion
       } catch (e) {
         console.error('[jazyk model] call failed:', e)
         throw e

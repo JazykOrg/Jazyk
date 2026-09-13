@@ -157,7 +157,20 @@ fn max_retries() -> usize {
 // content. This is the loop detector: a small model stuck repeating tokens is bounded
 // by the cap, not by its context window. Tunable with JAZYK_MAX_COMPLETION_TOKENS;
 // default 4096. See docs/compiler/project-settings.md#environment-tuning.
+// A cap set by the host, taking the place of the environment where there is none
+// (the browser backend sets it at boot: docs/frontends/wasm.md#the-model). Zero
+// means unset.
+static MAX_COMPLETION_OVERRIDE: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_max_completion_tokens(n: u64) {
+    MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
+}
+
 fn max_completion_tokens() -> u64 {
+    let over = MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed);
+    if over > 0 {
+        return over.max(256);
+    }
     std::env::var("JAZYK_MAX_COMPLETION_TOKENS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())

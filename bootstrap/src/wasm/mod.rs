@@ -56,6 +56,10 @@ pub fn boot(root_path: &str) -> String {
     // it, so the first-round probe would fail every session before falling back.
     // Sticky, like a JAZYK_CODEC=text (docs/frontends/wasm.md#the-model).
     crate::llm::set_tools_mode(2);
+    // A small model that rambles must be cut short: a text-codec turn is one JSON
+    // object, and 1024 tokens holds any of them. At a few tokens per second on a
+    // laptop GPU the cap is also what bounds a turn to a minute or two.
+    crate::llm::set_max_completion_tokens(1024);
     let p = crate::project::Project::load(&root);
     serde_json::json!({
         "ok": true,

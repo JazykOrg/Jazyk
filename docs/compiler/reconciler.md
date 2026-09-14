@@ -638,14 +638,14 @@ when staged ([staged mutations](./sessions.md#staged-mutations)), and the same
 computation previews what the mutation will open and what it will make ready. The tool
 reply says so. E.g.:
 
-A goal line previewed once in a session is not repeated on later replies: the reply
-counts it under `opensRepeated` instead, since an extraction batch of nineteen
-statements about one entity once read the same review line on every upsert.
-
 ```
 ok: delete_requirement req:orders-6 staged
 this delete will open: retrace view:usecase/holds (member gone), retrace ent:order (statement gone)
 ```
+
+A goal line previewed once in a session is not repeated on later replies: the reply
+counts it under `opensRepeated` instead, since an extraction batch of nineteen
+statements about one entity once read the same review line on every upsert.
 
 - At commit the previews become real goals with causes, recorded as `opened_goals` in
   the journal entry, and the trace prints a `goal` event per goal

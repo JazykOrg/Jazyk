@@ -1339,6 +1339,8 @@ pub struct ToolSession {
     feedback_count: usize,
     // What a review's word-match verdicts staged, said once on the mark's reply.
     review_staged_note: Option<String>,
+    // Goal lines already previewed this session: a repeat is counted, not repeated.
+    previewed: std::collections::BTreeSet<String>,
     mutation_limit: usize,
     default_budget: usize,
     // Staged entities (id -> entity) so lookup-before-create sees this session's own creates.
@@ -1394,6 +1396,7 @@ impl ToolSession {
             refusals: 0,
             feedback_count: 0,
             review_staged_note: None,
+            previewed: std::collections::BTreeSet::new(),
             mutation_limit,
             default_budget,
             staged_entities: Default::default(),
@@ -4102,8 +4105,25 @@ impl ToolSession {
                     opens.push(line);
                 }
             }
-            if !opens.is_empty() {
-                v["opens"] = json!(opens);
+            // A line previewed earlier this session is counted, not repeated: an
+            // extraction batch once read the same review line on every upsert.
+            let mut fresh: Vec<String> = Vec::new();
+            let mut repeated = 0usize;
+            for line in opens {
+                if self.previewed.insert(line.clone()) {
+                    fresh.push(line);
+                } else {
+                    repeated += 1;
+                }
+            }
+            if !fresh.is_empty() {
+                v["opens"] = json!(fresh);
+            }
+            if repeated > 0 {
+                v["opensRepeated"] = json!(format!(
+                    "{} goal line(s) previewed earlier in this session stand as before",
+                    repeated
+                ));
             }
             v["status"] = json!(self.condensed_status());
         }

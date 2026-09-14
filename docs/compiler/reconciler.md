@@ -633,6 +633,10 @@ prompt exactly as the model would receive it
 
 ## Bubbling
 
+A goal line previewed once in a session is not repeated on later replies: the reply
+counts it under `opensRepeated` instead, since an extraction batch of nineteen
+statements about one entity once read the same review line on every upsert.
+
 Downstream work is never silent and never model-invented. Staged mutations are validated
 when staged ([staged mutations](./sessions.md#staged-mutations)), and the same
 computation previews what the mutation will open and what it will make ready. The tool

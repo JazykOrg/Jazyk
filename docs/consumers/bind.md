@@ -22,7 +22,10 @@ full: its `statement`, facets, edges, and transition, the verbatim quote, its cr
 (id, kind, statement, quote or proposal), and its entity as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
 test name, the decided medium and build when they exist, the entity's recorded files,
-the ledger's recorded conventions (the run commands, the files other rows name), the
+the ledger's recorded conventions (the run commands, the files other rows name: the
+toolchain and command style to reuse, never an assertion style, and a
+`testConventionsNote` says so, since an earlier row's test that read a descriptive object
+literal once read as the convention to follow), the
 open error diagnostics naming the requirement, and `existingTests`: the deliverable
 files that already name this requirement by id, by test-name slug, or by statement
 hash, so a test left under an earlier id or hash is found by the harness rather than

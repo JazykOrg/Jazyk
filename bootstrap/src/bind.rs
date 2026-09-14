@@ -297,6 +297,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "mediumWarning": crate::gen::medium_divergence(&ledger),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd})),
         "testConventions": conventions,
+        "testConventionsNote": "the toolchain and command style already recorded, to reuse exactly; an earlier row's assertion style is not a convention, and a test that reads a description of the artifact stays wrong however many rows share it",
         // The statement is disputed while these stand; the test judges one side of an
         // open question (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
         "openDiagnostics": crate::gen::open_errors_on(store, &rid),

@@ -862,7 +862,9 @@ The loop continued onto the org corpus and onto generation:
   turns ($16.16). example-slides with a deliverable converged with 31 criteria for 14
   requirements ($5.30 against $2.40 without them); example-f1 without a deliverable
   derives no criteria goals and converges as before ($2.55), its missing criteria
-  riding as information.
+  riding as information. Generation over the sort and slides criteria ledgers bound 14
+  requirements each with 24 and 31 criterion tests ($3.25 and $6.38), sort's one red
+  row being the documented contradiction and the slides deck built and judged green.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

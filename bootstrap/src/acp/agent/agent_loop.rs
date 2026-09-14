@@ -93,8 +93,20 @@ impl Codec for NativeCodec {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
+                // Arguments that do not parse are a cut reply, not an empty call:
+                // dispatching `{}` misleads the model and the raw string poisons every
+                // later request. Mirrors docs/frontends/acp.md#the-embedded-agent.
                 let args = match c["function"]["arguments"].as_str() {
-                    Some(s) => serde_json::from_str(s).unwrap_or(json!({})),
+                    Some(s) => match serde_json::from_str::<Value>(s) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            out.push(Action::Malformed(format!(
+                                "the arguments of the {} call are not a JSON object ({}; {} chars, likely cut at your output cap)",
+                                name, e, s.chars().count()
+                            )));
+                            continue;
+                        }
+                    },
                     None => c["function"]["arguments"].clone(),
                 };
                 out.push(Action::Call {
@@ -382,6 +394,17 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         if let Some(o) = kept.as_object_mut() {
             o.remove("finish_reason");
         }
+        // A cut arguments string never re-enters the history: the endpoint rejects a
+        // request carrying it (docs/frontends/acp.md#the-embedded-agent).
+        if let Some(calls) = kept["tool_calls"].as_array_mut() {
+            for c in calls.iter_mut() {
+                if let Some(s) = c["function"]["arguments"].as_str() {
+                    if serde_json::from_str::<Value>(s).is_err() {
+                        c["function"]["arguments"] = json!("{}");
+                    }
+                }
+            }
+        }
         a.history.push(kept);
         for field in ["reasoning_content", "reasoning"] {
             if let Some(r) = msg[field].as_str() {
@@ -404,10 +427,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     err
                 ));
             }
-            a.history.push(json!({"role": "user", "content": format!(
-                "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
-                err
-            )}));
+            let repair = if mode == 2 {
+                format!(
+                    "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
+                    err
+                )
+            } else {
+                format!(
+                    "Your tool call did not parse ({}). Nothing ran. Resend it complete; if your output cap cut it, make it smaller: write a long file in parts (write_text_file for the head, then append: true for the rest).",
+                    err
+                )
+            };
+            a.history.push(json!({"role": "user", "content": repair}));
             continue;
         }
         malformed_streak = 0;
@@ -568,6 +599,19 @@ mod tests {
         let c = TextCodec;
         let msg = json!({"role": "assistant", "content": "The document describes a shop."});
         assert!(matches!(c.parse(&msg)[0], Action::Text(_)));
+    }
+
+    #[test]
+    fn native_codec_cut_arguments_are_malformed() {
+        let c = NativeCodec;
+        let msg = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "c1", "function": {"name": "write_text_file", "arguments": "{\"path\": \"src/a.rs\", \"content\": \"fn main() {"}}]
+        });
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], Action::Malformed(e) if e.contains("write_text_file")));
     }
 
     #[test]

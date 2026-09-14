@@ -807,6 +807,10 @@ resolves when the ledger says so: the harness checks that `record_generation` la
 for the entity, not the model's word. What separates the workers is model quality,
 never capability.
 
+The `record_generation` reply carries the measure under `unattached` with an
+`unattachedNote` saying it is informational: the generation is accepted, and a large
+ratio suggests the deliverable states behavior the documents do not.
+
 ## Invented choices
 
 Anything the deliverable needs that the documents do not state is an ambiguity

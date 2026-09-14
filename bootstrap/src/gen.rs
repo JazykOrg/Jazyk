@@ -1752,6 +1752,7 @@ pub fn mark(
     let mut reply = json!({
         "marked": id, "files": files.len(), "tests": seeded,
         "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio},
+        "unattachedNote": "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)",
     });
     if !removed.is_empty() {
         reply["removed"] = json!(removed);

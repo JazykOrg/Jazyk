@@ -934,7 +934,9 @@ impl Board {
                     }
                     *c.by_class.entry(g.class.clone()).or_insert(0) += 1;
                     *c.by_kind.entry(g.kind.clone()).or_insert(0) += 1;
-                    if self.is_ready(&g.id) {
+                    // ready counts mandatory goals like open does; an optional ready
+                    // batch stays under optional (docs/frontends/mcp.md#compilation-over-mcp).
+                    if g.mandatory && self.is_ready(&g.id) {
                         c.ready += 1;
                     }
                 }

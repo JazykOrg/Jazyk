@@ -890,7 +890,20 @@ The loop continued onto the org corpus and onto generation:
   and the bind contract names a constant or object literal describing the artifact a
   description in another syntax. Under the fixed binary the next two invocations bound
   24 rows, every one unimplemented with a failing criterion test as its gate, with no
-  tool error.
+  tool error, and the run finished green: 39 rows, 42 criterion tests, all passing,
+  over seven Codex invocations. The org handbook under Codex bound all 126
+  requirements with 251 criterion tests (244 green) and generated five Markdown pages
+  across nineteen invocations and two usage-limit pauses; the four rows left red are
+  expense and hiring rules that the handbook-delivery requirements contradict, and the
+  `failing-binding` check files them as findings because generation had its turn (a
+  rule added when sort's contradictory example criterion regenerated its entity on
+  every build). The embedded agent binding f2's 46 requirements against its Rust
+  product wrote 66 criterion tests (44 green) and generated two entities before every
+  later generation session died on a 400 about an unclosed object: a tool call cut at
+  the model's output cap was dispatched as an empty call and stored verbatim, so every
+  later request of the run carried the cut JSON; cut arguments are now a repaired
+  action that never re-enters the history, and `write_text_file` appends so a long
+  file is written in parts.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

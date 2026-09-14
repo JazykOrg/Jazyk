@@ -203,9 +203,9 @@ The initially loaded set for the batch holds:
   (`h:ent:order:requirements`, `h:ent:order:related`).
 - The lookalike candidates as stubs.
 - The unreferenced statements, each with its id, statement, and section: the ones
-  whose quote (the document's own text, never the session's wording, which a
-  paraphrase could have decorated with the name) names the entity without referencing
-  it, omitting the ones the entity's `not_about` already holds (judged word matches in
+  whose quote and statement both name the entity without referencing it (a paraphrase
+  that added the name fails on the quote; a sentence split into several statements
+  fails on the statement for the parts not about it), omitting the ones the entity's `not_about` already holds (judged word matches in
   an earlier review).
 - The open diagnostics naming the entity or its requirements.
 

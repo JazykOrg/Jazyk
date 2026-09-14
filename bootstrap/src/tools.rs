@@ -514,7 +514,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "settle_pairs",
-            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks, unless an open contradiction already names both sides (filed by an earlier batch, or by this session before the pair opened): then that one carries the verdict, nothing is filed, and the entry needs only the goal, the verdict, and the justification; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
+            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks, unless an open contradiction already names both sides (filed by an earlier batch, or by this session before the pair opened): then that one carries the verdict, nothing is filed, and the entry needs only the goal, the verdict, and the justification; an entry may name carried_by, an open contradiction on one side that states the same conflict, and that one carries it; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
             parameters: obj(
                 json!({"verdicts": {"type": "array", "minItems": 1, "items": {
                     "type": "object",
@@ -1139,7 +1139,8 @@ impl GoalScope {
         } else if g.kind == "derive-criteria" {
             // Three criteria per listed requirement, the density the skill asks for
             // (docs/compiler/sessions.md#budgets).
-            3 * g.change["requirements"].as_array().map(|a| a.len()).unwrap_or(0)
+            3 * (g.change["none"].as_array().map(|a| a.len()).unwrap_or(0)
+                + g.change["revised"].as_array().map(|a| a.len()).unwrap_or(0))
         } else {
             0
         };
@@ -1662,6 +1663,22 @@ impl ToolSession {
                 ));
             }
         }
+        // The id follows the requirement's document, so a requirement's criteria read
+        // as one family whatever section each quotes (criterion.md#identity).
+        let req_doc = self
+            .snapshot
+            .graph
+            .requirements
+            .get(&rid)
+            .and_then(|r| r.source.as_ref().map(|s| s.doc.clone()))
+            .or_else(|| {
+                self.staged.iter().find_map(|o| match o {
+                    Op::CreateRequirement { id, requirement } if *id == rid => {
+                        requirement.source.as_ref().map(|s| s.doc.clone())
+                    }
+                    _ => None,
+                })
+            });
         let (source, provenance, stem_doc) = if has_source {
             let section = Self::str_arg(args, "section")?;
             let quote = Self::str_arg(args, "quote")?;
@@ -1674,7 +1691,7 @@ impl ToolSession {
                     quote: quote.trim().to_string(),
                 }),
                 None,
-                doc,
+                req_doc.clone().unwrap_or(doc),
             )
         } else {
             let derived = &args["provenance"]["derived"];
@@ -1696,24 +1713,7 @@ impl ToolSession {
             if from.is_empty() {
                 from.push(rid.clone());
             }
-            // A derived criterion takes its requirement's document stem
-            // (docs/compiler/model/criterion.md#identity).
-            let stem = self
-                .snapshot
-                .graph
-                .requirements
-                .get(&rid)
-                .and_then(|r| r.source.as_ref().map(|s| s.doc.clone()))
-                .or_else(|| {
-                    self.staged.iter().find_map(|o| match o {
-                        Op::CreateRequirement { id, requirement } if *id == rid => {
-                            requirement.source.as_ref().map(|s| s.doc.clone())
-                        }
-                        _ => None,
-                    })
-                })
-                .unwrap_or_else(|| "x".to_string());
-            (None, Some(Provenance::Derived { from, reasoning }), stem)
+            (None, Some(Provenance::Derived { from, reasoning }), req_doc.unwrap_or_else(|| "x".to_string()))
         };
         let mut entities: Vec<String> = Vec::new();
         for e in Self::str_list(args, "entities") {
@@ -2335,8 +2335,15 @@ impl ToolSession {
             })
             .cloned();
         // The arguments a filing verdict needs, checked before anything stages; a
-        // contradiction already standing on the pair needs none.
-        if verdict == "contradiction" && standing_contradiction.is_none() {
+        // contradiction already standing on the pair, or one the entry names as
+        // carried_by, needs none.
+        let carried = Self::opt_str(entry, "carried_by").is_some_and(|cid| {
+            self.staged_diags
+                .get(&cid)
+                .or_else(|| self.snapshot.graph.diagnostics.get(&cid))
+                .is_some_and(|d| d.lifecycle == "open" && d.rule == "contradiction" && d.subjects.iter().any(|s| *s == a || *s == b))
+        });
+        if verdict == "contradiction" && standing_contradiction.is_none() && !carried {
             match Self::opt_str(entry, "severity").as_deref() {
                 None => {
                     return Err(ToolError::new(
@@ -2404,7 +2411,20 @@ impl ToolSession {
                     json!({"verdict": "duplicate", "carried_by": filed["id"]})
                 }
                 "contradiction" => {
-                    if let Some(id) = &standing_contradiction {
+                    // A standing contradiction the entry names carries the verdict even
+                    // when it names one side only: the same threshold conflict across
+                    // several pairs is one finding (rejudge-pair.md#tools).
+                    let named = Self::opt_str(entry, "carried_by").filter(|cid| {
+                        self.staged_diags
+                            .get(cid)
+                            .or_else(|| self.snapshot.graph.diagnostics.get(cid))
+                            .is_some_and(|d| {
+                                d.lifecycle == "open"
+                                    && d.rule == "contradiction"
+                                    && d.subjects.iter().any(|s| *s == a || *s == b)
+                            })
+                    });
+                    if let Some(id) = named.as_ref().or(standing_contradiction.as_ref()) {
                         result["diagnostic"] = json!(id);
                         result["note"] = json!("the contradiction already stood on the pair; no second one filed");
                         json!({"verdict": "contradiction", "carried_by": id})
@@ -4467,7 +4487,19 @@ impl ToolSession {
                     .into_iter()
                     .filter(|(_, d)| lifecycle == "all" || d.lifecycle == lifecycle)
                     .filter(|(_, d)| rule.as_deref().is_none_or(|r| d.rule == r))
-                    .filter(|(_, d)| subject.as_deref().is_none_or(|s| d.subjects.iter().any(|x| x == s)))
+                    .filter(|(_, d)| {
+                        // An entity subject covers its requirements and criteria, as the
+                        // review hints count them (docs/compiler/tools.md#read-tools).
+                        subject.as_deref().is_none_or(|s| {
+                            d.subjects.iter().any(|x| x == s)
+                                || d.subjects.iter().any(|x| {
+                                    self.snapshot.graph.requirements.get(x).is_some_and(|r| r.entities.iter().any(|e| self.snapshot.resolve_id(e) == s))
+                                        || self.snapshot.graph.criteria.get(x).is_some_and(|c| {
+                                            self.snapshot.graph.requirements.get(&c.requirement).is_some_and(|r| r.entities.iter().any(|e| self.snapshot.resolve_id(e) == s))
+                                        })
+                                })
+                        })
+                    })
                     .map(|(id, d)| {
                         let mut v = json!({
                             "id": id, "rule": d.rule, "severity": d.severity, "lifecycle": d.lifecycle,
@@ -9076,6 +9108,42 @@ mod tests {
     // settles the pair's open diagnostic, a goal of another kind and a goal outside
     // the batch are refused by name, a contradiction without its message is refused
     // before anything stages, and the guard counts accepted entries.
+    // Mirrors docs/compiler/goals/rejudge-pair.md#tools: an entry may name carried_by,
+    // an open contradiction on one side stating the same conflict, and nothing new files.
+    #[test]
+    fn settle_pairs_carried_by_reuses_a_one_sided_contradiction() {
+        let mut t = pair_session();
+        t.snapshot.graph.diagnostics.insert(
+            "diag:contradiction-5".into(),
+            Diagnostic {
+                rule: "contradiction".into(),
+                severity: "error".into(),
+                subjects: vec!["req:c".into(), "req:zzz".into()],
+                message: "500 versus 250".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let v = t
+            .dispatch(
+                PAIR_SETTLE_TOOL,
+                &json!({"verdicts": [
+                    {"goal": "g:rejudge-pair:req:a~req:c", "verdict": "contradiction", "carried_by": "diag:contradiction-5",
+                     "justification": "The same threshold conflict diag:contradiction-5 already states against req:c."}
+                ]}),
+            )
+            .unwrap();
+        let r = &v["results"][0];
+        assert!(r["error"].is_null(), "{}", r);
+        assert_eq!(r["diagnostic"], "diag:contradiction-5", "{}", r);
+        assert!(t.staged_diags.is_empty());
+    }
+
     // Mirrors docs/compiler/goals/rejudge-pair.md#tools: a contradiction already
     // standing on the pair carries the verdict; the entry needs no severity or
     // message, and nothing new is filed.

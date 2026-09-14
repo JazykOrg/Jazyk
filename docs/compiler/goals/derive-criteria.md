@@ -16,8 +16,8 @@ when the project configures a `[gen]` deliverable
 - carries a `requirement-revised` record newer than its criteria (its derived criteria
   were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
 
-The `change` lists the requirements by id with the reason (`none` or `revised`); the
-`cause` is the newest record among them. Each goal is a batch wall of its own
+The `change` carries two id lists, `none` (no criterion yet) and `revised` (a derived
+criterion gone stale); the `cause` is the newest record among them. Each goal is a batch wall of its own
 ([batching](../reconciler.md#batching)), and the changeset's mutation budget grows by
 three per listed requirement ([budgets](../sessions.md#budgets)): a batch that packed
 twelve entities' goals against one budget once failed three of them unstaged. A project without a deliverable derives none:

@@ -232,7 +232,9 @@ The `rejudge-pair` toolset ([toolsets](../tools.md#toolsets)):
   `contradiction` files `contradiction` with the entry's `severity`, `message`, and
   `prompt` and marks, or, when an open `contradiction` already names both sides,
   lets that one carry the verdict with no second filing and no `severity` or
-  `message` required (the hint names it); `resolved` resolves the pair's open
+  `message` required (the hint names it); an entry may also name `carried_by`, an
+  open contradiction on one side that states the same conflict (one threshold against
+  three statements of the other document is one finding), and that one carries it; `resolved` resolves the pair's open
   diagnostic and marks. The
   session prefers it when it holds several verdicts; `mark_goal_done` still serves a
   single pair and the same-document delete.

@@ -1214,14 +1214,12 @@ impl Store {
     // derived criterion reads as its requirement's kin (crit:slide-about-3), and `x`
     // only when neither has a document (docs/compiler/model/criterion.md#identity).
     pub fn crit_stem(&self, c: &Criterion) -> String {
-        if let Some(s) = c.source.as_ref() {
-            return s.doc.clone();
-        }
         self.graph
             .requirements
             .get(&c.requirement)
             .and_then(|r| r.source.as_ref())
             .map(|s| s.doc.clone())
+            .or_else(|| c.source.as_ref().map(|s| s.doc.clone()))
             .unwrap_or_else(|| "x".to_string())
     }
 
@@ -1659,6 +1657,19 @@ impl Store {
                 }
                 _ => false,
             };
+            // Two transitions of one subject with different ends are siblings of one
+            // machine, distinct by construction: the state machine checks judge their
+            // conflicts (nondeterministic-transition), never a pair. Six transition
+            // bullets once opened twenty-eight pairs, every one consistent.
+            let sibling_transitions = match (&transition, &other.transition) {
+                (Some((subj, _, _)), Some(t)) => {
+                    self.resolve_id(&t.subject) == *subj && !same_transition
+                }
+                _ => false,
+            };
+            if sibling_transitions {
+                continue;
+            }
             // An intro-versus-steps restatement: one sourced in the document's opening
             // section, the other in a later section of the same document. Qualifies
             // with one shared entity and one shared token (typically the verb stem),
@@ -8523,6 +8534,33 @@ mod tests {
         let n = s.requirement_neighbors("req:expenses-1");
         assert!(n.contains(&"req:policies-4".to_string()), "{:?}", n);
         assert!(!n.contains(&"req:policies-5".to_string()), "{:?}", n);
+    }
+
+    // Mirrors docs/compiler/reconciler.md#pairs: two transitions of one subject with
+    // different ends are siblings of one machine and never pair; the same ends pair.
+    #[test]
+    fn sibling_transitions_of_one_machine_never_pair() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:application".into(), entity("Application"));
+        let mk = |st: &str, from: &str, to: &str| Requirement {
+            statement: st.into(),
+            entities: vec!["ent:application".into()],
+            transition: Some(Transition {
+                subject: "ent:application".into(),
+                from: from.into(),
+                to: to.into(),
+                trigger: None,
+                guard: None,
+            }),
+            source: Some(mention("hiring.md", "/moving", "q")),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:h-1".into(), mk("An Application moves from applied to screened when the recruiter reviews it.", "applied", "screened"));
+        s.graph.requirements.insert("req:h-2".into(), mk("An Application moves from applied to rejected when the recruiter declines it.", "applied", "rejected"));
+        s.graph.requirements.insert("req:h-3".into(), mk("The recruiter moves an Application from applied to screened after reviewing it.", "applied", "screened"));
+        let n = s.requirement_neighbors("req:h-1");
+        assert!(!n.contains(&"req:h-2".to_string()), "{:?}", n);
+        assert!(n.contains(&"req:h-3".to_string()), "{:?}", n);
     }
 
     // The erp operation bullets: six statements of one entity sharing "supports" and

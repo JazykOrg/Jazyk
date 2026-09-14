@@ -1715,13 +1715,17 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
         // The quote is the document's own text; a statement is the session's wording,
         // and a paraphrase that added the name would otherwise raise its own hint
         // (docs/compiler/goals/review-entity.md#hints).
-        let text = blank_code(
+        // Both the quote (the document's text) and the statement (the session's) must
+        // name the entity: a paraphrase that added the name fails the first, a sentence
+        // split into several statements fails the second for the parts not about it.
+        let quote_text = blank_code(
             r.source
                 .as_ref()
                 .map(|s| s.quote.as_str())
                 .unwrap_or(&r.statement),
         );
-        if names.iter().any(|n| word_bounded(&text, n)) {
+        let statement_text = blank_code(&r.statement);
+        if names.iter().any(|n| word_bounded(&quote_text, n) && word_bounded(&statement_text, n)) {
             out.push((rid.clone(), r.statement.clone()));
             if out.len() >= 6 {
                 break;
@@ -1859,7 +1863,7 @@ impl GoalKind for ReviewEntity {
             }
             if !parentless.is_empty() {
                 hints.push(format!(
-                    "composition edges whose part has no parent or a parent disagreeing with the stated whole (set parent on the part with update_entity): {}",
+                    "composition edges whose part has no parent or a parent disagreeing with the stated whole (set parent on the part with update_entity, unless the part is a generic rule-carrier such as Department beside the named departments, which the judgment skill keeps parentless): {}",
                     parentless.join(", ")
                 ));
             }
@@ -2446,10 +2450,8 @@ impl GoalKind for DeriveCriteria {
         for (entity, reqs) in criteria_owed(store) {
             let none = reqs.iter().filter(|(_, why)| *why == "none").count();
             let revised = reqs.len() - none;
-            let listed: Vec<Value> = reqs
-                .iter()
-                .map(|(rid, why)| json!({"id": rid, "reason": why}))
-                .collect();
+            let none_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "none").map(|(r, _)| r.as_str()).collect();
+            let revised_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "revised").map(|(r, _)| r.as_str()).collect();
             let mut hints = vec![format!(
                 "requirements: {} ({} without criteria, {} revised)",
                 reqs.len(),
@@ -2507,7 +2509,7 @@ impl GoalKind for DeriveCriteria {
                 self,
                 &entity,
                 true,
-                json!({"requirements": listed}),
+                json!({"none": none_ids, "revised": revised_ids}),
                 cause,
                 hints,
             ));
@@ -2521,9 +2523,11 @@ impl GoalKind for DeriveCriteria {
         let mut lines = Vec::new();
         for g in batch {
             lines.push(format!("- {} stub", g.target));
-            for r in g.change["requirements"].as_array().into_iter().flatten() {
-                if let Some(id) = r["id"].as_str() {
-                    lines.push(format!("- {} full", id));
+            for key in ["none", "revised"] {
+                for r in g.change[key].as_array().into_iter().flatten() {
+                    if let Some(id) = r.as_str() {
+                        lines.push(format!("- {} full", id));
+                    }
                 }
             }
         }
@@ -5783,13 +5787,8 @@ pub(crate) mod tests {
         targets.sort();
         assert_eq!(targets, vec!["ent:line", "ent:sort"], "{:?}", targets);
         let sort = goals.iter().find(|g| g.target == "ent:sort").unwrap();
-        let listed: Vec<(String, String)> = sort.change["requirements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| (r["id"].as_str().unwrap().to_string(), r["reason"].as_str().unwrap().to_string()))
-            .collect();
-        assert_eq!(listed, vec![("req:a-1".to_string(), "none".to_string()), ("req:a-3".to_string(), "revised".to_string())]);
+        assert_eq!(sort.change["none"], json!(["req:a-1"]));
+        assert_eq!(sort.change["revised"], json!(["req:a-3"]));
         assert!(sort.hints.iter().any(|h| h == "skill criteria"));
         assert_eq!(skills_for("derive-criteria", &s, "ent:sort"), vec!["criteria"]);
         assert_eq!(tier("derive-criteria"), Some(3));

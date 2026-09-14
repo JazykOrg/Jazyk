@@ -260,6 +260,10 @@ computed deterministically:
   (Payment and Order sit together in each payment rule), and a same-entity
   restatement with no word in common is review-entity's catch, which reads the
   entity's statements whole and deletes the same-document duplicate.
+- two transitions of one subject with different `from` or `to` never pair: they are
+  siblings of one state machine, distinct by construction, and the machine's checks
+  (`nondeterministic-transition`) judge their conflicts; six transition bullets of a
+  hiring page once opened twenty-eight pairs, every one consistent.
 - a pair whose requirements both carry a `transition` with the same subject and the
   same `from` and `to` qualifies on its own and scores two more: a restated transition
   is the likeliest duplicate (`expenses-1` against `expenses-15`, one sentence in the

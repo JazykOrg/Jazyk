@@ -44,10 +44,11 @@ An Order paid on day 5 is never cancelled for non-payment.
 
 ## Identity
 
-`crit:<doc-stem>-<n>`, the stem from the quote's document for a stated criterion and from
-the requirement's document for a derived one (a session once read `crit:x-1` as an
-unfilled placeholder); `crit:x-<n>` only when neither has a document
-([identifiers](../model.md#identifiers)). The natural key is the owning requirement plus
+`crit:<doc-stem>-<n>`, the stem from the owning requirement's document whatever section
+the criterion's own quote sits in, so a requirement's criteria read as one family (a
+session once found `crit:expenses-24` between `crit:policies-10` and `-11`, and another
+read `crit:x-1` as an unfilled placeholder); `crit:x-<n>` only when the requirement has
+no document either ([identifiers](../model.md#identifiers)). The natural key is the owning requirement plus
 the punctuation-insensitive `statement`, so a retried upsert lands on the same node and a
 reworded sentence refreshes it in place ([mutations](../graph.md#mutations)).
 

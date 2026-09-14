@@ -1011,11 +1011,17 @@ impl McpServer {
         // Derived facts this commit landed carry ratification proposals: the ratify goals
         // they open wait on a human and swell the blocked count, so the reply says so
         // (docs/frontends/mcp.md#compilation-over-mcp).
-        let ratify_new = board
-            .goals
-            .iter()
-            .filter(|g| g.kind == "ratify" && !o.known_open.contains(&g.id))
-            .count();
+        let ratify_new = generation
+            .map(|g| {
+                let build = format!("g{}", g);
+                Store::load(&self.out)
+                    .graph
+                    .diagnostics
+                    .values()
+                    .filter(|d| d.rule == "ratification-pending" && d.created.as_deref() == Some(build.as_str()))
+                    .count()
+            })
+            .unwrap_or(0);
         if ratify_new > 0 {
             reply["ratificationNote"] = json!(format!(
                 "{} derived fact(s) this commit landed (criteria, groupings, sub-entities) carry ratification proposals: {} ratify goal(s) wait on a human and join the blocked count; nothing is wrong with them",

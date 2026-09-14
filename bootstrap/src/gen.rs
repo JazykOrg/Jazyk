@@ -385,6 +385,10 @@ pub struct Unattached {
     pub files: u64,
     pub lines: u64,
     pub ratio: f64,
+    // No site anchors any owned line: the medium carries no markers and the ratio
+    // says nothing. Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub markerless: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1765,8 +1769,12 @@ pub fn mark(
     ledger.save(&store.out);
     let mut reply = json!({
         "marked": id, "files": files.len(), "tests": seeded,
-        "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio},
-        "unattachedNote": "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)",
+        "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio, "markerless": unattached.markerless},
+        "unattachedNote": if unattached.markerless {
+            "informational: no requirement site anchors any line of these files (the medium carries no traceability markers), so the ratio says nothing here; the generation is accepted (docs/consumers/gen.md#the-unattached-remainder)"
+        } else {
+            "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)"
+        },
     });
     if !removed.is_empty() {
         reply["removed"] = json!(removed);
@@ -1855,10 +1863,12 @@ pub fn measure_unattached(ledger: &Ledger, gs: &GenSettings, slug: &str) -> Unat
     } else {
         ((lines as f64 / significant as f64) * 100.0).round() / 100.0
     };
+    let markerless = significant > 0 && e.files.iter().all(|f| !first_site.contains_key(f.as_str()));
     Unattached {
         files,
         lines,
         ratio,
+        markerless,
     }
 }
 

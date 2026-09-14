@@ -871,6 +871,10 @@ unattached remainder over the files it owns (support files excluded):
   next site in the same file, or at the end of the file; the lines before the first site
   are unattached.
 - `ratio`: `lines` over the entity's significant lines.
+- `markerless`: no site anchors any line of the owned files. The medium carries no
+  traceability markers (a Markdown handbook, a slide deck), so every line reads as
+  unattached and the ratio says nothing; the `record_generation` reply's note says so
+  instead of reporting an invented remainder of one.
 
 The measure lands on the entity's ledger entry (`unattached`), and the message of every
 `invented-choice` diagnostic on the entity names the ratio, so the grade and the measure

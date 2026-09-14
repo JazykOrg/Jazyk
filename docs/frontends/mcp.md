@@ -349,7 +349,11 @@ commands with its own tools, `record_binding` records the row and
 `record_generation` the manifest. The binding package carries the requirement's
 `statement` and `quote`. A package whose ledger holds no medium carries `mediumNote`,
 and `record_medium` records the agent's decision before anything is written
-([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). Jazyk deliberately serves no file-editing tools here; a
+([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). There is no batch in these lifecycles, so a graph write outside one is refused with a
+note that names the channel: a contradiction the tests expose reaches the author
+through the `failing-binding` check once the row is recorded, since a Codex session
+generating a handbook tried `report_diagnostic` for one. Jazyk deliberately serves no
+file-editing tools here; a
 coding agent brings its own, and the in-process worker's file tools
 ([generation tools](../compiler/goals/generate.md#tools)) are not served over MCP.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these

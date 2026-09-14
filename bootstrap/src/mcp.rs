@@ -1926,8 +1926,17 @@ impl McpServer {
                     };
                 }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile") {
+                    // Binding and generation have no batch: a contradiction the tests
+                    // expose reaches the author through the failing-binding check
+                    // (docs/frontends/mcp.md#generation-and-verification-over-mcp).
+                    let lifecycle = self.modes.iter().any(|m| m == "generate" || m == "bind");
+                    let message = if lifecycle {
+                        "no batch is open; begin_goals first, then stage writes into it. During binding or generation there is no batch: record the row's verdict, and a contradiction the tests expose reaches the author through the failing-binding check at the next check run; report_diagnostic belongs to compile sessions"
+                    } else {
+                        "no batch is open; begin_goals first, then stage writes into it"
+                    };
                     return Ok(text_result(
-                        json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first, then stage writes into it"}}),
+                        json!({"error": {"rule": "no-open-batch", "message": message}}),
                         true,
                     ));
                 }

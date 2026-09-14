@@ -491,8 +491,8 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "write_text_file",
-            description: "Write one deliverable file, creating parent directories. path is relative to the deliverable directory. A path recorded for another entity is rejected with the owner named; reference other entities' files instead of rewriting them.",
-            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}}), &["path", "content"]),
+            description: "Write one deliverable file, creating parent directories; with append true the content goes at the end of the existing file, so a long file is written in parts that fit your reply cap. path is relative to the deliverable directory. A path recorded for another entity is rejected with the owner named; reference other entities' files instead of rewriting them.",
+            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}}), &["path", "content"]),
         },
         ToolDef {
             name: "list_files",
@@ -3292,10 +3292,24 @@ impl ToolSession {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                std::fs::write(&path, &content).map_err(|e| {
-                    ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e))
-                })?;
-                Ok(json!({"written": rel, "bytes": content.len()}))
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools: a
+                // long file arrives in parts when the model's reply cap is small.
+                let append = args["append"].as_bool() == Some(true) && path.is_file();
+                if append {
+                    use std::io::Write;
+                    let mut f = std::fs::OpenOptions::new().append(true).open(&path).map_err(|e| {
+                        ToolError::new("io-error", format!("cannot append to `{}`: {}", rel, e))
+                    })?;
+                    f.write_all(content.as_bytes()).map_err(|e| {
+                        ToolError::new("io-error", format!("cannot append to `{}`: {}", rel, e))
+                    })?;
+                } else {
+                    std::fs::write(&path, &content).map_err(|e| {
+                        ToolError::new("io-error", format!("cannot write `{}`: {}", rel, e))
+                    })?;
+                }
+                let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                Ok(json!({"written": rel, "bytes": content.len(), "appended": append, "fileBytes": total}))
             }
             "list_files" => {
                 let rel = Self::opt_str(args, "path").unwrap_or_default();

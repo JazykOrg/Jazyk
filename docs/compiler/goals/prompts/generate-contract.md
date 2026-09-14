@@ -12,4 +12,5 @@ Generate the entity's part of the deliverable AND the tests for its requirements
 - Name a test you write with the name the package gives it: a criterion's suggestedTestName (crit, slug, hash prefix), or the requirement's testName (requirement id plus hash prefix) only when it has no criteria; put the single-line marker comment above it.
 - Reference other entities' files through the manifest the package carries.
 - Dense entities generate in parts of {GROUP} requirements: part 1 is the core plus the first group; each later part receives what exists so far and returns ONLY additional content to append.
+- Write a long file in parts when your tool calls have a size cap: write_text_file for the head, then the rest with append: true, each call a few thousand characters at most; a call cut mid-way lands nothing.
 - Return only file content, never fences or prose, when asked for a file.

@@ -120,6 +120,17 @@ impl Codec for NativeCodec {
 
 struct TextCodec;
 
+// An endpoint error about the reply's own JSON: the model's output was cut before a
+// tool call closed. Mirrors docs/frontends/acp.md#the-embedded-agent.
+fn reply_unparsed(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("can't find closing")
+        || e.contains("cannot find closing")
+        || e.contains("unexpected end of json")
+        || e.contains("unexpected eof")
+        || e.contains("unterminated string")
+}
+
 // Balanced top-level `{...}` blocks in reply text, in order, string-aware: the
 // text codec's action extractor.
 fn balanced_objects(content: &str) -> Vec<String> {
@@ -304,6 +315,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut called_any = false;
     let mut nudged = false;
     let mut empty_nudges = 0u32;
+    let mut cut_nudges = 0u32;
     let mut malformed_streak = 0u32;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
@@ -325,6 +337,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 mode = 2;
                 codec = codec_for(mode);
                 a.history[0] = system(codec.as_ref(), a.tools);
+                continue;
+            }
+            // The endpoint could not parse the reply itself (the output cap cut a
+            // long tool call): the same request returns the same cut reply, so a
+            // nudge toward a smaller call is the repair, twice at most.
+            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+            Err(e) if reply_unparsed(&e) && cut_nudges < 2 => {
+                cut_nudges += 1;
+                (a.emit)(AgentEvent::Message(format!(
+                    "the endpoint could not parse the last reply ({}); asking for a smaller call",
+                    llm::truncate(&e, 160)
+                )));
+                a.history.push(json!({"role": "user", "content": "Your last reply was cut off before its tool call closed, so nothing landed. Reply with a smaller call: write a long file in parts (write_text_file for the head, then append: true for the rest), each call a few thousand characters at most."}));
                 continue;
             }
             Err(e) => return Stop::Error(e),

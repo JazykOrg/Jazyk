@@ -148,7 +148,12 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   acts on it. A stall whose finish reason is `length` is a different case: the
   completion cap cut the reasoning before any call, so re-thinking cannot help; the
   nudge says so and asks for the call alone, with no further deliberation, and the
-  same two-strike fuse applies. A turn the loop cannot finish (the
+  same two-strike fuse applies. An endpoint error that says the reply
+  itself could not be parsed (an unclosed object, an unexpected end of JSON: the
+  model's output cap cut a long tool call) is not a transport failure: the loop
+  answers it with a nudge to reply with a smaller call, writing long files in parts
+  (`append`), at most twice per prompt, since the same request retried returns the
+  same cut reply. A turn the loop cannot finish (the
   endpoint erroring past its retries) answers as a `refusal` stop with the error
   emitted as a message chunk, never as a protocol error: the client side treats an
   error response to `session/prompt` as fatal to the whole connection, and one

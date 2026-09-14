@@ -249,9 +249,13 @@ serves these:
 
 - `read_text_file({path, line?, limit?})`: one file's content, path relative to the
   deliverable.
-- `write_text_file({path, content})`: write one file. A path recorded for another
-  entity is rejected with the owner named; during a `bind` goal, a path the ledger
-  records as any entity's implementing file is rejected the same way.
+- `write_text_file({path, content, append?})`: write one file, or append to it when
+  `append` is true, so a long file is written in parts that fit a model's reply cap.
+  A path recorded for another entity is rejected with the owner named; during a `bind`
+  goal, a path the ledger records as any entity's implementing file is rejected the
+  same way. The embedded agent once wrote a whole module in one call, the reply was
+  cut at the model's output cap, the endpoint rejected the unclosed JSON, and every
+  generation session after the first two died the same way.
 - `list_files({path?})`: the deliverable tree.
 - `run_command({command, cwd?})`: execute a shell command under the deliverable,
   bounded by a timeout; the exit code and output tail come back. This is how the

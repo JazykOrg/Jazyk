@@ -871,7 +871,7 @@ impl McpServer {
                 let failed = s2.status.failed.len();
                 let mut parts: Vec<String> = vec![if failed > 0 {
                     format!(
-                        "compilation incomplete: {} failed goal(s) stand (jazyk retry <goal> reopens one; the failure reasons are on the goals)",
+                        "compilation incomplete: {} failed goal(s) stand; a change on a goal's subject or a human retry from the board reopens it, and jazyk explain <goal> shows the reason",
                         failed
                     )
                 } else {

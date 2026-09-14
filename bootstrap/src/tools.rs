@@ -2039,11 +2039,17 @@ impl ToolSession {
             ));
         }
         self.goal_gate(&gs)?;
+        // A text codec hands evidence as a JSON string: parse it, so the gates read the
+        // object the session meant (docs/compiler/tools.md#goal-tools).
+        let evidence: Value = match &args["evidence"] {
+            Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone())),
+            other => other.clone(),
+        };
         // The review's unreferenced verdicts: referenced is backed by the staged
         // update, word-match is remembered on the entity so the hint never returns.
         // Mirrors docs/compiler/goals/review-entity.md#gate.
         if gs.kind == "review-entity" {
-            if let Some(list) = args["evidence"]["unreferenced"].as_array() {
+            if let Some(list) = evidence["unreferenced"].as_array() {
                 let target = self.snapshot.resolve_id(&gs.target).to_string();
                 let mut word_matches: Vec<String> = Vec::new();
                 for e in list {
@@ -2100,12 +2106,19 @@ impl ToolSession {
         // open-question backed by an invented-choice prompt
         // (docs/compiler/goals/derive-criteria.md#gate).
         if gs.kind == "derive-criteria" {
-            let Some(list) = args["evidence"]["requirements"].as_array() else {
+            let Some(list) = evidence["requirements"].as_array() else {
                 return Err(ToolError::new(
                     "bad-evidence",
                     format!(
-                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed",
-                        goal
+                        "{} carries evidence {{requirements: [{{id, criteria: [ids], verdict: complete | stated-only | open-question}}]}}, one entry per requirement the goal listed; received {}",
+                        goal,
+                        match &evidence {
+                            Value::Null => "no evidence".to_string(),
+                            Value::String(_) => "a string that is not JSON".to_string(),
+                            Value::Array(_) => "a bare array (wrap it: {requirements: [...]})".to_string(),
+                            Value::Object(m) => format!("an object with keys {}", m.keys().cloned().collect::<Vec<_>>().join(", ")),
+                            other => other.to_string(),
+                        }
                     ),
                 ));
             };
@@ -2163,7 +2176,7 @@ impl ToolSession {
             goal.clone(),
             GoalOutcome::Done {
                 justification,
-                evidence: args["evidence"].clone(),
+                evidence,
             },
         );
         let open: Vec<&str> = self
@@ -8207,6 +8220,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v["marked"], "g:reconcile-section:shop.md#/shop", "{}", v);
+    }
+
+    // Mirrors docs/compiler/tools.md#goal-tools: evidence handed as a JSON string (the
+    // text codec's shape) is parsed before the gate reads it.
+    #[test]
+    fn string_encoded_evidence_is_parsed_before_the_gate() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), plain("Sort"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The utility sorts its lines.".into(),
+                entities: vec!["ent:sort".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.criteria.insert(
+            "crit:a-1".into(),
+            crate::model::Criterion {
+                requirement: "req:a".into(),
+                statement: "Three lines come out ordered.".into(),
+                kind: "positive".into(),
+                provenance: Some(Provenance::Derived { from: vec!["req:a".into()], reasoning: "the rule".into() }),
+                ..Default::default()
+            },
+        );
+        let goals = vec![Goal {
+            id: "g:derive-criteria:ent:sort".into(),
+            kind: "derive-criteria".into(),
+            mandatory: true,
+            target: "ent:sort".into(),
+            change: json!({"none": ["req:a"], "revised": []}),
+            ..Default::default()
+        }];
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let v = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.",
+                        "evidence": "{\"requirements\": [{\"id\": \"req:a\", \"criteria\": [\"crit:a-1\"], \"verdict\": \"complete\"}]}"}),
+            )
+            .unwrap();
+        assert_eq!(v["marked"], "g:derive-criteria:ent:sort", "{}", v);
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.", "evidence": [{"id": "req:a"}]}),
+            )
+            .unwrap_err();
+        assert!(err.message.contains("bare array"), "{}", err.message);
     }
 
     // Mirrors docs/compiler/goals/review-entity.md#gate: a word-match verdict is

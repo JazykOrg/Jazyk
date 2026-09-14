@@ -386,6 +386,10 @@ clear or keep change records; they are not graph mutations
   `goal` trace events, and `jazyk explain` keep one entry per goal, as with
   `mark_goal_done`. The repeated-call guard counts per accepted entry
   ([repeated calls](./sessions.md#repeated-calls)).
+- `evidence` may arrive as a JSON string (the text codec's shape): the tool parses it
+  before the gate reads it, and a refusal says what shape arrived (a bare array, a
+  string that is not JSON, an object with other keys), since a local model once met the
+  same `bad-evidence` line for every shape it tried.
 - `mark_goal_failed({goal, reason})`: always available. A goal that cannot be
   accomplished (documents too deeply contradictory, a target that no longer makes
   sense) must be failable, or the board fills with dishonestly resolved goals. The

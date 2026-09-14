@@ -1957,7 +1957,11 @@ impl McpServer {
                                 "reason": g.change["reason"],
                                 "state": g.state,
                                 "gated": board.gated.contains(&g.id),
+                                "ready": board.is_ready(&g.id),
                             });
+                            if let Some(r) = board.readiness.get(&g.id).and_then(|r| r.reason()) {
+                                v["blockedBy"] = json!(r);
+                            }
                             if kind == "generate" {
                                 v["entity"] = json!(g.target);
                             } else {
@@ -1978,7 +1982,7 @@ impl McpServer {
                         "next": if rows.is_empty() {
                             "nothing owed".to_string()
                         } else {
-                            format!("{} claims one row; recording it resolves its goal", begin)
+                            format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
                         },
                     });
                     return Ok(text_result(reply, false));
@@ -2008,6 +2012,28 @@ impl McpServer {
                         }
                     }
                     if let Some(ent) = args["entity"].as_str() {
+                        // A generate goal that is not ready (its requirements still owe
+                        // a binding, a compile goal open in its cone) is refused with
+                        // the board's reason: a Codex session once bound one requirement
+                        // and generated the whole entity next.
+                        // Mirrors docs/compiler/goals/generate.md#readiness.
+                        let mut board = crate::board::Board::compute(&self.project, &self.out);
+                        board.mark_own(&self.worker_id());
+                        let gid = format!("g:generate:{}", ent);
+                        // A lease (this serving's own retry, or another worker's) is the
+                        // claim below's to answer.
+                        if board.goals.iter().any(|g| g.id == gid)
+                            && !board.is_ready(&gid)
+                            && !board.claimed.contains_key(&gid)
+                        {
+                            if let Some(r) = board.readiness.get(&gid).and_then(|r| r.reason()) {
+                                return Ok(text_result(
+                                    json!({"error": {"rule": "not-ready", "message": format!(
+                                        "`{}` is not ready to generate: {}; generation_tasks lists the rows that are", ent, r)}}),
+                                    true,
+                                ));
+                            }
+                        }
                         if let Err(holder) =
                             crate::control::claim(&self.out, ent, &self.worker_id())
                         {

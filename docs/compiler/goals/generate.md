@@ -51,7 +51,9 @@ E.g.:
 - Tier 3, after binding: ready when no goal of tiers 0 to 2 is open in the entity's
   cone and no `bind` goal is open on any of its requirements
   ([readiness](../reconciler.md#readiness)). The bound tests define the interface
-  the product conforms to, so they exist before the product does.
+  the product conforms to, so they exist before the product does. Over MCP,
+  `begin_generation` refuses an entity whose goal is not ready with the reason
+  (`not-ready`), so an agent cannot generate around its own unfinished bindings.
 - Within the tier, goals order topologically over the derived relationships
   ([order from relationships](../../consumers/gen.md#order-from-relationships)):
   leaf entities first, then the entities that compose or depend on them.

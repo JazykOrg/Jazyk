@@ -353,7 +353,13 @@ and `record_medium` records the agent's decision before anything is written
 coding agent brings its own, and the in-process worker's file tools
 ([generation tools](../compiler/goals/generate.md#tools)) are not served over MCP.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these
-lifecycles claim: resolving a row resolves its goal.
+lifecycles claim: resolving a row resolves its goal. Each task row carries the goal's
+`ready` flag and, when it is not ready, `blockedBy` with the board's reason, and
+`begin_generation` refuses an entity whose goal is not ready (`not-ready`, the same
+reason), since a Codex session bound one requirement of an entity and generated the
+whole entity next while its other requirements still owed a binding; generation waits
+for every binding of the entity because the bound tests are the interface it builds to
+([readiness](../compiler/goals/generate.md#readiness)).
 
 Verification: `run_tests` executes recorded programmatic tests (the build first, then
 the commands) and records verdicts as a side effect. `llm` rows go through

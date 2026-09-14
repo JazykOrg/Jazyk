@@ -580,8 +580,11 @@ inside the deliverable that points outside is refused (`bad-path`) like `..` wou
 and `list_files` does not list it.
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
-  the open `generate` goals: `{entity, reason, changed}` where `changed` lists the
-  requirement ids added, removed, or reworded since the entity was last generated.
+  the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where
+  `changed` lists the requirement ids added, removed, or reworded since the entity was
+  last generated and `blockedBy` is the board's readiness reason for a row that is not
+  ready (its requirements still owe a binding, a release). `begin_generation` refuses a
+  row that is not ready with the same reason (`not-ready`).
 - `begin_generation({entity})`: the full package for one entity: the instructions (the
   generation contract: both halves per entity, traceability markers, the two test
   kinds, the parts protocol), the entity's loaded set, its requirements in generation

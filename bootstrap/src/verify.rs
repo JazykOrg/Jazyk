@@ -603,9 +603,20 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
             continue;
         };
         if row.test.kind != "programmatic" {
-            skipped.push(
-                json!({"requirement": rid, "reason": "llm row; judge it and record_verdict"}),
-            );
+            // The headline is judged, not run; its programmatic criterion tests run
+            // all the same, or three checks vanish behind a green reply
+            // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
+            let crit_rows = run_criterion_tests(store, rid, gs);
+            let ran: Vec<&Value> = crit_rows.iter().filter(|c| c.get("note").is_none()).collect();
+            if !ran.is_empty() {
+                let crit_failed = ran.iter().any(|c| c["verdict"] == "fail");
+                if crit_failed { failed += 1 } else { passed += 1 }
+                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else { "pass" }, "note": "the headline is an llm test (judge it with record_verdict); its programmatic criterion tests ran", "criteria": crit_rows}));
+            } else {
+                skipped.push(
+                    json!({"requirement": rid, "reason": "llm row with no programmatic criterion test; judge it and record_verdict"}),
+                );
+            }
             continue;
         }
         let (status, reason) = status_of(store, rid, row, gs);

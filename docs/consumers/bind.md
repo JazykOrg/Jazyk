@@ -32,7 +32,9 @@ reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). The
   Record the carrying files, or record none. Absence is a finding, not a failure.
 - Search for an existing test per criterion. Bind to it when found; never write a
   duplicate beside it. One test per criterion, keyed by the criterion id and its
-  statement hash; the requirement's row groups them. A test carrying this statement's hash in its name or marker
+  statement hash; the requirement's row groups them. One file per requirement may hold
+  every criterion's test, and each entry's `run` then selects its own test by name, since
+  a command that runs the whole file judges every criterion at once. A test carrying this statement's hash in its name or marker
   under another requirement id is this requirement's test (ids renumber between
   compiles, the hash follows the statement): rename it to the suggested name and bind
   to it. A test named with this id but another hash belongs to the statement that hash

@@ -419,7 +419,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_binding",
-            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the test is its acceptance gate), failing (fail with files: the deliverable contradicts the statement, a diagnostic for the author). Never rewrite implementation files during binding.",
+            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the tests are its acceptance gate), partial (files exist and the criterion tests split, some passing and some failing: generation work for the failing criteria), failing (every test fails with files present: the deliverable contradicts the statement, a finding the failing-binding check files for the author). Never rewrite implementation files during binding.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -6116,7 +6116,10 @@ impl ToolSession {
                     targets = ledger
                         .requirements
                         .iter()
-                        .filter(|(_, row)| row.test.kind == "programmatic")
+                        .filter(|(_, row)| {
+                            row.test.kind == "programmatic"
+                                || row.tests.values().any(|t| t.test.kind == "programmatic")
+                        })
                         .map(|(rid, _)| rid.clone())
                         .collect();
                 }

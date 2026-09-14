@@ -114,10 +114,28 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&p) else { continue };
-            let hits: Vec<&String> = needles.iter().filter(|n| text.contains(n.as_str())).collect();
+            // A needle hits at a word boundary only: crit:x-1 is no part of crit:x-13.
+            let bounded = |n: &str| {
+                text.match_indices(n).any(|(i, _)| {
+                    text[i + n.len()..]
+                        .chars()
+                        .next()
+                        .map(|c| !c.is_alphanumeric())
+                        .unwrap_or(true)
+                })
+            };
+            let hits: Vec<&String> = needles.iter().filter(|n| bounded(n.as_str())).collect();
             if !hits.is_empty() {
                 let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
-                out.push(serde_json::json!({"file": rel, "names": hits}));
+                // A hash needle is eight hex characters; a file that names the id or
+                // slug but no current hash is another statement's test.
+                let is_hash = |n: &str| n.len() == 8 && n.chars().all(|c| c.is_ascii_hexdigit());
+                let current = hits.iter().any(|n| is_hash(n));
+                let mut hit = serde_json::json!({"file": rel, "names": hits, "carriesCurrentHash": current});
+                if !current {
+                    hit["note"] = serde_json::json!("names this id or slug but no current statement hash: the test of an earlier statement under this id, or of another one; rename only when its assertion is this statement's");
+                }
+                out.push(hit);
             }
             if out.len() >= 10 {
                 return;
@@ -261,7 +279,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "criteriaNote": if criteria.is_empty() {
             "no criteria on this requirement; one test encodes the statement"
         } else {
-            "one test per criterion, named by suggestedTestName; record them under tests in record_binding"
+            "one test per criterion, named by suggestedTestName; record them under tests in record_binding. One file per requirement may hold them all, but each entry's run must select its own test by name (cargo test <name>, npx tsx --test --test-name-pattern <name>, python3 tests/<file>.py <name>): a run of the whole file judges every criterion at once"
         },
         "existingTests": existing_tests,
         "reason": reason,
@@ -859,6 +877,24 @@ mod tests {
         let row = Ledger::load(&s.out).requirements["req:shop-1"].clone();
         assert_eq!(row.tests["crit:shop-1"].verdict, "pass");
         assert_eq!(row.tests["crit:shop-2"].verdict, "fail");
+    }
+
+    // Mirrors docs/consumers/bind.md#the-bind-goal: existingTests matches whole names
+    // (crit:x-1 is no part of crit:x-13) and says whether a hit carries the current hash.
+    #[test]
+    fn existing_tests_match_whole_names_and_label_the_hash() {
+        let dir = std::env::temp_dir().join(format!("jazyk-existing-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("tests/a.py"), "# crit:x-13 crit_x_13_0d4edd0c\n").unwrap();
+        std::fs::write(dir.join("tests/b.py"), "# crit:x-1 crit_x_1_aaaaaaaa\n").unwrap();
+        std::fs::write(dir.join("tests/c.py"), "# crit_x_1_deadbeef\n").unwrap();
+        let hits = existing_tests(&dir, &["crit:x-1".to_string(), "crit_x_1".to_string(), "deadbeef".to_string()]);
+        let files: Vec<&str> = hits.iter().map(|h| h["file"].as_str().unwrap()).collect();
+        assert_eq!(files, vec!["tests/b.py", "tests/c.py"], "{:?}", hits);
+        assert_eq!(hits[0]["carriesCurrentHash"], false);
+        assert!(hits[0]["note"].as_str().unwrap().contains("another"), "{}", hits[0]);
+        assert_eq!(hits[1]["carriesCurrentHash"], true);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

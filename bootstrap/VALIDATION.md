@@ -865,6 +865,10 @@ The loop continued onto the org corpus and onto generation:
   riding as information. Generation over the sort and slides criteria ledgers bound 14
   requirements each with 24 and 31 criterion tests ($3.25 and $6.38), sort's one red
   row being the documented contradiction and the slides deck built and judged green.
+  example-org with a deliverable converged with 251 criteria for 126 requirements (13
+  quoted from its examples), every trap holding, across a Claude run of $33.31 the owner
+  stopped mid-way and a Codex finish of one invocation; from that point the loop runs
+  on Codex and the embedded agent only.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

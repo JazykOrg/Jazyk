@@ -656,7 +656,7 @@ impl McpServer {
             crate::control::claim_goals(&self.out, &batch.id, &self.worker_id(), &batch.goals)
         {
             return json!({"error": {"rule": "claimed", "message": format!(
-                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse", batch.id, holder)}});
+                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse ({}s after its last activity; a killed worker's lease lapses on its own)", batch.id, holder, crate::control::LEASE_TTL_SECS)}});
         }
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(&batch.id));
@@ -2011,7 +2011,7 @@ impl McpServer {
                         {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse", ent, holder)}}),
+                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse ({}s after its last activity)", ent, holder, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }
@@ -2052,7 +2052,7 @@ impl McpServer {
                         {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse", rid, holder)}}),
+                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse ({}s after its last activity)", rid, holder, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }

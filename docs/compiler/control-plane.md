@@ -28,7 +28,12 @@ until a release approves them:
   re-gates exactly that document.
 - A `generate` goal is blocked until `released.generate` equals the graph's current
   generation. A commit moves the generation, so new graph facts gate new generation
-  work until the next release.
+  work until the next release. The generate release first syncs the documents on disk
+  into the store, writing the pending `edit` entry a build would write, and approves
+  the generation that results, so the approval covers the state the human sees. A
+  release once approved generation 31 while four deleted documents waited to be
+  journaled; the next serving wrote the entry, the store moved to 32, and every bind
+  goal re-gated one command after its release.
 - A `bind` goal gates with generation: it writes test files into the deliverable, so
   the same `released.generate` opens it
   ([binding](../consumers/bind.md#when-binding-runs)).

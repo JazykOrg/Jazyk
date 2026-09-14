@@ -4826,8 +4826,9 @@ impl Store {
     // The same alignment without a write: the section trees, the dirty set, the
     // alignment blocks, and the records land in memory and the `edit` and `align`
     // entries are minted but never written, so a read-only consumer (status, preview,
-    // release, monitor, the GUI board) derives from the documents as they stand
-    // while the entries stay a build's to write.
+    // the compile release, monitor, the GUI board) derives from the documents as they
+    // stand while the entries stay a build's to write (the generate release writes
+    // them, since it approves a generation number: control.rs).
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn sync_docs_in_memory(
         &mut self,

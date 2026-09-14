@@ -72,9 +72,9 @@ previews what the row opens ([bubbling](../compiler/reconciler.md#bubbling)): an
 `unimplemented` row opens `generate` on the owning entity.
 
 The test follows the same contract as generation's tests: the
-[facets and transition suggest the test shape](./gen.md#tests-tie-requirements-to-the-deliverable),
+[facets and transition suggest the test shape](./gen.md#tests-tie-criteria-to-the-deliverable),
 the two kinds are `programmatic` and `llm`, the test must be
-[falsifiable](./gen.md#tests-tie-requirements-to-the-deliverable), and the name embeds
+[falsifiable](./gen.md#tests-tie-criteria-to-the-deliverable), and the name embeds
 the requirement id and the hash of its `statement`
 ([traceability](./gen.md#traceability)). When no falsifiable programmatic assertion
 exists, the kind is `llm` and the artifact is a

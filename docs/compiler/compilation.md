@@ -165,7 +165,8 @@ Every check run journals a `checks` entry under its own generation.
   still looks normative ([coverage](#coverage)).
 - `stale-provenance`: an anchor no session addressed, a quote that fails to locate.
 - `failing-binding`: a ledger row whose implementing files exist and whose tests fail,
-  the deliverable contradicting the statement ([what the verdict means](../consumers/bind.md#what-the-verdict-means)).
+  the deliverable contradicting the statement, or whose criterion tests stay red after
+  a generation over the current facts ([what the verdict means](../consumers/bind.md#what-the-verdict-means)).
 - Criteria: `criterion-missing` for a requirement with no
   [criterion](./model/criterion.md), `warning` when the project configures a `[gen]`
   deliverable (binding waits on it) and `info` otherwise; `criterion-restates` for a

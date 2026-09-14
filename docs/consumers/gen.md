@@ -569,10 +569,16 @@ the files on disk, recomputed at every read. First match wins:
    part and the failing criteria are generation work, like an `unimplemented` row,
    never a contradiction. A requirement whose criteria go past what the code enforces
    (a Product with a name and a price that no constructor refuses without them) is the
-   common case.
+   common case. Generation gets one turn per set of facts: when the entity's ledger
+   entry records a generation over the current facts (its `factHash` equals the live
+   one) and a criterion test is still red after it, the row reads `failing` (reason
+   `criteria-failing-after-generation`), a finding for the author, not more generation
+   work. Without the rule a criterion that contradicts its neighbors (sort's example
+   that lists unsorted output) regenerated its entity on every build.
 6. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
    → `unimplemented` (the requirement is [bound](./bind.md) but nothing implements it:
-   generation work, and the bound test is its acceptance gate); `fail` with
+   generation work, and the bound test is its acceptance gate; after a generation over
+   the current facts it reads `failing` by the same rule); `fail` with
    implementing files → `failing` (the deliverable contradicts the statement: the
    `failing-binding` [check](../compiler/compilation.md#checks) files the diagnostic
    for the author at the next check run, since the binding loop has no batch to file

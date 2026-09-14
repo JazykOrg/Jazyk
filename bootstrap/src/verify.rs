@@ -40,6 +40,21 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     // (docs/consumers/gen.md#status-is-derived-never-stored).
     let crit_pass = row.tests.values().filter(|t| t.verdict == "pass").count();
     let crit_fail = row.tests.values().filter(|t| t.verdict == "fail").count();
+    // Generation gets one turn per set of facts: red criteria after a generation
+    // over the current facts are a finding, not more generation work (a criterion
+    // contradicting its neighbors once regenerated sort's entity on every build).
+    // Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
+    let generated_here = || {
+        let ledger = Ledger::load(&store.out);
+        ledger
+            .entities
+            .get(&crate::gen::slug_of(&row.entity))
+            .map(|e| e.fact_hash == crate::gen::fact_hash(store, &row.entity))
+            .unwrap_or(false)
+    };
+    if (crit_fail > 0 || row.verdict == "fail") && generated_here() {
+        return ("failing".into(), "criteria-failing-after-generation".into());
+    }
     if !row.files.is_empty() && crit_pass > 0 && crit_fail > 0 {
         return ("partial".into(), "criteria-failing".into());
     }

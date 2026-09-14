@@ -114,7 +114,9 @@ the requirement:
   what generation must make pass.
 - Implementing files named and the criterion tests split, some passing and some
   failing → `partial`: implemented in part, the failing criteria are generation work
-  like an `unimplemented` row.
+  like an `unimplemented` row. Once a generation over the current facts has landed
+  and a criterion is still red, both read `failing`: generation had its turn
+  ([status](./gen.md#status-is-derived-never-stored)).
 - Test fails and the binding names implementing files → `failing`. The deliverable
   contradicts the statement. That is a
   [diagnostic](../compiler/model/diagnostic.md) for the author (the docs are wrong,

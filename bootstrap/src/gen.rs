@@ -2763,6 +2763,13 @@ mod tests {
             row.hashes.requirement,
             hash_hex("The Cart shall hold items.")
         );
+        // A red verdict over the generated facts is a finding, never more generation
+        // work: generation had its turn (docs/consumers/gen.md#status-is-derived-never-stored).
+        crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        let (st, why) = crate::verify::status_of(&s, "req:shop-1", &ledger.requirements["req:shop-1"], &gs);
+        assert_eq!((st.as_str(), why.as_str()), ("failing", "criteria-failing-after-generation"));
+        assert!(pending(&s, &gs).is_empty(), "generation had its turn");
 
         // A recorded file deleted by hand is generation work under its own name.
         std::fs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();

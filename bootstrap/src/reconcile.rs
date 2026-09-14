@@ -559,20 +559,32 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             if !store.graph.requirements.contains_key(rid) {
                 continue;
             }
-            let (status, _) = crate::verify::status_of(store, rid, row, &gs);
+            let (status, reason) = crate::verify::status_of(store, rid, row, &gs);
             if status == "failing" {
-                f.push(finding(
-                    "failing-binding",
-                    rid,
-                    "warning",
+                let red: Vec<&str> = row
+                    .tests
+                    .iter()
+                    .filter(|(_, t)| t.verdict == "fail")
+                    .map(|(c, _)| c.as_str())
+                    .collect();
+                let message = if reason == "criteria-failing-after-generation" {
+                    format!(
+                        "{} keeps red criterion tests ({}) after {} was generated over the current facts: generation had its turn, so the criterion contradicts the deliverable or its neighbors (the docs are wrong, or the code is); {}",
+                        rid,
+                        red.join(", "),
+                        row.entity,
+                        row.evidence.as_deref().unwrap_or("no evidence recorded")
+                    )
+                } else {
                     format!(
                         "{} is implemented in {} but its test `{}` fails: the deliverable contradicts the statement (the docs are wrong, or the code is); {}",
                         rid,
                         row.files.join(", "),
                         row.test.name,
                         row.evidence.as_deref().unwrap_or("no evidence recorded")
-                    ),
-                ));
+                    )
+                };
+                f.push(finding("failing-binding", rid, "warning", message));
             }
         }
     }

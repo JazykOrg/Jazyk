@@ -23,8 +23,11 @@ the [ledger](../../consumers/gen.md#the-ledger):
   is gone from the deliverable (deleted by hand). `detail.changed` lists the missing
   files. The part has to be written again before its rows can be judged.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
-  is `unimplemented` (the test fails and nothing implements it). The bound test is
-  the acceptance gate; generation is the work that clears it.
+  is `unimplemented` or `partial` (a test fails and nothing, or only part, implements
+  it). The bound test is the acceptance gate; generation is the work that clears it. A
+  row still red after a generation over the current facts reads `failing` and derives
+  nothing ([status](../../consumers/gen.md#status-is-derived-never-stored)): a
+  contradictory criterion once regenerated its entity on every build.
 
 The reasons are checked in that order and the first that holds names the goal. An
 entity with no ledger entry becomes generation work through `unimplemented` rows

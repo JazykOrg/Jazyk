@@ -1981,6 +1981,8 @@ impl McpServer {
                         "count": rows.len(),
                         "next": if rows.is_empty() {
                             "nothing owed".to_string()
+                        } else if rows.iter().all(|r| r["gated"] == json!(true)) {
+                            format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
                         } else {
                             format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
                         },

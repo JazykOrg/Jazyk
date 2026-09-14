@@ -1219,6 +1219,17 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                             "provenance": crate::session::provenance_line(r),
                             "hash": hash_hex(&r.statement),
                             "testName": test_name(rid, &r.statement),
+                            // The criteria with the names binding gives their tests,
+                            // so a test generation must write (a requirement with no
+                            // bound row) carries the name binding would look for.
+                            // Mirrors docs/compiler/goals/generate.md#what-the-model-sees.
+                            "criteria": store.criteria_of(rid).iter().filter_map(|cid| {
+                                let c = store.graph.criteria.get(cid)?;
+                                Some(json!({
+                                    "id": cid, "statement": c.statement,
+                                    "suggestedTestName": crit_test_name(cid, &c.statement),
+                                }))
+                            }).collect::<Vec<Value>>(),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
                             // The statement is disputed while these stand; the session
                             // writes against one side of an open question and must

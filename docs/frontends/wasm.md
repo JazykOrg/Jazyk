@@ -248,9 +248,9 @@ and no build can run. That means two headers on the document:
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
 
-The Vite dev server and `vite preview` set both. A static host that cannot set
-headers (GitHub Pages, which is what serves [jazyk.org](../site.md)) needs a service
-worker that adds them on the client, installed before the demo page loads.
+The Vite dev server and `vite preview` set both. [jazyk.org](../site.md) is served
+from S3 through CloudFront, which sets them with a response headers policy on the
+demo's path; nothing client-side is needed.
 
 ## What a tab does not do
 

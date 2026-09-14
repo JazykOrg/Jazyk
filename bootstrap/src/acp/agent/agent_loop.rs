@@ -226,10 +226,13 @@ impl Codec for TextCodec {
         if let Some(e) = first_err {
             return vec![Action::Malformed(e)];
         }
-        // Content that opens like an action but never yielded one is a broken
-        // action, not prose: a truncated object must not end the turn as an answer.
+        // Content that holds the start of an action but never yielded one is a
+        // broken action, not prose: a truncated object must not end the turn as an
+        // answer, wherever it sits (a closing sentence once preceded a truncated
+        // mark_goal_done and the reply read as prose; the batch parked).
+        // Mirrors docs/frontends/acp.md#the-embedded-agent.
         let t = content.trim_start();
-        if t.starts_with('{') && t.contains("\"tool\"") {
+        if t.contains('{') && t.contains("\"tool\"") {
             return vec![Action::Malformed(
                 "the object is incomplete or unbalanced".to_string(),
             )];
@@ -526,6 +529,13 @@ mod tests {
                 _ => panic!("expected calls"),
             }
         }
+    }
+
+    #[test]
+    fn text_codec_truncated_action_after_prose_is_malformed() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "Now I'll mark the goal done.\n\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\", \"evidence\": {\"curate-view\": []}}"});
+        assert!(matches!(c.parse(&msg)[0], Action::Malformed(_)));
     }
 
     #[test]

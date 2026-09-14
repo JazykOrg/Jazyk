@@ -169,7 +169,9 @@ that packs several action objects executes them all in order, one result each,
 because executing the first and dropping the rest leaves the model believing work
 happened that never did. A text reply that reads as a JSON action but does not parse
 is answered with a repair message naming the error, three strikes before the prompt
-fails: a dropped brace is a resend, not an answer. The agent probes on the first
+fails: a dropped brace is a resend, not an answer. The check reads the whole reply,
+not its first character: a sentence of prose followed by a truncated action object
+once read as an answer and ended the turn, and the batch parked. The agent probes on the first
 round: an endpoint that rejects the `tools` parameter, or a model that answers prose
 without calls, downgrades the run to `text`, sticky until it ends. The endpoint
 fallbacks ride along too: streaming when the endpoint demands it, dropped

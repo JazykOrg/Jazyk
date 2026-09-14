@@ -36,7 +36,12 @@ steps:
   file that only restates the statement (a page repeating the sentence, a comment, a
   heading) carries nothing: `files` lists the files a criterion test inspects, and stays
   empty when no such file exists, so the row reads `unimplemented` and generation opens
-  instead of `failing`. A binder once listed a handbook page that named a role without
+  instead of `failing`. A constant, an object literal, or a table that describes the
+  artifact (a list of endpoint paths, a runtime name, a framework name) is a description
+  in another syntax, not the artifact; a file holding only that carries nothing, and a
+  test that reads it inspects prose. Codex once generated an `apiContract.js` object
+  naming Express, PostgreSQL, and four endpoints, then bound nine requirements against
+  it as verified. A binder once listed a handbook page that named a role without
   stating any of its criteria, and the row read as a contradiction.
 - Search for an existing test per criterion. Bind to it when found; never write a
   duplicate beside it. One test per criterion, keyed by the criterion id and its

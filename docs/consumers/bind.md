@@ -116,7 +116,10 @@ the requirement:
   failing → `partial`: implemented in part, the failing criteria are generation work
   like an `unimplemented` row. Once a generation over the current facts has landed
   and a criterion is still red, both read `failing`: generation had its turn
-  ([status](./gen.md#status-is-derived-never-stored)).
+  ([status](./gen.md#status-is-derived-never-stored)), and the `record_binding` reply's
+  note says so rather than claiming implementing files exist, since a binder that
+  recorded an empty file list after a generation read the contradiction note and
+  asked whether the entity's files had overridden its list.
 - Test fails and the binding names implementing files → `failing`. The deliverable
   contradicts the statement. That is a
   [diagnostic](../compiler/model/diagnostic.md) for the author (the docs are wrong,

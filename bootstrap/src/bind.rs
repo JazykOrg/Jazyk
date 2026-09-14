@@ -552,12 +552,15 @@ pub fn record(
         "verdict": verdict,
         "status": status,
         "reason": reason,
-        "note": match status.as_str() {
+        "note": match (status.as_str(), reason.as_str()) {
+            ("failing", "criteria-failing-after-generation") => "a generation over the current facts has landed and a criterion test is still red: generation had its turn, so this is a finding for the author (the failing-binding check files it), not generation work; it becomes work again when the docs or the deliverable change",
+            (status, _) => match status {
             "verified" => "the deliverable already satisfies the statement",
             "unimplemented" => "nothing implements the statement; the entity is generation work and this test is its acceptance gate",
             "partial" => "implementing files exist and some criterion tests pass while others fail: the entity is generation work for the failing criteria",
             "failing" => "implementing files exist but the tests fail: the deliverable contradicts the statement; the failing-binding check files it for the author at the next check run, never regenerate silently",
             _ => "recorded",
+            },
         },
     });
     if !contradicted.is_empty() {

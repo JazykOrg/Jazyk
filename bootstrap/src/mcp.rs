@@ -1976,7 +1976,33 @@ impl McpServer {
                         "generate" => "begin_generation",
                         _ => "begin_verification (or run_tests for programmatic rows)",
                     };
-                    let reply = json!({
+                    // Rows that went stale under a generation (a shared test file, an
+                    // implementation file) hold no generate goal until run_tests
+                    // re-baselines them; say so instead of letting the list read as
+                    // complete (docs/frontends/mcp.md#generation-and-verification-over-mcp).
+                    let stale_note = if kind == "generate" {
+                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let ledger = crate::gen::Ledger::load(&self.out);
+                        let store = Store::load(&self.out);
+                        let stale = ledger
+                            .requirements
+                            .iter()
+                            .filter(|(rid, row)| {
+                                store.graph.requirements.contains_key(*rid)
+                                    && matches!(
+                                        crate::verify::status_of(&store, rid, row, &gs).0.as_str(),
+                                        "stale-test" | "stale-code"
+                                    )
+                            })
+                            .count();
+                        (stale > 0).then(|| format!(
+                            "{} row(s) went stale since their last run (a test or implementation file changed); run_tests re-baselines them, and any generation work they hold returns to this list afterwards",
+                            stale
+                        ))
+                    } else {
+                        None
+                    };
+                    let mut reply = json!({
                         "tasks": rows,
                         "count": rows.len(),
                         "next": if rows.is_empty() {
@@ -1987,6 +2013,9 @@ impl McpServer {
                             format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
                         },
                     });
+                    if let Some(n) = stale_note {
+                        reply["staleNote"] = json!(n);
+                    }
                     return Ok(text_result(reply, false));
                 }
 

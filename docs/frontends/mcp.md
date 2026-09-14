@@ -357,7 +357,11 @@ lifecycles claim: resolving a row resolves its goal. Each task row carries the g
 `ready` flag and, when it is not ready, `blockedBy` with the board's reason; when every
 row is gated the list's `next` names the release that opens them (`jazyk release
 generate`), since a Codex session read a fully gated list and learned the command only
-from the refusal that followed; and
+from the refusal that followed; `generation_tasks` carries a `staleNote` when rows
+went stale since their last run (a shared test file or implementation file changed
+under a generation), since their generate goals return only after `run_tests`
+re-baselines them and a Codex session saw entities appear in the list it had read as
+complete; and
 `begin_generation` refuses an entity whose goal is not ready (`not-ready`, the same
 reason), since a Codex session bound one requirement of an entity and generated the
 whole entity next while its other requirements still owed a binding; generation waits

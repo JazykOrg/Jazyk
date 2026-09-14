@@ -1370,6 +1370,9 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // conforms to them. A task that cannot make one pass without changing it
         // reports that; the repair is a re-bind
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
+        // Shared requirements confused a Codex session into re-recording them
+        // (docs/compiler/goals/generate.md#what-the-model-sees).
+        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; an entity whose every requirement is carried records files: []",
         "boundTests": rids
             .iter()
             .filter_map(|rid| {

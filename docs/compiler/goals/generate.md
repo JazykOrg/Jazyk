@@ -161,6 +161,7 @@ generatedFiles                     other entities' files with what each holds; n
 supportFiles                       the deliverable-wide files any session may rewrite
 buildEntry, buildError             the build's entry with its content; the standing failure, if any
 boundTests                         tests binding wrote, one per criterion under criteriaTests; make them pass, list them unchanged
+ownershipNote                      a row already passing under another entity's files is carried there: list it unchanged, record no file for it; an entity whose rows are all carried records files: []
 requirementGroups                  each requirement with its statement, quote, openDiagnostics, criteria (id, statement, suggestedTestName) and testName (for a requirement with no criteria)
 contradicted, mediumWarning        the disputed requirements; the medium's standing divergence
 context                            the entity's neighborhood (../context.md#rendering)

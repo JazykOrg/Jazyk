@@ -439,6 +439,13 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
     }
 }
 
+// `b<generation>-<n>`, the id a batch lease is filed under.
+fn is_batch_id(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('b') else { return false };
+    let Some((g, n)) = rest.split_once('-') else { return false };
+    !g.is_empty() && !n.is_empty() && g.bytes().all(|c| c.is_ascii_digit()) && n.bytes().all(|c| c.is_ascii_digit())
+}
+
 #[derive(Clone, Debug)]
 pub struct Board {
     pub generation: u64,
@@ -446,6 +453,12 @@ pub struct Board {
     pub readiness: BTreeMap<String, Ready>,
     pub gated: BTreeSet<String>,
     pub claimed: BTreeMap<String, String>,
+    // Batch ids live leases hold: form_batches numbers past them.
+    // Mirrors docs/compiler/reconciler.md#batching.
+    pub held_batches: BTreeSet<String>,
+    // Goals leased to the serving reading the board: rendered as `claimedBy: you`.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub own: BTreeSet<String>,
     pub batches: Vec<Batch>,
     // Change records whose evidence lapsed at derivation: the reconciler clears them.
     pub lapsed: Vec<String>,
@@ -684,6 +697,8 @@ impl Board {
             readiness: BTreeMap::new(),
             gated: BTreeSet::new(),
             claimed: BTreeMap::new(),
+            held_batches: BTreeSet::new(),
+            own: BTreeSet::new(),
             batches: Vec::new(),
             lapsed,
             reopened,
@@ -762,6 +777,11 @@ impl Board {
                 );
             }
             board.claimed = claimed;
+            board.held_batches = leases
+                .keys()
+                .filter(|k| is_batch_id(k))
+                .cloned()
+                .collect();
         }
         board.batches = board.form_batches(store, proj);
         board
@@ -1180,8 +1200,19 @@ impl Board {
             }
         }
         batches.sort_by_key(rank);
-        for (i, b) in batches.iter_mut().enumerate() {
-            b.id = format!("b{}-{}", self.generation, i + 1);
+        // Numbering skips the ids live leases hold, so a batch formed while another
+        // is being worked never takes the working batch's id (a session once read the
+        // board's fresh `b24-1` as its own and reported the two as inconsistent).
+        let mut n = 0;
+        for b in batches.iter_mut() {
+            loop {
+                n += 1;
+                let id = format!("b{}-{}", self.generation, n);
+                if !self.held_batches.contains(&id) {
+                    b.id = id;
+                    break;
+                }
+            }
         }
         batches
     }
@@ -1239,6 +1270,28 @@ impl Board {
 
     // ---- the answer the MCP serving and the GUI render ----
 
+    // The goals leased to the reading serving are its own: the blocking sentence says
+    // so instead of naming the serving's worker id as a stranger's claim.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub fn mark_own(&mut self, worker: &str) {
+        let own: Vec<String> = self
+            .claimed
+            .iter()
+            .filter(|(_, w)| w.as_str() == worker)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in own {
+            self.readiness.insert(
+                id.clone(),
+                Ready::Blocked(
+                    "yours: your open batch holds it; mark_goal_done or mark_goal_failed it, then done"
+                        .to_string(),
+                ),
+            );
+            self.own.insert(id);
+        }
+    }
+
     pub fn goal_json(&self, g: &Goal) -> Value {
         let ready = self.is_ready(&g.id);
         let mut v = json!({
@@ -1259,7 +1312,7 @@ impl Board {
             v["blockedBy"] = json!(r);
         }
         if let Some(w) = self.claimed.get(&g.id) {
-            v["claimedBy"] = json!(w);
+            v["claimedBy"] = json!(if self.own.contains(&g.id) { "you" } else { w.as_str() });
         }
         if let Some(b) = self.batches.iter().find(|b| b.goals.contains(&g.id)) {
             v["batch"] = json!(b.id);

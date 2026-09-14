@@ -200,8 +200,9 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
          batch says `awaiting release`; `jazyk release` (or the GUI) approves it. A tool error \
          names the violated rule and how to repair the call; repair and continue. If any \
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
-         report_feedback: it reaches jazyk's developers, never touches the graph, and is not a \
-         substitute for the work.",
+         report_feedback: it appends a line to the project's local jazyk-out/feedback.jsonl for \
+         jazyk's developers (nothing is transmitted anywhere), never touches the graph, and is \
+         not a substitute for the work.",
     );
     s
 }
@@ -547,6 +548,7 @@ impl McpServer {
             );
             board = crate::board::Board::compute(&self.project, &self.out);
         }
+        board.mark_own(&self.worker_id());
         let mut v = if full { board.answer() } else { board.answer_compact() };
         if self.bridge.only.is_some() {
             if let Some(fin) = self.finished.lock().unwrap().as_ref() {

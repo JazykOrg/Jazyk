@@ -26,10 +26,18 @@ the ledger's recorded conventions (the run commands, the files other rows name),
 open error diagnostics naming the requirement, and `existingTests`: the deliverable
 files that already name this requirement by id, by test-name slug, or by statement
 hash, so a test left under an earlier id or hash is found by the harness rather than
-reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). The steps:
+reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). Every path
+in the package and in the recorded binding (`existingTests`, `files`, a test's
+`artifact`) is relative to the deliverable directory, and a `pathsNote` says so. The
+steps:
 
 - Search the deliverable for an implementation, starting at the entity's recorded files.
-  Record the carrying files, or record none. Absence is a finding, not a failure.
+  Record the carrying files, or record none. Absence is a finding, not a failure. A
+  file that only restates the statement (a page repeating the sentence, a comment, a
+  heading) carries nothing: `files` lists the files a criterion test inspects, and stays
+  empty when no such file exists, so the row reads `unimplemented` and generation opens
+  instead of `failing`. A binder once listed a handbook page that named a role without
+  stating any of its criteria, and the row read as a contradiction.
 - Search for an existing test per criterion. Bind to it when found; never write a
   duplicate beside it. One test per criterion, keyed by the criterion id and its
   statement hash; the requirement's row groups them. One file per requirement may hold

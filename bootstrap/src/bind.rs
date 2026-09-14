@@ -282,6 +282,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
             "one test per criterion, named by suggestedTestName; record them under tests in record_binding. One file per requirement may hold them all, but each entry's run must select its own test by name (cargo test <name>, npx tsx --test --test-name-pattern <name>, python3 tests/<file>.py <name>): a run of the whole file judges every criterion at once"
         },
         "existingTests": existing_tests,
+        "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,
         "statement": r.statement,
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),

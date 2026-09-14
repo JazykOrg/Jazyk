@@ -483,6 +483,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
 developers. It reports that a prompt, a skill, a tool, a schema, or an error message is
 ambiguous, wrong, confusing, or missing something, not that the project's documents are.
+The channel is a local file: each call appends one line to the project's
+`<out>/feedback.jsonl`, and nothing is transmitted anywhere. The tool description and
+the serving instructions say so, since an agent whose own guard screens outbound data
+once refused the call as an export to an external destination.
 Findings about the documents are [diagnostics](./model/diagnostic.md); findings about
 jazyk are feedback.
 

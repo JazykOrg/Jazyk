@@ -77,7 +77,8 @@ Two directories make the actors and their claims visible:
   so exactly one claimant wins); `done` and `abandon_goals` release it. A lease names
   its worker and expires (default 120 seconds, refreshed by any tool call on the open
   batch), so a dead agent's claim evaporates instead of wedging the board. The board
-  shows `claimedBy` on leased goals and consumers skip them.
+  shows `claimedBy` on leased goals and consumers skip them; a goal leased to the
+  reading serving itself shows `claimedBy: you`.
 
 The internal loop holds one coarse `build` lease for a whole run instead of per-batch
 leases. The two granularities exclude each other: `begin_goals` refuses while a live

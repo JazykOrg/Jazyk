@@ -241,7 +241,14 @@ serving; what it claims is a batch:
   `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
-  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. The
+  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. A goal the
+  calling serving itself holds (its open batch, or a batch of the running build the
+  serving belongs to) reads `claimedBy: you`, and its blocking sentence says the goal
+  is yours to mark and finish, since a session once read its own batch as another
+  worker's claim and reported the board as inconsistent. The batches the reply lists are
+  the ones the scheduler would form next, numbered past the ids live leases hold, so
+  the batch a session is working on never shares an id with one the board would form
+  now. The
   On a converged board that still lists optional batches, the note says how many
   optional goals stay claimable and `next` reads `optional: begin_goals claims <batch>
   or stop here`, since a reader once weighed the verdict against a line inviting a

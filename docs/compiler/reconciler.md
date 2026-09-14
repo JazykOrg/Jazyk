@@ -623,7 +623,9 @@ GC goal its own commit made ready.
 
 A batch has an id, `b<generation>-<n>`: the generation the board derives from and the
 batch's index within it. A re-derivation of the board renames its batches, so an id
-never outlives the board it came from. It names the session, its lease
+never outlives the board it came from. Numbering skips the ids of batches a live lease
+holds ([workers and leases](./control-plane.md#workers-and-leases)), so a batch formed
+while another is being worked never takes the working batch's id. It names the session, its lease
 ([workers and leases](./control-plane.md#workers-and-leases)), its trace file, and the
 `{target}` of the worker protocol line. The toolset of the session is the union of the
 batch's kinds' toolsets ([toolsets](./tools.md#toolsets)); the skills are the union of

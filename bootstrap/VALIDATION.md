@@ -869,6 +869,28 @@ The loop continued onto the org corpus and onto generation:
   quoted from its examples), every trap holding, across a Claude run of $33.31 the owner
   stopped mid-way and a Codex finish of one invocation; from that point the loop runs
   on Codex and the embedded agent only.
+- The embedded agent through LocalRouter (gemma4:e4b, text codec) converged f1 in 6
+  sessions and 25k tokens, sort in a resumed run after a fix (the text codec hands
+  `evidence` as a JSON string and the gate refused every shape), and f2 in 46 sessions
+  and 289k tokens: 46 requirements, 14 entities, 68 criteria (8 quoted), the planted
+  contradiction filed as an error, the Order state machine with its three transitions,
+  100% coverage. Its gaps are judgment (Inventory, Catalog, and Admin CLI without the
+  Orderly parent, Admin CLI without a stereotype) and stamina (twenty tool errors,
+  eight of them three-sentence justifications; three optional GC goals parked after a
+  truncated action object read as prose, which the codec now answers with a repair).
+  It read the board's fresh `b24-1` beside its own `b24-1` and reported the two as
+  inconsistent: the goals reply now marks the reader's own leased goals and numbers
+  derived batches past the ids live leases hold. Codex generating over the erp criteria
+  ledger exposed the sequencing hole: it bound one backend requirement with no files,
+  generated the entity as an object literal describing the API (Express, PostgreSQL,
+  four endpoint paths), and bound nine more rows against that description as verified,
+  all green; `begin_generation` now refuses an entity whose goal is not ready (its
+  requirements still owe a binding), the task lists carry readiness, the generation
+  contract makes the bound criterion tests pass instead of deriving requirement tests,
+  and the bind contract names a constant or object literal describing the artifact a
+  description in another syntax. Under the fixed binary the next two invocations bound
+  24 rows, every one unimplemented with a failing criterion test as its gate, with no
+  tool error.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one

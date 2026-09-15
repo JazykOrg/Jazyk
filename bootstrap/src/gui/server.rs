@@ -2,7 +2,7 @@
 use super::state::SharedState;
 use super::{
     api, assets, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
-    outfiles, views_api,
+    outfiles, product, views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -83,7 +83,10 @@ pub fn router(st: SharedState) -> Router {
         .route("/gen/pending", get(api::gen_pending))
         .route("/gen/package/{id}", get(api::gen_package))
         .route("/verify/pending", get(api::verify_pending))
-        .route("/verify/matrix", get(api::verify_matrix))
+        .route("/verify/matrix", get(product::verify_matrix))
+        .route("/capabilities", get(product::capabilities))
+        .route("/projects", get(product::projects))
+        .route("/inbox", get(product::inbox))
         .route("/docsgen/{slug}", get(api::docsgen))
         .route(
             "/chat/sessions",

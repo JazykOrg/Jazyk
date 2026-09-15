@@ -586,7 +586,7 @@ The same render runs after every committed changeset. See
 
 ### jazyk gui
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts the
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts the
 [GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
 the language server over WebSocket, then opens the browser. `--no-open` skips opening
 the browser. `--watch` starts in the automatic

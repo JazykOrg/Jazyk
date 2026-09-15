@@ -457,7 +457,7 @@ spends ([storage layout](./graph.md#storage-layout)).
 The runner translates a session's update stream into structured events: the tool call
 with condensed arguments, the condensed result, and any message or thought text the
 agent produced, emitted as model text. The `compile` command renders these live, the
-[GUI](../frontends/gui.md#activity) streams them to the browser, and `jazyk watch`
+[GUI](../frontends/gui.md#runs) streams them to the browser, and `jazyk watch`
 prints one line per goal opened or resolved. The generation and verification workers
 emit their own kinds per entity and per ledger row. The committed changeset with the
 same information persists in the [journal](./graph.md#journal).

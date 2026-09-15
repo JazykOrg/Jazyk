@@ -768,7 +768,7 @@ are stable ([identifiers](../compiler/model.md#identifiers)):
 Before a run rewrites or removes a deliverable file, the previous content is
 snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
 run per file. The snapshot is the diff baseline for frontends: the
-[GUI](../frontends/gui.md#deliverable-viewer) shows what the last generation changed
+[GUI](../frontends/gui.md#product-file-viewer) shows what the last generation changed
 against it. A file the run creates fresh has no baseline.
 
 ## Command

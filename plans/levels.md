@@ -347,7 +347,7 @@ checks) before commit. Commit per stage on the `levels` branch, docs first.
 3. Tools and derived data: `tools.rs` (the two tools, `children`), `derive.rs`
    (level views, lifted flows), `render.rs` (links), with tests.
 4. Frontends: `docsgen.rs`, GUI (API and frontend), `viewer.rs`, `cli.rs`; then
-   `cd bootstrap/gui && npm run build` and `cargo build --release`.
+   `cd bootstrap/app && npm run build` and `cargo build --release`.
 5. Skills and prompts: `skills/abstraction.md`, `prompts/abstract-entity.md`, the
    judgment line, embedded by the release build.
 6. Fixture: `example-saas`, a corpus written to the owner's picture (User,

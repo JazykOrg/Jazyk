@@ -151,8 +151,9 @@ requirements cohere into no groups the documents name, or when the pressure is o
 oversized section's: `section-too-large` is the author's to split, and a graph split is
 the answer only when the requirements cohere into sub-concepts the documents name. The
 failure surfaces on the entity with the recommendation (a section to split, or a bump
-when the count is honest) ([parked and failed](../reconciler.md#parked-and-failed)). A
-failed mandatory goal blocks convergence.
+when the count is honest) ([parked and failed](../reconciler.md#parked-and-failed)), and
+stands while the count grows by less than a fifth, so new statements about the same
+whole do not re-fire it. A failed mandatory goal blocks convergence.
 
 Stability: a split re-derived on a later build lands on the same natural keys (the same
 names under the same parent), so the upserts are no-ops

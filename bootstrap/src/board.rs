@@ -439,6 +439,25 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
     }
 }
 
+// Whether a failed goal's entry still covers the goal as re-derived: the same change,
+// or no newer cause; for an abstract-entity goal over a limit, a count that has not
+// grown by a fifth since the failure (growth alone is not a new subject).
+// Mirrors docs/compiler/reconciler.md#parked-and-failed.
+pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
+    if derived.change == failed.change {
+        return true;
+    }
+    if derived.kind == "abstract-entity" {
+        let count = |g: &Goal| g.change["limits"][0]["count"].as_u64();
+        if let (Some(then), Some(now)) = (count(failed), count(derived)) {
+            if now * 5 < then * 6 {
+                return true;
+            }
+        }
+    }
+    derived.cause.as_ref().map(|c| c.generation) <= failed.cause.as_ref().map(|c| c.generation)
+}
+
 // `b<generation>-<n>`, the id a batch lease is filed under.
 fn is_batch_id(s: &str) -> bool {
     let Some(rest) = s.strip_prefix('b') else { return false };
@@ -552,10 +571,7 @@ impl Board {
         for f in &store.status.failed {
             match goals.iter_mut().find(|g| g.id == f.goal.id) {
                 Some(g) => {
-                    let same = g.change == f.goal.change
-                        || g.cause.as_ref().map(|c| c.generation)
-                            <= f.goal.cause.as_ref().map(|c| c.generation);
-                    if same {
+                    if failure_stands(&f.goal, g) {
                         g.state = GoalState::Failed {
                             reason: f.reason.clone(),
                         };
@@ -2066,6 +2082,26 @@ pub fn recomputed_by_change(store: &Store, target: &str) -> Vec<String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    // A failed abstract-entity goal stands while the count grows by less than a
+    // fifth (docs/compiler/reconciler.md#parked-and-failed).
+    #[test]
+    fn failed_abstract_entity_stands_within_the_band() {
+        let mk = |count: u64, generation: u64| Goal {
+            id: "g:abstract-entity:ent:ines".into(),
+            kind: "abstract-entity".into(),
+            target: "ent:ines".into(),
+            change: json!({"limits": [{"limit": "requirements-per-entity", "count": count, "soft": 50, "hard": 80, "level": "hard"}]}),
+            cause: Some(crate::model::Cause { generation, mutation: 0, via: "limits".into() }),
+            ..Default::default()
+        };
+        let failed = mk(82, 60);
+        assert!(failure_stands(&failed, &mk(82, 61)));
+        assert!(failure_stands(&failed, &mk(95, 70)));
+        assert!(!failure_stands(&failed, &mk(99, 70)));
+        let other = Goal { kind: "review-entity".into(), ..mk(82, 60) };
+        assert!(!failure_stands(&other, &Goal { kind: "review-entity".into(), ..mk(83, 61) }));
+    }
     use super::*;
     use crate::store::{self, RecordBatch};
 

@@ -714,7 +714,11 @@ it.
 - A failed goal never re-runs by itself. It reopens when its subject changes again (a
   new change record on the subject drops the `failed` entry at commit) or when a human
   retries it from the board or removes its entry from `failed`. `jazyk explain <goal>`
-  shows the reason.
+  shows the reason. For an [`abstract-entity`](./goals/abstract-entity.md) goal whose
+  change is a count over a limit, growth alone is not a new subject: the failure stands
+  until the count has grown by a fifth over the count at failure (or a human bumps or
+  retries), since a novel lead's goal once re-fired on every chapter's new statements
+  and failed three times, at up to fifty calls each, with the same honest reason.
 - Resolving a parked or failed goal clears its entry with its record.
 
 ## Flip detection

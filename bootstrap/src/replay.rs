@@ -393,16 +393,13 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             }
             // A build trace records a refusal as its own event in the call's place.
             Some("toolError") => {
+                // The message carries the reply the model saw; its rule wins over the
+                // event's field, which some writers fill with the tool name.
                 let msg = e["message"].as_str().unwrap_or("");
-                let rule = e["rule"]
-                    .as_str()
-                    .filter(|r| !r.is_empty())
-                    .map(String::from)
-                    .or_else(|| {
-                        regex::Regex::new(r#""rule":\s*\\?"([a-z-]+)"#)
-                            .ok()
-                            .and_then(|r| r.captures(msg).map(|c| c[1].to_string()))
-                    })
+                let rule = regex::Regex::new(r#"\\?"rule\\?":\s*\\?"([a-z-]+)"#)
+                    .ok()
+                    .and_then(|r| r.captures(msg).map(|c| c[1].to_string()))
+                    .or_else(|| e["rule"].as_str().filter(|r| !r.is_empty()).map(String::from))
                     .unwrap_or_else(|| "?".to_string());
                 results.push(json!({"error": {"rule": rule, "message": msg}}));
             }

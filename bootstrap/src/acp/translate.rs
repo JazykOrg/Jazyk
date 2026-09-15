@@ -142,11 +142,24 @@ impl UpdateTranslator {
                         summary: crate::session::condense(&out, 160),
                         full: crate::session::full_payload(&out),
                     }),
-                    Some(ToolCallStatus::Failed) => trace.event(TraceEvent::ToolError {
-                        label: self.label.clone(),
-                        rule: name,
-                        message: crate::session::condense(&out, 400),
-                    }),
+                    Some(ToolCallStatus::Failed) => {
+                        // The rule the reply carries, so a replay extracted from the
+                        // trace expects what the harness answered; the tool name
+                        // stands in when the reply is not a jazyk refusal.
+                        let reply: serde_json::Value = out
+                            .as_str()
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_else(|| out.clone());
+                        let rule = reply["error"]["rule"]
+                            .as_str()
+                            .map(String::from)
+                            .unwrap_or(name);
+                        trace.event(TraceEvent::ToolError {
+                            label: self.label.clone(),
+                            rule,
+                            message: crate::session::condense(&out, 400),
+                        })
+                    }
                     // Pending/in-progress churn stays off the trace; the start row said it.
                     _ => {}
                 }

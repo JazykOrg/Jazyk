@@ -466,8 +466,12 @@
   background: var(--panel);
 }
 
-.home .proj:hover {
+.home a.proj:hover {
   border-color: var(--accent);
+}
+
+.home .proj.other {
+  opacity: 0.75;
 }
 
 .home .proj .name {

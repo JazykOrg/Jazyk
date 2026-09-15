@@ -17,11 +17,13 @@ const DEMOS = [
   { id: 'org', name: 'The organization', blurb: 'a company handbook' },
 ]
 
+// One server serves one project: the served row opens, the others say where to
+// start a server (docs/frontends/gui.md#home).
 function ProjectRow({ p, dev }: { p: ProjectSummary; dev: boolean }) {
   const waiting = p.verdict?.blocked ?? 0
   const errors = p.diagnostics?.error ?? 0
-  return (
-    <Link to="/docs" className="proj" title={p.current ? 'the project this server serves' : 'served by another jazyk gui; start one there to open it'}>
+  const body = (
+    <>
       <span className="name">
         {p.name || p.root}
         {p.current && <span className="muted"> · open</span>}
@@ -33,7 +35,18 @@ function ProjectRow({ p, dev }: { p: ProjectSummary; dev: boolean }) {
         {errors > 0 ? ` · ${errors} error${errors === 1 ? '' : 's'}` : ''}
       </span>
       <span className="path">{p.root}</span>
-    </Link>
+    </>
+  )
+  if (p.current)
+    return (
+      <Link to="/docs" className="proj" title="the project this server serves">
+        {body}
+      </Link>
+    )
+  return (
+    <div className="proj other" title={`run jazyk gui in ${p.root} to open it`}>
+      {body}
+    </div>
   )
 }
 

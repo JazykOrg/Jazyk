@@ -841,6 +841,12 @@ impl SkillState {
         }
     }
 
+    // A skill shipped as a pointer was never rendered: drop the entry so load_skill
+    // renders it. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub fn forget(&mut self, name: &str) {
+        self.rendered.retain(|e| e.name != name);
+    }
+
     pub fn is_active(&self, name: &str) -> bool {
         self.rendered.iter().any(|e| e.name == name && e.active)
     }

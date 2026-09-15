@@ -1849,10 +1849,13 @@ impl GoalKind for ReviewEntity {
                     let Some(part) = store.graph.entities.get(&edge.b) else {
                         continue;
                     };
+                    // A parent under the stated whole satisfies the composition
+                    // transitively (a scene under a chapter under the manuscript).
+                    // Mirrors docs/compiler/goals/review-entity.md#hints.
                     let line = match &part.parent {
-                        None => format!("{} -> {}", edge.a, edge.b),
-                        Some(p) if p != &edge.a => {
-                            format!("{} -> {} (parent now {})", edge.a, edge.b, p)
+                        None => format!("{} -> {} (whole -> part)", edge.a, edge.b),
+                        Some(p) if p != &edge.a && !store.is_ancestor(&edge.a, &edge.b) => {
+                            format!("{} -> {} (whole -> part; parent now {}, not under the whole)", edge.a, edge.b, p)
                         }
                         _ => continue,
                     };
@@ -1863,7 +1866,7 @@ impl GoalKind for ReviewEntity {
             }
             if !parentless.is_empty() {
                 hints.push(format!(
-                    "composition edges whose part has no parent or a parent disagreeing with the stated whole (set parent on the part with update_entity, unless the part is a generic rule-carrier such as Department beside the named departments, which the judgment skill keeps parentless): {}",
+                    "composition edges whose part has no parent or a parent outside the stated whole (the edge reads whole -> part; set parent on the part with update_entity, or fix a reversed edge on the requirement, unless the part is a generic rule-carrier such as Department beside the named departments, which the judgment skill keeps parentless): {}",
                     parentless.join(", ")
                 ));
             }
@@ -2381,8 +2384,36 @@ impl GoalKind for ConformInstance {
         let types: BTreeSet<String> = crate::derive::instance_types(store).into_values().collect();
         let mut out = Vec::new();
         for op in staged {
-            if let Op::UpdateEntity { id, .. } = op {
-                if types.contains(id) {
+            if let Op::UpdateEntity {
+                id,
+                name,
+                definition,
+                add_aliases,
+                remove_aliases,
+                add_mention,
+                stereotype,
+                parent,
+                clear_parent,
+                set_attributes,
+                add_attributes,
+                provenance,
+                ..
+            } = op
+            {
+                // A not_about-only update is a review annotation, not a type edit
+                // (docs/compiler/goals/conform-instance.md#gate).
+                let annotation_only = name.is_none()
+                    && definition.is_none()
+                    && add_aliases.is_empty()
+                    && remove_aliases.is_empty()
+                    && add_mention.is_none()
+                    && stereotype.is_none()
+                    && parent.is_none()
+                    && !clear_parent
+                    && set_attributes.is_none()
+                    && add_attributes.is_empty()
+                    && provenance.is_none();
+                if types.contains(id) && !annotation_only {
                     out.push(Violation::new(
                         "type-edited",
                         format!("{} is a type; conform the instance, never the type", id),

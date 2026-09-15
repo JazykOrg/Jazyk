@@ -6,7 +6,7 @@ use crate::model::*;
 use crate::session::{SkillLoad, SkillState};
 use crate::store::{Op, Store};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct ToolDef {
     pub name: &'static str,
@@ -1463,17 +1463,63 @@ impl ToolSession {
     }
 
     fn render_status_full(&self) -> String {
-        self.loaded.render_status(
+        self.with_staged_notes(self.loaded.render_status(
             &self.skills.index_line(),
             self.skills.rendered_chars(),
             &self.pinned_targets(),
-        )
+        ))
+    }
+
+    // The staged note per loaded item: the listing renders the committed snapshot,
+    // and a line a staged mutation touches says so, so the model never mistakes
+    // its own pending work for a lost write (a Codex session read the old statement
+    // under updated: true as a lost edit). Mirrors docs/compiler/context.md#the-loaded-set.
+    fn staged_notes(&self) -> BTreeMap<String, &'static str> {
+        let mut notes: BTreeMap<String, &'static str> = BTreeMap::new();
+        for op in &self.staged {
+            let (id, note) = match op {
+                Op::UpdateRequirement { id, statement, .. } => {
+                    (id.clone(), if statement.is_some() { "statement revised" } else { "revised" })
+                }
+                Op::UpdateEntity { id, .. } | Op::UpdateCriterion { id, .. } | Op::UpdateView { id, .. } => {
+                    (id.clone(), "revised")
+                }
+                Op::DeleteEntity { id, .. }
+                | Op::DeleteRequirement { id, .. }
+                | Op::DeleteCriterion { id, .. }
+                | Op::DeleteView { id, .. } => (id.clone(), "delete"),
+                _ => continue,
+            };
+            notes.insert(id, note);
+        }
+        notes
+    }
+
+    fn with_staged_notes(&self, listing: String) -> String {
+        let notes = self.staged_notes();
+        if notes.is_empty() {
+            return listing;
+        }
+        listing
+            .lines()
+            .map(|line| {
+                if let Some(rest) = line.strip_prefix("- ") {
+                    let id = rest.split_whitespace().next().unwrap_or("");
+                    if let Some(n) = notes.get(id) {
+                        return format!("{}   (staged: {})", line.trim_end(), n);
+                    }
+                }
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
     }
 
     fn condensed_status(&self) -> String {
         // The listing only when it changed; twenty-six updates echoing the same two
         // thousand characters was repetition. Mirrors docs/compiler/context.md#the-loaded-set.
-        let full = self.loaded.render_condensed(self.skills.rendered_chars());
+        let full = self.with_staged_notes(self.loaded.render_condensed(self.skills.rendered_chars()));
         let mut last = self.last_condensed.borrow_mut();
         if *last == full {
             return format!(
@@ -8054,6 +8100,24 @@ mod tests {
             &json!({"section": "/shop", "state": "non-normative", "note": "navigation only"}),
         )
         .unwrap();
+    }
+
+    // The listing renders the committed snapshot; a line a staged mutation touches
+    // says so (docs/compiler/context.md#the-loaded-set).
+    #[test]
+    fn staged_statement_is_noted_on_the_listing() {
+        let mut t = session();
+        t.dispatch("load", &json!({"target": "ent:customer"})).unwrap();
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:customer", "definition": "A Customer is a person who buys."}),
+        )
+        .unwrap();
+        let status = t.dispatch("graph_status", &json!({})).unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(status.contains("(staged: revised)"), "{}", status);
     }
 
     // A heading quoted as body text is refused with the reason, not the generic

@@ -678,7 +678,7 @@ impl McpServer {
         // The assembled prompt and the loaded set, before the store moves into the
         // session. The first batch of a serving ships the agent contract and the
         // skills in full; later batches elide what the agent already saw.
-        let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
+        let (loaded, mut skills) = crate::session::initial_loaded(&store, &goals);
         let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
             .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
@@ -734,6 +734,10 @@ impl McpServer {
                 inline_skills.join(", "),
                 body
             );
+            // Pointers are not renderings: load_skill must hand the text over.
+            for n in &inline_skills {
+                skills.forget(n);
+            }
         }
         let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
         let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);

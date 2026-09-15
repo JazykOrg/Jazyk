@@ -103,7 +103,9 @@ The harness validates the claim over the store plus what the session has staged:
   does.
 - The type is never edited from this goal: an `update_entity` whose `id` is the type,
   or an `update_requirement` on a requirement whose `entities` do not include the
-  instance, is rejected naming this rule.
+  instance, is rejected naming this rule. An update that only records `not_about`
+  (the review annotation a `review-entity` goal on the type stages in the same batch)
+  edits nothing the instance conforms to and passes.
 - The justification is present.
 
 `done` runs the same gate over every goal in the batch and the per-mutation gates on

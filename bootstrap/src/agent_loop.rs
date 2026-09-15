@@ -102,8 +102,20 @@ impl Codec for NativeCodec {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
+                // Arguments that do not parse are a cut reply, not an empty call:
+                // dispatching `{}` misleads the model and the raw string poisons every
+                // later request. Mirrors docs/frontends/acp.md#the-embedded-agent.
                 let args = match c["function"]["arguments"].as_str() {
-                    Some(s) => serde_json::from_str(s).unwrap_or(json!({})),
+                    Some(s) => match serde_json::from_str::<Value>(s) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            out.push(Action::Malformed(format!(
+                                "the arguments of the {} call are not a JSON object ({}; {} chars, likely cut at your output cap)",
+                                name, e, s.chars().count()
+                            )));
+                            continue;
+                        }
+                    },
                     None => c["function"]["arguments"].clone(),
                 };
                 out.push(Action::Call {
@@ -128,6 +140,32 @@ impl Codec for NativeCodec {
 }
 
 struct TextCodec;
+
+// A prose reply that names the action it is about to take instead of taking it.
+// Mirrors docs/frontends/acp.md#the-embedded-agent.
+fn announces_action(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let tail: String = t.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+    let lower = tail.to_lowercase();
+    t.ends_with(':')
+        || ["i'll ", "i will ", "let me ", "now i ", "next i ", "next, i ", "i'm going to ", "i am going to "]
+            .iter()
+            .any(|p| lower.contains(p))
+}
+
+// An endpoint error about the reply's own JSON: the model's output was cut before a
+// tool call closed. Mirrors docs/frontends/acp.md#the-embedded-agent.
+fn reply_unparsed(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("can't find closing")
+        || e.contains("cannot find closing")
+        || e.contains("unexpected end of json")
+        || e.contains("unexpected eof")
+        || e.contains("unterminated string")
+}
 
 // Balanced top-level `{...}` blocks in reply text, in order, string-aware: the
 // text codec's action extractor.
@@ -235,10 +273,13 @@ impl Codec for TextCodec {
         if let Some(e) = first_err {
             return vec![Action::Malformed(e)];
         }
-        // Content that opens like an action but never yielded one is a broken
-        // action, not prose: a truncated object must not end the turn as an answer.
+        // Content that holds the start of an action but never yielded one is a
+        // broken action, not prose: a truncated object must not end the turn as an
+        // answer, wherever it sits (a closing sentence once preceded a truncated
+        // mark_goal_done and the reply read as prose; the batch parked).
+        // Mirrors docs/frontends/acp.md#the-embedded-agent.
         let t = content.trim_start();
-        if t.starts_with('{') && t.contains("\"tool\"") {
+        if t.contains('{') && t.contains("\"tool\"") {
             return vec![Action::Malformed(
                 "the object is incomplete or unbalanced".to_string(),
             )];
@@ -310,6 +351,8 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut called_any = false;
     let mut nudged = false;
     let mut empty_nudges = 0u32;
+    let mut cut_nudges = 0u32;
+    let mut intent_nudges = 0u32;
     let mut malformed_streak = 0u32;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
@@ -331,6 +374,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 mode = 2;
                 codec = codec_for(mode);
                 a.history[0] = system(codec.as_ref(), a.tools);
+                continue;
+            }
+            // The endpoint could not parse the reply itself (the output cap cut a
+            // long tool call): the same request returns the same cut reply, so a
+            // nudge toward a smaller call is the repair, twice at most.
+            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+            Err(e) if reply_unparsed(&e) && cut_nudges < 2 => {
+                cut_nudges += 1;
+                (a.emit)(AgentEvent::Message(format!(
+                    "the endpoint could not parse the last reply ({}); asking for a smaller call",
+                    llm::truncate(&e, 160)
+                )));
+                a.history.push(json!({"role": "user", "content": "Your last reply was cut off before its tool call closed, so nothing landed. Reply with a smaller call: write a long file in parts (write_text_file for the head, then append: true for the rest), each call a few thousand characters at most."}));
                 continue;
             }
             Err(e) => return Stop::Error(e),
@@ -363,6 +419,17 @@ pub fn run_loop(a: LoopArgs) -> Stop {
         if let Some(o) = kept.as_object_mut() {
             o.remove("finish_reason");
         }
+        // A cut arguments string never re-enters the history: the endpoint rejects a
+        // request carrying it (docs/frontends/acp.md#the-embedded-agent).
+        if let Some(calls) = kept["tool_calls"].as_array_mut() {
+            for c in calls.iter_mut() {
+                if let Some(s) = c["function"]["arguments"].as_str() {
+                    if serde_json::from_str::<Value>(s).is_err() {
+                        c["function"]["arguments"] = json!("{}");
+                    }
+                }
+            }
+        }
         a.history.push(kept);
         for field in ["reasoning_content", "reasoning"] {
             if let Some(r) = msg[field].as_str() {
@@ -385,10 +452,18 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     err
                 ));
             }
-            a.history.push(json!({"role": "user", "content": format!(
-                "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
-                err
-            )}));
+            let repair = if mode == 2 {
+                format!(
+                    "Your JSON action did not parse ({}). Resend the complete action as exactly one JSON object: {{\"tool\": \"<name>\", \"args\": {{ ... }}}}, nothing else.",
+                    err
+                )
+            } else {
+                format!(
+                    "Your tool call did not parse ({}). Nothing ran. Resend it complete; if your output cap cut it, make it smaller: write a long file in parts (write_text_file for the head, then append: true for the rest).",
+                    err
+                )
+            };
+            a.history.push(json!({"role": "user", "content": repair}));
             continue;
         }
         malformed_streak = 0;
@@ -438,6 +513,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."
                 };
                 a.history.push(json!({"role": "user", "content": nudge}));
+                continue;
+            }
+            // An announced action ("I'll rewrite src/order.rs", "Now I'll record
+            // the generation") is not an answer: say so, up to three times, since a
+            // local model ended sessions on such a line with the call never made.
+            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+            let announced = actions
+                .iter()
+                .any(|x| matches!(x, Action::Text(t) if announces_action(t)));
+            if called_any && announced && intent_nudges < 3 {
+                intent_nudges += 1;
+                a.history.push(json!({"role": "user", "content":
+                    "You announced an action but made no tool call, and announcing is not acting: make that call now. If the work is finished, reply with a one-line summary and nothing else."}));
                 continue;
             }
             if called_any && !nudged {
@@ -538,10 +626,37 @@ mod tests {
     }
 
     #[test]
+    fn text_codec_truncated_action_after_prose_is_malformed() {
+        let c = TextCodec;
+        let msg = json!({"role": "assistant", "content": "Now I'll mark the goal done.\n\n{\"tool\": \"mark_goal_done\", \"args\": {\"goal\": \"g:a\", \"evidence\": {\"curate-view\": []}}"});
+        assert!(matches!(c.parse(&msg)[0], Action::Malformed(_)));
+    }
+
+    #[test]
     fn text_codec_prose_is_text() {
         let c = TextCodec;
         let msg = json!({"role": "assistant", "content": "The document describes a shop."});
         assert!(matches!(c.parse(&msg)[0], Action::Text(_)));
+    }
+
+    #[test]
+    fn announced_actions_are_recognized() {
+        assert!(announces_action("All tests pass. Now I'll record the generation with the manifest."));
+        assert!(announces_action("Let me fix src/order.rs first:"));
+        assert!(!announces_action("Generation of ent:stock is complete and recorded."));
+    }
+
+    #[test]
+    fn native_codec_cut_arguments_are_malformed() {
+        let c = NativeCodec;
+        let msg = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "c1", "function": {"name": "write_text_file", "arguments": "{\"path\": \"src/a.rs\", \"content\": \"fn main() {"}}]
+        });
+        let actions = c.parse(&msg);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], Action::Malformed(e) if e.contains("write_text_file")));
     }
 
     #[test]

@@ -28,7 +28,7 @@ phases).
   unchanged).
 - The implementation is `bootstrap/` (Rust, binary `jazyk`). Build:
   `cd bootstrap && cargo build --release`. Test: `cargo test`. After ANY GUI
-  or binary change, finish with `cd bootstrap/gui && npm run build` then
+  or binary change, finish with `cd bootstrap/app && npm run build` then
   `cargo build --release` (the built frontend embeds into the binary).
 - Fixtures: `bootstrap/example/f1` (small), `f2` (planted traps, see its
   `EXPECTED.md`). Larger corpora: `example-sort`, `example-erp`,

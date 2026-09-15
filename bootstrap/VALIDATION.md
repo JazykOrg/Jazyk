@@ -837,6 +837,74 @@ The loop continued onto the org corpus and onto generation:
   had set (the hint says it is the flat top level), and a 58k first reply spilled to a
   file (skills ship as `load_skill` pointers past 45k).
 
+- Acceptance criteria (2026-09-13, `plans/acceptance-criteria.md`): on example-sort the
+  first compile with the criterion tools served converged in 86 turns and $5.64 with
+  14 requirements and 24 criteria, two quoted from the test-case sections and 22 derived
+  by one `derive-criteria` session with a boundary or a negative for every conditional
+  and every collecting step, none restating its requirement; the requirements document
+  lists them and binding takes one test per criterion. The first attempt had found the
+  tools named in the contract but absent from the MCP serving, which a test now holds.
+  On f2 the criteria compile converged in 356 turns and $14.17 (7.83 without criteria)
+  with 102 criteria for 53 requirements, three quoted and the rest derived, none
+  missing; the first attempt had packed twelve entities' criteria goals against one
+  64-mutation budget and failed three, so a criteria goal is a batch wall of its own
+  and raises the budget per requirement. Generation over that ledger bound 34 rows in
+  three invocations for $18.52, one test per criterion on most, and exposed that
+  regeneration dropped the criterion tests from a row, that a partly implemented
+  requirement had no status between unimplemented and failing (it reads `partial`
+  now), and that a failing binding could reach no author (the `failing-binding` check
+  files it). On example-erp the criteria compile converged with 86 criteria for 39
+  requirements (54 positive, 32 negative, none quoted: the corpus states no cases or
+  examples), eight criteria goals done, for about $20 across a run the usage limit cut
+  and its resume. Generation over that ledger on an empty deliverable bound 34
+  requirements with 73 criterion tests and generated the backend and the frontend as
+  an npm workspace, every test green, with no tool error and no feedback entry in 148
+  turns ($16.16). example-slides with a deliverable converged with 31 criteria for 14
+  requirements ($5.30 against $2.40 without them); example-f1 without a deliverable
+  derives no criteria goals and converges as before ($2.55), its missing criteria
+  riding as information. Generation over the sort and slides criteria ledgers bound 14
+  requirements each with 24 and 31 criterion tests ($3.25 and $6.38), sort's one red
+  row being the documented contradiction and the slides deck built and judged green.
+  example-org with a deliverable converged with 251 criteria for 126 requirements (13
+  quoted from its examples), every trap holding, across a Claude run of $33.31 the owner
+  stopped mid-way and a Codex finish of one invocation; from that point the loop runs
+  on Codex and the embedded agent only.
+- The embedded agent through LocalRouter (gemma4:e4b, text codec) converged f1 in 6
+  sessions and 25k tokens, sort in a resumed run after a fix (the text codec hands
+  `evidence` as a JSON string and the gate refused every shape), and f2 in 46 sessions
+  and 289k tokens: 46 requirements, 14 entities, 68 criteria (8 quoted), the planted
+  contradiction filed as an error, the Order state machine with its three transitions,
+  100% coverage. Its gaps are judgment (Inventory, Catalog, and Admin CLI without the
+  Orderly parent, Admin CLI without a stereotype) and stamina (twenty tool errors,
+  eight of them three-sentence justifications; three optional GC goals parked after a
+  truncated action object read as prose, which the codec now answers with a repair).
+  It read the board's fresh `b24-1` beside its own `b24-1` and reported the two as
+  inconsistent: the goals reply now marks the reader's own leased goals and numbers
+  derived batches past the ids live leases hold. Codex generating over the erp criteria
+  ledger exposed the sequencing hole: it bound one backend requirement with no files,
+  generated the entity as an object literal describing the API (Express, PostgreSQL,
+  four endpoint paths), and bound nine more rows against that description as verified,
+  all green; `begin_generation` now refuses an entity whose goal is not ready (its
+  requirements still owe a binding), the task lists carry readiness, the generation
+  contract makes the bound criterion tests pass instead of deriving requirement tests,
+  and the bind contract names a constant or object literal describing the artifact a
+  description in another syntax. Under the fixed binary the next two invocations bound
+  24 rows, every one unimplemented with a failing criterion test as its gate, with no
+  tool error, and the run finished green: 39 rows, 42 criterion tests, all passing,
+  over seven Codex invocations. The org handbook under Codex bound all 126
+  requirements with 251 criterion tests (244 green) and generated five Markdown pages
+  across nineteen invocations and two usage-limit pauses; the four rows left red are
+  expense and hiring rules that the handbook-delivery requirements contradict, and the
+  `failing-binding` check files them as findings because generation had its turn (a
+  rule added when sort's contradictory example criterion regenerated its entity on
+  every build). The embedded agent binding f2's 46 requirements against its Rust
+  product wrote 66 criterion tests (44 green) and generated two entities before every
+  later generation session died on a 400 about an unclosed object: a tool call cut at
+  the model's output cap was dispatched as an empty call and stored verbatim, so every
+  later request of the run carried the cut JSON; cut arguments are now a repaired
+  action that never re-enters the history, and `write_text_file` appends so a long
+  file is written in parts.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

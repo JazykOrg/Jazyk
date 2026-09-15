@@ -168,6 +168,16 @@ mod imp {
         f.write_all(contents.as_bytes())
     }
 
+    // Append bytes to a file, creating it.
+    pub fn append(p: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)?;
+        f.write_all(bytes)
+    }
+
     // Append one line to a file, creating it. The crate's logs are append-only.
     pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {
         use std::io::Write;
@@ -391,6 +401,13 @@ mod imp {
             ));
         }
         write(p, contents)
+    }
+
+    pub fn append(p: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
+        let p = p.as_ref();
+        let mut buf = read(p).unwrap_or_default();
+        buf.extend_from_slice(bytes);
+        write(p, buf)
     }
 
     pub fn append_line(p: impl AsRef<Path>, line: &str) -> io::Result<()> {

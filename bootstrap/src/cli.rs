@@ -31,6 +31,7 @@ pub struct Options {
     pub watch: bool,
     pub gui_dist: Option<String>,
     pub no_token: bool,
+    pub dev: bool,
     pub mcp: Option<String>,
     pub json: bool,
     pub once: bool,
@@ -78,6 +79,7 @@ impl Default for Options {
             watch: false,
             gui_dist: None,
             no_token: false,
+            dev: false,
             mcp: None,
             json: false,
             once: false,
@@ -344,6 +346,7 @@ pub fn run_gui(paths: &[String], opts: &Options) -> i32 {
             watch: opts.watch,
             gui_dist: opts.gui_dist.clone(),
             no_token: opts.no_token,
+            dev: opts.dev,
             cli_opts: opts.clone(),
         },
     )

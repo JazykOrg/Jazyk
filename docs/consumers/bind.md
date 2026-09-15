@@ -22,17 +22,35 @@ full: its `statement`, facets, edges, and transition, the verbatim quote, its cr
 (id, kind, statement, quote or proposal), and its entity as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
 test name, the decided medium and build when they exist, the entity's recorded files,
-the ledger's recorded conventions (the run commands, the files other rows name), the
+the ledger's recorded conventions (the run commands, the files other rows name: the
+toolchain and command style to reuse, never an assertion style, and a
+`testConventionsNote` says so, since an earlier row's test that read a descriptive object
+literal once read as the convention to follow), the
 open error diagnostics naming the requirement, and `existingTests`: the deliverable
 files that already name this requirement by id, by test-name slug, or by statement
 hash, so a test left under an earlier id or hash is found by the harness rather than
-reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). The steps:
+reconstructed by hand ([binding tools](../compiler/tools.md#binding-tools)). Every path
+in the package and in the recorded binding (`existingTests`, `files`, a test's
+`artifact`) is relative to the deliverable directory, and a `pathsNote` says so. The
+steps:
 
 - Search the deliverable for an implementation, starting at the entity's recorded files.
-  Record the carrying files, or record none. Absence is a finding, not a failure.
+  Record the carrying files, or record none. Absence is a finding, not a failure. A
+  file that only restates the statement (a page repeating the sentence, a comment, a
+  heading) carries nothing: `files` lists the files a criterion test inspects, and stays
+  empty when no such file exists, so the row reads `unimplemented` and generation opens
+  instead of `failing`. A constant, an object literal, or a table that describes the
+  artifact (a list of endpoint paths, a runtime name, a framework name) is a description
+  in another syntax, not the artifact; a file holding only that carries nothing, and a
+  test that reads it inspects prose. Codex once generated an `apiContract.js` object
+  naming Express, PostgreSQL, and four endpoints, then bound nine requirements against
+  it as verified. A binder once listed a handbook page that named a role without
+  stating any of its criteria, and the row read as a contradiction.
 - Search for an existing test per criterion. Bind to it when found; never write a
   duplicate beside it. One test per criterion, keyed by the criterion id and its
-  statement hash; the requirement's row groups them. A test carrying this statement's hash in its name or marker
+  statement hash; the requirement's row groups them. One file per requirement may hold
+  every criterion's test, and each entry's `run` then selects its own test by name, since
+  a command that runs the whole file judges every criterion at once. A test carrying this statement's hash in its name or marker
   under another requirement id is this requirement's test (ids renumber between
   compiles, the hash follows the statement): rename it to the suggested name and bind
   to it. A test named with this id but another hash belongs to the statement that hash
@@ -62,9 +80,9 @@ previews what the row opens ([bubbling](../compiler/reconciler.md#bubbling)): an
 `unimplemented` row opens `generate` on the owning entity.
 
 The test follows the same contract as generation's tests: the
-[facets and transition suggest the test shape](./gen.md#tests-tie-requirements-to-the-deliverable),
+[facets and transition suggest the test shape](./gen.md#tests-tie-criteria-to-the-deliverable),
 the two kinds are `programmatic` and `llm`, the test must be
-[falsifiable](./gen.md#tests-tie-requirements-to-the-deliverable), and the name embeds
+[falsifiable](./gen.md#tests-tie-criteria-to-the-deliverable), and the name embeds
 the requirement id and the hash of its `statement`
 ([traceability](./gen.md#traceability)). When no falsifiable programmatic assertion
 exists, the kind is `llm` and the artifact is a
@@ -94,10 +112,20 @@ the requirement:
   functionality: the requirement's entity gains a `generate` goal
   ([incremental regeneration](./gen.md#incremental-regeneration)), and the bound test is
   what generation must make pass.
+- Implementing files named and the criterion tests split, some passing and some
+  failing → `partial`: implemented in part, the failing criteria are generation work
+  like an `unimplemented` row. Once a generation over the current facts has landed
+  and a criterion is still red, both read `failing`: generation had its turn
+  ([status](./gen.md#status-is-derived-never-stored)), and the `record_binding` reply's
+  note says so rather than claiming implementing files exist, since a binder that
+  recorded an empty file list after a generation read the contradiction note and
+  asked whether the entity's files had overridden its list.
 - Test fails and the binding names implementing files → `failing`. The deliverable
   contradicts the statement. That is a
   [diagnostic](../compiler/model/diagnostic.md) for the author (the docs are wrong,
-  or the code is), never a silent regeneration: rewriting existing code because a
+  or the code is), filed by the `failing-binding`
+  [check](../compiler/compilation.md#checks) since the binding loop has no batch of
+  its own to file into, never a silent regeneration: rewriting existing code because a
   sentence disagrees with it is a decision, not a default.
 
 ## When binding runs

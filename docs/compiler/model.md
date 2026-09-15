@@ -144,8 +144,9 @@ change reaches exactly the nodes with a justification path through it. The
   slug can go stale. That is expected.
 - Requirement: `req:<doc-stem>-<n>`. E.g. `req:catalog-3`. A derived or decreed
   requirement has no document behind it: `req:x-<n>`.
-- Criterion: `crit:<doc-stem>-<n>` from the document its quote sits in, `crit:x-<n>` for
-  a derived or decreed one. E.g. `crit:catalog-2`.
+- Criterion: `crit:<doc-stem>-<n>` from its requirement's document, whatever section
+  its own quote sits in, so a requirement's criteria read as one family;
+  `crit:x-<n>` only when the requirement has no document either. E.g. `crit:catalog-2`.
 - View: `view:<kind>/<slug>`, the kind segment being the catalog kind with its hyphens
   removed (`use-case` → `usecase`) and the slug from the title at creation time. E.g.
   `view:sequence/checkout`, `view:usecase/checkout`.

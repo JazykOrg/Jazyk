@@ -202,16 +202,23 @@ This is why the demo ships a project whose diagrams are already rendered: the
 
 ## The demo
 
-`bootstrap/gui/demo.html` is the same app with a different entry. It offers two ways
-in: the bundled project in memory, or a [folder on this computer](#a-folder-on-disk).
-It seeds the backend with the choice, installs it, and hands over to the app, which
-cannot tell the difference. The model loads behind the app, because every read works
-without one and only a build needs it.
+`bootstrap/app/demo.html` is the same app with a different entry. The app mounts at
+once against a backend with no project open, which answers the
+[capability descriptor](./gui.md#backends-and-capabilities) itself (`backend:
+demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `rendering: none`) and
+refuses every other route with `501` until a project is open. Home renders the
+picker from that descriptor and dispatches `jazyk:open-demo` or
+`jazyk:pick-folder`; the entry listens, seeds the backend with the bundled project
+or the [folder](#a-folder-on-disk) picked, and moves to the documents. Opening a
+folder flips the descriptor to `backend: wasm`, `persistence: browser`. The model
+loads behind all of it, because every read works without one and only a build
+needs it; `jobs` lists `compile` once the model is ready.
 
 The fixture is `bootstrap/example/f1` compiled to convergence: its documents, its
 `jazyk.toml`, and its whole `jazyk-out` (the shards, the journal, the coverage, the
-rendered diagrams), packed by `gui/scripts/pack-demo.mjs` into one JSON the demo
-imports. Traces and session transcripts are left out.
+rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON the demo
+imports. Traces and session transcripts are left out. Home lists every example;
+only the shop travels in the page.
 
 So a visitor lands on a populated graph rather than an empty one: the entities, the
 requirements, the views, the diagrams, and a `converged` verdict. Editing a document
@@ -220,13 +227,14 @@ the page.
 
 ## Building
 
-`cd bootstrap/gui && npm run build:demo` runs the whole pipeline:
+`cd bootstrap/app && npm run build:demo` runs the whole pipeline:
 
 - `scripts/build-wasm.sh`: `cargo build --target wasm32-unknown-unknown --lib
   --release`, then `wasm-bindgen --target web`, then a stable re-export for the model
   bridge (wasm-bindgen names its snippet directory after a content hash), then the
   demo fixture.
 - `vite build` with `JAZYK_DEMO=1`, which builds `demo.html` into `dist-demo/`.
+  `npm run preview:demo` serves it with the isolation headers.
 
 The demo lands in its own directory so the dist the binary embeds never grows a 7MB
 module. `npm run build` is unchanged and still builds only the workbench.

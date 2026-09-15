@@ -7,7 +7,7 @@ use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use include_dir::{include_dir, Dir};
 
-static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/gui/dist");
+static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/app/dist");
 
 fn mime(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {

@@ -87,7 +87,7 @@ pub struct LoadedSet {
     prev_docs: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
-fn fmt_k(n: usize) -> String {
+pub(crate) fn fmt_k(n: usize) -> String {
     if n >= 1000 {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {

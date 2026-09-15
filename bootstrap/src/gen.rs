@@ -382,6 +382,10 @@ pub struct Unattached {
     pub files: u64,
     pub lines: u64,
     pub ratio: f64,
+    // No site anchors any owned line: the medium carries no markers and the ratio
+    // says nothing. Mirrors docs/consumers/gen.md#the-unattached-remainder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub markerless: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -995,7 +999,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
                 ledger
                     .requirements
                     .get(*rid)
-                    .map(|row| crate::verify::status_of(store, rid, row, gs).0 == "unimplemented")
+                    .map(|row| matches!(crate::verify::status_of(store, rid, row, gs).0.as_str(), "unimplemented" | "partial"))
                     .unwrap_or(false)
             })
             .collect();
@@ -1216,6 +1220,17 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
                             "provenance": crate::session::provenance_line(r),
                             "hash": hash_hex(&r.statement),
                             "testName": test_name(rid, &r.statement),
+                            // The criteria with the names binding gives their tests,
+                            // so a test generation must write (a requirement with no
+                            // bound row) carries the name binding would look for.
+                            // Mirrors docs/compiler/goals/generate.md#what-the-model-sees.
+                            "criteria": store.criteria_of(rid).iter().filter_map(|cid| {
+                                let c = store.graph.criteria.get(cid)?;
+                                Some(json!({
+                                    "id": cid, "statement": c.statement,
+                                    "suggestedTestName": crit_test_name(cid, &c.statement),
+                                }))
+                            }).collect::<Vec<Value>>(),
                             "criteriaPath": format!("criteria/req-{}.md", req_slug(rid)),
                             // The statement is disputed while these stand; the session
                             // writes against one side of an open question and must
@@ -1356,6 +1371,9 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // conforms to them. A task that cannot make one pass without changing it
         // reports that; the repair is a re-bind
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
+        // Shared requirements confused a Codex session into re-recording them
+        // (docs/compiler/goals/generate.md#what-the-model-sees).
+        "ownershipNote": "a requirement whose bound row already passes under another entity's files is carried there: list its row unchanged in tests and record no file for it; an entity whose every requirement is carried records files: []",
         "boundTests": rids
             .iter()
             .filter_map(|rid| {
@@ -1680,10 +1698,17 @@ pub fn mark(
                 ),
                 None => ("none".into(), None, None, None),
             };
+            // The criterion tests binding recorded ride along: generation touches the
+            // implementing files, never the evidence (docs/consumers/gen.md#the-ledger).
+            let tests = ledger
+                .requirements
+                .get(&rid)
+                .map(|row| row.tests.clone())
+                .unwrap_or_default();
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
-                    tests: std::collections::BTreeMap::new(),
+                    tests,
                     entity: owner,
                     files: row_files,
                     sites: sites_by_rid.remove(&rid).unwrap_or_default(),
@@ -1741,7 +1766,12 @@ pub fn mark(
     ledger.save(&store.out);
     let mut reply = json!({
         "marked": id, "files": files.len(), "tests": seeded,
-        "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio},
+        "unattached": {"files": unattached.files, "lines": unattached.lines, "ratio": unattached.ratio, "markerless": unattached.markerless},
+        "unattachedNote": if unattached.markerless {
+            "informational: no requirement site anchors any line of these files (the medium carries no traceability markers), so the ratio says nothing here; the generation is accepted (docs/consumers/gen.md#the-unattached-remainder)"
+        } else {
+            "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)"
+        },
     });
     if !removed.is_empty() {
         reply["removed"] = json!(removed);
@@ -1830,10 +1860,12 @@ pub fn measure_unattached(ledger: &Ledger, gs: &GenSettings, slug: &str) -> Unat
     } else {
         ((lines as f64 / significant as f64) * 100.0).round() / 100.0
     };
+    let markerless = significant > 0 && e.files.iter().all(|f| !first_site.contains_key(f.as_str()));
     Unattached {
         files,
         lines,
         ratio,
+        markerless,
     }
 }
 
@@ -2233,7 +2265,7 @@ pub fn ledger_stale_records(store: &Store, gs: &GenSettings) -> Vec<crate::model
         );
     }
     for p in crate::verify::pending(store, gs, Some("stale"), None) {
-        if p["status"] == "unimplemented" || p["reason"] == "not-generated" {
+        if p["status"] == "unimplemented" || p["status"] == "partial" || p["reason"] == "not-generated" {
             continue;
         }
         if bind_owed.contains(p["requirement"].as_str().unwrap_or_default()) {
@@ -2741,6 +2773,13 @@ mod tests {
             row.hashes.requirement,
             hash_hex("The Cart shall hold items.")
         );
+        // A red verdict over the generated facts is a finding, never more generation
+        // work: generation had its turn (docs/consumers/gen.md#status-is-derived-never-stored).
+        crate::bind::record(&s, "req:shop-1", &[], &bound, &json!([]), "fail", None, &gs).unwrap();
+        let ledger = Ledger::load(&out);
+        let (st, why) = crate::verify::status_of(&s, "req:shop-1", &ledger.requirements["req:shop-1"], &gs);
+        assert_eq!((st.as_str(), why.as_str()), ("failing", "criteria-failing-after-generation"));
+        assert!(pending(&s, &gs).is_empty(), "generation had its turn");
 
         // A recorded file deleted by hand is generation work under its own name.
         crate::vfs::remove_file(gs.deliverable.join("src/cart.rs")).unwrap();

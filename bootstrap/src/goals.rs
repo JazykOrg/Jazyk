@@ -984,7 +984,9 @@ impl GoalKind for ReconcileSection {
             if known_count > 8 {
                 known.push(format!("and {} more", known_count - 8));
             }
-            hints.push(if known_count == 0 {
+            hints.push(if store.graph.entities.is_empty() {
+                "the graph holds no entity yet: create what the section states, no search can find anything".to_string()
+            } else if known_count == 0 {
                 format!(
                     "no known entity is named in the document; {} in the graph; search before creating",
                     store.graph.entities.len()
@@ -1710,8 +1712,20 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
         if e.not_about.contains(rid) || r.entities.iter().any(|x| store.resolve_id(x) == id) {
             continue;
         }
-        let text = blank_code(&r.statement);
-        if names.iter().any(|n| word_bounded(&text, n)) {
+        // The quote is the document's own text; a statement is the session's wording,
+        // and a paraphrase that added the name would otherwise raise its own hint
+        // (docs/compiler/goals/review-entity.md#hints).
+        // Both the quote (the document's text) and the statement (the session's) must
+        // name the entity: a paraphrase that added the name fails the first, a sentence
+        // split into several statements fails the second for the parts not about it.
+        let quote_text = blank_code(
+            r.source
+                .as_ref()
+                .map(|s| s.quote.as_str())
+                .unwrap_or(&r.statement),
+        );
+        let statement_text = blank_code(&r.statement);
+        if names.iter().any(|n| word_bounded(&quote_text, n) && word_bounded(&statement_text, n)) {
             out.push((rid.clone(), r.statement.clone()));
             if out.len() >= 6 {
                 break;
@@ -1835,10 +1849,13 @@ impl GoalKind for ReviewEntity {
                     let Some(part) = store.graph.entities.get(&edge.b) else {
                         continue;
                     };
+                    // A parent under the stated whole satisfies the composition
+                    // transitively (a scene under a chapter under the manuscript).
+                    // Mirrors docs/compiler/goals/review-entity.md#hints.
                     let line = match &part.parent {
-                        None => format!("{} -> {}", edge.a, edge.b),
-                        Some(p) if p != &edge.a => {
-                            format!("{} -> {} (parent now {})", edge.a, edge.b, p)
+                        None => format!("{} -> {} (whole -> part)", edge.a, edge.b),
+                        Some(p) if p != &edge.a && !store.is_ancestor(&edge.a, &edge.b) => {
+                            format!("{} -> {} (whole -> part; parent now {}, not under the whole)", edge.a, edge.b, p)
                         }
                         _ => continue,
                     };
@@ -1849,7 +1866,7 @@ impl GoalKind for ReviewEntity {
             }
             if !parentless.is_empty() {
                 hints.push(format!(
-                    "composition edges whose part has no parent or a parent disagreeing with the stated whole (set parent on the part with update_entity): {}",
+                    "composition edges whose part has no parent or a parent outside the stated whole (the edge reads whole -> part; set parent on the part with update_entity, or fix a reversed edge on the requirement, unless the part is a generic rule-carrier such as Department beside the named departments, which the judgment skill keeps parentless): {}",
                     parentless.join(", ")
                 ));
             }
@@ -2367,8 +2384,36 @@ impl GoalKind for ConformInstance {
         let types: BTreeSet<String> = crate::derive::instance_types(store).into_values().collect();
         let mut out = Vec::new();
         for op in staged {
-            if let Op::UpdateEntity { id, .. } = op {
-                if types.contains(id) {
+            if let Op::UpdateEntity {
+                id,
+                name,
+                definition,
+                add_aliases,
+                remove_aliases,
+                add_mention,
+                stereotype,
+                parent,
+                clear_parent,
+                set_attributes,
+                add_attributes,
+                provenance,
+                ..
+            } = op
+            {
+                // A not_about-only update is a review annotation, not a type edit
+                // (docs/compiler/goals/conform-instance.md#gate).
+                let annotation_only = name.is_none()
+                    && definition.is_none()
+                    && add_aliases.is_empty()
+                    && remove_aliases.is_empty()
+                    && add_mention.is_none()
+                    && stereotype.is_none()
+                    && parent.is_none()
+                    && !clear_parent
+                    && set_attributes.is_none()
+                    && add_attributes.is_empty()
+                    && provenance.is_none();
+                if types.contains(id) && !annotation_only {
                     out.push(Violation::new(
                         "type-edited",
                         format!("{} is a type; conform the instance, never the type", id),
@@ -2436,10 +2481,8 @@ impl GoalKind for DeriveCriteria {
         for (entity, reqs) in criteria_owed(store) {
             let none = reqs.iter().filter(|(_, why)| *why == "none").count();
             let revised = reqs.len() - none;
-            let listed: Vec<Value> = reqs
-                .iter()
-                .map(|(rid, why)| json!({"id": rid, "reason": why}))
-                .collect();
+            let none_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "none").map(|(r, _)| r.as_str()).collect();
+            let revised_ids: Vec<&str> = reqs.iter().filter(|(_, w)| *w == "revised").map(|(r, _)| r.as_str()).collect();
             let mut hints = vec![format!(
                 "requirements: {} ({} without criteria, {} revised)",
                 reqs.len(),
@@ -2497,7 +2540,7 @@ impl GoalKind for DeriveCriteria {
                 self,
                 &entity,
                 true,
-                json!({"requirements": listed}),
+                json!({"none": none_ids, "revised": revised_ids}),
                 cause,
                 hints,
             ));
@@ -2511,9 +2554,11 @@ impl GoalKind for DeriveCriteria {
         let mut lines = Vec::new();
         for g in batch {
             lines.push(format!("- {} stub", g.target));
-            for r in g.change["requirements"].as_array().into_iter().flatten() {
-                if let Some(id) = r["id"].as_str() {
-                    lines.push(format!("- {} full", id));
+            for key in ["none", "revised"] {
+                for r in g.change[key].as_array().into_iter().flatten() {
+                    if let Some(id) = r.as_str() {
+                        lines.push(format!("- {} full", id));
+                    }
                 }
             }
         }
@@ -2817,7 +2862,7 @@ impl GoalKind for Verify {
             .collect();
         crate::verify::pending(store, gen, Some("stale"), None)
             .into_iter()
-            .filter(|p| p["status"] != "unimplemented" && p["reason"] != "not-generated")
+            .filter(|p| p["status"] != "unimplemented" && p["status"] != "partial" && p["reason"] != "not-generated")
             .filter(|p| !bind_reqs.contains(p["requirement"].as_str().unwrap_or_default()))
             .filter_map(|p| {
                 let rid = p["requirement"].as_str()?.to_string();
@@ -2938,6 +2983,13 @@ impl GoalKind for Ratify {
                         .get(subject)
                         .and_then(|e| e.provenance.clone())
                 })
+                .or_else(|| {
+                    store
+                        .graph
+                        .criteria
+                        .get(subject)
+                        .and_then(|c| c.provenance.clone())
+                })
         };
         let hints_for =
             |subject: &str, prov: Option<&Provenance>, proposal: Option<&(String, &Diagnostic)>| {
@@ -3025,6 +3077,7 @@ impl GoalKind for Ratify {
             }
             if !store.graph.entities.contains_key(subject)
                 && !store.graph.requirements.contains_key(subject)
+                && !store.graph.criteria.contains_key(subject)
             {
                 continue;
             }
@@ -5766,13 +5819,8 @@ pub(crate) mod tests {
         targets.sort();
         assert_eq!(targets, vec!["ent:line", "ent:sort"], "{:?}", targets);
         let sort = goals.iter().find(|g| g.target == "ent:sort").unwrap();
-        let listed: Vec<(String, String)> = sort.change["requirements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| (r["id"].as_str().unwrap().to_string(), r["reason"].as_str().unwrap().to_string()))
-            .collect();
-        assert_eq!(listed, vec![("req:a-1".to_string(), "none".to_string()), ("req:a-3".to_string(), "revised".to_string())]);
+        assert_eq!(sort.change["none"], json!(["req:a-1"]));
+        assert_eq!(sort.change["revised"], json!(["req:a-3"]));
         assert!(sort.hints.iter().any(|h| h == "skill criteria"));
         assert_eq!(skills_for("derive-criteria", &s, "ent:sort"), vec!["criteria"]);
         assert_eq!(tier("derive-criteria"), Some(3));

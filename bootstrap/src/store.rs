@@ -236,9 +236,10 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 32] = [
+pub const CHECK_RULES: [&str; 33] = [
     "criterion-missing",
     "criterion-restates",
+    "failing-binding",
     "pinned-fact-drift",
     "unsupported-format",
     "parse-error",
@@ -1210,8 +1211,17 @@ impl Store {
         format!("{}{}", prefix, max + 1)
     }
 
-    pub fn crit_stem(c: &Criterion) -> &str {
-        c.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+    // The id stem of a criterion: its quote's document, else its requirement's, so a
+    // derived criterion reads as its requirement's kin (crit:slide-about-3), and `x`
+    // only when neither has a document (docs/compiler/model/criterion.md#identity).
+    pub fn crit_stem(&self, c: &Criterion) -> String {
+        self.graph
+            .requirements
+            .get(&c.requirement)
+            .and_then(|r| r.source.as_ref())
+            .map(|s| s.doc.clone())
+            .or_else(|| c.source.as_ref().map(|s| s.doc.clone()))
+            .unwrap_or_else(|| "x".to_string())
     }
 
     // The criteria of one requirement, in id order (docs/compiler/model/criterion.md).
@@ -1383,7 +1393,9 @@ impl Store {
 
     // Whether a node id names an existing entity or requirement.
     fn node_exists(&self, id: &str) -> bool {
-        self.graph.entities.contains_key(id) || self.graph.requirements.contains_key(id)
+        self.graph.entities.contains_key(id)
+            || self.graph.requirements.contains_key(id)
+            || self.graph.criteria.contains_key(id)
     }
 
     // Deterministic search over names and aliases: exact, then substring, then token overlap.
@@ -1646,6 +1658,19 @@ impl Store {
                 }
                 _ => false,
             };
+            // Two transitions of one subject with different ends are siblings of one
+            // machine, distinct by construction: the state machine checks judge their
+            // conflicts (nondeterministic-transition), never a pair. Six transition
+            // bullets once opened twenty-eight pairs, every one consistent.
+            let sibling_transitions = match (&transition, &other.transition) {
+                (Some((subj, _, _)), Some(t)) => {
+                    self.resolve_id(&t.subject) == *subj && !same_transition
+                }
+                _ => false,
+            };
+            if sibling_transitions {
+                continue;
+            }
             // An intro-versus-steps restatement: one sourced in the document's opening
             // section, the other in a later section of the same document. Qualifies
             // with one shared entity and one shared token (typically the verb stem),
@@ -3489,18 +3514,23 @@ impl Store {
                     criterion.updated = Some(build.clone());
                     // The store mints the id from the quote's document stem; a staged
                     // id under another stem (a provisional one) is re-minted.
-                    let stem = Self::crit_stem(&criterion);
-                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(stem).strip_suffix(".md").unwrap_or(stem));
+                    let stem = self.crit_stem(&criterion);
+                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(&stem).strip_suffix(".md").unwrap_or(stem.rsplit('/').next().unwrap_or(&stem)));
                     let mut final_id = id.clone();
                     if !final_id.starts_with(&format!("crit:{}-", stem_slug))
                         || self.graph.criteria.contains_key(&final_id)
                     {
-                        final_id = self.mint_crit_id(stem, &BTreeSet::new());
+                        final_id = self.mint_crit_id(&stem, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
                     }
                     dirt.created(&final_id, m);
+                    // A derived criterion carries a ratification proposal like any
+                    // derived fact (docs/compiler/model/criterion.md#lifecycle).
+                    if let Some(p) = criterion.provenance.as_ref() {
+                        dirt.pending(&final_id, m, p);
+                    }
                     applied.push(Op::CreateCriterion {
                         id: final_id.clone(),
                         criterion: criterion.clone(),
@@ -3868,6 +3898,15 @@ impl Store {
                         e.provenance = None;
                         e.updated = Some(build.clone());
                         dirt.entity(&rid, m, "mentions");
+                    } else if let Some(c) = self.graph.criteria.get_mut(&rid) {
+                        if c.source.is_some() {
+                            skipped.push(format!("ratify_provenance {}: already quoted", rid));
+                            continue;
+                        }
+                        c.source = Some(source.clone());
+                        c.provenance = None;
+                        c.stale = false;
+                        c.updated = Some(build.clone());
                     } else if self.graph.views.contains_key(&rid) {
                         skipped.push(format!("ratify_provenance {}: views are not ratified", rid));
                         continue;
@@ -4038,6 +4077,15 @@ impl Store {
                             continue;
                         }
                         self.graph.views.remove(&rid);
+                        dirt.deleted(&rid, m);
+                    } else if self.graph.criteria.contains_key(&rid) {
+                        // A derived criterion retracted goes; its requirement stands
+                        // (docs/compiler/goals/ratify.md#created-when).
+                        if !pending(&self.graph.criteria[&rid].provenance) {
+                            skipped.push(format!("retract_decree {}: not a decree", rid));
+                            continue;
+                        }
+                        self.graph.criteria.remove(&rid);
                         dirt.deleted(&rid, m);
                     } else {
                         skipped.push(format!("retract_decree: unknown id {}", rid));
@@ -4518,6 +4566,14 @@ impl Store {
                     e.provenance.clone(),
                     e.parent.clone().into_iter().collect(),
                 )
+            } else if let Some(c) = self.graph.criteria.get(&id) {
+                // The sentence lands under the owning requirement's section
+                // (docs/compiler/model/criterion.md#lifecycle).
+                (
+                    c.statement.clone(),
+                    c.provenance.clone(),
+                    vec![c.requirement.clone()],
+                )
             } else {
                 continue;
             };
@@ -4771,8 +4827,9 @@ impl Store {
     // The same alignment without a write: the section trees, the dirty set, the
     // alignment blocks, and the records land in memory and the `edit` and `align`
     // entries are minted but never written, so a read-only consumer (status, preview,
-    // release, monitor, the GUI board) derives from the documents as they stand
-    // while the entries stay a build's to write.
+    // the compile release, monitor, the GUI board) derives from the documents as they
+    // stand while the entries stay a build's to write (the generate release writes
+    // them, since it approves a generation number: control.rs).
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn sync_docs_in_memory(
         &mut self,
@@ -5805,10 +5862,10 @@ mod tests {
         let r = s.apply(ops, &wi().commit(3, 100));
         assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
-        assert_eq!(ids, vec!["crit:t-1", "crit:x-1"], "{:?}", ids);
+        assert_eq!(ids, vec!["crit:t-1", "crit:t-2"], "{:?}", ids);
         assert_eq!(s.criteria_of("req:t-1").len(), 2);
         assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-2"));
         // The requirement's statement changes: the derived criterion is revised, the
         // quoted one keeps its own quote.
         s.apply(
@@ -5824,7 +5881,7 @@ mod tests {
             }],
             &wi().commit(4, 100),
         );
-        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-2"));
         assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
         // The requirement goes: its criteria go with it.
         s.apply(
@@ -5836,7 +5893,7 @@ mod tests {
         );
         assert!(s.graph.criteria.is_empty());
         assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:x-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-2"));
     }
 
     // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes
@@ -8471,6 +8528,33 @@ mod tests {
         let n = s.requirement_neighbors("req:expenses-1");
         assert!(n.contains(&"req:policies-4".to_string()), "{:?}", n);
         assert!(!n.contains(&"req:policies-5".to_string()), "{:?}", n);
+    }
+
+    // Mirrors docs/compiler/reconciler.md#pairs: two transitions of one subject with
+    // different ends are siblings of one machine and never pair; the same ends pair.
+    #[test]
+    fn sibling_transitions_of_one_machine_never_pair() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:application".into(), entity("Application"));
+        let mk = |st: &str, from: &str, to: &str| Requirement {
+            statement: st.into(),
+            entities: vec!["ent:application".into()],
+            transition: Some(Transition {
+                subject: "ent:application".into(),
+                from: from.into(),
+                to: to.into(),
+                trigger: None,
+                guard: None,
+            }),
+            source: Some(mention("hiring.md", "/moving", "q")),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:h-1".into(), mk("An Application moves from applied to screened when the recruiter reviews it.", "applied", "screened"));
+        s.graph.requirements.insert("req:h-2".into(), mk("An Application moves from applied to rejected when the recruiter declines it.", "applied", "rejected"));
+        s.graph.requirements.insert("req:h-3".into(), mk("The recruiter moves an Application from applied to screened after reviewing it.", "applied", "screened"));
+        let n = s.requirement_neighbors("req:h-1");
+        assert!(!n.contains(&"req:h-2".to_string()), "{:?}", n);
+        assert!(n.contains(&"req:h-3".to_string()), "{:?}", n);
     }
 
     // The erp operation bullets: six statements of one entity sharing "supports" and

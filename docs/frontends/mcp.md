@@ -241,7 +241,18 @@ serving; what it claims is a batch:
   `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
-  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. The
+  (`ready`, or the blocking reason as a sentence), `gated` and `claimedBy`. A goal the
+  calling serving itself holds (its open batch, or a batch of the running build the
+  serving belongs to) reads `claimedBy: you`, and its blocking sentence says the goal
+  is yours to mark and finish, since a session once read its own batch as another
+  worker's claim and reported the board as inconsistent. The batches the reply lists are
+  the ones the scheduler would form next, numbered past the ids live leases hold, so
+  the batch a session is working on never shares an id with one the board would form
+  now. The
+  On a converged board that still lists optional batches, the note says how many
+  optional goals stay claimable and `next` reads `optional: begin_goals claims <batch>
+  or stop here`, since a reader once weighed the verdict against a line inviting a
+  claim. The
   compact form exists because a thirty-goal board with forty-five gated bind goals
   once answered with seventy-five thousand characters, most of them hints on goals
   the agent could not claim. A batch id is `b<generation>-<n>`: the
@@ -286,10 +297,15 @@ serving; what it claims is a batch:
   coverage contract, stale anchors), commits atomically, writes the journal entry
   with `resolved_goals` and `opened_goals`, and re-derives the board. A gate failure
   leaves the changeset open and names the repair. The reply is `{committed, next}`,
-  `next` naming the next ready batch by id with its goals. `beginNext: true` claims
+  `next` naming the next ready batch by id with its goals, and a `ratificationNote`
+  when the commit landed derived facts, saying how many ratify goals they opened and
+  that they wait on a human (a session once watched the blocked count climb from 17 to
+  46 across three criteria batches with no word why). `beginNext: true` claims
   that batch in the same call and carries its `instructions` and `package` in the
-  reply, saving a round trip per batch; the default reply only names it. The claim
-  stops at convergence: when the commit leaves only optional goals ready, the reply
+  reply, saving a round trip per batch; the default reply only names it. A `beganNote`
+  beside the claim says that `abandon_goals` releases the batch untouched, since a
+  session capped at a number of commits once found itself holding a batch it had not
+  meant to take. The claim stops at convergence: when the commit leaves only optional goals ready, the reply
   carries the verdict and says so in words (`beginNext stops at convergence, so
   begin_goals takes the next batch when you want it`), since an agent told to converge
   once held an optional batch it had not asked for, and an agent that wanted it once
@@ -300,7 +316,9 @@ serving; what it claims is a batch:
   loaded block always ship whole. When that first reply would pass 45k characters, the
   skills ship as `load_skill` pointers instead of bodies and the reply opens with a
   line saying to load them, since a client once spilled a 58k reply to a file and
-  spent four calls reading it back. `begin_goals` with `full: true` repeats everything
+  spent four calls reading it back. A skill shipped as a pointer is not rendered:
+  `load_skill` returns its text, since a session once heard that a skill it had never
+  seen "already stands in the conversation". `begin_goals` with `full: true` repeats everything
   for a client that lost its context.
 - A goal the batch neither resolved nor failed when `done` commits parks; a parked
   goal resumes first in the next batch that fits it
@@ -333,11 +351,28 @@ commands with its own tools, `record_binding` records the row and
 `record_generation` the manifest. The binding package carries the requirement's
 `statement` and `quote`. A package whose ledger holds no medium carries `mediumNote`,
 and `record_medium` records the agent's decision before anything is written
-([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). Jazyk deliberately serves no file-editing tools here; a
+([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)). There is no batch in these lifecycles, so a graph write outside one is refused with a
+note that names the channel: a contradiction the tests expose reaches the author
+through the `failing-binding` check once the row is recorded, since a Codex session
+generating a handbook tried `report_diagnostic` for one. Jazyk deliberately serves no
+file-editing tools here; a
 coding agent brings its own, and the in-process worker's file tools
 ([generation tools](../compiler/goals/generate.md#tools)) are not served over MCP.
 The `bind`, `generate`, and `verify` goals on the board are the same rows these
-lifecycles claim: resolving a row resolves its goal.
+lifecycles claim: resolving a row resolves its goal. Each task row carries the goal's
+`ready` flag and, when it is not ready, `blockedBy` with the board's reason; when every
+row is gated the list's `next` names the release that opens them (`jazyk release
+generate`), since a Codex session read a fully gated list and learned the command only
+from the refusal that followed; `generation_tasks` carries a `staleNote` when rows
+went stale since their last run (a shared test file or implementation file changed
+under a generation), since their generate goals return only after `run_tests`
+re-baselines them and a Codex session saw entities appear in the list it had read as
+complete; and
+`begin_generation` refuses an entity whose goal is not ready (`not-ready`, the same
+reason), since a Codex session bound one requirement of an entity and generated the
+whole entity next while its other requirements still owed a binding; generation waits
+for every binding of the entity because the bound tests are the interface it builds to
+([readiness](../compiler/goals/generate.md#readiness)).
 
 Verification: `run_tests` executes recorded programmatic tests (the build first, then
 the commands) and records verdicts as a side effect. `llm` rows go through

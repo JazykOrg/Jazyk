@@ -16,8 +16,11 @@ when the project configures a `[gen]` deliverable
 - carries a `requirement-revised` record newer than its criteria (its derived criteria
   were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
 
-The `change` lists the requirements by id with the reason (`none` or `revised`); the
-`cause` is the newest record among them. A project without a deliverable derives none:
+The `change` carries two id lists, `none` (no criterion yet) and `revised` (a derived
+criterion gone stale); the `cause` is the newest record among them. Each goal is a batch wall of its own
+([batching](../reconciler.md#batching)), and the changeset's mutation budget grows by
+three per listed requirement ([budgets](../sessions.md#budgets)): a batch that packed
+twelve entities' goals against one budget once failed three of them unstaged. A project without a deliverable derives none:
 stated criteria still enter through extraction, and the `criterion-missing` check
 reports the gaps as information ([checks](../compilation.md#checks)).
 
@@ -36,11 +39,15 @@ runs first by construction.
 - `complete`: at least one criterion is staged or recorded on the requirement, and no
   staged criterion has the same normalized text as the requirement's statement
   (`criterion-restates` otherwise).
-- `stated-only`: the documents state criteria and the session added none; at least one
-  criterion exists.
+- `stated-only`: the documents' own criteria cover the requirement and the session
+  added none; at least one criterion exists.
 - `open-question`: the requirement's evidence depends on a value the documents do not
-  give, and an `invented-choice` prompt is staged naming the requirement
-  ([invented choices](../../consumers/gen.md#invented-choices)). The requirement keeps
+  give, or give twice, and an open diagnostic with a prompt names the requirement: an
+  `invented-choice` staged here for a value nobody stated
+  ([invented choices](../../consumers/gen.md#invented-choices)), or a standing
+  `contradiction`, `decision`, or `ambiguity` whose prompt already carries the
+  question (the 21 versus 30 day deadline is that case; filing a second question
+  would be a twin). The requirement keeps
   no criterion until the answer; `bind` stays blocked on it.
 - Every derived criterion staged carries `from` naming the requirement, `reasoning`, and
   a ratification proposal sentence toward the requirement's section

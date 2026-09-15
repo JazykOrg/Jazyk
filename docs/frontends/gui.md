@@ -1,12 +1,14 @@
 # GUI
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts one
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts one
 local process: an HTTP server that serves the GUI web app, a JSON API over the
 [graph store](../compiler/graph.md), a live event stream, and the
 [language server](./lsp.md) over WebSocket. It then opens the browser at the served
-address. The GUI is the workbench for developing a jazyk project: edit the documents,
-watch the compiler resolve goals, review the graph and its projections, review what
-changed and why, and run [generation](../consumers/gen.md) and verification.
+address. The GUI is the front door of a jazyk project: read and edit the documents,
+see what the compiler understood and what it asks, walk the model and its diagrams,
+review the product against the documents, and talk to the agent. The compiler's own
+workbench (the board, the runs, the prompts) sits behind the
+[Developer toggle](#developer-toggle). `--dev` starts with the toggle on.
 
 The GUI is the live superset of the [viewer](./viewer.md). The viewer stays the offline
 snapshot; the GUI serves the same shards, updated as builds commit.
@@ -22,7 +24,7 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   self-evident too: the app titles itself with the project directory and shows the
   root in the status bar.
 - The web app is embedded in the binary at compile time from the built frontend
-  (`bootstrap/gui/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
+  (`bootstrap/app/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
   a directory on disk instead, for frontend development.
 - Unknown non-API paths serve the app's `index.html`, so app routes are addressable
   URLs.
@@ -127,6 +129,15 @@ Project and store reads:
   newest first, capped (default 200, maximum 2000). Each entry carries the model's
   report plus the references that name its caller. An unreadable or absent log is an
   empty list, never an error.
+- `GET /api/capabilities`: the backend descriptor the app renders against
+  ([backends and capabilities](#backends-and-capabilities)). The server answers with
+  everything it serves; another backend answers with what it can do.
+- `GET /api/projects`: the projects this server has opened, newest first, each with
+  its root, its shape (documents only, documents and product, product only), and its
+  status summary ([home](#home)).
+- `GET /api/inbox`: the [Inbox](#inbox) rollup: the counts of open questions,
+  pending proposals, open problems by severity, documents awaiting a release, and
+  drafts, plus the sum the top bar shows.
 
 The board and causality:
 
@@ -223,7 +234,8 @@ Generation and verification:
 - `GET /api/verify/pending`: pending verification grouped by reason.
 - `GET /api/verify/matrix`: every ledger row with its
   [derived status](../consumers/gen.md#status-is-derived-never-stored), plus rollup
-  counts.
+  counts. `?format=csv` or `?format=md` answers the same rows as a file for
+  download ([trace matrix](#trace-matrix)).
 
 Settings:
 
@@ -243,7 +255,8 @@ Deliverable:
 
 - `GET /api/deliverable`: the generated product as a file listing, each file with the
   entities and requirements the [ledger](../consumers/gen.md#the-ledger) binds to it,
-  and the test artifacts pointing at it. Hidden entries, `target`, `node_modules`, and
+  and the test artifacts pointing at it. The reply also carries the recorded `medium`
+  and `build` from the ledger, the [product form](#product) page's source. Hidden entries, `target`, `node_modules`, and
   `jazyk-out*` directories are skipped, so a deliverable at the project root lists the
   product, not the compiler's output.
 - `GET /api/deliverable/file?path=`: one file's text plus its resolved
@@ -297,7 +310,7 @@ Transcripts:
 - `GET /api/trace`: past runs from the transcripts on disk under `<out>/trace/`,
   newest first (by the start the metadata line records), capped at 200: each with
   its stem, its metadata line, its outcome when the run finished (a missing outcome
-  means it died mid-run), and its event count. The [activity panel](#activity)'s
+  means it died mid-run), and its event count. The [Runs](#runs) page's
   run list.
 - `GET /api/trace/{stem}`: one whole transcript: the metadata, the outcome, and
   every event, elided the same way the live stream is ([jobs](#jobs)). Event `n`
@@ -393,261 +406,712 @@ External activity surfaces the same way: a `jazyk compile` run from a terminal, 
 and the GUI renders it live without owning the job. The goal events come from the
 journal entries at commit, not from the job, so a build run anywhere moves the board.
 
+## Product surface
+
+The GUI is the product's front door: a hosted or local editor for the people who own
+the documents and the product they describe. The compiler's machinery (goals, cones,
+tiers, batches, leases, releases, sessions, GC, the verdict) stays behind one
+[Developer toggle](#developer-toggle). The default mode speaks the product words in
+the [vocabulary](#vocabulary) table, organizes the workspace around three
+[lenses](#lenses) over one graph, and gathers every request the compiler makes of a
+human into one [Inbox](#inbox).
+
+Who it serves:
+
+- An author (a product manager, an architect, a standards engineer, a technical writer,
+  a novelist, an operations lead) writes and reviews the documents. They want to know
+  whether the prose was understood, where it is ambiguous or contradictory, what was
+  extracted from a sentence, which questions they owe, and how an entity connects to
+  the rest.
+- An implementer (an engineer, or an agent the engineer supervises) owns the product.
+  They want which requirements are verified, failing, unimplemented, or stale; the
+  trail from a sentence to a criterion to a test to a code site; and what the product
+  carries that no document describes.
+- A reviewer reads: the documents with their diagrams and linkage, a health summary,
+  what changed between two syncs, and a chat to ask the project questions.
+- A jazyk developer wants the workbench: the board, the runs, the prompts, the costs.
+  The Developer toggle serves them without shaping the default layout.
+
+Three project shapes are served equally:
+
+- Documents and product fully linked: the trail runs both ways and the
+  [trace matrix](#trace-matrix) is the health dashboard.
+- Documents covering a slice of the product (a standard's requirements, a document for
+  one feature): the documents are authoritative for their slice only. How much of the
+  product the documents describe is a number, never a failure. The files no document
+  describes ([not described](#not-described)) are informational and the entry point
+  to documenting more. For a standard, the trace matrix reads as a compliance matrix
+  and exports.
+- Documents written out of the product ([decompilation](../consumers/decompile.md)):
+  product first, drafts land as ordinary documents carrying `unratified`, the review
+  surface is the editor, and progress is a count of areas documented.
+
+A non-software deliverable (a novel, a handbook, a slide deck) is a product too: the
+default mode says "product", never "code", unless the recorded
+[medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated) is code.
+
+## Vocabulary
+
+The default mode never says goal, cone, tier, batch, lease, release, session, GC, or
+verdict. One table maps the compiler's words to the product's; the app, the CLI help
+where the two meet, and this page use it. Developer mode shows the compiler word
+beside the product word wherever both apply.
+
+| Compiler (docs, CLI, Developer mode) | Default mode |
+|---|---|
+| compile, build | Sync: the model syncs with the documents |
+| bind, generate | Build: the product is built from the documents |
+| verify, audit | Check: tests run, statuses refresh |
+| decompile | Document: documents are written from the product |
+| release (manual mode) | the Sync or Build button itself; gated work is Pending changes |
+| `compile: auto`, `compile: manual` | Sync on save, Sync on request |
+| `gen: auto`, `gen: manual` | Build after sync, Build on request |
+| verdict `converged` | Up to date |
+| verdict `incomplete` with `open` and `failed` | Sync incomplete, N items left, with the reason |
+| `blocked` (`ratify`, `answer`, gated) | Waiting on you (N): the Inbox count |
+| `optional` (soft-limit GC advice) | Suggestions |
+| a goal in session, batch narration | the build thread's plain lines ("Reading compiler/graph.md, 3 sections") |
+| diagnostic, by severity | Problem: error, warning, note |
+| prompted diagnostic | Question |
+| ratification proposal, invented choice | Proposal |
+| triage `acknowledged`, `suppressed`, `wontfix` | Seen, Hidden, Won't fix |
+| coverage `covered`, `non-normative`, `unprocessed` | Read, Informational (with its note), Not read yet |
+| provenance `quote` | Quoted, with the sentence |
+| provenance `derived` | Inferred, needs your confirmation (the Proposal) |
+| provenance `decree` | Your edit, not yet in the documents (the Proposal) |
+| entity, requirement, criterion | kept: these are the product's value |
+| view | Diagram |
+| relationship, state machine | Relation, States |
+| deliverable, medium | Product, Product form |
+| ledger row, derived status | Trace row; the statuses stay: verified, failing, stale, unimplemented, missing |
+| unclaimed report | Not described: files no document describes |
+| draft (`unratified`) | Draft |
+| journal, generation, changeset | History, Sync #N, Change |
+| ripple | What this caused |
+
+## Backends and capabilities
+
+One app, three backends. The [server](#serving) (`jazyk gui`) serves everything; the
+demo runs a bundled example in the tab; the [browser backend](./wasm.md) runs the
+compiler in the tab over a folder on the computer. The backends do not change the
+layout. They change what the backend can do, so the app reads one descriptor and
+renders against it:
+
+- `GET /api/capabilities`:
+  - `projects`: `list` (the server's recent projects and a path input), `bundled`
+    (the demo's examples), `folder-picker` (the browser backend's File System Access
+    flow).
+  - `docs`: `read` or `write`.
+  - `events`: `stream` (the [event stream](#events)), `pushed` (trace events posted
+    from a build running in the page), `refetch` (no stream; the app refetches after
+    every write).
+  - `lsp`: whether `GET /lsp` exists. Without it the editor derives the same
+    decorations from the graph's mentions and quotes on the client.
+  - `jobs`: the job kinds the backend runs, from `compile`, `gen`, `verify`, `audit`,
+    `decompile`, `benchmark`.
+  - `agent`: `embedded`, `external`, or `none`. Without an agent the chat column
+    shows build threads only and says why.
+  - `model`: `configured`, `in-page` (a model loaded in the tab), `needs-key`, or
+    `none`.
+  - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
+    renderings.
+  - `persistence`: `disk`, `memory` (the demo: a reload starts from the seed), or
+    `browser` (the folder handle, mirrored back).
+- A route the backend does not serve answers `501` with a reason
+  (the browser backend's rule). A panel whose read answers `501` hides
+  behind that reason; it never renders empty or errors.
+- A missing capability hides its action and explains it in the empty state ("Sync
+  needs a model. Add one in Settings."). Nothing fails for want of a capability.
+- The transport is one seam: every read and write goes through one
+  `request(method, path, body)` the backend implements, so the app never knows which
+  backend it has beyond the descriptor.
+
+The demo banners "Demo: changes stay in this tab". The browser backend banners the
+folder it mirrors to.
+
+## Home
+
+The first screen is the project picker:
+
+- Open a project: the entries the descriptor allows. `Open folder` (the browser
+  backend), `Try a demo` (the bundled examples: the shop, the sort utility, the ERP,
+  the slide deck, the novel, the organization), `Recent` (the server's list from
+  `GET /api/projects`: each with its path, its shape, its sync state in product
+  words, and its waiting count).
+- New project: a wizard. Pick the documents folder and glob, optionally the product
+  folder, pick the model or agent (or "none: browse only"), name the root documents.
+  The wizard writes `jazyk.toml` through `PUT /api/settings`, then runs the first sync
+  with its plan visible and an estimate beside it. It names the shape it detected:
+  "documents only", "documents and product", or "product only: start by documenting
+  it", the last offering Document.
+- The Developer toggle sits here too, so a developer lands in the workbench from the
+  first project.
+
+`GET /api/projects` lists the projects the server has opened, newest first, each with
+its root, its shape, and its status summary; the server keeps the list in
+`~/.jazyk/projects.yaml`.
+
 ## Layout
 
-One workbench page. Navigation swaps panes, never the page. Six regions:
+One workspace page. Navigation swaps panes, never the page. Five regions:
 
-- The rail: a narrow icon strip on the far left: `files`, `graph`, `board`, `work`,
-  `benchmarks`, `feedback`, `settings`. A rail item picks what the sidebar shows; it
-  never navigates away.
-- The sidebar: the navigator for the active rail item. Clicking an entry opens it in
-  the center.
-- The center: the open item. The document editor, the deliverable viewer, the map,
-  the board, the work views, the settings form.
-- The inspector: the detail pane beside the center. Selecting a node anywhere (a code
-  lens, a map node, an arrow, a list row, a goal card, an id chip) shows its detail
-  here, beside the center, never replacing it. Closable (its close button, or
-  Escape outside a text field); the center keeps its state under it.
-- The chat pane: the persistent pane on the far right, collapsible to a strip. The
-  conversation surface: chat sessions with the agent and follow views of automated
-  work, each with its loaded-set panel. See [chat](#chat).
-- The activity panel: the bottom strip, always present. Collapsed it is one line:
-  the run controls and the live build state. Expanded it is the run history and the
-  selected run's transcript. See [activity](#activity).
+- The top bar: the project switcher, the three lenses as tabs (Docs, Model, Product),
+  Inbox with its count, History, the command palette, the action button, and settings.
+- The navigator: the left column, the active lens's navigation.
+- The center: the open item. The editor, a model page, a product page, the Inbox, a
+  History diff, the settings form.
+- The inspector: the detail pane beside the center, never replacing it. Selecting a
+  node anywhere (a sentence marker, a diagram box, a list row, an id chip, a code
+  lens) shows its detail here. Closable (its close button, or Escape outside a text
+  field); the center keeps its state under it. On a narrow screen it is a drawer.
+- The chat column: the far right, collapsible to a strip with an unread mark. See
+  [chat](#chat).
 
-Addressable state: `/files/docs/<path>`, `/files/deliverable/<path>`,
-`/files/out/<path>` (a file under the out directory), `/graph`,
-`/board`, `/work`, `/feedback`, and `/settings` pick the center; `?node=` holds the
-inspector selection (any node id, a relationship, a state machine, or a goal);
-`?view=` the view overlaid on the map; `?entity=` the [explorer's](#explore)
-position and `?detail=` its detail under the overlaid view; `?goal=` the selected
-board card; `?run=` the selected run. A document takes `?section=` and `?quote=` to reveal and highlight a
-quote; a deliverable file takes `?site=<requirement>` to reveal that requirement's
-first located site, or `?line=` to reveal a line directly.
+The status bar under everything: the sync number, the state in product words, the
+waiting count, the problem counts by severity, the connection state, and the
+[Developer toggle](#developer-toggle). The state never travels alone: the problem
+counts ride beside it, because a project can be up to date with open errors standing
+([convergence](../compiler/compilation.md#convergence)).
 
-### Files
+There is no bottom activity panel. Its control line is the action button, its build
+progress is the chat column's build thread, and its run console is the Developer
+lens's [Runs](#runs).
 
-One explorer over the project's trees, in labeled sections:
+Addressable state: `/docs/<path>` (a document in the editor), `/model/<section>` and
+`/model/<section>/<id>` (entities, requirements, criteria, diagrams, relations,
+states), `/product/<section>` and `/product/files/<path>` (files, trace, tests,
+not-described, generated, form), `/inbox/<section>`, `/history/<generation>`,
+`/settings`, and `/dev/<section>` under the Developer lens. `?node=` holds the
+inspector selection; a document takes `?section=` and `?quote=` to reveal and
+highlight a quote; a product file takes `?site=<requirement>` or `?line=`; a diagram
+takes `?detail=` ([explore](#explore)); `?run=` selects a run under Developer. Every
+URL the previous layout served (`/files/*`, `/graph`, `/board`, `/work`, `/journal/*`,
+`/feedback`, `/benchmarks`) redirects to its new place.
 
-- Documents: the docs tree. Each document shows its open diagnostics as a
-  severity-colored badge, its open goals as a count, and a drift dot when it is stale
-  against the graph. Documents can be created, moved, and deleted from the tree,
-  through the documents API and its validation; a delete asks for a second click,
-  never a dialog. Directories exist implicitly through paths.
-- Deliverable: the generated product files, each with its ownership count badge
-  (the entities and requirements the ledger binds to it) and a stale dot when a
-  bound requirement's verification is stale.
-- Generated: the pages [docsgen](../consumers/docsgen.md) writes under
-  `<out>/docsgen/` (the requirements documents, the entity cards, the level pages,
-  the diagram pages), listed through `GET /api/out/list`. A row opens the page
-  read-only in the center with its [markdown preview](#markdown-preview). The list
-  refreshes when a build commits, since the pages render on every commit.
-- Build progress: while a build runs, the documents it is working on say so in
-  place. A document whose sections carry open `reconcile-section` goals is dimmed with
-  a waiting mark; the document whose sections a session is reconciling shows a running
-  mark, the section the session reached, and how many of the batch's sections it has
-  touched. When the session ends, the row turns into its result (what was staged, or
-  the failure) and fades a few seconds later. Hovering the row holds the result until
-  the pointer leaves. The states come from the
-  [trace events](../compiler/sessions.md#trace-events) of the running job, so a build
-  started outside the GUI moves the lock, the counter, and the board as always, but
-  does not light the tree up: its events are in its own transcript, not on this
-  server's stream.
-- Linkage: the two sections light each other up. Selecting a document highlights
-  the deliverable files bound to it: the requirements whose source anchors in the
-  document, joined through the ledger to the files that implement them. Selecting
-  a deliverable file highlights the documents its requirements anchor in. The
-  highlight is a tint on the related rows, so the prose and the code it produced
-  are visibly one system.
+### The action button
 
-### Deliverable viewer
+One button in the top bar whose label is the state: `Sync (3 documents changed)`,
+`Syncing 2 of 5`, `Up to date`, `Build (4 entities)`, `Check`. Clicking it opens the
+action sheet:
 
-Opening a deliverable file shows it read-only in the center:
+- What will run, in product words: the documents, the work counts, who runs it (the
+  built-in runner or the attached agent, by the
+  [dispatch](../compiler/control-plane.md#dispatch) preference), and an estimate from
+  the last sync's cost (`status.yaml` `costs`).
+- The mode switches: Sync on save or on request; Build after sync or on request. The
+  modes are the [workflow modes](#workflow-modes): control-plane state, never the
+  app's.
+- `Run`. In on-request mode `Run` records the [release](../compiler/control-plane.md#modes-and-releases)
+  and starts the job, or wakes the attached agent. When the preference is an agent
+  and none is registered, the sheet says so and offers the built-in run.
+- Check and Document are entries in the same sheet. Document takes an area from the
+  [not described](#not-described) list and records a decompile release.
+- While a job runs the button shows its progress and offers cancel.
 
-- Every resolved [site](../consumers/gen.md#traceability) shows as a code lens above
-  its line (the requirement id and verification status). Clicking the lens opens
-  the requirement in the inspector. Lost sites are flagged in the inspector.
-- The viewer diffs against the file's generation baseline
-  (`GET /api/deliverable/baseline`): gutter marks on the lines the last generation
-  changed, and a `diff` toggle that swaps the viewer for a side-by-side diff of
-  baseline against current text. A file with no baseline shows no marks and no
-  toggle.
-- A markdown deliverable file opens on its [markdown preview](#markdown-preview),
-  with a `source` toggle back to the viewer.
+In Developer mode the sheet also opens the [preview pane](#preview) on the next batch.
 
-### Markdown preview
+## Lenses
 
-A markdown file opens rendered, not as its raw text: headings, lists, links, inline
-and fenced code, tables, block quotes, and images, in the app's palette. Which
-surface holds the preview depends on the tree the file lives in:
+Three navigators over one graph. Selecting anything shows the same card in the
+inspector and highlights its linkage in every visible lens: a document tints the
+product files its requirements bind to and the entities it defines; a product file
+tints the documents its requirements anchor in; an entity tints its mentions.
 
-- A generated page under the out directory (`/files/out/<path>`, the
-  [generated section](#files)) and a markdown deliverable file open on the preview in
-  place of the source; a `source` toggle swaps the read-only text in. Any other file
-  under the out directory (a `.puml`, a `.yaml`) opens as read-only text, a `.png`
-  opens as the image, and a `.svg` opens inline with its links live (below).
-- A source document under the docs glob keeps its [editor](#editor) and shows the
-  preview beside it, split, live as one types; a `preview` toggle on the editor's bar
-  shows or hides it, and the choice is remembered in the browser.
+### Docs
 
-Links and images resolve against the open file's path, so the pages walk the way
-[docsgen](../consumers/docsgen.md#entity-cards) writes them:
+The navigator is the document tree. Each row carries its problem badge (the highest
+open severity, colored), the drift dot when it is stale against the model, the pending
+mark when it was edited since its last sync, and the progress mark while a sync works
+on it (dimmed and waiting, then running with the section reached, then its result,
+fading after a few seconds and held under the pointer). Documents are created, moved,
+and deleted from the tree through the documents API; a delete asks for a second click,
+never a dialog.
 
-- A relative link to a `.md` under the out directory opens that page in the center
-  (a card's siblings, its diagram pages, its requirements document). A relative link
-  to a document under the docs glob opens the editor on it, and one to a deliverable
-  file opens the deliverable viewer. A `#fragment` scrolls the preview to the heading
-  with that slug, under the compiler's own heading slug rule, the one docsgen writes
-  its fragments with. A link with a scheme (`https:`, `mailto:`) opens in a new
-  tab. A relative link that lands nowhere the GUI serves renders as plain text.
-- A relative image under the out directory (`../../diagrams/class/checkout.svg` from a
-  card) renders inline through `GET /api/out/file`, so the diagrams docsgen embeds
-  show on the page. An image anywhere else is not served and shows its alt text.
-  The images are the build's renderings, read as files; the map still draws the
-  graph itself ([graph](#graph)).
-- A `.svg` embedded by a page, or opened by itself, renders inline as SVG, not as an
-  image, so the anchors the renderer wrote into it
-  ([drill-down](../compiler/diagrams.md#drill-down)) are live. Each anchor resolves
-  against the `.svg`'s own path under the out directory and lands where a link in the
-  page lands: clicking a box opens that entity's card in the preview, a `.puml` opens
-  as text, a collapsed node's link opens the level's `.svg`; an anchor that lands
-  nowhere the GUI serves is not a link. The pointer shows a box is a link. The text
-  is sanitized before it enters the page (`<script>` elements and `on*` attributes
-  dropped). The diagram keeps its rendered size: its `viewBox` stays, the hard
-  `width` and `height` are dropped, and one wider than the panel scrolls inside its
-  own container.
+Under the tree, the open document's outline: its sections from the
+[section tree](../compiler/parsing.md), each with its read state (Read, Informational
+with its note, Not read yet). Clicking a section scrolls the editor to it.
 
-The preview renders the text as it stands and never rewrites it: the editor's text
-stays plain markdown, byte for byte, and a generated page is never written through
-the GUI.
+The center is the [editor](#editor). A Reader toggle renders the document with the
+same overlays and no editing, for reviewers.
 
-### Graph
+The inspector for a section: its read state, the requirements extracted from it with
+their statements, the entities it defines, its problems, and what the last sync did
+here.
 
-The `graph` rail item is the whole graph surface: the sidebar navigates it, the
-center draws it. The map renders its projections straight from the graph and never
-reads the rendered files under `<out>/diagrams/`; those are build output for the
-other surfaces ([diagrams](../compiler/diagrams.md#rendering)), and the
-[markdown preview](#markdown-preview) shows them only where a generated page embeds
-one.
+### Model
 
-- The sidebar: one text filter plus facet lists, the viewer's cards served live:
-  entities, requirements, views, diagnostics (with triage actions), coverage.
-  Views are grouped by [kind](../compiler/model/view.md#kinds), default views marked
-  as such, each with its member count and its limits state. Suppressed diagnostics
-  never render. A row opens the node in the inspector and focuses it on the map; a
-  view row overlays the view.
-- The containment tree: the entity list in the sidebar is the tree the `parent` field
-  makes ([levels](../compiler/concepts/levels.md#levels)), one root per scope
-  ([the scope root](../compiler/concepts/levels.md#the-scope-root)), each node
-  expandable to its children. A node with a level shows its child count and its
-  [level view](../compiler/diagrams.md#level-views) ids; clicking one overlays that
-  view. A grouping (an entity with `derived` provenance) is marked as such, with its
-  ratification proposal one click away.
-- The breadcrumb: while a level view is overlaid, a breadcrumb sits over the diagram
-  panel: the chain from the scope root down to the level's node. Each crumb overlays
-  that ancestor's level view; the last crumb is the current level. A member drawn
-  with a level of its own is the link down ([drill-down](../compiler/concepts/levels.md#drill-down)):
-  double-clicking it, or picking it from the view's `children` list
-  (`GET /api/views/{id}`), overlays the member's level view and extends the
-  breadcrumb. `?view=` holds the overlaid view, so a drilled-down position is an
-  addressable URL. Clearing the overlay clears the breadcrumb.
-- The center: the map. Nodes are typed: entities (with their stereotype as a badge),
-  documents, requirements, and deliverable files. Edges are typed too:
-  - The [derived relationships](../compiler/graph.md#derived-data) between
-    entities, one arrow per direction-and-type group, drawn with UML notation: a
-    hollow triangle for generalization, a hollow triangle on a dashed line for
-    realization, a filled diamond for composition, a hollow diamond for aggregation,
-    a plain line for association, an open arrow on a dashed line for dependency, and
-    an open arrow on a dashed line labeled `«instantiate»` for instantiation.
-    Cardinality labels sit at the ends where a contribution states one.
-  - A requirement to the entities it names (membership).
-  - A requirement to the document its source anchors in.
-  - A requirement to the deliverable files whose ledger sites implement it.
-- Containment: an entity's children draw nested inside it
-  ([containment](../compiler/model/entity.md#containment)). A relationship between an
-  entity and one of its drawn ancestors (the composition that put it there) is the
-  nesting itself and draws no arrow; it reappears as an arrow only when the two are
-  not nested, e.g. with the parent hidden by the filter. A parent collapses to one
-  node showing its child count. With the children hidden, every relationship touching
-  a hidden descendant lifts to the parent: one arrow per direction and type, promoted
-  to the strongest type in the group, with a count label
-  ([lifting and collapse](../compiler/diagrams.md#lifting-and-collapse)). Clicking a
-  lifted arrow expands it: the concrete edges beneath it list in the inspector, each
-  walking to its requirement and its sentence. Lifting is computed on the server by the
-  same code the emitters use, so the map and the rendered picture never disagree.
-- Views as overlays: selecting a view (the sidebar, `?view=`, or the inspector's
-  overlay action) draws that view's [membership](../compiler/model/view.md#membership)
-  and nothing else: the members, every relationship among them, lifted where the view
-  hides descendants, the view's `collapse` set applied. Excluded members list in the
-  inspector with their notes. The kind decides the drawing: the structural kinds
-  (class, object, package, component, composite, deployment) draw as the map; the
-  flow kinds (use-case, activity, sequence, communication, timing, overview) draw as
-  ordered steps with the participants as lanes, one step per member requirement; a
-  state view draws the derived [state machine](../compiler/model/state-machine.md#rendering)
-  of its subject. A view over its hard limit draws with auto-collapse of the largest
-  subtrees and the same visible note the rendered picture carries
-  ([over-limit views](../compiler/diagrams.md#over-limit-views)). Clearing the overlay
-  returns to the whole graph.
-- Type chips filter which node types draw. The overview default shows entities and
-  documents only: every requirement and file at once would drown the picture.
-- Hidden types never break the picture: when two visible nodes are joined only
-  through hidden ones, a collapsed tie draws between them, thin and dotted. A
-  document connects to the files its hidden requirements implement, a document to
-  the entities they name, an entity to its files, whatever the chip combination.
-  Selecting the tie inspects the intermediary. With the intermediary type visible,
-  the real edges carry the story and the collapsed tie disappears.
-- Focus: selecting a node and focusing (or double-tapping it) pulls in every
-  adjacent node of every type, chips notwithstanding: one neighborhood is never
-  busy, so it shows everything, including the requirements and files the overview
-  hides. Hops extend to 2 for the wider neighborhood.
-- Selecting an arrow opens its relationship in the inspector: the contribution group
-  and its requirements.
-- Entity scope, stereotype, and edge-type filters carry over from the overview.
+The navigator has six sections:
 
-### Explore
+- Entities: the containment tree, one root per scope
+  ([levels](../compiler/concepts/levels.md#levels)), each entity with its stereotype
+  chip and requirement count. A grouping (`derived` provenance) is marked, its
+  proposal one click away.
+- Requirements: a list filterable by document, entity, provenance, and trace status,
+  searchable by statement.
+- Criteria: the [criteria](../compiler/model/criterion.md) per requirement with kind
+  and binding status.
+- Diagrams: every [view](../compiler/model/view.md) grouped by kind, defaults marked,
+  each with its member count and limits state.
+- Relations: the derived relationships, grouped by type.
+- States: the derived state machines, one per subject.
+
+The center is a page per selection:
+
+- The entity page: the [card](../consumers/docsgen.md#entity-cards) the API serves
+  (`GET /api/entities/{id}/card`): definition, stereotype, parent, attributes; the
+  entity's level diagram rendered as SVG with clickable members; its requirements; its
+  relations grouped by type; `Mentioned in` (document, section, quote, each a jump to
+  the editor); the files implementing it and their verification rollup; its open
+  proposals and problems.
+- The requirement page: the statement; the provenance chip (Quoted, with the sentence
+  and a jump; Inferred or Your edit, with the proposal and its Accept and Retract);
+  entities and edges; transition; facets; criteria, each with its kind, its test, its
+  verdict, its last run, and its evidence; code sites (`exact`, `moved`, `lost`);
+  related requirements; its history. The trail draws as one chain with a status dot
+  per step: section, requirement, criterion, test, file.
+- The diagram page: the rendered diagram with live drill-down anchors
+  ([drill-down](../compiler/diagrams.md#drill-down)), the members in order, the
+  excluded members with notes, the collapse set, the limits state, and membership
+  edits (a decree, which clears `default` with the warning). The Diagrams section
+  lands on a gallery by kind.
+- The criteria page: the given, when, and then of each criterion, its kind, its
+  measure, and its binding.
+
+Every id in a page opens the inspector; the page never changes under it.
+
+#### Explore
 
 The walk the [cards](../consumers/docsgen.md#entity-cards) give a markdown reader,
-the GUI gives live, from the same model (`GET /api/entities/{id}/card`, the card as
-JSON, and `GET /api/views/{id}/page`, the diagram page as JSON). What the LSP cannot
-do, this surface does:
+served live from `GET /api/entities/{id}/card` and `GET /api/views/{id}/page`:
 
-- Click a node, anywhere: on the map, in an overlaid level view, in the tree, in a
-  card, any entity id in the app. The inspector shows the entity's card first, the
-  long detail under it: the definition, `Sits in`, the in-context view, `Inside`,
-  relationships, flows, siblings, children, each item a link that moves the
-  explorer. A diagram's nodes are live: clicking a box in an overlaid view opens
-  that entity's card and, when it has a level, offers the level below. Closing the
-  inspector clears the position; the overlaid view stays.
-- Where the map goes: a move from a card (a sibling, a child, a relationship, a
-  crumb) overlays the entity's context view (its parent's level, the scope root's
-  for a parentless entity) with the entity selected, so the map shows where the
-  entity sits. A click on a node already drawn (the map, the tree) keeps the
-  overlay. The scope root has no card: its crumb overlays the root's level view.
-- History: the explorer keeps a stack of positions (`?entity=` with `?view=`). Back
-  and forward walk it; every move pushes, and a browser back lands on the same stack
-  entry, so the two never disagree. The URL carries the position, so any point of
-  the walk is addressable and shareable: a URL with `?entity=` and no `?node=` opens
-  the inspector on the card.
-- Detail: a level view overlays with its groupings collapsed; `more detail` expands
-  every grouping one level (its children draw inside it, relationships lifted as the
-  renderer lifts them), `less detail` collapses one level back up to the level's
-  members. The control sits in the breadcrumb bar over a structural overlay, with the
-  level count between its two buttons; `more detail` disables where the tree ends.
-  The map redraws from the graph through `GET /api/views/{id}?detail=`; nothing is
-  rendered by the build for this. `?detail=` holds it and resets when the overlaid
-  view changes.
-- Sideways: the card's siblings and the diagram page's `Around` list are chips; one
-  click moves to the sibling entity or the neighboring view without going up first.
-  `Around` sits in the breadcrumb bar: the level above (`↑`), the other views of the
-  same level (labeled by kind and title, since the use case and the sequence of one
-  flow share a title), and the levels below (`↓`, labeled by member).
-- Up and down: the breadcrumb over the diagram panel stays; the card's `Inside` and
-  `Sits in` are the same moves as chips.
+- Every entity is a card first: the definition, `Sits in`, the in-context diagram,
+  `Inside`, relations, flows, siblings, children, each item a link that moves the
+  walk. A diagram's boxes are live: clicking one opens that entity and, when it has a
+  level, offers the level below.
+- History: the walk keeps a stack of positions (`/model/entities/<id>` with `?view=`).
+  Back and forward walk it, and the browser's back lands on the same entry.
+- Detail: a level diagram opens with its groupings collapsed; `more detail` expands
+  every grouping one level, `less detail` collapses one back. The diagram redraws
+  through `GET /api/views/{id}?detail=`; nothing is rendered by the build for it.
+  `?detail=` holds it.
+- Sideways: the card's siblings and the page's `Around` list are chips: the level
+  above, the other diagrams of the same level, the levels below.
+- The neighborhood widget: every inspector card carries a small map of the selected
+  node and its one-hop neighbors with typed edges, drawn from the graph. It is the only
+  map the default mode shows; the whole-graph map is a Developer tool ([map](#map)).
+
+### Product
+
+The navigator has six sections:
+
+- Files: the product tree, each file with its ownership badge (the entities and
+  requirements the [ledger](../consumers/gen.md#the-ledger) binds to it) and a stale
+  dot after a build changed it.
+- Trace: the [trace matrix](#trace-matrix).
+- Tests: the test artifacts by requirement, with kind, run command, verdict, and
+  evidence.
+- Not described: the files no document describes ([not described](#not-described)).
+- Generated docs: the pages [docsgen](../consumers/docsgen.md) writes, rendered.
+- Product form: the recorded [medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated): form,
+  toolchain, build command, last run, and the medium warning when one stands.
+
+#### Product file viewer
+
+A product file opens read-only in the center:
+
+- Every resolved [site](../consumers/gen.md#traceability) shows as a code lens above
+  its line (the requirement id and trace status). Clicking it opens the requirement
+  in the inspector and highlights the sentence in the Docs lens. Lost sites are
+  flagged.
+- The viewer diffs against the file's build baseline
+  (`GET /api/deliverable/baseline`): gutter marks on the lines the last build changed,
+  and a `diff` toggle for a side-by-side view. A file with no baseline shows neither.
+- A markdown product file opens on its [markdown preview](#markdown-preview) with a
+  `source` toggle.
+
+#### Trace matrix
+
+Every ledger row, the [verification matrix](../consumers/gen.md#status-is-derived-never-stored)
+served by `GET /api/verify/matrix`:
+
+- Rows are requirements grouped by entity and document. Columns are the criteria with
+  their test verdicts. The row carries its status chip, its reason, and the
+  one-sentence repair; the [cascade](../consumers/gen.md#the-cascade) is explained per
+  row.
+- Filters by status, document, and entity. Actions per row and per entity: Build,
+  Check, re-bind.
+- The header: verified, failing, stale, unverified, not built; and the two coverage
+  numbers: sections read (the graph's coverage of the documents) and product files
+  described (the ledger's coverage of the product).
+- A requirement a document marks as not applicable shows as such, never as missing.
+- `GET /api/verify/matrix?format=csv` and `?format=md` export the matrix, the
+  compliance-matrix use.
+
+#### Not described
+
+The [unclaimed report](../consumers/bind.md#the-unclaimed-report) as a file list with
+sizes and the unattached ratio per entity. An area picker groups files by directory or
+module. The Document action records a decompile release for the picked area and
+dispatches ([decompilation](../consumers/decompile.md#triggering)); the drafts it
+produces appear in the [Inbox](#drafts). The count shrinks as drafts land and their
+statements bind: stopping early documents a subsystem, and the number says how far.
+
+#### Markdown preview
+
+A markdown file opens rendered: headings, lists, links, inline and fenced code,
+tables, block quotes, and images, in the app's palette. Which surface holds the
+preview depends on the tree the file lives in:
+
+- A generated page under the out directory and a markdown product file open on the
+  preview in place of the source; a `source` toggle swaps the read-only text in. Any
+  other file under the out directory opens as read-only text, a `.png` as the image,
+  and a `.svg` inline with its links live.
+- A source document keeps its [editor](#editor) and shows the preview beside it,
+  split, live as one types; a `preview` toggle on the editor's bar shows or hides it,
+  remembered in the browser.
+
+Links and images resolve against the open file's path, so the pages walk the way
+[docsgen](../consumers/docsgen.md#entity-cards) writes them: a relative link to a
+page under the out directory opens that page, one to a document opens the editor, one
+to a product file opens the viewer, a `#fragment` scrolls to the heading with that
+slug under the compiler's own slug rule, a link with a scheme opens in a new tab, and
+a link that lands nowhere renders as text. A relative image under the out directory
+renders inline through `GET /api/out/file` with the `token` query parameter. A `.svg`
+renders inline as SVG, sanitized (`<script>` elements and `on*` attributes dropped),
+its `viewBox` kept and its hard `width` and `height` dropped, so the anchors the
+renderer wrote ([drill-down](../compiler/diagrams.md#drill-down)) are live.
+
+The preview renders the text as it stands and never rewrites it.
+
+## Inbox
+
+The single review queue: every request the compiler makes of a human, in one place,
+with one vocabulary. The Inbox count in the top bar is the sum of Questions,
+Proposals, Pending changes, and Problems at `error`. `GET /api/inbox` serves the
+rollup with per-section counts; each section reads its own endpoint.
+
+### Questions
+
+Open diagnostics carrying a [prompt](../compiler/model/diagnostic.md#prompts), from
+`GET /api/questions`. Each item: the question, the sentence it concerns with a jump to
+the editor, up to four option buttons, and a text box when the prompt accepts
+freeform. Answering posts to `POST /api/questions/{id}/answer`, the same engine every
+frontend uses: an `edit` option applies and the item disappears with the next event;
+other answers show `answer.status` as the [answer session](./acp.md#answer-sessions)
+handles them (`handling`, `handled`, `failed`).
+
+The same questions render inline in the [editor](#editor) as a band under the
+anchored sentence, with the same buttons. The chat keeps `/questions` for agents.
+
+Two goal kinds wait on this list, and Developer mode's board says so on their cards:
+an [`answer`](../compiler/goals/answer.md) goal waits on an unanswered prompt, and a
+[`ratify`](../compiler/goals/ratify.md) goal waits on a proposal. Opening a project
+with standing questions re-surfaces them here without any action: the list reads from
+the graph, and the graph kept them.
+
+### Proposals
+
+[Ratification proposals](../compiler/model/diagnostic.md#ratification-proposals)
+grouped by target document, one reviewed draft per document as the
+[ratification report](../consumers/docsgen.md#ratification-proposals) groups them.
+Each: the sentence the document should gain, the target section, `Accept` (the dual
+write: the sentence lands, the provenance flips to `quote`, the diagnostic resolves,
+the goal leaves), and `Retract` (`retract_decree`). The owner may also write the
+sentence anywhere in their own words; the proposal is a convenience, never the only
+door. Invented-choice prompts from a build ([invented choices](../consumers/gen.md#invented-choices))
+list here too, graded by their severity.
+
+### Problems
+
+Open diagnostics by severity: the rule, the message, the reasoning, the subjects
+(each a jump: a node opens the inspector, a section opens the editor), and the triage
+actions (Seen, Hidden, Won't fix, posted to `POST /api/diagnostics/{id}/triage`).
+Hidden items sit behind a filter and never count. A `failing` trace row is a problem
+here ([failing bindings](../consumers/bind.md#what-the-verdict-means)). The filters:
+severity, rule, document.
+
+### Pending changes
+
+In on-request mode, the documents edited since their last release
+([gating](../compiler/control-plane.md#modes-and-releases)): each with what a sync
+would do to it, in product words, and the Sync action that records the release. The
+Build release lists the same way: the entities a build would produce. This is the
+product face of `awaiting release`: visible here, actionable here, and nowhere else
+described as blocked.
+
+### Drafts
+
+Documents the Document action wrote that still carry `unratified`
+([ratification](../consumers/decompile.md#ratification)): each with its evidence
+summary (how many statements observed by a test, how many inferred from the code) and
+`Open in editor`. Editing the document, even to accept it with a one-line change,
+clears the item.
+
+## History
+
+For reviewers and release notes:
+
+- The list of syncs, newest first, from `GET /api/journal`: each with its state in
+  product words, its cost in plain words (sessions, tokens), and the human edits that
+  started its cascade (`edit`, `dual-write`, `decree`, `ratify`, `answer` entries),
+  so the list separates what people decided from what followed
+  ([release diffs](../consumers/pm.md#release-diffs-from-the-journal)).
+- A sync opens its changes: each mutation with its reasoning, the work it resolved
+  with the justification, the work it opened.
+- A range of syncs opens the diff (`GET /api/diff?from=&to=`): per node before and
+  after.
+- What this caused: one change's [ripple](../compiler/reconciler.md) rendered as a
+  small DAG (`GET /api/ripple`), forward or back.
+
+## Chat
+
+The chat column is the GUI's [ACP client](./acp.md) surface: persistent,
+project-scoped, collapsible to a strip with an unread mark. One list, two kinds of
+thread:
+
+- Chat sessions: a conversation with the configured agent, created in the column. The
+  session gets the [`chat` serving](./mcp.md#toolsets), so the agent can read and load
+  the graph, revise requirements and edit facts through the
+  [dual-write tools](./acp.md#dual-write-tools), claim goal batches through the
+  lifecycle tools, and edit project settings. Prompting streams the agent's thoughts,
+  messages, and tool calls into the transcript as they happen. The title is the first
+  prompt line.
+- Build threads: one per job, live while it runs, kept after. Every
+  [worker session](./acp.md#worker-sessions) a job runs registers as a read-only
+  session, so watching a sync is opening its thread. A build thread renders the
+  [plan](./acp.md#plans) as a live checklist, one entry per goal batch (pending,
+  running, done, failed, or waiting with the reason), the running batch's narration
+  as short lines in product words, the committed changes as collapsible cards, and
+  the state line at the end. In Developer mode a board card opens the thread holding
+  its goal.
+
+The column's behaviors:
+
+- Ask about this: the current selection (the open document, the inspected node) is
+  offered as context with one click, so a question about a requirement starts with the
+  requirement loaded.
+- Tool calls collapse to one line each in the default mode. The
+  [Developer toggle](#developer-toggle) expands their payloads, the rounds, the
+  tokens, and the loaded-set panel: the [loaded set](../compiler/context.md#the-loaded-set)
+  as the serving renders it, re-rendered on every mutating tool reply, each item
+  opening in the inspector.
+- [Slash commands](./acp.md#slash-commands): the same catalog the IDE proxy
+  advertises, completed in the prompt box. A build command runs through the job
+  queue and streams into a build thread.
+- Follow in editor: a toggle on a build thread that pins the transcript to the newest
+  update and moves the center along with the work. A tool call carrying a location
+  opens the document or product file at that line.
+- A dual write the agent makes shows as a diff card with a jump to the sentence.
+- Permission requests from chat sessions surface inline as option buttons
+  ([permissions](./acp.md#permissions)). An unanswered request cancels with the
+  prompt it belongs to. Worker sessions never ask; their policy answers.
+- Transcripts persist in the [session store](./acp.md#session-store) under
+  `<out>/sessions/`, so a reloaded page and a restarted server restore the list and
+  its history. A restored conversation has no agent behind it until it is prompted
+  again.
+- A backend without an agent shows build threads only and says why the chat is
+  unavailable.
+
+API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
+them, `GET /api/chat/sessions/{id}` returns one with its transcript and its loaded
+set, `POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
+event stream), `POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
+`POST /api/chat/permissions` answers a pending permission request with body
+`{sessionId, id, optionId?}` (a missing `optionId` cancels the request). Updates
+travel as `chat.update` events, elided like `job.trace`; permission requests as
+`chat.permission`; session list changes as `chat.sessions`.
+
+## Inspector
+
+The detail pane for one node, opened from anywhere, layered over nothing. Every card
+opens with the trail: where the node sits between the documents and the product, one
+step per hop with its status dot. Under it, the detail per kind:
+
+- An entity: name, definition, scope, stereotype, parent (opens it) and children,
+  attributes (each with its provenance), mentions (each opens the editor at the
+  quote), the requirements referencing it, its relations by direction and type, the
+  diagrams it belongs to, its derived states, the files implementing it, and its
+  verification rollup. The [neighborhood widget](#explore) sits beside the trail.
+- A requirement: the statement, its provenance (Quoted opens the editor at the quote;
+  Inferred lists the upstream nodes and the reasoning; Your edit names the author and
+  the note; both carry the proposal), its entities, its edges with type and
+  cardinality, its transition, its facets with reasoning, its criteria with their
+  tests and verdicts, its sites (each opens the product file at the located line),
+  and its trace status.
+- A criterion: its requirement, the condition and outcome, kind, measure, its test,
+  the last verdict and evidence.
+- A diagram: kind, title, the members in order, the excluded members with notes, the
+  query, the collapse set, provenance, limits state, and the open action.
+- A relation: the members and the contribution groups, each with its requirements. A
+  lifted arrow lists the concrete edges beneath it first.
+- States: the states, the initial state, the transitions, each with the requirement
+  that declares it and its open [checks](../compiler/model/state-machine.md#checks).
+- A problem: message, severity, subjects, reasoning, the triage actions, and its
+  question when it carries one.
+- A product file: the entities and requirements bound to it, its sites, its tests.
+- In Developer mode: a goal (kind, class, target, change, cause, state, hints, and its
+  explanation from `GET /api/explain`), a change record, and a `Raw` tab with the
+  node's YAML.
+
+Justification walks. Every rendered element walks to the sentence behind it, and the
+inspector is the walk ([justification closure](../compiler/compilation.md#checks)):
+an arrow opens its relation, the relation lists its contributing requirements, each
+requirement shows its sentence, and the sentence opens the editor at the quote. A
+walk that reaches an Inferred or Your edit fact ends on its open proposal instead of
+a quote, with the upstream nodes beside it.
+
+Editing facts. Fields in the inspector are editable in place: a definition, an
+attribute value, a statement, an edge's type or cardinality, a transition, a
+diagram's members. Saving goes through `POST /api/facts/{id}/edit`, the
+[edit paths](../compiler/compilation.md#edit-paths):
+
+- A Quoted fact: the inspector shows the proposed sentence rewrite as a diff of the
+  sentence in its document. Accepting commits the dual write (the graph mutation and
+  the prose replacement in one changeset, the document not re-dirtied); the open
+  editor on that document updates in place. Declining lands the edit as Your edit
+  with a proposal.
+- An Inferred or Your edit fact, or a fact added with no prose behind it: a decree.
+  The proposal appears in the [Inbox](#proposals) at once.
+- A default diagram: any edit clears its `default` mark and the recompute leaves it
+  alone from that commit on ([default views](../compiler/model/view.md#default-views));
+  the inspector says so before the save and offers no delete while `default` is set.
+
+## Editor
+
+The GUI embeds a code editor on the project's documents, backed by the language
+server over `GET /lsp` (WebSocket, one JSON-RPC message per text frame, no
+Content-Length framing) where the backend serves it. Each connection is its own
+session with its own open-document overlay. The [capabilities](./lsp.md#capabilities)
+are the LSP's: anchored diagnostics, hover with the most relevant diagram and the
+entity's page link, the requirement card, go to definition, references, completion,
+document links, code lens. Without an LSP the same decorations derive on the client
+from the graph's mentions, quotes, and section tree.
+
+- Markdown renders inline while editing. Headings take their size, emphasis and
+  inline code take their style, links show their text, list bullets and quote bars
+  draw as marks, and fenced code highlights in its own language. The markup syntax
+  appears only where the selection touches it, so the document reads like a page and
+  edits like text. The text itself stays plain markdown, byte for byte: the docs are
+  compiler input, provenance quotes locate against the exact characters, and nothing
+  is rewritten by rendering.
+- Requirement sentences carry a marker in the left margin colored by their rollup:
+  extracted only, verified, failing, stale, question open. Clicking the marker opens
+  the requirement in the inspector. The marker replaces the code lens as the default
+  rendering; the lens returns under the Developer toggle.
+- Entity mentions are underlined so what is clickable is discoverable; hover shows
+  the card, click opens the inspector.
+- Hovering a requirement's sentence shows the [requirement card](./lsp.md#capabilities):
+  the requirement, the code, and the test, each linked, with the trace status. The
+  card's links stay inside the app.
+- The linkage rail: a toggle that shows, beside each section, chips for the entities
+  it defines, its requirement count, its criteria count, and its verification rollup.
+- Questions and proposals render inline as a collapsible band under the sentence they
+  concern, with the option buttons and the freeform input, the same calls as the
+  [Inbox](#inbox).
+- The read state renders beside the text from the section tree: Read, Informational,
+  and Not read yet sections are visually distinct.
+- A sync in progress is visible in the text. When a session takes this document's
+  sections, the sections in its batch are banded as queued, and the section the
+  session reached ([`section` events](../compiler/sessions.md#trace-events)) is banded
+  as running. When the session ends, the bands become its result, green for committed
+  and red for parked or failed, and clear a few seconds later; hovering a band holds
+  it.
+- A dual write shows in the text as it lands: the accepted rewrite replaces the
+  sentence in place, the document does not re-dirty, and the gutter shows no change
+  against the baseline for it.
+- The editor diffs against the last-synced text (`GET /api/docs/baseline`): changed,
+  added, and deleted lines mark the gutter, updated live. A `diff` toggle swaps the
+  editor for a side-by-side diff; the current side stays editable. A never-synced
+  document shows neither.
+- The [markdown preview](#markdown-preview) sits beside the editor when its
+  `preview` toggle is on. The Reader toggle replaces the editor with the rendered
+  page carrying the same markers, underlines, bands, and read states.
+- Saving writes through the documents API with the conditional hash, so an edit made
+  outside the GUI is never silently overwritten. When a build commits, the server
+  republishes diagnostics for every open document, the same refresh the
+  [LSP](./lsp.md#rebuilds-and-refresh) does.
+- Document URIs are `file://` paths under the project root, as reported by
+  `GET /api/project`.
+
+## Settings
+
+The [project settings](../compiler/project-settings.md) as a form over
+`GET /api/settings` and `PUT /api/settings`, grouped: Documents (glob, roots,
+handlers, lint rules), Model and agent (`[llm]`, `[acp]`, and the executors per goal
+kind, each with the last sync's cost for that kind beside it), Product (`[gen]`:
+folder, worker, code globs), Workflow (the mode defaults). Unset keys show their
+effective defaults. The API key shows set or unset only. Saving is conditional on the
+file hash and applies live. A Connection group shows the backend kind and its
+[capabilities](#backends-and-capabilities).
+
+## Workflow modes
+
+The GUI always watches the documents (that is what `docs.changed` reports). What a
+change triggers is the workflow mode, and the mode is not the GUI's private state: it
+lives in the [control plane](../compiler/control-plane.md)
+(`control.yaml` in the out directory), where the internal loop, `jazyk monitor`, and
+every agent over MCP read the same policy. A mode set in the GUI survives a restart
+and binds the agents too.
+
+`GET /api/watch` and `PUT /api/watch` carry `{compile, gen}`, each `auto` or
+`manual`; the action sheet shows them as Sync on save or on request and Build after
+sync or on request:
+
+- `compile: manual` (the default): changes queue visibly in the Inbox's
+  [pending changes](#pending-changes). The board derives from the saved documents, so
+  the work a save opens exists before any release, carrying `gated: true`. Syncing is
+  an explicit `Run` in the action sheet, which records a
+  [release](../compiler/control-plane.md#modes-and-releases), so an attached agent's
+  watcher fires from the same click.
+- `compile: auto`: changes sync automatically, the loop of
+  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate, backoff
+  retries for `incomplete` builds.
+- `gen: manual` (the default): Build runs on `Run`, which likewise records a release.
+  The release covers [binding](../consumers/bind.md#when-binding-runs) too: open
+  `bind` goals run before `generate` goals.
+- `gen: auto`: a finished sync with open `generate` goals queues a `gen` job behind it.
+
+Document has no mode: it is always an explicit action that records a decompile
+release for its area ([decompilation](../consumers/decompile.md#triggering)).
+
+`--watch` starts with `compile: auto`. Automatic modes spend LLM budget, so both are
+opt-in. Running `jazyk watch` in a terminal beside the GUI is safe: builds serialize
+on the build lease and commits on the store lock, and the second build derives an
+empty board.
+
+### Workers
+
+`GET /api/workers` reports the control plane: the modes, the registered
+[workers](../compiler/control-plane.md#workers-and-leases) with their heartbeats and
+held batches, the live leases, and the gated goal counts. The action sheet names who
+will run ("claude-code agent, waiting for you"), and the Developer lens's
+[Workers](#workers-1) page renders the whole snapshot. `Run` dispatches by the
+`worker` preference ([dispatch](../compiler/control-plane.md#dispatch)): with an agent
+registered and preferred, the click records the release and the agent claims the
+batches ([compilation over MCP](./mcp.md#compilation-over-mcp)), its progress
+streaming into a build thread from the MCP transcript and onto the board from the
+commits; otherwise the GUI runs its own job. `POST /api/release` with `{stage}`
+records a release without running anything.
+
+## Developer toggle
+
+One switch in the status bar (also `⌘⇧D`), remembered per browser, off by default.
+`jazyk gui --dev` starts with it on. When on:
+
+- The Developer lens appears in the top bar with the pages below.
+- Compiler words appear beside product words in labels and in the status bar.
+- The inspector gains goal cards, change records, and the `Raw` tab.
+- The chat expands tool payloads, rounds, tokens, and the loaded-set panel.
+- The editor shows the requirement code lenses beside the markers.
+- The status bar adds the event-stream sequence, the store lock state, and the last
+  request's latency.
+- Failed or dead runs surface under [Runs](#runs) only. The default mode shows a
+  failed sync as one line with its reason and a `Details` link that flips the toggle.
 
 ### Board
 
-The `board` rail item is the goal board: what compilation owes, why, and what it is
-doing about it. The board is derived from disk on every consult
+The goal board: what compilation owes, why, and what it is doing about it. The board
+is derived from disk on every consult
 ([goal derivation](../compiler/reconciler.md#goal-derivation)), so the GUI shows the
 same board `jazyk status` counts, whichever process runs the build.
 
@@ -668,7 +1132,7 @@ same board `jazyk status` counts, whichever process runs the build.
   - open: ready, or waiting with the readiness sentence;
   - in session: the batch id, the card pulsing while the session streams;
   - blocked: the reason: the unanswered prompt, the ratification proposal, or the
-    gated release, each a link to where the human acts;
+    gated release, each a link to where the human acts (the Inbox);
   - parked: out of budget, resumes first next build;
   - failed: the reason the session gave, standing on the target;
   - resolved: the card turns into its justification and stays until the build ends,
@@ -676,22 +1140,19 @@ same board `jazyk status` counts, whichever process runs the build.
 - Cause lines: a card opened by a resolution draws a line from the card that resolved,
   while both show, and the line lights as the `goal.opened` event fires. The board is
   the ripple, live.
-- A card click opens the live session in the chat pane when a session holds the goal
-  (the [follow session](#chat)); otherwise it opens the goal in the inspector with its
-  explanation (`GET /api/explain?target=`).
+- A card click opens the build thread holding the goal in the chat column when a
+  session holds it; otherwise it opens the goal in the inspector with its explanation
+  (`GET /api/explain?target=`).
 - Card actions: `preview` opens the [preview pane](#preview) on the batch this goal
-  would join; `explain` and `ripple` open the inspector (`ripple` with the ripple
-  pane already open); a blocked `answer` card jumps to its question in the
-  [questions list](#questions), a blocked `ratify` card to its proposal (the
-  questions list, and the proposal's diagnostic in the inspector); a `split-view`
-  or `abstract-entity` card offers `dismiss`, which stages
-  [`bump_limit`](../compiler/graph.md#mutations) on the node (through
+  would join; `explain` and `ripple` open the inspector; a blocked `answer` card jumps
+  to its question in the [Inbox](#questions), a blocked `ratify` card to its
+  [proposal](#proposals); a `split-view` or `abstract-entity` card offers `dismiss`,
+  which stages [`bump_limit`](../compiler/graph.md#mutations) on the node (through
   `POST /api/facts/{id}/edit` with `{field: limits.<limit>, value}`): a decree that
   raises the node's own threshold ([per-node bumps](../compiler/graph.md#per-node-bumps)).
   Dismissal is a graph write, never goal state, and the goal stops deriving until the
   raised threshold is crossed.
-- The board never shows decompilation: drafts stay outside the goal board
-  ([work](#work)).
+- The board never shows decompilation: drafts stay outside the goal board.
 
 E.g.:
 
@@ -703,258 +1164,113 @@ waiting: 2 compile goals open in the cone
 hints: load ent:order · skill abstraction
 ```
 
-### Preview
+### Runs
 
-The preview pane shows the next session's prompt exactly as the model receives it,
-assembled from the same code that runs the session
-([the prompt](../compiler/sessions.md#the-prompt)): the agent contract, the active
-skills, the `## Project` block, the `## Goals` block with each goal's contract paragraph
-and hints, the `## Loaded` block (the loaded set as its status block), and the
-worker-protocol line. Beside it: the batch's toolset and the executor the batch
-resolves to ([executors](../compiler/project-settings.md#executors)).
+The run console: a run is one job plus what it committed.
 
-- In `compile: manual`, the pane opens before the release: the compile click shows the
-  next batch's prompt, and the pane's release button records the release
-  ([modes and releases](../compiler/control-plane.md#modes-and-releases)). The pane
-  re-renders as documents change until the release lands.
-- From a board card, the pane shows the batch that goal would join, the same rendering
-  as `jazyk preview <goal|target>`.
-- The pane is read-only: prompts are assembled, never authored. Changing what the model
-  will see means changing the documents or the graph.
-- A preview makes no LLM call. The transcript records the same rendering per round, so
-  the [activity panel](#activity) shows after the fact what the preview showed before.
-
-### Work
-
-The ledger-side worklists, opened from the `work` rail item:
-
-- The verification matrix: every ledger row with its derived status chip and the
-  [staleness cascade](../consumers/gen.md#the-cascade) explained per row. Rows open the
-  requirement in the inspector.
-- The generation packages: for each entity with an open `generate` goal, the package a
-  session receives (`GET /api/gen/package/{entity}`). The goals themselves are board
-  cards; this view shows what the session will be handed.
-- The [unclaimed report](../consumers/bind.md#the-unclaimed-report) and the decompile
-  action. Decompilation is outside the goal board: the action records a decompile
-  release for its scope and dispatches like compile and generate
-  ([decompilation](../consumers/decompile.md#triggering)).
-- Run actions submit jobs to the activity panel.
-
-### Feedback
-
-The history of the [feedback tool](../compiler/tools.md#feedback-tool): what the
-models reported about jazyk itself, newest first. This view is for jazyk's
-developers, not for the project's authors; nothing here is a statement about the
-documents.
-
-- Each entry shows its kind, its subject, the message, and the references that name
-  the caller: the source, the goal kind and batch, the target, the MCP client, the
-  model, the codec, and the store generation.
-- The kind is a filter: `?kind=` selects one, and the counts sit beside the filters.
-- An entry made during a traced run links to that run, which selects it in the
-  activity panel (`?run=`), so the call sits back in the transcript it came from.
-- A feedback call mid-build refreshes the view as it lands, not at the end of the run.
-
-### Inspector
-
-The detail pane for one node, opened from anywhere, layered over nothing:
-
-- An entity: name, definition, scope, stereotype, parent (opens it) and children,
-  attributes (each with its provenance), mentions (each opens the editor at the
-  quote), the requirements referencing it, its relationships by direction and type,
-  the views it belongs to (each with an overlay action), its derived state machine,
-  the files implementing it, and its verification rollup.
-- A requirement: the statement, its provenance (a quote opens the editor at the
-  quote; `derived` lists the upstream nodes and the reasoning; `decree` names the
-  author and the note), its entities, its edges with type and cardinality, its
-  transition, its facets with their reasoning, its implementing sites (each opens the
-  deliverable file at the located line), and its verification status.
-- A view: kind, title, the members in order, the excluded members with notes, the
-  query, the collapse set, provenance, its limits state, and the overlay action.
-- A relationship (from an arrow): the members and the contribution groups, each with
-  its requirements. A lifted arrow lists the concrete edges beneath it first.
-- A state machine: the states, the initial state, and the transitions, each with the
-  requirement that declares it and its open [checks](../compiler/model/state-machine.md#checks).
-- A diagnostic: message, severity, subjects, reasoning, the triage actions, and its
-  prompt when it carries one.
-- A goal (from a board card): kind, class, target, change, cause, state, hints, and its
-  explanation: the change record, the readiness sentence, what blocks it.
-- Every node id anywhere in the app opens the inspector. The center never changes
-  under it; the click-through from a requirement to its implementation is: open the
-  inspector, then open a site.
-
-Justification walks. Every rendered element walks to the sentence behind it, and the
-inspector is the walk ([justification closure](../compiler/compilation.md#checks)):
-
-- An arrow opens its relationship, the relationship lists its contributing
-  requirements, each requirement shows its sentence, and the sentence opens the editor
-  at the quote. A lifted arrow adds one step: the concrete edges beneath it.
-- An object value opens the attribute and the example sentence it came from.
-- A component box opens the statements on the entity.
-- A walk that reaches a `derived` or `decree` fact ends on its open ratification
-  proposal instead of a quote, with the upstream nodes beside it.
-
-Editing facts. Fields in the inspector are editable in place: a definition, an
-attribute value, a statement, an edge's type or cardinality, a transition, a view's
-members. Saving goes through `POST /api/facts/{id}/edit`, the
-[edit paths](../compiler/compilation.md#edit-paths):
-
-- A quote-provenanced fact: the inspector shows the proposed sentence rewrite as a
-  diff of the sentence in its document. Accepting commits the dual write (the graph
-  mutation and the prose replacement in one changeset, the document not re-dirtied);
-  the open editor on that document updates in place. Declining lands the edit as a
-  decree with a ratification proposal.
-- A derived or decree fact, or a fact added with no prose behind it: a decree. The
-  ratification proposal appears in the [questions list](#questions) at once.
-- A default view: any edit to it clears its `default` mark, and the recompute leaves
-  it alone from that commit on ([default views](../compiler/model/view.md#default-views));
-  the inspector says so before the save. The inspector offers no delete while `default`
-  is set: `delete_view` refuses a default view. Any edit clears the mark, and delete
-  becomes available.
-- Downstream goals derive from the graph change like any other, and the board shows
-  them as they open.
-
-### Chat
-
-The chat pane is the GUI's [ACP client](./acp.md) surface. One session list, two
-session kinds:
-
-- Chat sessions: a conversation with the configured agent, created in the pane. The
-  session gets the [`chat` serving](./mcp.md#toolsets), so the agent can read and load
-  the graph, revise requirements and edit facts through the
-  [dual-write tools](./acp.md#dual-write-tools), claim goal batches through the
-  lifecycle tools, and edit project settings. Prompting streams the agent's thoughts,
-  messages, and tool calls into the transcript as they happen.
-- Follow sessions: every [worker session](./acp.md#worker-sessions) a job runs
-  registers as a read-only session, so watching a build is opening its session. A
-  board card opens the session holding its goal. The transcript is the same rendering
-  as a chat session: the agent's messages, its tool calls, their results. The header
-  names the batch: its goals and their targets.
-
-The pane's behaviors:
-
-- The loaded-set panel: beside every session's transcript, the
-  [loaded set](../compiler/context.md#the-loaded-set) as the serving renders it
-  ([rendering](../compiler/context.md#rendering)): each loaded item with its size,
-  what it shows and what stays unloaded behind a handle, the unload suggestions, the
-  high-water mark, and the skill index line. The panel re-renders live on every
-  mutating tool reply and in full on `graph_status`, the same cadence the model sees.
-  Every item opens in the inspector; a handle shows its size estimate. The panel is
-  read-only on a follow session; on a chat session it reflects what the agent loads.
-- [Slash commands](./acp.md#slash-commands): the same catalog the IDE proxy
-  advertises, completed in the prompt box from the advertised list. A command means
-  the same thing in both frontends; here a build command runs through the job queue
-  and streams its progress into the same session.
-- The [build plan](./acp.md#plans) renders as a live checklist: one entry per goal
-  batch, showing the batch's task and target, flipping as the build advances.
-- Follow mode: a toggle that pins the transcript to the newest update and moves the
-  editor along with the work. A tool call carrying a location opens the document or
-  deliverable file in the center at that line, so the center shows what the agent is
-  touching while the pane shows what it is doing. Pair programming, with the agent
-  driving.
-- Permission requests from chat sessions surface inline as option buttons
-  ([permissions](./acp.md#permissions)). An unanswered request cancels with the
-  prompt it belongs to. Worker sessions never ask; their policy answers.
-- Transcripts persist in the [session store](./acp.md#session-store) under
-  `<out>/sessions/`, so a reloaded page, and a restarted server, restore the session
-  list and its history. A restored conversation has no agent behind it until it is
-  prompted again, which opens a fresh agent session under the same id.
-
-API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
-them, `GET /api/chat/sessions/{id}` returns one with its transcript and its loaded
-set, `POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
-event stream), `POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
-`POST /api/chat/permissions` answers a pending permission request with body
-`{sessionId, id, optionId?}` (a missing `optionId` cancels the request). Updates
-travel as `chat.update` events, elided like `job.trace`; permission requests as
-`chat.permission`; session list changes as `chat.sessions`.
-
-### Questions
-
-Open diagnostics carrying a [prompt](../compiler/model/diagnostic.md#prompts) render
-in two places:
-
-- A questions list in the chat pane, above the session list while any are open: the
-  question, one button per option, and a text box when the prompt accepts freeform.
-  Answering posts to the same engine every frontend uses: an `edit` option applies
-  and the finding disappears with the next event; other answers show
-  `answer.status` as the [answer session](./acp.md#answer-sessions) handles them.
-- Inline in the [editor](#editor): the GUI's editor rides the same
-  [LSP](./lsp.md#capabilities) the IDEs use, so a prompted diagnostic's options
-  appear as quick fixes on the anchored quote, plus the freeform input the GUI can
-  offer where base LSP clients cannot.
-
-Two goal kinds are blocked on this list, and the board says so on their cards:
-
-- An [`answer`](../compiler/goals/answer.md) goal waits on an unanswered prompt. The
-  human's answer resolves it; applying the answer runs as an
-  [answer session](./acp.md#answer-sessions), not a goal, and the recorded answer is
-  the cause of what it commits.
-- A [`ratify`](../compiler/goals/ratify.md) goal waits on a
-  [ratification proposal](../compiler/model/diagnostic.md#ratification-proposals): the
-  sentence the documents should gain, rendered as the prompt's `edit` option.
-  Accepting applies the dual write and flips the fact's provenance to `quote` in the
-  same changeset; `retract` removes the decree. Either way the goal leaves the board.
-
-Opening a project with standing errors, warnings, and proposals re-surfaces them here
-without any action: the list reads from the graph, and the graph kept them.
-
-### Activity
-
-The bottom panel shows runs: a run is one job plus what it committed. Collapsed, the
-panel is a single control line; expanded, it is two parts:
-
-- The run list: newest first, live jobs and the transcripts on disk (CLI runs
-  included), each with kind, state, timing, and its one-line result: the verdict with
-  its counts for a compile. Selecting a run pins it: a new job starting does not steal
-  the view.
+- The run list: newest first, live jobs and the transcripts on disk (CLI and MCP runs
+  included, from `GET /api/trace`), each with kind, state, timing, and its one-line
+  result: the verdict with its counts for a compile; a missing outcome reads as died
+  mid-run. Selecting a run pins it (`?run=`): a new job starting does not steal the
+  view.
 - The selected run: the transcript as session groups, newest session first, the
   running session pinned and highlighted with its tool calls streaming in. A session
   group is keyed by the event [label](../compiler/sessions.md#trace-events), one group
   per batch, so a run reads as its sessions, not as one interleaved stream. The header
   names the batch: its goals and their targets, and for a `reconcile-section` batch
   the document, its sections, and the section the session reached. A GC burst heads
-  its own group with the `gcBurst` line (`abstract-entity ent:order (54 > 50)`).
+  its own group with the `gcBurst` line.
 - Inside a session, one card per round. The card header is the round's arithmetic:
   prompt size, response time, completion tokens, and how many tool calls the answer
-  produced. Expanding it shows the round in full, fetched on demand:
-  - The request: every message in the order it was sent, each collapsible, the
-    agent contract, the skills, the goals block, and the `## Loaded` status block as
-    rendered that round included. The request is what the model was asked; nothing
-    about it is inferred from the reply.
-  - The response: the assistant message as it arrived, reasoning field included, and
-    the parsed tool calls with their arguments.
-  - The tool results the harness sent back, each with the full payload, the condensed
-    status block on every mutating reply included.
-  A retry or a sticky fallback (codec downgrade, streaming, dropped `temperature`)
-  shows as its own row in the round, with the error that caused it.
+  produced. Expanding it shows the round in full, fetched on demand
+  (`GET /api/trace/{stem}/{n}`): the request (every message in the order it was sent,
+  each collapsible), the response (the assistant message as it arrived, reasoning
+  included, and the parsed tool calls), and the tool results the harness sent back. A
+  retry or a sticky fallback shows as its own row with the error that caused it.
 - The changesets the run committed (the journal entries whose build matches) render
   inline in order, each expandable to its mutations and reasoning, its resolved goals
-  with their justifications, and the goals it opened with their causes: the trace
-  says what the model did, the changesets say what landed and what it set in motion.
-- The whole-build report: one click from a compile run opens its ripple
+  with their justifications, and the goals it opened with their causes.
+- The whole-build report: one click opens the run's ripple
   (`GET /api/ripple?generation=` at the run's first generation) in the inspector: the
   causality DAG, the cost beside it, and the parked and failed goals with reasons.
-- The control line, visible even collapsed: the compile button (with the board
-  counts: open goals and blocked), the generate button (with the open `generate` goal
-  count), verify, the [compile mode](#workflow-modes) select, and the generation mode
-  select. The
-  running job shows its kind, its current batch, and its progress here; cancel is one
-  click.
-- The changeset timeline is addressable per generation, and the release diff between
-  any two generations stays reachable from the panel (the journal range diff).
 
-## Benchmarks
+### Preview
 
-The benchmarks tab grades and compares models
+The preview pane shows the next session's prompt exactly as the model receives it,
+assembled from the same code that runs the session
+([the prompt](../compiler/sessions.md#the-prompt)): the agent contract, the active
+skills, the `## Project` block, the `## Goals` block with each goal's contract paragraph
+and hints, the `## Loaded` block, and the worker-protocol line. Beside it: the batch's
+toolset and the executor the batch resolves to
+([executors](../compiler/project-settings.md#executors)).
+
+- In `compile: manual`, the action sheet opens the pane before the release in
+  Developer mode, and the pane's release button records the release
+  ([modes and releases](../compiler/control-plane.md#modes-and-releases)). The pane
+  re-renders as documents change until the release lands.
+- From a board card, the pane shows the batch that goal would join, the same rendering
+  as `jazyk preview <goal|target>`.
+- The pane is read-only: prompts are assembled, never authored.
+- A preview makes no LLM call. The transcript records the same rendering per round, so
+  [Runs](#runs) shows after the fact what the preview showed before.
+
+### Journal
+
+The raw [journal](../compiler/graph.md#journal) entries per generation, the source
+[History](#history) renders in product words: mutations, resolved and opened goals,
+rounds, tokens, and the entry kind.
+
+### Workers
+
+The whole control-plane snapshot from `GET /api/workers`: the modes, every registered
+worker with its heartbeat and held batch, the live leases, the gated goal counts, and
+a release button per stage when gated goals exist.
+
+### Map
+
+The whole-graph map, drawn from the graph itself and never from the rendered files
+under `<out>/diagrams/`:
+
+- Nodes are typed: entities (with their stereotype as a badge), documents,
+  requirements, and product files. Edges are typed too: the
+  [derived relationships](../compiler/graph.md#derived-data) between entities, one
+  arrow per direction-and-type group, drawn with UML notation (a hollow triangle for
+  generalization, a hollow triangle on a dashed line for realization, a filled diamond
+  for composition, a hollow diamond for aggregation, a plain line for association, an
+  open arrow on a dashed line for dependency, and the same labeled `«instantiate»` for
+  instantiation), with cardinality labels where a contribution states one; a
+  requirement to the entities it names; a requirement to the document its source
+  anchors in; a requirement to the product files whose sites implement it.
+- Containment draws as nesting ([containment](../compiler/model/entity.md#containment)).
+  A parent collapses to one node showing its child count. With the children hidden,
+  every relationship touching a hidden descendant lifts to the parent: one arrow per
+  direction and type, promoted to the strongest type in the group, with a count label
+  ([lifting and collapse](../compiler/diagrams.md#lifting-and-collapse)). Clicking a
+  lifted arrow lists the concrete edges beneath it in the inspector. Lifting is
+  computed on the server by the same code the emitters use, so the map and the
+  rendered picture never disagree.
+- Views as overlays: `?view=` draws that view's membership and nothing else, the
+  structural kinds as the map, the flow kinds as ordered steps with the participants
+  as lanes, a state view as its machine. A view over its hard limit draws with
+  auto-collapse of the largest subtrees and the same visible note the rendered picture
+  carries ([over-limit views](../compiler/diagrams.md#over-limit-views)).
+- Type chips filter which node types draw; the default shows entities and documents.
+  When two visible nodes are joined only through hidden ones, a collapsed tie draws
+  between them, thin and dotted; selecting it inspects the intermediary.
+- Focus: selecting a node and focusing pulls in every adjacent node of every type,
+  chips notwithstanding, to one or two hops. Entity scope, stereotype, and edge-type
+  filters apply.
+
+### Benchmarks
+
+The benchmarks page grades and compares models
 ([benchmark](../benchmark/benchmark.md)):
 
 - The table merges three sources, latest per model and codec: results embedded in the
   binary (`source: embedded`), the machine-wide history (`~/.jazyk/benchmarks/`), and
   the project's own `results.yaml`. Columns are the workflow verdicts, the tier
   scores, efficiency, tokens, and throughput; rows with a different `caseSetHash` than
-  the running binary's are marked stale. Grading per goal kind is deferred; the table
-  shows what the harness grades.
+  the running binary's are marked stale.
 - A run form: the endpoint URL (default: the resolved LLM settings), a model picked
   from the endpoint's `/v1/models` listing or typed free-form, and a run button that
   starts a benchmark [job](#jobs). Progress streams like any job; the finished grade
@@ -962,127 +1278,42 @@ The benchmarks tab grades and compares models
 
 API: `GET /api/benchmarks` (the merged table), `GET /api/benchmarks/models?baseUrl=`
 (the endpoint's model listing), and `POST /api/jobs` with
-`{kind: benchmark, baseUrl?, model?}` (the shared [jobs](#jobs) surface; returns the
-job id).
+`{kind: benchmark, baseUrl?, model?}`.
 
-## Workflow modes
+### Feedback
 
-The GUI always watches the documents (that is what `docs.changed` reports). What a
-change triggers is the workflow mode, and the mode is not the GUI's private state: it
-lives in the [control plane](../compiler/control-plane.md)
-(`control.yaml` in the out directory), where the internal loop, `jazyk monitor`, and
-every agent over MCP read the same policy. A mode set in the GUI survives a restart
-and binds the agents too.
+The history of the [feedback tool](../compiler/tools.md#feedback-tool): what the
+models reported about jazyk itself, newest first. This page is for jazyk's developers,
+not for the project's authors; nothing here is a statement about the documents.
 
-`GET /api/watch` and `PUT /api/watch` carry `{compile, gen}`, each `auto` or
-`manual`:
+- Each entry shows its kind, its subject, the message, and the references that name
+  the caller: the source, the goal kind and batch, the target, the MCP client, the
+  model, the codec, and the store generation.
+- The kind is a filter: `?kind=` selects one, and the counts sit beside the filters.
+- An entry made during a traced run links to that run under [Runs](#runs).
+- A feedback call mid-build refreshes the page as it lands.
 
-- `compile: manual` (the default): changes queue visibly. The board derives from the
-  saved documents, so the goals a save opens appear as cards before any release,
-  carrying `gated: true`; the control line counts the documents that drifted from the
-  graph and the goals open. Compiling is an explicit click: the click opens the
-  [preview pane](#preview) on the next batch, and the pane's release records a
-  [release](../compiler/control-plane.md#modes-and-releases), so an attached agent's
-  watcher fires from the same click.
-- `compile: auto`: changes compile automatically, the loop of
-  [`jazyk watch`](./cli.md#jazyk-watch): debounced events, a fingerprint gate,
-  backoff retries for `incomplete` builds. No preview pane: the prompt is still on
-  record in the transcript.
-- `gen: manual` (the default): generation runs on click, which likewise records a
-  release. The release covers [binding](../consumers/bind.md#when-binding-runs) too:
-  open `bind` goals run before `generate` goals.
-- `gen: auto`: a finished compile with open `generate` goals queues a `gen` job behind
-  it ([incremental regeneration](../consumers/gen.md#incremental-regeneration)).
+## Empty states and failure
 
-Decompilation has no mode: the decompile action is always an explicit click. It
-records a decompile release for its scope and dispatches like compile and generate
-([decompilation](../consumers/decompile.md#triggering)). The
-[unclaimed report](../consumers/bind.md#the-unclaimed-report) beside the action shows
-what territory has no docs; the count shrinks as drafts land and their statements
-bind.
+- Every panel has an empty state that says what fills it and offers the action: a
+  project with no sync yet offers Sync; a Product lens with no product folder offers
+  the settings; an Inbox with nothing waiting says so.
+- A slow backend shows a skeleton for at most two seconds, then a banner naming the
+  request still pending. A read that another process blocks (the store busy under a
+  build in another process) says which process holds it, from `GET /api/workers`.
+- A dropped event stream banners the lost connection and polls until it heals; a
+  rejected token gives way to the token prompt ([serving](#serving)).
+- The default mode never renders a run list, a transcript, or a dead run. A failed
+  sync is one line with its reason and `Details`.
 
-`--watch` starts with `compile: auto`. Automatic modes spend LLM budget, so both are
-opt-in. With both automatic, a document change compiles and regenerates end to end;
-the chain never loops, because generation does not touch the documents. Running
-`jazyk watch` in a terminal beside the GUI is safe: builds serialize on the build
-lease and commits on the store lock, and the second build derives an empty board.
+## Frontend
 
-### Workers
-
-`GET /api/workers` reports the control plane: the modes, the registered
-[workers](../compiler/control-plane.md#workers-and-leases) with their heartbeats and
-held batches, the live leases, and the gated goal counts. The workers strip renders
-it: who is attached ("claude-code agent, awaiting release", "working on
-reconcile-section docs/orders.md"), and a release button per stage when gated goals
-exist.
-
-Compile and generate clicks dispatch by the `worker` preference
-([dispatch](../compiler/control-plane.md#dispatch)): with an agent registered and
-preferred, the click records the release and the agent claims the batches
-([compilation over MCP](./mcp.md#compilation-over-mcp)), its progress streaming into
-the [activity view](#activity) from the MCP transcript and onto the board from the
-commits; otherwise the GUI runs its own job. `POST /api/release` with `{stage}`
-records a release without running anything, the button the workers strip uses.
-
-## Editor
-
-The GUI embeds a code editor on the project's documents, backed by the language server
-over `GET /lsp` (WebSocket, one JSON-RPC message per text frame, no Content-Length
-framing). Each connection is its own session with its own open-document overlay. The
-[capabilities](./lsp.md#capabilities) are the LSP's: anchored diagnostics, hover with
-the most relevant view's picture and the entity's page link, the requirement card, go
-to definition, references, completion, document links, code lens.
-
-- Markdown renders inline while editing. Headings take their size, emphasis and
-  inline code take their style, links show their text, list bullets and quote bars
-  draw as marks, and fenced code highlights in its own language. The markup syntax
-  (`#`, `**`, backticks, `](url)`) appears only where the selection touches it, so
-  the document reads like a page and edits like text. The text itself stays plain
-  markdown, byte for byte: the docs are compiler input, provenance quotes locate
-  against the exact characters, and nothing is rewritten by rendering.
-- The [markdown preview](#markdown-preview) sits beside the editor when its
-  `preview` toggle is on, split with the text, and follows every keystroke. Its
-  links resolve against the document's path: another document opens in the editor,
-  a generated page under the out directory opens in the center, an image under the
-  out directory renders inline.
-- Document URIs are `file://` paths under the project root, as reported by
-  `GET /api/project`.
-- When a build commits, the server republishes diagnostics for every open document on
-  every connection, the same refresh the [LSP](./lsp.md#rebuilds-and-refresh) does.
-- Entity mentions are visibly marked in the text (a subtle accent underline), not
-  only on hover, so what is clickable is discoverable. The marks come from the
-  language server's document links.
-- Requirement attachments show as the language server's [code
-  lenses](./lsp.md#capabilities) above their quotes, so where a requirement anchors
-  is visible without hovering. Clicking a lens opens the requirement in the
-  inspector, beside the text.
-- Hovering a requirement's quote shows the language server's
-  [requirement card](./lsp.md#capabilities): the requirement, the code, and the test,
-  each linked, with the verification status. The card's links stay inside the app: the
-  requirement link opens the requirement in the inspector, a code or test link opens
-  that deliverable file in the center at the line, and a link into another document
-  opens the editor there. An `llm` test's criteria file has no page of its own, so that
-  link lands on the requirement's verification detail in the inspector.
-- Coverage renders beside the text from the section tree: covered, non-normative, and
-  unprocessed sections are visually distinct.
-- A build in progress is visible in the text. When a session takes this document's
-  sections, the sections in its batch are banded as queued, and the section the
-  session reached ([`section` events](../compiler/sessions.md#trace-events)) is banded
-  as running. Each band marks its first line in the gutter, beside the coverage
-  border. When the session ends, the bands become its result, green for committed and
-  red for parked or failed, and clear a few seconds later. Hovering a band holds it,
-  and its tooltip names the batch, the section, and the outcome.
-  Section lines come from the last reconciled section tree, the same source as the
-  coverage bands, so they can drift against unsaved edits until the next build
-  commits.
-- A dual write shows in the text as it lands: the accepted sentence rewrite replaces
-  the sentence in place, the document does not re-dirty, and the gutter shows no
-  change against the baseline for it, because the commit absorbed the new hash.
-- The editor diffs against the reconciled baseline (`GET /api/docs/baseline`):
-  changed, added, and deleted lines mark the gutter, updated live as the text
-  changes. The marks answer what the next compile will see as dirty. A `diff`
-  toggle swaps the editor for a side-by-side diff of baseline against current text;
-  the current side stays editable. A never-reconciled document shows no marks and
-  no toggle.
-- Saving writes through the documents API with the conditional hash, so an edit made
-  outside the GUI is never silently overwritten.
+The app lives in `bootstrap/app` and its built output (`bootstrap/app/dist`,
+committed) embeds into the binary. The stack: React, TypeScript, Vite, TanStack Query
+for server state, zustand for the ephemeral client state (connection, jobs, the trace
+ring, the Developer toggle), CodeMirror 6 for the editor, react-router, react-markdown,
+Radix primitives for menus, dialogs, sheets, and tooltips, and cytoscape for the
+Developer map. One token file holds the design system: the type scale, spacing, and
+the severity and status colors the [viewer](./viewer.md) uses (red `error`, amber
+`warning`, blue `info`, grey `none`). The vocabulary table above is one module keyed
+by the Developer toggle, so a label is never written twice.

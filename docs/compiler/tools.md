@@ -386,6 +386,10 @@ clear or keep change records; they are not graph mutations
   `goal` trace events, and `jazyk explain` keep one entry per goal, as with
   `mark_goal_done`. The repeated-call guard counts per accepted entry
   ([repeated calls](./sessions.md#repeated-calls)).
+- `evidence` may arrive as a JSON string (the text codec's shape): the tool parses it
+  before the gate reads it, and a refusal says what shape arrived (a bare array, a
+  string that is not JSON, an object with other keys), since a local model once met the
+  same `bad-evidence` line for every shape it tried.
 - `mark_goal_failed({goal, reason})`: always available. A goal that cannot be
   accomplished (documents too deeply contradictory, a target that no longer makes
   sense) must be failable, or the board fills with dishonestly resolved goals. The
@@ -479,6 +483,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
 developers. It reports that a prompt, a skill, a tool, a schema, or an error message is
 ambiguous, wrong, confusing, or missing something, not that the project's documents are.
+The channel is a local file: each call appends one line to the project's
+`<out>/feedback.jsonl`, and nothing is transmitted anywhere. The tool description and
+the serving instructions say so, since an agent whose own guard screens outbound data
+once refused the call as an export to an external destination.
 Findings about the documents are [diagnostics](./model/diagnostic.md); findings about
 jazyk are feedback.
 
@@ -572,8 +580,11 @@ inside the deliverable that points outside is refused (`bad-path`) like `..` wou
 and `list_files` does not list it.
 
 - `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
-  the open `generate` goals: `{entity, reason, changed}` where `changed` lists the
-  requirement ids added, removed, or reworded since the entity was last generated.
+  the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where
+  `changed` lists the requirement ids added, removed, or reworded since the entity was
+  last generated and `blockedBy` is the board's readiness reason for a row that is not
+  ready (its requirements still owe a binding, a release). `begin_generation` refuses a
+  row that is not ready with the same reason (`not-ready`).
 - `begin_generation({entity})`: the full package for one entity: the instructions (the
   generation contract: both halves per entity, traceability markers, the two test
   kinds, the parts protocol), the entity's loaded set, its requirements in generation
@@ -611,7 +622,9 @@ and `list_files` does not list it.
 work from. Same worker model as generation: the agent searches and edits with its own
 tools; jazyk holds the ledger. These tools never mutate the graph.
 
-- `binding_tasks({})`: requirements owing a binding, the targets of the open
+- `binding_tasks({})` (rows sorted by entity with a `byEntity` count, since generation
+  works per entity and a session once bound an entity's rows by hand to make its task
+  useful): requirements owing a binding, the targets of the open
   [`bind`](./goals/bind.md) goals, with a `reason` (`unbound`, `requirement-changed`,
   `artifact-gone`). Deterministic; no model involved.
 - `begin_binding({requirement})`: the package for one requirement: the instructions

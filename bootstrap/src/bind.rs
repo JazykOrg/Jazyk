@@ -115,10 +115,28 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
                 continue;
             }
             let Ok(text) = crate::vfs::read_to_string(&p) else { continue };
-            let hits: Vec<&String> = needles.iter().filter(|n| text.contains(n.as_str())).collect();
+            // A needle hits at a word boundary only: crit:x-1 is no part of crit:x-13.
+            let bounded = |n: &str| {
+                text.match_indices(n).any(|(i, _)| {
+                    text[i + n.len()..]
+                        .chars()
+                        .next()
+                        .map(|c| !c.is_alphanumeric())
+                        .unwrap_or(true)
+                })
+            };
+            let hits: Vec<&String> = needles.iter().filter(|n| bounded(n.as_str())).collect();
             if !hits.is_empty() {
                 let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
-                out.push(serde_json::json!({"file": rel, "names": hits}));
+                // A hash needle is eight hex characters; a file that names the id or
+                // slug but no current hash is another statement's test.
+                let is_hash = |n: &str| n.len() == 8 && n.chars().all(|c| c.is_ascii_hexdigit());
+                let current = hits.iter().any(|n| is_hash(n));
+                let mut hit = serde_json::json!({"file": rel, "names": hits, "carriesCurrentHash": current});
+                if !current {
+                    hit["note"] = serde_json::json!("names this id or slug but no current statement hash: the test of an earlier statement under this id, or of another one; rename only when its assertion is this statement's");
+                }
+                out.push(hit);
             }
             if out.len() >= 10 {
                 return;
@@ -262,9 +280,10 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "criteriaNote": if criteria.is_empty() {
             "no criteria on this requirement; one test encodes the statement"
         } else {
-            "one test per criterion, named by suggestedTestName; record them under tests in record_binding"
+            "one test per criterion, named by suggestedTestName; record them under tests in record_binding. One file per requirement may hold them all, but each entry's run must select its own test by name (cargo test <name>, npx tsx --test --test-name-pattern <name>, python3 tests/<file>.py <name>): a run of the whole file judges every criterion at once"
         },
         "existingTests": existing_tests,
+        "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,
         "statement": r.statement,
         "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
@@ -279,6 +298,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "mediumWarning": crate::gen::medium_divergence(&ledger),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd})),
         "testConventions": conventions,
+        "testConventionsNote": "the toolchain and command style already recorded, to reuse exactly; an earlier row's assertion style is not a convention, and a test that reads a description of the artifact stays wrong however many rows share it",
         // The statement is disputed while these stand; the test judges one side of an
         // open question (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
         "openDiagnostics": crate::gen::open_errors_on(store, &rid),
@@ -533,11 +553,15 @@ pub fn record(
         "verdict": verdict,
         "status": status,
         "reason": reason,
-        "note": match status.as_str() {
+        "note": match (status.as_str(), reason.as_str()) {
+            ("failing", "criteria-failing-after-generation") => "a generation over the current facts has landed and a criterion test is still red: generation had its turn, so this is a finding for the author (the failing-binding check files it), not generation work; it becomes work again when the docs or the deliverable change",
+            (status, _) => match status {
             "verified" => "the deliverable already satisfies the statement",
             "unimplemented" => "nothing implements the statement; the entity is generation work and this test is its acceptance gate",
-            "failing" => "implementing files exist but the test fails: the deliverable contradicts the statement; surface it to the author, never regenerate silently",
+            "partial" => "implementing files exist and some criterion tests pass while others fail: the entity is generation work for the failing criteria",
+            "failing" => "implementing files exist but the tests fail: the deliverable contradicts the statement; the failing-binding check files it for the author at the next check run, never regenerate silently",
             _ => "recorded",
+            },
         },
     });
     if !contradicted.is_empty() {
@@ -814,6 +838,69 @@ mod tests {
         let p = pending(&s, &gs);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["reason"], "criterion-changed");
+    }
+
+    // Mirrors docs/consumers/gen.md#status-is-derived-never-stored: implementing files
+    // with the criterion tests split read partial, generation work, not a contradiction.
+    #[test]
+    fn split_criterion_tests_read_partial() {
+        let mut s = tmp_store();
+        for (id, st) in [("crit:shop-1", "Two items listed show two lines."), ("crit:shop-2", "A nameless item is refused.")] {
+            s.graph.criteria.insert(
+                id.into(),
+                crate::model::Criterion {
+                    requirement: "req:shop-1".into(),
+                    statement: st.into(),
+                    kind: "positive".into(),
+                    provenance: Some(crate::model::Provenance::Derived { from: vec!["req:shop-1".into()], reasoning: "evidence".into() }),
+                    ..Default::default()
+                },
+            );
+        }
+        let gs = GenSettings {
+            configured: true,
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        std::fs::write(gs.deliverable.join("src/shop.rs"), "pub fn list() {}\n").unwrap();
+        let n1 = crate::gen::crit_test_name("crit:shop-1", "Two items listed show two lines.");
+        let n2 = crate::gen::crit_test_name("crit:shop-2", "A nameless item is refused.");
+        std::fs::write(gs.deliverable.join("tests/shop.sh"), format!("# {}\n# {}\nexit 0\n", n1, n2)).unwrap();
+        let tests = json!([
+            {"criterion": "crit:shop-1", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n1, "run": "sh tests/shop.sh", "verdict": "pass"},
+            {"criterion": "crit:shop-2", "kind": "programmatic", "artifact": "tests/shop.sh", "name": n2, "run": "sh tests/shop.sh", "verdict": "fail"}
+        ]);
+        let v = record(&s, "req:shop-1", &["src/shop.rs".into()], &Value::Null, &tests, "", None, &gs).unwrap();
+        assert_eq!(v["status"], "partial", "{}", v);
+        assert_eq!(v["reason"], "criteria-failing");
+        // The headline is crit:shop-1's test: a pass recorded on the row lands on it.
+        let row = Ledger::load(&s.out).requirements["req:shop-1"].clone();
+        assert_eq!(row.test.name, n1);
+        crate::verify::mark(&s, "req:shop-1", "pass", None, Some("green"), Some(0), &gs).unwrap();
+        let row = Ledger::load(&s.out).requirements["req:shop-1"].clone();
+        assert_eq!(row.tests["crit:shop-1"].verdict, "pass");
+        assert_eq!(row.tests["crit:shop-2"].verdict, "fail");
+    }
+
+    // Mirrors docs/consumers/bind.md#the-bind-goal: existingTests matches whole names
+    // (crit:x-1 is no part of crit:x-13) and says whether a hit carries the current hash.
+    #[test]
+    fn existing_tests_match_whole_names_and_label_the_hash() {
+        let dir = std::env::temp_dir().join(format!("jazyk-existing-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("tests/a.py"), "# crit:x-13 crit_x_13_0d4edd0c\n").unwrap();
+        std::fs::write(dir.join("tests/b.py"), "# crit:x-1 crit_x_1_aaaaaaaa\n").unwrap();
+        std::fs::write(dir.join("tests/c.py"), "# crit_x_1_deadbeef\n").unwrap();
+        let hits = existing_tests(&dir, &["crit:x-1".to_string(), "crit_x_1".to_string(), "deadbeef".to_string()]);
+        let files: Vec<&str> = hits.iter().map(|h| h["file"].as_str().unwrap()).collect();
+        assert_eq!(files, vec!["tests/b.py", "tests/c.py"], "{:?}", hits);
+        assert_eq!(hits[0]["carriesCurrentHash"], false);
+        assert!(hits[0]["note"].as_str().unwrap().contains("another"), "{}", hits[0]);
+        assert_eq!(hits[1]["carriesCurrentHash"], true);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -412,6 +412,12 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
             }
         }
         "review-entity" => 1_500 + 140 * store.requirements_referencing(&g.target).len(),
+        // The listed requirements load full and each yields two or three criteria.
+        "derive-criteria" => {
+            900 + 700
+                * (g.change["none"].as_array().map(|a| a.len()).unwrap_or(0)
+                    + g.change["revised"].as_array().map(|a| a.len()).unwrap_or(0))
+        }
         // The caps variant loads the node's requirements; the fan-out variant loads
         // the level as stubs (docs/compiler/goals/abstract-entity.md#fan-out-hints).
         "abstract-entity" => {
@@ -433,6 +439,13 @@ pub fn estimate(store: &Store, g: &Goal) -> usize {
     }
 }
 
+// `b<generation>-<n>`, the id a batch lease is filed under.
+fn is_batch_id(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('b') else { return false };
+    let Some((g, n)) = rest.split_once('-') else { return false };
+    !g.is_empty() && !n.is_empty() && g.bytes().all(|c| c.is_ascii_digit()) && n.bytes().all(|c| c.is_ascii_digit())
+}
+
 #[derive(Clone, Debug)]
 pub struct Board {
     pub generation: u64,
@@ -440,6 +453,12 @@ pub struct Board {
     pub readiness: BTreeMap<String, Ready>,
     pub gated: BTreeSet<String>,
     pub claimed: BTreeMap<String, String>,
+    // Batch ids live leases hold: form_batches numbers past them.
+    // Mirrors docs/compiler/reconciler.md#batching.
+    pub held_batches: BTreeSet<String>,
+    // Goals leased to the serving reading the board: rendered as `claimedBy: you`.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub own: BTreeSet<String>,
     pub batches: Vec<Batch>,
     // Change records whose evidence lapsed at derivation: the reconciler clears them.
     pub lapsed: Vec<String>,
@@ -678,6 +697,8 @@ impl Board {
             readiness: BTreeMap::new(),
             gated: BTreeSet::new(),
             claimed: BTreeMap::new(),
+            held_batches: BTreeSet::new(),
+            own: BTreeSet::new(),
             batches: Vec::new(),
             lapsed,
             reopened,
@@ -756,6 +777,11 @@ impl Board {
                 );
             }
             board.claimed = claimed;
+            board.held_batches = leases
+                .keys()
+                .filter(|k| is_batch_id(k))
+                .cloned()
+                .collect();
         }
         board.batches = board.form_batches(store, proj);
         board
@@ -928,7 +954,9 @@ impl Board {
                     }
                     *c.by_class.entry(g.class.clone()).or_insert(0) += 1;
                     *c.by_kind.entry(g.kind.clone()).or_insert(0) += 1;
-                    if self.is_ready(&g.id) {
+                    // ready counts mandatory goals like open does; an optional ready
+                    // batch stays under optional (docs/frontends/mcp.md#compilation-over-mcp).
+                    if g.mandatory && self.is_ready(&g.id) {
                         c.ready += 1;
                     }
                 }
@@ -1010,7 +1038,12 @@ impl Board {
             self.goal(id).is_some_and(|g| {
                 matches!(
                     g.kind.as_str(),
-                    "place-anchors" | "reconcile-section" | "bind" | "generate" | "verify"
+                    "place-anchors"
+                        | "reconcile-section"
+                        | "derive-criteria"
+                        | "bind"
+                        | "generate"
+                        | "verify"
                 )
             })
         };
@@ -1167,8 +1200,19 @@ impl Board {
             }
         }
         batches.sort_by_key(rank);
-        for (i, b) in batches.iter_mut().enumerate() {
-            b.id = format!("b{}-{}", self.generation, i + 1);
+        // Numbering skips the ids live leases hold, so a batch formed while another
+        // is being worked never takes the working batch's id (a session once read the
+        // board's fresh `b24-1` as its own and reported the two as inconsistent).
+        let mut n = 0;
+        for b in batches.iter_mut() {
+            loop {
+                n += 1;
+                let id = format!("b{}-{}", self.generation, n);
+                if !self.held_batches.contains(&id) {
+                    b.id = id;
+                    break;
+                }
+            }
         }
         batches
     }
@@ -1226,6 +1270,28 @@ impl Board {
 
     // ---- the answer the MCP serving and the GUI render ----
 
+    // The goals leased to the reading serving are its own: the blocking sentence says
+    // so instead of naming the serving's worker id as a stranger's claim.
+    // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+    pub fn mark_own(&mut self, worker: &str) {
+        let own: Vec<String> = self
+            .claimed
+            .iter()
+            .filter(|(_, w)| w.as_str() == worker)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in own {
+            self.readiness.insert(
+                id.clone(),
+                Ready::Blocked(
+                    "yours: your open batch holds it; mark_goal_done or mark_goal_failed it, then done"
+                        .to_string(),
+                ),
+            );
+            self.own.insert(id);
+        }
+    }
+
     pub fn goal_json(&self, g: &Goal) -> Value {
         let ready = self.is_ready(&g.id);
         let mut v = json!({
@@ -1246,7 +1312,7 @@ impl Board {
             v["blockedBy"] = json!(r);
         }
         if let Some(w) = self.claimed.get(&g.id) {
-            v["claimedBy"] = json!(w);
+            v["claimedBy"] = json!(if self.own.contains(&g.id) { "you" } else { w.as_str() });
         }
         if let Some(b) = self.batches.iter().find(|b| b.goals.contains(&g.id)) {
             v["batch"] = json!(b.id);
@@ -1366,9 +1432,23 @@ impl Board {
             "batches": self.batches.iter().map(|b| self.batch_json(b)).collect::<Vec<_>>(),
             "counts": counts,
         });
-        if self.open_goals().is_empty() {
+        // No mandatory goal open: the verdict stands, and any batch still listed holds
+        // optional goals only. Say so, since a reader once weighed "converged" against
+        // a next line inviting a claim (docs/frontends/mcp.md#compilation-over-mcp).
+        if self.open_mandatory() == 0 {
             v["verdict"] = json!(self.verdict.to_string());
-            v["note"] = json!("nothing to compile; the graph reflects the docs");
+            if let Some(b) = self.batches.first() {
+                let optional: usize = self.batches.iter().map(|b| b.goals.len()).sum();
+                v["note"] = json!(format!(
+                    "nothing mandatory to compile; the graph reflects the docs. {} optional goal(s) in {} batch(es) stay claimable (begin_goals takes {}); the verdict does not wait for them",
+                    optional,
+                    self.batches.len(),
+                    b.id
+                ));
+                v["next"] = json!(format!("optional: begin_goals claims {} or stop here", b.id));
+            } else {
+                v["note"] = json!("nothing to compile; the graph reflects the docs");
+            }
         } else if self.batches.is_empty() {
             v["note"] = json!("no goal is ready; blockedBy says why");
         } else {

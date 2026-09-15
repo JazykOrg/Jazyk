@@ -35,6 +35,30 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
     if hash_files(gs, &row.files) != row.hashes.files {
         return ("stale-code".into(), "code-changed".into());
     }
+    // Criteria judged one by one: files present with some criterion tests green and
+    // some red is a partly implemented requirement, generation work like an
+    // unimplemented one, never a contradiction
+    // (docs/consumers/gen.md#status-is-derived-never-stored).
+    let crit_pass = row.tests.values().filter(|t| t.verdict == "pass").count();
+    let crit_fail = row.tests.values().filter(|t| t.verdict == "fail").count();
+    // Generation gets one turn per set of facts: red criteria after a generation
+    // over the current facts are a finding, not more generation work (a criterion
+    // contradicting its neighbors once regenerated sort's entity on every build).
+    // Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
+    let generated_here = || {
+        let ledger = Ledger::load(&store.out);
+        ledger
+            .entities
+            .get(&crate::gen::slug_of(&row.entity))
+            .map(|e| e.fact_hash == crate::gen::fact_hash(store, &row.entity))
+            .unwrap_or(false)
+    };
+    if (crit_fail > 0 || row.verdict == "fail") && generated_here() {
+        return ("failing".into(), "criteria-failing-after-generation".into());
+    }
+    if !row.files.is_empty() && crit_pass > 0 && crit_fail > 0 {
+        return ("partial".into(), "criteria-failing".into());
+    }
     match row.verdict.as_str() {
         "pass" => ("verified".into(), "passed".into()),
         // A failing test with nothing implementing it is not a defect, it is a bound
@@ -78,6 +102,7 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
         ("unverified", "runner-failed") => format!("the last run could not execute the command; fix the runner, then `jazyk test {}`", rid),
         ("unverified", _) => format!("never run; `jazyk test {}`", rid),
         ("unimplemented", _) => format!("nothing implements it; generate: `{}`", gen),
+        ("partial", _) => format!("implemented in part, a criterion test fails; generate: `{}`", gen),
         ("failing", _) => "the deliverable contradicts the statement; a finding for the author (fix the docs or the code), never automatic regeneration".into(),
         ("verified", _) => "nothing; the last run passed against the current statement, test, and files".into(),
         _ => String::new(),
@@ -100,7 +125,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
     };
     let (status, reason) = status_of(store, &rid, row, gs);
     match status.as_str() {
-        "verified" | "failing" | "unimplemented" => Ok(()),
+        "verified" | "failing" | "unimplemented" | "partial" => Ok(()),
         "unverified" => Err(format!(
             "no verdict on `{}` ({}): run_tests for a programmatic row, or begin_verification then record_verdict with the package's factHash for an llm row",
             rid, reason
@@ -155,13 +180,13 @@ pub fn pending(
         let actionable = match filter.unwrap_or("stale") {
             "all" => true,
             "failing" => status == "failing",
-            "runnable" => status != "verified" && status != "unimplemented",
+            "runnable" => status != "verified" && status != "unimplemented" && status != "partial",
             // Default: everything that needs a verifier's hand. Verified rows are
             // done; unimplemented rows are generation work, their bound test is the
             // acceptance gate (docs/consumers/bind.md#what-the-verdict-means); a
             // failing row is a finding for the author, re-verified only when its
             // test or files change (docs/compiler/goals/verify.md#created-when).
-            _ => status != "verified" && status != "unimplemented" && status != "failing",
+            _ => status != "verified" && status != "unimplemented" && status != "partial" && status != "failing",
         };
         if !actionable {
             continue;
@@ -371,6 +396,20 @@ pub fn mark(
     row.evidence = evidence.map(|e| crate::llm::truncate(e, 400));
     row.hashes.test = hash_file(&artifact_path(&store.out, gs, &row.test));
     row.hashes.files = hash_files(gs, &row.files);
+    // The headline is a criterion's own test when criteria exist: its verdict is that
+    // criterion's too, or the row reads partial against a stale entry forever
+    // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
+    // Matched by name: two criteria may share one runner command.
+    let headline_name = row.test.name.clone();
+    for t in row.tests.values_mut() {
+        if t.test.name == headline_name {
+            t.verdict = verdict.to_string();
+            t.exit_code = exit_code;
+            t.last_run = row.last_run.clone();
+            t.evidence = row.evidence.clone();
+            t.test_hash = hash_file(&artifact_path(&store.out, gs, &t.test));
+        }
+    }
     let stale = match fact_hash_seen {
         Some(h) => store
             .graph
@@ -434,9 +473,17 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
         return Vec::new();
     };
     let headline_run = row.test.run.clone();
+    let headline_name = row.test.name.clone();
+    let headline_verdict = row.verdict.clone();
     let mut lines = Vec::new();
     let mut any_fail = false;
     for (cid, t) in row.tests.iter_mut() {
+        if t.test.name == headline_name {
+            // The headline is this criterion's test: its verdict is the row's, and
+            // the list says so instead of leaving the criterion out.
+            lines.push(json!({"requirement": rid, "criterion": cid, "verdict": headline_verdict, "note": "the row's headline test"}));
+            continue;
+        }
         if t.test.kind != "programmatic" || t.test.run == headline_run {
             continue;
         }
@@ -560,13 +607,24 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
     let mut held: Vec<(String, ProgRun)> = Vec::new();
     for rid in &selected {
         let Some(row) = ledger.requirements.get(rid) else {
-            skipped.push(json!({"requirement": rid, "reason": "no ledger row; generate first"}));
+            skipped.push(json!({"requirement": rid, "reason": "no ledger row: the requirement is not bound yet; binding_tasks lists it, begin_binding then record_binding"}));
             continue;
         };
         if row.test.kind != "programmatic" {
-            skipped.push(
-                json!({"requirement": rid, "reason": "llm row; judge it and record_verdict"}),
-            );
+            // The headline is judged, not run; its programmatic criterion tests run
+            // all the same, or three checks vanish behind a green reply
+            // (docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable).
+            let crit_rows = run_criterion_tests(store, rid, gs);
+            let ran: Vec<&Value> = crit_rows.iter().filter(|c| c.get("note").is_none()).collect();
+            if !ran.is_empty() {
+                let crit_failed = ran.iter().any(|c| c["verdict"] == "fail");
+                if crit_failed { failed += 1 } else { passed += 1 }
+                rows.push(json!({"requirement": rid, "verdict": if crit_failed { "fail" } else { "pass" }, "note": "the headline is an llm test (judge it with record_verdict); its programmatic criterion tests ran", "criteria": crit_rows}));
+            } else {
+                skipped.push(
+                    json!({"requirement": rid, "reason": "llm row with no programmatic criterion test; judge it and record_verdict"}),
+                );
+            }
             continue;
         }
         let (status, reason) = status_of(store, rid, row, gs);
@@ -653,8 +711,11 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
                 .diagnostics
                 .iter()
                 .filter(|(_, d)| {
+                    // Any judged finding or open question on the statement: a decision
+                    // or an invented choice names the documents as much as a
+                    // contradiction does.
                     d.lifecycle == "open"
-                        && crate::store::JUDGED_RULES.contains(&d.rule.as_str())
+                        && (crate::tools::REVIEW_RULES.contains(&d.rule.as_str()) || d.prompt.is_some())
                         && d.subjects.iter().any(|s| s == rid)
                 })
                 .map(|(did, d)| json!({"requirement": rid, "diagnostic": did, "rule": d.rule, "message": d.message}))
@@ -670,7 +731,7 @@ pub fn run_selected(store: &Store, gs: &GenSettings, targets: &[String]) -> Resu
         "next": if failed > 0 && !doc_diags.is_empty() {
             "a failing row names its requirement; an open diagnostic names its statement, so the documents themselves may be wrong: surface it to the document author before rewriting the deliverable or the test"
         } else if failed > 0 {
-            "a failing row names its requirement; fix the deliverable or the test, then run_tests again"
+            "a failing row names its requirement; when its status reads failing (implementing files exist), it is a finding for the author that the failing-binding check files, not a row to regenerate; otherwise fix the deliverable or the test, then run_tests again"
         } else if runner_failed > 0 {
             "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
         } else if !skipped.is_empty() {
@@ -831,10 +892,15 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
                 test: hash_file(path),
                 files: hash_files(gs, &files),
             };
+            let tests = ledger
+                .requirements
+                .get(rid.as_str())
+                .map(|row| row.tests.clone())
+                .unwrap_or_default();
             ledger.requirements.insert(
                 rid.clone(),
                 ReqRow {
-                    tests: std::collections::BTreeMap::new(),
+                    tests,
                     entity: owner,
                     files,
                     sites: Vec::new(),

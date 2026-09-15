@@ -83,7 +83,9 @@ question).
 Gates: an `edit` option's `old_text` must locate in its section
 (whitespace-insensitively) when it is non-empty, `label` is required, and `edit` and
 `answer` are mutually exclusive per option. A `contradiction` or a
-`duplicate-requirement` names both sides in `subjects`; one subject is refused, since
+A [criterion](./criterion.md) is a subject like any node: a test case that contradicts
+the rule it exercises is a `contradiction` with the requirement and the criterion as
+its two subjects. `duplicate-requirement` names both sides in `subjects`; one subject is refused, since
 a finding whose message names a second statement that its subjects do not is a
 finding the other side never sees.
 The `section` takes either reference form: `/ref` or the full `doc.md#/ref` the loaded
@@ -158,6 +160,7 @@ answer:
 | [`rejudge-pair`](../goals/rejudge-pair.md), [`review-entity`](../goals/review-entity.md) sessions | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | `review-entity`, [`dedupe-candidates`](../goals/dedupe-candidates.md) sessions | `duplicate-entity` | warning | two entities that look like one concept |
 | `rejudge-pair`, `review-entity` sessions, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |
+| checks | `failing-binding` | warning | a bound requirement whose implementing files exist and whose tests fail: the deliverable contradicts the statement |
 | checks | `criterion-missing` | warning or info | a requirement with no criterion: warning when the project configures a `[gen]` deliverable, info otherwise |
 | checks, `upsert_criterion` gate | `criterion-restates` | warning | a criterion whose normalized text equals its requirement's statement |
 | `review-entity` sessions | `missing-link` | warning | a concept the documents rely on but never define; a dead file link is `broken-link`'s finding, never this rule's |
@@ -188,7 +191,7 @@ answer:
 | checks | `quality-unmeasured` | warning | a `quality` facet without a `measure` |
 | [reconciler](../compilation.md#convergence) | `incomplete-build` | warning | goals parked when a build budget ran out |
 | the store | `ratification-pending` | warning | a `derived` or `decree` fact with no sentence in the documents; the `prompt` proposes one |
-| [generation](../../consumers/gen.md) | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |
+| [generation](../../consumers/gen.md), [`derive-criteria`](../goals/derive-criteria.md) sessions | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |
 | [decompilation](../../consumers/decompile.md#ratification) | `unratified` | info | a drafted document no human has edited since the draft landed |
 | [project settings](../project-settings.md) | lint rules | configurable | project-specific lint over the graph |
 

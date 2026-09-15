@@ -550,6 +550,45 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             ));
         }
     }
+    // A binding whose implementing files exist and whose tests fail: the deliverable
+    // contradicts the statement, and the author hears it here, since the binding
+    // loop has no batch to file into (docs/consumers/bind.md#what-the-verdict-means).
+    {
+        let gs = crate::gen::GenSettings::resolve(proj);
+        let ledger = crate::gen::Ledger::load(&store.out);
+        for (rid, row) in &ledger.requirements {
+            if !store.graph.requirements.contains_key(rid) {
+                continue;
+            }
+            let (status, reason) = crate::verify::status_of(store, rid, row, &gs);
+            if status == "failing" {
+                let red: Vec<&str> = row
+                    .tests
+                    .iter()
+                    .filter(|(_, t)| t.verdict == "fail")
+                    .map(|(c, _)| c.as_str())
+                    .collect();
+                let message = if reason == "criteria-failing-after-generation" {
+                    format!(
+                        "{} keeps red criterion tests ({}) after {} was generated over the current facts: generation had its turn, so the criterion contradicts the deliverable or its neighbors (the docs are wrong, or the code is); {}",
+                        rid,
+                        red.join(", "),
+                        row.entity,
+                        row.evidence.as_deref().unwrap_or("no evidence recorded")
+                    )
+                } else {
+                    format!(
+                        "{} is implemented in {} but its test `{}` fails: the deliverable contradicts the statement (the docs are wrong, or the code is); {}",
+                        rid,
+                        row.files.join(", "),
+                        row.test.name,
+                        row.evidence.as_deref().unwrap_or("no evidence recorded")
+                    )
+                };
+                f.push(finding("failing-binding", rid, "warning", message));
+            }
+        }
+    }
     // Criteria: a requirement with none, and a criterion that restates its
     // requirement. Neither holds the verdict (docs/compiler/compilation.md#checks).
     let gen_configured = proj.gen_deliverable.is_some();

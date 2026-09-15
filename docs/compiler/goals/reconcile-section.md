@@ -196,7 +196,9 @@ Computed by the harness and rendered under the goal block:
   hint says so instead (`linked from N other document(s); none of their entities is
   named here`).
 - The known entities named in the document (name and id, eight at most, then a
-  count), or a line saying none is, with `search` before creating.
+  count), or a line saying none is, with `search` before creating; on an empty graph
+  the line says to create without a search, since the search round is a guaranteed
+  miss.
 - `load docs/<doc>#/<ref>` when the body is not loaded in full.
 - For a code-block section, its line count: coverage needs a requirement per behavioral
   step ([code blocks](../concepts/statements.md#code-blocks-state-obligations)).

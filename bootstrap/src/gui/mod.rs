@@ -13,6 +13,7 @@ mod facts;
 mod jobs;
 mod lsp_ws;
 mod outfiles;
+mod product;
 mod server;
 mod state;
 mod views_api;
@@ -83,6 +84,7 @@ pub struct GuiOptions {
     pub watch: bool,
     pub gui_dist: Option<String>,
     pub no_token: bool,
+    pub dev: bool,
     // The original invocation, kept so a settings reload re-resolves the LLM with
     // the same flag and env precedence.
     pub cli_opts: crate::cli::Options,
@@ -144,6 +146,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         cli_opts: gopts.cli_opts.clone(),
         token,
         dist_dir,
+        dev: gopts.dev,
         shutdown: tokio::sync::Notify::new(),
         events: events::EventHub::new(),
         last_pending: std::sync::Mutex::new(serde_json::Value::Null),
@@ -158,6 +161,7 @@ pub fn run(proj: Project, llm: Llm, out: PathBuf, gopts: GuiOptions) -> i32 {
         c.save(&st.out);
     }
     jobs::sweep_traces(&st.out);
+    product::record_opened(&st.root);
     let worker = jobs::spawn_worker(st.clone());
 
     let rt = match tokio::runtime::Builder::new_multi_thread()

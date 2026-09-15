@@ -14,9 +14,25 @@ The public site for the project is hosted at [jazyk.org](https://jazyk.org).
 
 ## Hosting
 
-The site is hosted on [GitHub Pages](https://pages.github.com/) with the custom domain
-pointed at [jazyk.org](https://jazyk.org). A push to `master` that touches `site/`
-deploys it.
+The site is served from a private S3 bucket through CloudFront, the same shape as the
+maintainer's other static sites.
+
+- The bucket is `jazyk.org` in us-east-1 with public access blocked. Only the CloudFront
+  distribution reads it, through an origin access control; a direct request to the bucket
+  returns 403.
+- The distribution answers for `jazyk.org` and `www.jazyk.org` with an ACM certificate
+  (us-east-1, DNS-validated, auto-renewing), redirects HTTP to HTTPS, and compresses.
+- A CloudFront function on the viewer request maps `/` and any path without a file
+  extension to its `index.html`, so `/levels` and `/levels/` both serve
+  `levels/index.html`.
+- A missing object (S3 answers 403 through the origin access control) renders `404.html`
+  with status 404.
+- DNS is at Porkbun, the registrar: an ALIAS on the apex and a CNAME on `www`, both to the
+  distribution's domain, plus the certificate's validation CNAME, which must stay.
+- Deploying is `site/deploy.sh`: sync everything but HTML with a week of cache, the HTML
+  files with no cache, then invalidate the distribution. The GitHub Actions workflow
+  runs the same script on every push to `master` that touches `site/`, assuming an IAM
+  role through OpenID Connect; no long-lived key is stored in GitHub.
 
 ## Pages
 

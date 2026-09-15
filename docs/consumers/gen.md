@@ -373,7 +373,10 @@ share (an actor's statement about the tool it uses lists both) has one row and o
 test: the entity generated later finds the row in its package's `boundTests` and lists
 it unchanged, never a second test beside it.
 
-The criterion's `kind` names the test shape directly: `positive` a scenario on the
+A run of the row's headline test records its verdict on the criterion entry that is
+the same test (the same test name; two criteria may share one runner command), so the
+first criterion's entry never stays at
+its binding-time verdict while the row moves. The criterion's `kind` names the test shape directly: `positive` a scenario on the
 stated input, `negative` the provoked failure path, `boundary` the edge value and the one
 past it, `quality` a measured check against `measure`. The requirement's
 [facets](../compiler/model/requirement.md#facets) and
@@ -561,11 +564,25 @@ the files on disk, recomputed at every read. First match wins:
    `jazyk test` refuses to run the row and says so.
 3. The test artifact bytes differ from `hashes.test` → `stale-test`. Rerun.
 4. The manifest files hash differs from `hashes.files` → `stale-code`. Rerun.
-5. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
+5. Implementing files present and the criterion tests split, some passing and some
+   failing → `partial` (reason `criteria-failing`): the requirement is implemented in
+   part and the failing criteria are generation work, like an `unimplemented` row,
+   never a contradiction. A requirement whose criteria go past what the code enforces
+   (a Product with a name and a price that no constructor refuses without them) is the
+   common case. Generation gets one turn per set of facts: when the entity's ledger
+   entry records a generation over the current facts (its `factHash` equals the live
+   one) and a criterion test is still red after it, the row reads `failing` (reason
+   `criteria-failing-after-generation`), a finding for the author, not more generation
+   work. Without the rule a criterion that contradicts its neighbors (sort's example
+   that lists unsorted output) regenerated its entity on every build.
+6. Otherwise the last verdict: `pass` → `verified`; `fail` with an empty `files` list
    → `unimplemented` (the requirement is [bound](./bind.md) but nothing implements it:
-   generation work, and the bound test is its acceptance gate); `fail` with
-   implementing files → `failing` (the deliverable contradicts the statement: a
-   diagnostic, never automatic regeneration); `none` → `unverified`. A run whose
+   generation work, and the bound test is its acceptance gate; after a generation over
+   the current facts it reads `failing` by the same rule); `fail` with
+   implementing files → `failing` (the deliverable contradicts the statement: the
+   `failing-binding` [check](../compiler/compilation.md#checks) files the diagnostic
+   for the author at the next check run, since the binding loop has no batch to file
+   into; never automatic regeneration); `none` → `unverified`. A run whose
    command never executed leaves the verdict at `none` and the reason at
    `runner-failed`, so a broken machine reads as unverified, not as a failing
    deliverable (see [runners](#runners)).
@@ -585,7 +602,7 @@ for a re-bind and regeneration, `jazyk test <requirement>` for a rerun, nothing 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
 change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
 ([when binding runs](./bind.md#when-binding-runs)), a `generate` goal for the entity of
-an `unimplemented` row or an entity whose facts moved, a `verify` goal for `stale-test`,
+an `unimplemented` or `partial` row or an entity whose facts moved, a `verify` goal for `stale-test`,
 `stale-code`, and `unverified` ([the verify goal](../compiler/goals/verify.md)). A
 `failing` row is a diagnostic, never a goal: `verification_tasks` and the board leave
 it alone until its test or files change. `jazyk test` and `run_tests` with no target
@@ -751,7 +768,7 @@ are stable ([identifiers](../compiler/model.md#identifiers)):
 Before a run rewrites or removes a deliverable file, the previous content is
 snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
 run per file. The snapshot is the diff baseline for frontends: the
-[GUI](../frontends/gui.md#deliverable-viewer) shows what the last generation changed
+[GUI](../frontends/gui.md#product-file-viewer) shows what the last generation changed
 against it. A file the run creates fresh has no baseline.
 
 ## Command
@@ -795,6 +812,10 @@ the build it wrote, reads failures, and repairs its own work before recording. A
 resolves when the ledger says so: the harness checks that `record_generation` landed
 for the entity, not the model's word. What separates the workers is model quality,
 never capability.
+
+The `record_generation` reply carries the measure under `unattached` with an
+`unattachedNote` saying it is informational: the generation is accepted, and a large
+ratio suggests the deliverable states behavior the documents do not.
 
 ## Invented choices
 
@@ -850,6 +871,10 @@ unattached remainder over the files it owns (support files excluded):
   next site in the same file, or at the end of the file; the lines before the first site
   are unattached.
 - `ratio`: `lines` over the entity's significant lines.
+- `markerless`: no site anchors any line of the owned files. The medium carries no
+  traceability markers (a Markdown handbook, a slide deck), so every line reads as
+  unattached and the ratio says nothing; the `record_generation` reply's note says so
+  instead of reporting an invented remainder of one.
 
 The measure lands on the entity's ledger entry (`unattached`), and the message of every
 `invented-choice` diagnostic on the entity names the ratio, so the grade and the measure

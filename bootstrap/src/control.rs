@@ -87,7 +87,14 @@ pub fn release(proj: &Project, out: &Path, stage: Option<&str>) {
         c.released.compile = current_doc_hashes(proj);
     }
     if stage.is_none() || stage == Some("generate") {
-        c.released.generate = crate::store::Store::load(out).status.generation;
+        // A pending document edit is journaled first, so the approved generation is
+        // the one the next build or serving will see: a release once approved 31
+        // while four deleted documents waited, and the next serving's sync moved the
+        // store to 32 and re-gated every bind goal.
+        let mut s = crate::store::Store::load(out);
+        let (parsed, _) = crate::reconcile::parse_all(proj);
+        s.sync_docs(&parsed);
+        c.released.generate = s.status.generation;
     }
     c.save(out);
 }

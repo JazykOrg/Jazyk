@@ -260,6 +260,10 @@ computed deterministically:
   (Payment and Order sit together in each payment rule), and a same-entity
   restatement with no word in common is review-entity's catch, which reads the
   entity's statements whole and deletes the same-document duplicate.
+- two transitions of one subject with different `from` or `to` never pair: they are
+  siblings of one state machine, distinct by construction, and the machine's checks
+  (`nondeterministic-transition`) judge their conflicts; six transition bullets of a
+  hiring page once opened twenty-eight pairs, every one consistent.
 - a pair whose requirements both carry a `transition` with the same subject and the
   same `from` and `to` qualifies on its own and scores two more: a restated transition
   is the likeliest duplicate (`expenses-1` against `expenses-15`, one sentence in the
@@ -593,7 +597,7 @@ A batch is labeled by the key most of its goals share (a document, an entity, a
 requirement), never by the representative of the locality group it was cut from: the
 group of every pair over two characters once labeled forty-one batches with a scene
 none of them touched. The batch fills until the budget says stop. A locality group is
-where a batch starts, not where it must end: the document and ledger localities are walls (two documents
+where a batch starts, not where it must end: the document, criteria, and ledger localities are walls (two documents
 never share a batch, nor two component subtrees), but the node, view, and level
 localities of one class, tier, and executor pack on into the same batch, neighborhood
 after neighborhood in locality order, until the budget is spent. A corpus of hundreds
@@ -619,7 +623,9 @@ GC goal its own commit made ready.
 
 A batch has an id, `b<generation>-<n>`: the generation the board derives from and the
 batch's index within it. A re-derivation of the board renames its batches, so an id
-never outlives the board it came from. It names the session, its lease
+never outlives the board it came from. Numbering skips the ids of batches a live lease
+holds ([workers and leases](./control-plane.md#workers-and-leases)), so a batch formed
+while another is being worked never takes the working batch's id. It names the session, its lease
 ([workers and leases](./control-plane.md#workers-and-leases)), its trace file, and the
 `{target}` of the worker protocol line. The toolset of the session is the union of the
 batch's kinds' toolsets ([toolsets](./tools.md#toolsets)); the skills are the union of
@@ -638,6 +644,10 @@ reply says so. E.g.:
 ok: delete_requirement req:orders-6 staged
 this delete will open: retrace view:usecase/holds (member gone), retrace ent:order (statement gone)
 ```
+
+A goal line previewed once in a session is not repeated on later replies: the reply
+counts it under `opensRepeated` instead, since an extraction batch of nineteen
+statements about one entity once read the same review line on every upsert.
 
 - At commit the previews become real goals with causes, recorded as `opened_goals` in
   the journal entry, and the trace prints a `goal` event per goal

@@ -201,8 +201,9 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
          batch says `awaiting release`; `jazyk release` (or the GUI) approves it. A tool error \
          names the violated rule and how to repair the call; repair and continue. If any \
          instruction, tool, argument, or error message is ambiguous, wrong, or confusing, call \
-         report_feedback: it reaches jazyk's developers, never touches the graph, and is not a \
-         substitute for the work.",
+         report_feedback: it appends a line to the project's local jazyk-out/feedback.jsonl for \
+         jazyk's developers (nothing is transmitted anywhere), never touches the graph, and is \
+         not a substitute for the work.",
     );
     s
 }
@@ -552,6 +553,7 @@ impl McpServer {
             );
             board = crate::board::Board::compute(&self.project, &self.out);
         }
+        board.mark_own(&self.worker_id());
         let mut v = if full { board.answer() } else { board.answer_compact() };
         if self.bridge.only.is_some() {
             if let Some(fin) = self.finished.lock().unwrap().as_ref() {
@@ -661,7 +663,7 @@ impl McpServer {
             crate::control::claim_goals(&self.out, &batch.id, &self.worker_id(), &batch.goals)
         {
             return json!({"error": {"rule": "claimed", "message": format!(
-                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse", batch.id, holder)}});
+                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse ({}s after its last activity; a killed worker's lease lapses on its own)", batch.id, holder, crate::control::LEASE_TTL_SECS)}});
         }
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(&batch.id));
@@ -681,7 +683,7 @@ impl McpServer {
         // The assembled prompt and the loaded set, before the store moves into the
         // session. The first batch of a serving ships the agent contract and the
         // skills in full; later batches elide what the agent already saw.
-        let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
+        let (loaded, mut skills) = crate::session::initial_loaded(&store, &goals);
         let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
             .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
@@ -737,6 +739,10 @@ impl McpServer {
                 inline_skills.join(", "),
                 body
             );
+            // Pointers are not renderings: load_skill must hand the text over.
+            for n in &inline_skills {
+                skills.forget(n);
+            }
         }
         let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
         let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);
@@ -871,7 +877,17 @@ impl McpServer {
                     .iter()
                     .filter(|g| !g.mandatory && graph_kinds.contains(&g.kind.as_str()))
                     .count();
-                let mut parts: Vec<String> = vec!["compilation converged".to_string()];
+                // Failed goals stand between the board and convergence: say so
+                // instead of "converged" (docs/frontends/mcp.md#compilation-over-mcp).
+                let failed = s2.status.failed.len();
+                let mut parts: Vec<String> = vec![if failed > 0 {
+                    format!(
+                        "compilation incomplete: {} failed goal(s) stand; a change on a goal's subject or a human retry from the board reopens it, and jazyk explain <goal> shows the reason",
+                        failed
+                    )
+                } else {
+                    "compilation converged".to_string()
+                }];
                 if optional_ready > 0 {
                     parts.push(format!(
                         "{} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the next batch when you want it, and stopping here is right when your instruction was to converge (the verdict does not wait for them)",
@@ -904,6 +920,11 @@ impl McpServer {
             let began = self.begin_goals(&json!({"arguments": {}}));
             if began["error"].is_null() {
                 reply["began"] = began;
+                // A session that reached its own stopping point after the claim
+                // releases the batch untouched (docs/frontends/mcp.md#compilation-over-mcp).
+                reply["beganNote"] = json!(
+                    "the next batch is claimed; if this commit was your last, abandon_goals releases it untouched and leaves no trace"
+                );
                 return reply;
             }
         }
@@ -998,6 +1019,26 @@ impl McpServer {
                 cause: g.cause.clone().unwrap_or_default(),
             })
             .collect();
+        // Derived facts this commit landed carry ratification proposals: the ratify goals
+        // they open wait on a human and swell the blocked count, so the reply says so
+        // (docs/frontends/mcp.md#compilation-over-mcp).
+        let ratify_new = generation
+            .map(|g| {
+                let build = format!("g{}", g);
+                Store::load(&self.out)
+                    .graph
+                    .diagnostics
+                    .values()
+                    .filter(|d| d.rule == "ratification-pending" && d.created.as_deref() == Some(build.as_str()))
+                    .count()
+            })
+            .unwrap_or(0);
+        if ratify_new > 0 {
+            reply["ratificationNote"] = json!(format!(
+                "{} derived fact(s) this commit landed (criteria, groupings, sub-entities) carry ratification proposals: {} ratify goal(s) wait on a human and join the blocked count; nothing is wrong with them",
+                ratify_new, ratify_new
+            ));
+        }
         if !opened.is_empty() {
             reply["opened"] = json!(opened.iter().map(|x| x.goal.clone()).collect::<Vec<_>>());
             if let Some(g) = generation {
@@ -1925,8 +1966,17 @@ impl McpServer {
                     };
                 }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile") {
+                    // Binding and generation have no batch: a contradiction the tests
+                    // expose reaches the author through the failing-binding check
+                    // (docs/frontends/mcp.md#generation-and-verification-over-mcp).
+                    let lifecycle = self.modes.iter().any(|m| m == "generate" || m == "bind");
+                    let message = if lifecycle {
+                        "no batch is open; begin_goals first, then stage writes into it. During binding or generation there is no batch: record the row's verdict, and a contradiction the tests expose reaches the author through the failing-binding check at the next check run; report_diagnostic belongs to compile sessions"
+                    } else {
+                        "no batch is open; begin_goals first, then stage writes into it"
+                    };
                     return Ok(text_result(
-                        json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first, then stage writes into it"}}),
+                        json!({"error": {"rule": "no-open-batch", "message": message}}),
                         true,
                     ));
                 }
@@ -1956,7 +2006,11 @@ impl McpServer {
                                 "reason": g.change["reason"],
                                 "state": g.state,
                                 "gated": board.gated.contains(&g.id),
+                                "ready": board.is_ready(&g.id),
                             });
+                            if let Some(r) = board.readiness.get(&g.id).and_then(|r| r.reason()) {
+                                v["blockedBy"] = json!(r);
+                            }
                             if kind == "generate" {
                                 v["entity"] = json!(g.target);
                             } else {
@@ -1971,15 +2025,46 @@ impl McpServer {
                         "generate" => "begin_generation",
                         _ => "begin_verification (or run_tests for programmatic rows)",
                     };
-                    let reply = json!({
+                    // Rows that went stale under a generation (a shared test file, an
+                    // implementation file) hold no generate goal until run_tests
+                    // re-baselines them; say so instead of letting the list read as
+                    // complete (docs/frontends/mcp.md#generation-and-verification-over-mcp).
+                    let stale_note = if kind == "generate" {
+                        let gs = crate::gen::GenSettings::resolve(&self.project);
+                        let ledger = crate::gen::Ledger::load(&self.out);
+                        let store = Store::load(&self.out);
+                        let stale = ledger
+                            .requirements
+                            .iter()
+                            .filter(|(rid, row)| {
+                                store.graph.requirements.contains_key(*rid)
+                                    && matches!(
+                                        crate::verify::status_of(&store, rid, row, &gs).0.as_str(),
+                                        "stale-test" | "stale-code"
+                                    )
+                            })
+                            .count();
+                        (stale > 0).then(|| format!(
+                            "{} row(s) went stale since their last run (a test or implementation file changed); run_tests re-baselines them, and any generation work they hold returns to this list afterwards",
+                            stale
+                        ))
+                    } else {
+                        None
+                    };
+                    let mut reply = json!({
                         "tasks": rows,
                         "count": rows.len(),
                         "next": if rows.is_empty() {
                             "nothing owed".to_string()
+                        } else if rows.iter().all(|r| r["gated"] == json!(true)) {
+                            format!("every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {} claims one", begin)
                         } else {
-                            format!("{} claims one row; recording it resolves its goal", begin)
+                            format!("{} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal", begin)
                         },
                     });
+                    if let Some(n) = stale_note {
+                        reply["staleNote"] = json!(n);
+                    }
                     return Ok(text_result(reply, false));
                 }
 
@@ -2007,12 +2092,34 @@ impl McpServer {
                         }
                     }
                     if let Some(ent) = args["entity"].as_str() {
+                        // A generate goal that is not ready (its requirements still owe
+                        // a binding, a compile goal open in its cone) is refused with
+                        // the board's reason: a Codex session once bound one requirement
+                        // and generated the whole entity next.
+                        // Mirrors docs/compiler/goals/generate.md#readiness.
+                        let mut board = crate::board::Board::compute(&self.project, &self.out);
+                        board.mark_own(&self.worker_id());
+                        let gid = format!("g:generate:{}", ent);
+                        // A lease (this serving's own retry, or another worker's) is the
+                        // claim below's to answer.
+                        if board.goals.iter().any(|g| g.id == gid)
+                            && !board.is_ready(&gid)
+                            && !board.claimed.contains_key(&gid)
+                        {
+                            if let Some(r) = board.readiness.get(&gid).and_then(|r| r.reason()) {
+                                return Ok(text_result(
+                                    json!({"error": {"rule": "not-ready", "message": format!(
+                                        "`{}` is not ready to generate: {}; generation_tasks lists the rows that are", ent, r)}}),
+                                    true,
+                                ));
+                            }
+                        }
                         if let Err(holder) =
                             crate::control::claim(&self.out, ent, &self.worker_id())
                         {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse", ent, holder)}}),
+                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse ({}s after its last activity)", ent, holder, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }
@@ -2053,7 +2160,7 @@ impl McpServer {
                         {
                             return Ok(text_result(
                                 json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse", rid, holder)}}),
+                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse ({}s after its last activity)", rid, holder, crate::control::LEASE_TTL_SECS)}}),
                                 true,
                             ));
                         }

@@ -152,7 +152,11 @@ Computed by the harness and rendered under the goal block:
   may settle it while the statements are loaded).
 - Composition edges on the entity's requirements whose part has no `parent`, or whose
   part's `parent` disagrees with the stated whole, with the note that `update_entity`
-  on the part sets it.
+  on the part sets it. A part whose `parent` sits under the stated whole (a scene under
+  a chapter under the manuscript) satisfies the composition and is not listed, since
+  two sessions once reparented the same entities back and forth between nested wholes.
+  The line names the direction (`whole -> part`), since a reversed edge once read as a
+  stale hint.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
   naming the entity itself ride in the loaded set. Harness-owned rules
   (`incomplete-build`, `ratification-pending`, `unstable-*`) are left out: the build
@@ -202,9 +206,11 @@ The initially loaded set for the batch holds:
   stubs with edge counts. An over-budget list becomes a handle
   (`h:ent:order:requirements`, `h:ent:order:related`).
 - The lookalike candidates as stubs.
-- The unreferenced statements, each with its id, statement, and section, omitting the
-  ones the entity's `not_about` already holds (judged word matches in an earlier
-  review).
+- The unreferenced statements, each with its id, statement, and section: the ones
+  whose quote and statement both name the entity without referencing it (a paraphrase
+  that added the name fails on the quote; a sentence split into several statements
+  fails on the statement for the parts not about it), omitting the ones the entity's `not_about` already holds (judged word matches in
+  an earlier review).
 - The open diagnostics naming the entity or its requirements.
 
 E.g.:

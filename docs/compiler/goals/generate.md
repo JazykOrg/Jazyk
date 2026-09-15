@@ -23,8 +23,11 @@ the [ledger](../../consumers/gen.md#the-ledger):
   is gone from the deliverable (deleted by hand). `detail.changed` lists the missing
   files. The part has to be written again before its rows can be judged.
 - `unimplemented`: a requirement of the entity has a bound row whose derived status
-  is `unimplemented` (the test fails and nothing implements it). The bound test is
-  the acceptance gate; generation is the work that clears it.
+  is `unimplemented` or `partial` (a test fails and nothing, or only part, implements
+  it). The bound test is the acceptance gate; generation is the work that clears it. A
+  row still red after a generation over the current facts reads `failing` and derives
+  nothing ([status](../../consumers/gen.md#status-is-derived-never-stored)): a
+  contradictory criterion once regenerated its entity on every build.
 
 The reasons are checked in that order and the first that holds names the goal. An
 entity with no ledger entry becomes generation work through `unimplemented` rows
@@ -51,7 +54,9 @@ E.g.:
 - Tier 3, after binding: ready when no goal of tiers 0 to 2 is open in the entity's
   cone and no `bind` goal is open on any of its requirements
   ([readiness](../reconciler.md#readiness)). The bound tests define the interface
-  the product conforms to, so they exist before the product does.
+  the product conforms to, so they exist before the product does. Over MCP,
+  `begin_generation` refuses an entity whose goal is not ready with the reason
+  (`not-ready`), so an agent cannot generate around its own unfinished bindings.
 - Within the tier, goals order topologically over the derived relationships
   ([order from relationships](../../consumers/gen.md#order-from-relationships)):
   leaf entities first, then the entities that compose or depend on them.
@@ -155,8 +160,9 @@ changed                            requirement ids added, removed, or reworded
 generatedFiles                     other entities' files with what each holds; never write to them
 supportFiles                       the deliverable-wide files any session may rewrite
 buildEntry, buildError             the build's entry with its content; the standing failure, if any
-boundTests                         tests binding wrote; make them pass
-requirementGroups                  each requirement with its testName, statement, quote, openDiagnostics
+boundTests                         tests binding wrote, one per criterion under criteriaTests; make them pass, list them unchanged
+ownershipNote                      a row already passing under another entity's files is carried there: list it unchanged, record no file for it; an entity whose rows are all carried records files: []
+requirementGroups                  each requirement with its statement, quote, openDiagnostics, criteria (id, statement, suggestedTestName) and testName (for a requirement with no criteria)
 contradicted, mediumWarning        the disputed requirements; the medium's standing divergence
 context                            the entity's neighborhood (../context.md#rendering)
 ```
@@ -243,9 +249,13 @@ serves these:
 
 - `read_text_file({path, line?, limit?})`: one file's content, path relative to the
   deliverable.
-- `write_text_file({path, content})`: write one file. A path recorded for another
-  entity is rejected with the owner named; during a `bind` goal, a path the ledger
-  records as any entity's implementing file is rejected the same way.
+- `write_text_file({path, content, append?})`: write one file, or append to it when
+  `append` is true, so a long file is written in parts that fit a model's reply cap.
+  A path recorded for another entity is rejected with the owner named; during a `bind`
+  goal, a path the ledger records as any entity's implementing file is rejected the
+  same way. The embedded agent once wrote a whole module in one call, the reply was
+  cut at the model's output cap, the endpoint rejected the unclosed JSON, and every
+  generation session after the first two died the same way.
 - `list_files({path?})`: the deliverable tree.
 - `run_command({command, cwd?})`: execute a shell command under the deliverable,
   bounded by a timeout; the exit code and output tail come back. This is how the

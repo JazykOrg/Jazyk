@@ -182,8 +182,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `cargo test`.
 - The owner's `jazyk` command is a symlink to `bootstrap/target/release/jazyk`. After
   ANY change to the GUI frontend or the binary, always finish with
-  `cd bootstrap/gui && npm run build` then `cargo build --release`: the built frontend
-  (`gui/dist`) embeds into the binary at compile time, so a stale release build serves
+  `cd bootstrap/app && npm run build` then `cargo build --release`: the built frontend
+  (`app/dist`) embeds into the binary at compile time, so a stale release build serves
   the old GUI. A running `jazyk gui` keeps its embedded assets; it needs a restart to
   pick up a new binary.
 - `jazyk compile [path...]` (live trace; `--verbose` the cascade and full prompts,

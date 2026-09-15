@@ -251,7 +251,9 @@ for the named stage (both when unnamed) without running anything. The watchers w
 whichever worker is attached does the work. This is the scriptable form of the GUI's
 release button. An explicit `jazyk compile` or `jazyk gen` is itself a release for
 its stage: a typed command is an approval. The generate stage covers
-[binding](../consumers/bind.md#when-binding-runs) too; decompilation releases through
+[binding](../consumers/bind.md#when-binding-runs) too, and it journals any pending
+document edit before approving the generation, so an edit saved since the last build
+does not re-gate the release one command later; decompilation releases through
 [`jazyk decompile`](#jazyk-decompile), never through `release`.
 
 The output says what the release did: how many gated goals it approved, how many
@@ -584,7 +586,7 @@ The same render runs after every committed changeset. See
 
 ### jazyk gui
 
-`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]` starts the
+`jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]` starts the
 [GUI](./gui.md): one local server with the web app, the JSON API, the event stream, and
 the language server over WebSocket, then opens the browser. `--no-open` skips opening
 the browser. `--watch` starts in the automatic

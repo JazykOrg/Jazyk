@@ -92,7 +92,7 @@ shortened here; the real ones are the payload files):
 ## Project
 - generation 413, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
-- board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers
+- board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers (2 ratification proposals among them)
 - lint: warning: An em dash appears in prose. Use commas, periods, parentheses, or colons instead.
 
 ## Goals
@@ -121,6 +121,10 @@ Skills: judgment (active, 6.4k); extraction, flow-views, structural-views, abstr
 
 PROTOCOL: the `jazyk` tools carry this batch, b413-3. First call `begin_goals` with {"batch": "b413-3"} ...
 ```
+
+The diagnostics line names how many of its counts are ratification proposals for
+derived facts (criteria, groupings), so a session that just committed fourteen derived
+criteria does not read fourteen new warnings as defects of its own making.
 
 Contract paragraphs are short and imperative: what the goal means, what evidence the
 gate wants, what not to do, and that justifications and failure reasons are one or two
@@ -410,7 +414,9 @@ Budgets are registry constants built into the binary, not settings
   [`abstract-entity`](./goals/abstract-entity.md) goal over a requirement count to 64
   plus that count: a split of ninety-six statements stages one move per grouped
   statement, and a budget the split cannot fit fails every honest session (the first
-  caps split measured ran out at 64 with three sub-entities staged empty). Enforced by
+  caps split measured ran out at 64 with three sub-entities staged empty). A
+  [`derive-criteria`](./goals/derive-criteria.md) goal raises it by three per listed
+  requirement, the density the criteria skill asks for. Enforced by
   the tool serving.
 - Context: 24000 characters, counting the loaded set and the skills rendered this
   session ([policy](./context.md#policy)).
@@ -451,7 +457,7 @@ spends ([storage layout](./graph.md#storage-layout)).
 The runner translates a session's update stream into structured events: the tool call
 with condensed arguments, the condensed result, and any message or thought text the
 agent produced, emitted as model text. The `compile` command renders these live, the
-[GUI](../frontends/gui.md#activity) streams them to the browser, and `jazyk watch`
+[GUI](../frontends/gui.md#runs) streams them to the browser, and `jazyk watch`
 prints one line per goal opened or resolved. The generation and verification workers
 emit their own kinds per entity and per ledger row. The committed changeset with the
 same information persists in the [journal](./graph.md#journal).

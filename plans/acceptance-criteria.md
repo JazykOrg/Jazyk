@@ -88,7 +88,7 @@ lets generation write one test per criterion.
 - [x] Phase 3 tools and extraction with tests (the two loop runs follow phase 4).
 - [x] Phase 4 goal kind and checks with tests (the loop run follows phase 5).
 - [x] Phase 5 ledger with tests (the generation runs follow).
-- [ ] Phase 6 VALIDATION.md.
+- [x] Phase 6 VALIDATION.md (sort, f2, erp, slides, f1 compiles; f2 and erp generations measured).
 
 ## Decisions taken
 

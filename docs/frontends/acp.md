@@ -136,7 +136,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage. A prose reply in a prompt that already made tool calls gets one nudge before
   the prompt ends: weak models forget they are mid-goal more often than they finish
-  silently, and a purely conversational answer still ends the prompt immediately.
+  silently, and a purely conversational answer still ends the prompt immediately. A
+  prose reply that announces an action ("I'll rewrite src/order.rs", "Now I'll record
+  the generation", a line ending in a colon) is not an answer either: it gets a nudge
+  saying announcing is not acting, up to three times per prompt, since a local model
+  ended four of ten generation sessions on such a sentence with the call never made.
   A reply that is empty of both message and calls while carrying reasoning is a
   stall, not an answer: reasoning models narrate the action they intend and stop, as
   if the thinking were visible. The loop answers with a corrective nudge naming that
@@ -148,7 +152,12 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   acts on it. A stall whose finish reason is `length` is a different case: the
   completion cap cut the reasoning before any call, so re-thinking cannot help; the
   nudge says so and asks for the call alone, with no further deliberation, and the
-  same two-strike fuse applies. A turn the loop cannot finish (the
+  same two-strike fuse applies. An endpoint error that says the reply
+  itself could not be parsed (an unclosed object, an unexpected end of JSON: the
+  model's output cap cut a long tool call) is not a transport failure: the loop
+  answers it with a nudge to reply with a smaller call, writing long files in parts
+  (`append`), at most twice per prompt, since the same request retried returns the
+  same cut reply. A turn the loop cannot finish (the
   endpoint erroring past its retries) answers as a `refusal` stop with the error
   emitted as a message chunk, never as a protocol error: the client side treats an
   error response to `session/prompt` as fatal to the whole connection, and one
@@ -169,7 +178,15 @@ that packs several action objects executes them all in order, one result each,
 because executing the first and dropping the rest leaves the model believing work
 happened that never did. A text reply that reads as a JSON action but does not parse
 is answered with a repair message naming the error, three strikes before the prompt
-fails: a dropped brace is a resend, not an answer. The agent probes on the first
+fails: a dropped brace is a resend, not an answer. A native tool call whose
+`arguments` string does not parse is the same broken action: it is repaired the same
+way, never dispatched with empty arguments, and the reply enters the history with the
+call's arguments emptied, so the endpoint never sees the cut JSON again. Before that,
+a `write_text_file` cut at the model's output cap stayed in the history verbatim and
+every later request of the session, and of every session after it in the run, was
+refused with a 400 about an unclosed object. The check reads the whole reply,
+not its first character: a sentence of prose followed by a truncated action object
+once read as an answer and ended the turn, and the batch parked. The agent probes on the first
 round: an endpoint that rejects the `tools` parameter, or a model that answers prose
 without calls, downgrades the run to `text`, sticky until it ends. The endpoint
 fallbacks ride along too: streaming when the endpoint demands it, dropped

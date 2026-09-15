@@ -186,6 +186,10 @@ definitions:
         $ref: '#/definitions/requirementExists'
       requirementCount:
         $ref: '#/definitions/requirementCount'
+      criteriaCount:
+        $ref: '#/definitions/criteriaCount'
+      attributeExists:
+        $ref: '#/definitions/attributeExists'
       relationshipExists:
         $ref: '#/definitions/relationshipExists'
       edgeDeclared:
@@ -271,6 +275,36 @@ definitions:
       entity:
         description: An entity the requirement must reference, by id or exact name
         type: string
+  attributeExists:
+    description: The entity carries an attribute of this name, case-insensitive
+    type: object
+    required: [entity, name]
+    additionalProperties: false
+    properties:
+      entity:
+        type: string
+      name:
+        type: string
+  criteriaCount:
+    description: >-
+      The number of criteria in the resulting graph is within bounds, optionally
+      counting only the criteria of one requirement (by id, or by a statement pattern)
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      requirement:
+        description: Count only the criteria of this requirement id
+        type: string
+      statementPattern:
+        description: Count only the criteria of requirements whose statement matches
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
   requirementCount:
     description: >-
       The number of requirements in the resulting graph is within bounds, optionally

@@ -36,6 +36,8 @@ Cases exist for ten goal kinds: the four the landing graded first
     pair, `req:a~req:b`, the smaller id first.
   - [`declare-edges`](../compiler/goals/declare-edges.md): `target` is a requirement
     id.
+  - [`derive-criteria`](../compiler/goals/derive-criteria.md): `target` is an entity
+    id. The sandbox configures a deliverable so the goal derives.
   - [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md): `target` is an
     entity pair, `ent:a~ent:b`, the smaller id first.
   - [`curate-view`](../compiler/goals/curate-view.md) and
@@ -91,6 +93,12 @@ Graph checks:
   tombstoned or redirected.
 - `requirementExists {statementPattern, entity}`: a requirement whose `statement`
   matches the pattern references the entity.
+- `attributeExists {entity, name}`: the entity carries an attribute of this name
+  (case-insensitive).
+- `criteriaCount {requirement?, statementPattern?, min?, max?}`: the number of
+  criteria, of one requirement by id or of the requirements whose statement matches
+  the pattern, is within bounds. `max: 1` on a plain fact says no contrived negative
+  was added.
 - `requirementCount {entity?, min?, max?}`: the number of requirements, optionally
   only those referencing the entity, is within bounds.
 - `relationshipExists {a, b, type?}`: a derived relationship between the two entities,
@@ -210,6 +218,12 @@ Extraction tier:
 - [reuse](./cases/reuse.md): reuse discipline.
 - [converge](./cases/converge.md): convergence discipline.
 - [repair](./cases/repair.md): repair.
+- [enumeration](./cases/enumeration.md): a parts list is one membership statement
+  with an edge per part, and each part's own description its own statement.
+- [properties](./cases/properties.md): a sentence listing several properties of one
+  subject is one statement with attributes.
+- [criteria-density](./cases/criteria-density.md): one criterion on a plain fact, the
+  negative only on a conditional.
 
 Review tier:
 

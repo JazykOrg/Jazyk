@@ -13,7 +13,10 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 21] = [
+const CASE_FILES: [&str; 24] = [
+    include_str!("../../docs/benchmark/cases/enumeration.md"),
+    include_str!("../../docs/benchmark/cases/properties.md"),
+    include_str!("../../docs/benchmark/cases/criteria-density.md"),
     include_str!("../../docs/benchmark/cases/extract.md"),
     include_str!("../../docs/benchmark/cases/navigation.md"),
     include_str!("../../docs/benchmark/cases/declarative.md"),
@@ -431,9 +434,12 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
             report.skipped.join("; ")
         ));
     }
+    // A deliverable is configured so the ledger-tier kinds derive
+    // (docs/benchmark/cases.md#case-format).
     let proj = crate::project::Project {
         root: tmp.to_path_buf(),
         out: store.out.clone(),
+        gen_deliverable: Some("deliverable".into()),
         ..Default::default()
     };
     let control = crate::control::Control::load(&proj, &proj.out);
@@ -568,6 +574,56 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
             });
             (!found).then(|| format!("no requirement matching `{}` on {}", pat, ent_id))
+        }
+        "attributeExists" => {
+            let ent = arg["entity"].as_str().unwrap_or_default();
+            let Some(ent_id) = find_entity(store, ent) else {
+                return Some(format!("entity {} not found", ent));
+            };
+            let name = arg["name"].as_str().unwrap_or_default().to_lowercase();
+            let has = store
+                .graph
+                .entities
+                .get(&ent_id)
+                .map(|e| e.attributes.iter().any(|a| a.name.to_lowercase() == name))
+                .unwrap_or(false);
+            if has {
+                None
+            } else {
+                Some(format!("{} has no attribute `{}`", ent, name))
+            }
+        }
+        "criteriaCount" => {
+            let rx = match arg["statementPattern"].as_str() {
+                Some(p) => match compile(p) {
+                    Ok(r) => Some(r),
+                    Err(e) => return Some(e),
+                },
+                None => None,
+            };
+            let n = store
+                .graph
+                .criteria
+                .values()
+                .filter(|c| {
+                    let owner = store.resolve_id(&c.requirement);
+                    if let Some(rid) = arg["requirement"].as_str() {
+                        if owner != store.resolve_id(rid) {
+                            return false;
+                        }
+                    }
+                    if let Some(r) = &rx {
+                        return store
+                            .graph
+                            .requirements
+                            .get(owner)
+                            .map(|q| r.is_match(&q.statement))
+                            .unwrap_or(false);
+                    }
+                    true
+                })
+                .count();
+            within(n, arg, "criteria")
         }
         "requirementCount" => {
             let n = match arg["entity"].as_str() {
@@ -2150,7 +2206,7 @@ mod tests {
         let cases = parse_cases();
         // Twenty-one files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 27);
+        assert_eq!(cases.len(), 30);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2176,7 +2232,7 @@ mod tests {
         assert_eq!(extract.checks.len(), 6);
         // Tier defaults to extraction; the review and structure cases declare theirs.
         assert_eq!(extract.tier, "extraction");
-        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 9);
+        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 10);
         assert_eq!(cases.iter().filter(|c| c.tier == "structure").count(), 6);
         let lint = cases.iter().find(|c| c.name == "review-lint").unwrap();
         assert_eq!(lint.lint.warnings.len(), 1);
@@ -2222,7 +2278,7 @@ mod tests {
     fn derived_cases_seed_and_derive_their_goal() {
         let cases = parse_cases();
         let derived: Vec<&Case> = cases.iter().filter(|c| c.derives_goal()).collect();
-        assert_eq!(derived.len(), 10);
+        assert_eq!(derived.len(), 11);
         for case in derived {
             let tmp = own_dir(&case.name);
             let (store, goal) = seed_derived(case, &tmp)

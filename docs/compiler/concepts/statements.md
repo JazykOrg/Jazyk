@@ -164,7 +164,7 @@ a tester can check it on its own. Two tests decide where to split:
   information. A sentence listing several properties of one subject ("an outdoor gear
   retailer with about 120 employees, a warehouse in Boulder, and four stores") is one
   statement carrying the values, each value also an
-  [attribute](../model/entity.md#attributes) of the subject; it splits only when a
+  [attribute](../model/entity.md#fields) of the subject; it splits only when a
   property binds a different part of the deliverable. An org corpus once turned that
   sentence into four requirements, each reviewed, paired, given two criteria, and tested.
 

@@ -499,6 +499,55 @@
   color: var(--muted);
 }
 
+/* The new-project wizard (docs/frontends/gui.md#home). */
+.wizard {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 16px 14px;
+  margin-bottom: 24px;
+  background: var(--panel);
+}
+
+.wizard h2 {
+  margin-top: 0;
+  border: none;
+}
+
+.wizard label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+
+.wizard textarea,
+.wizard input[type='text'] {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.wizard .actions {
+  margin: 8px 0 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.wizard button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
 /* Empty states (docs/frontends/gui.md#empty-states-and-failure) */
 .empty-state {
   border: 1px dashed var(--line);

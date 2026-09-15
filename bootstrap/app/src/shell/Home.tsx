@@ -6,6 +6,7 @@ import { useProjects, type ProjectSummary } from '../lib/product'
 import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
 import { shapeWords, verdictWords } from '../lib/words'
+import Wizard, { useSettingsExists } from './Wizard'
 
 const DEMOS = [
   { id: 'shop', name: 'The shop', blurb: 'a small online shop, three entities' },
@@ -42,6 +43,8 @@ export default function Home() {
   const { data: proj } = useProject()
   const dev = useApp((a) => a.dev)
   const kind = caps.data?.projects ?? 'list'
+  const settings = useSettingsExists()
+  const needsSetup = settings.data ? !settings.data.exists : false
 
   return (
     <div className="ws-scroll">
@@ -52,8 +55,10 @@ export default function Home() {
         {caps.data?.backend === 'demo' && <div className="banner">Demo: changes stay in this tab.</div>}
         {caps.data?.backend === 'wasm' && <div className="banner">Running in this browser over a folder on your computer. Nothing leaves the machine.</div>}
 
+        {needsSetup && proj && settings.data && <Wizard payload={settings.data} root={proj.root} />}
+
         <div className="actions">
-          {proj && (
+          {proj && !needsSetup && (
             <Link to="/docs" className="btn">
               Open {proj.root.replace(/\/+$/, '').split('/').pop()} →
             </Link>
@@ -85,11 +90,15 @@ export default function Home() {
           </>
         )}
 
-        <h2>New project</h2>
-        <p className="muted">
-          Point jazyk at a folder of documents, a product, or both: run <span className="mono">jazyk init</span> in the folder, then{' '}
-          <span className="mono">jazyk gui</span>. The wizard that does this from here is on its way.
-        </p>
+        {!needsSetup && (
+          <>
+            <h2>New project</h2>
+            <p className="muted">
+              Point jazyk at a folder of documents, a product, or both: run <span className="mono">jazyk gui</span> in that folder and this
+              screen walks you through the rest.
+            </p>
+          </>
+        )}
       </div>
     </div>
   )

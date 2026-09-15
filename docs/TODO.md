@@ -20,9 +20,10 @@ This scratch space is a live document to outline the work for this documentation
   over the [GUI](./frontends/gui.md); today the [viewer](./frontends/viewer.md)
   snapshot is the share. The home screen and the capability descriptor are the only
   cloud-facing pieces in the spec.
-- The GUI's previous layout (`bootstrap/gui`, the rail workbench) is removed once
-  `bootstrap/app` reaches its [cutover](./frontends/gui.md#frontend); every old URL
-  redirects until then.
+- The demo and browser backends (the `wasm-backend` branch) mount into
+  `bootstrap/app` through its transport seam and the
+  [capability descriptor](./frontends/gui.md#backends-and-capabilities); the
+  Home screen already carries their entries.
 - Per-entity file sharding for the [graph store](./compiler/graph.md#storage-layout), when
   `entities.yaml` grows too large.
 - [Journal](./compiler/graph.md#journal) rotation: cap `journal/` growth, compact old

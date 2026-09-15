@@ -24,7 +24,7 @@ snapshot; the GUI serves the same shards, updated as builds commit.
   self-evident too: the app titles itself with the project directory and shows the
   root in the status bar.
 - The web app is embedded in the binary at compile time from the built frontend
-  (`bootstrap/gui/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
+  (`bootstrap/app/dist`, committed). `--gui-dist DIR` (or `JAZYK_GUI_DIST`) serves from
   a directory on disk instead, for frontend development.
 - Unknown non-API paths serve the app's `index.html`, so app routes are addressable
   URLs.

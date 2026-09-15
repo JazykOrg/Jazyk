@@ -9,6 +9,19 @@ type: object
 required: [name, description, goal, given, assert]
 additionalProperties: false
 properties:
+  goals:
+    description: >-
+      Replays only: the batch's other goals, held in the same session. See replays.md
+    type: array
+    items:
+      type: object
+      required: [kind, target]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+        target:
+          type: string
   steps:
     description: >-
       Replays only: the scripted tool calls the session runs without a model, in

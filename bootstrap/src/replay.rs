@@ -192,8 +192,66 @@ pub fn run_case(case: &Case) -> ReplayReport {
         }
         crate::vfs::write(&p, content).ok();
     }
+    // The batch's other goals derive from the same seeded board
+    // (docs/benchmark/replays.md#replay-format).
+    let mut extra: Vec<crate::model::Goal> = Vec::new();
+    if !case.extra_goals.is_empty() {
+        let proj = crate::project::Project {
+            root: tmp.clone(),
+            out: store.out.clone(),
+            gen_deliverable: Some("deliverable".into()),
+            ..Default::default()
+        };
+        let control = crate::control::Control::load(&proj, &proj.out);
+        let board = crate::board::Board::derive(&store, &proj, &control);
+        for (kind, target) in &case.extra_goals {
+            // An assembled kind builds its goal from kind and target, as the primary
+            // goal of such a case does (docs/benchmark/cases.md#derived-goals).
+            if let Some(task) = benchmark::assembled_task(kind) {
+                let dirty: Vec<String> = if task == "reconcile-doc" {
+                    store
+                        .docs
+                        .get(target)
+                        .map(|r| r.sections.keys().cloned().collect())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                extra.push(
+                    WorkItem {
+                        task: task.to_string(),
+                        target: target.clone(),
+                        dirty_sections: dirty,
+                        stale_anchors: Vec::new(),
+                        proposals: Vec::new(),
+                    }
+                    .to_goal(crate::model::GoalState::Open),
+                );
+                continue;
+            }
+            let id = crate::goals::goal_id(kind, target);
+            match board.goals.iter().find(|g| g.id == id) {
+                Some(g) => extra.push(g.clone()),
+                None => {
+                    let same: Vec<&str> = board
+                        .goals
+                        .iter()
+                        .filter(|g| &g.kind == kind)
+                        .map(|g| g.id.as_str())
+                        .collect();
+                    report.fixture_error = Some(format!(
+                        "the fixture derives no {}; {} goals derived: {}",
+                        id,
+                        kind,
+                        if same.is_empty() { "(none)".to_string() } else { same.join(", ") }
+                    ));
+                    return report;
+                }
+            }
+        }
+    }
     let benchmark::CaseSession { mut session, .. } =
-        benchmark::case_session(store.clone(), &item, &case.lint, &gs, derived.as_ref());
+        benchmark::case_session_batch(store.clone(), &item, &case.lint, &gs, derived.as_ref(), &extra);
     for step in &case.steps {
         let reply = session.dispatch(&step.call, &step.args);
         let (ok, detail) = judge(step, &reply);
@@ -393,7 +451,21 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             wanted.insert(m.as_str().to_string());
         }
     }
-    // Requirements bring their entities; entities bring their parent chain.
+    // A goal's entity brings the requirements that reference it (a review or a
+    // criteria goal derives from them); requirements bring their entities; entities
+    // bring their parent chain.
+    for g in goals.clone() {
+        for m in id_re.find_iter(&g) {
+            let id = m.as_str();
+            if id.starts_with("ent:") {
+                for (rid, r) in &reqs {
+                    if r["entities"].as_array().into_iter().flatten().any(|e| e.as_str() == Some(id)) {
+                        wanted.insert(rid.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut grow = true;
     while grow {
         grow = false;
@@ -466,8 +538,18 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         }
         steps.push(step);
     }
+    let extra_goals: Vec<Value> = goals
+        .iter()
+        .skip(1)
+        .filter_map(|g| {
+            let rest = g.strip_prefix("g:")?;
+            let (k, t) = rest.split_once(':')?;
+            Some(json!({"kind": k, "target": t}))
+        })
+        .collect();
     let case = json!({
         "name": format!("{}-{}", trace.file_stem().and_then(|s| s.to_str()).unwrap_or("trace"), label.replace(':', "-")),
+        "goals": extra_goals,
         "description": format!("Extracted from {} session {}; trim the fixture, keep the steps that matter, correct the expectations", trace.display(), label),
         "goal": {"kind": kind, "target": target},
         "given": {"docs": docs, "graph": {"entities": g_ents, "requirements": g_reqs, "views": g_views}},

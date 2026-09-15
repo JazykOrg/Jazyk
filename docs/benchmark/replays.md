@@ -18,8 +18,9 @@ recorded outcome as its expectation (`ok`, or the `rule` the harness refused wit
 The graph the session saw comes from the batch's
 [snapshot](../compiler/sessions.md#snapshots) when the run left one, else from the
 project's current graph (the file says which): the extractor seeds under `given.graph`
-the goal's targets, every node the calls name, the entities of those requirements, and
-their parent chains, so the goal derives as it did. The author trims the fixture to what
+the goal's targets, every node the calls name, the requirements that reference a
+goal's entity, the entities of those requirements, and their parent chains, so the
+goal derives as it did. The author trims the fixture to what
 the scenario needs, keeps the steps that matter, and edits the expectations to what the
 harness should have answered. A replay is the finding written down as a test.
 
@@ -35,6 +36,9 @@ naming the finding it holds, and one or more fenced `yaml` blocks per
 - `name`, `description`, `goal`, `given`: as a [case](./cases.md#case-format). The
   fixture seeds the same sandbox, the goal derives or assembles the same way, and the
   session opens with the same prompt and the same loaded set a build's session would.
+- `goals` (optional): the batch's other goals, each `{kind, target}`, derived from the
+  same fixture and held in the same session, since a recorded batch holds several (a
+  review batch on f2 held four entities) and a session marks each of them.
 - `steps`: the calls, in order. Each is `call` (a tool name from the goal's
   [toolset](../compiler/tools.md#toolsets)), `args` (the arguments object), and an
   optional `expect`:

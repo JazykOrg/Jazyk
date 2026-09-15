@@ -70,6 +70,8 @@ pub struct Case {
     pub checks: Vec<(String, Value)>,
     // Replays only: the scripted calls. Mirrors docs/benchmark/replays.md#replay-format.
     pub steps: Vec<Step>,
+    // Replays only: the batch's other goals as (kind, target).
+    pub extra_goals: Vec<(String, String)>,
 }
 
 // One scripted call of a replay and the reply the harness must give.
@@ -82,6 +84,19 @@ pub struct Step {
     pub rule: Option<String>,
     pub contains: Option<String>,
     pub absent: Option<String>,
+}
+
+// The harness task name a goal kind assembles to, for the kinds whose goal is
+// assembled from kind and target rather than derived (docs/benchmark/cases.md#derived-goals).
+pub fn assembled_task(kind: &str) -> Option<&'static str> {
+    let task: &'static str = match kind {
+        "reconcile-section" => "reconcile-doc",
+        "generate" => "generate-entity",
+        "verify" => "verify-requirement",
+        "review-entity" => "review-entity",
+        _ => return None,
+    };
+    ASSEMBLED_TASKS.contains(&task).then_some(task)
 }
 
 impl Case {
@@ -196,6 +211,16 @@ pub fn case_from_value(v: &Value) -> Case {
                                 c.as_object()
                                     .and_then(|m| m.iter().next())
                                     .map(|(k, v)| (k.clone(), v.clone()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                extra_goals: v["goals"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|g| {
+                                Some((g["kind"].as_str()?.to_string(), g["target"].as_str()?.to_string()))
                             })
                             .collect()
                     })
@@ -1250,21 +1275,40 @@ pub fn case_session(
     gs: &crate::gen::GenSettings,
     derived: Option<&crate::model::Goal>,
 ) -> CaseSession {
+    case_session_batch(snapshot, item, lint, gs, derived, &[])
+}
+
+// The same session over a batch: the derived goal plus the batch's other derived
+// goals, as a replay of a recorded batch holds them
+// (docs/benchmark/replays.md#replay-format).
+pub fn case_session_batch(
+    snapshot: Store,
+    item: &crate::model::WorkItem,
+    lint: &crate::project::Linting,
+    gs: &crate::gen::GenSettings,
+    derived: Option<&crate::model::Goal>,
+    extra: &[crate::model::Goal],
+) -> CaseSession {
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
     let goal = match derived {
         Some(g) => g.clone(),
         None => item.to_goal(crate::model::GoalState::Open),
     };
+    let mut goals: Vec<crate::model::Goal> = vec![goal.clone()];
+    goals.extend(extra.iter().cloned());
     let scope = match derived {
-        Some(g) => WorkScope::for_batch(&format!("snippet-{}", g.id), std::slice::from_ref(g)),
+        Some(g) => WorkScope::for_batch(&format!("snippet-{}", g.id), &goals),
+        // An assembled primary with batch mates scopes the whole batch, as a
+        // recorded session did (docs/benchmark/replays.md#replay-format).
+        None if !extra.is_empty() => WorkScope::for_batch(&format!("replay-{}", goal.id), &goals),
         None => WorkScope::from_item(item),
     };
     // The case's own lint rules ride on the project block (docs/benchmark/cases.md).
-    let prompt = crate::session::preview_with(&snapshot, std::slice::from_ref(&goal), lint);
+    let prompt = crate::session::preview_with(&snapshot, &goals, lint);
     // The session holds what its prompt lists, as a build session does
     // (docs/benchmark/benchmark.md#runs): the same seeding `begin_goals` applies.
-    let (loaded, skills) = crate::session::initial_loaded(&snapshot, std::slice::from_ref(&goal));
+    let (loaded, skills) = crate::session::initial_loaded(&snapshot, &goals);
     let names = toolset(&item.task);
     let tools: Vec<GenericTool> = catalog()
         .iter()

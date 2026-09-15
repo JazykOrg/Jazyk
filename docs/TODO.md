@@ -16,6 +16,13 @@ This scratch space is a live document to outline the work for this documentation
 
 ## LATER
 
+- The GUI beyond one machine: sign-in, per-project access, and read-only share links
+  over the [GUI](./frontends/gui.md); today the [viewer](./frontends/viewer.md)
+  snapshot is the share. The home screen and the capability descriptor are the only
+  cloud-facing pieces in the spec.
+- The GUI's previous layout (`bootstrap/gui`, the rail workbench) is removed once
+  `bootstrap/app` reaches its [cutover](./frontends/gui.md#frontend); every old URL
+  redirects until then.
 - Per-entity file sharding for the [graph store](./compiler/graph.md#storage-layout), when
   `entities.yaml` grows too large.
 - [Journal](./compiler/graph.md#journal) rotation: cap `journal/` growth, compact old

@@ -350,7 +350,7 @@ What consumes the links:
   level below it, and moves up, down, or sideways one link at a time. A diagram page
   carries a legend, one link per drawn entity, because an image embedded in a markdown
   preview does not click; the `.svg` anchors work wherever the file itself is opened.
-- The [GUI](../frontends/gui.md#graph) draws from the graph, not from the files. It
+- The [GUI](../frontends/gui.md#map) draws from the graph, not from the files. It
   shows the containment tree beside the diagram panel and a breadcrumb over it, and
   follows `children` to open the level below a clicked member.
 - The [terminal viewer](../frontends/viewer.md) prints the containment tree with each

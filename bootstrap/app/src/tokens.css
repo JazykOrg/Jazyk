@@ -1,0 +1,217 @@
+/* The viewer's palette, carried forward so the GUI reads as its live successor.
+   Dark values keyed off the same variable names; prefers-color-scheme is the default
+   and the manual toggle stamps data-theme on the root. */
+:root {
+  --ink: #1d2523;
+  --muted: #5b6763;
+  --line: #dde3e0;
+  --accent: #0e7a6d;
+  --err: #c24333;
+  --warn: #a8731c;
+  --info: #2a6fa8;
+  --none: #7a827f;
+  --bg: #f7f8f7;
+  --panel: #ffffff;
+  --mono: ui-monospace, Menlo, monospace;
+  --sans: -apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #d6ddda;
+    --muted: #8b968f;
+    --line: #2c3431;
+    --accent: #35b3a2;
+    --err: #e06a58;
+    --warn: #d09a45;
+    --info: #5f9fd6;
+    --none: #7a827f;
+    --bg: #141917;
+    --panel: #1c2320;
+  }
+}
+
+:root[data-theme='light'] {
+  --ink: #1d2523;
+  --muted: #5b6763;
+  --line: #dde3e0;
+  --accent: #0e7a6d;
+  --err: #c24333;
+  --warn: #a8731c;
+  --info: #2a6fa8;
+  --none: #7a827f;
+  --bg: #f7f8f7;
+  --panel: #ffffff;
+}
+
+:root[data-theme='dark'] {
+  --ink: #d6ddda;
+  --muted: #8b968f;
+  --line: #2c3431;
+  --accent: #35b3a2;
+  --err: #e06a58;
+  --warn: #d09a45;
+  --info: #5f9fd6;
+  --none: #7a827f;
+  --bg: #141917;
+  --panel: #1c2320;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--bg);
+  margin: 0;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+a {
+  color: var(--accent);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 10px 14px;
+  margin: 8px 0;
+}
+
+.chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  border: 1px solid currentColor;
+  margin-right: 6px;
+  white-space: nowrap;
+}
+
+.sev-error,
+.v-bad {
+  color: var(--err);
+}
+.sev-warning,
+.v-stale {
+  color: var(--warn);
+}
+.sev-info {
+  color: var(--info);
+}
+.sev-none,
+.v-none {
+  color: var(--none);
+}
+.v-ok {
+  color: var(--accent);
+}
+
+.card.agg-ok {
+  border-left: 4px solid var(--accent);
+}
+.card.agg-bad {
+  border-left: 4px solid var(--err);
+}
+.card.agg-stale {
+  border-left: 4px solid var(--warn);
+}
+.card.agg-none {
+  border-left: 4px solid var(--line);
+}
+
+button,
+.btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+button:hover,
+.btn:hover {
+  outline: 2px solid var(--accent);
+}
+
+button:disabled {
+  color: var(--muted);
+  border-color: var(--line);
+  cursor: default;
+  outline: none;
+}
+
+input[type='text'],
+input[type='search'] {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: var(--sans);
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+input:focus {
+  outline: 2px solid var(--accent);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  background: var(--panel);
+}
+
+th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border-bottom: 1.5px solid var(--ink);
+  padding: 6px 10px;
+}
+
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 10px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 24px 0 8px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 4px;
+}
+
+h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-family: var(--mono);
+}

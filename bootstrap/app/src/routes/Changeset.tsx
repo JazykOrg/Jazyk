@@ -1,0 +1,140 @@
+// One committed changeset: the entry kind, its goal batch, every mutation with its
+// reasoning, the goals it resolved and opened, and navigation to neighbors and the
+// diff.
+import { Link, useParams } from 'react-router'
+import { useQuery } from '@tanstack/react-query'
+import { get, entryLabel, type JournalEntry } from '../lib/api'
+import NodeLink from '../components/NodeLink'
+import SectionLink from '../components/SectionLink'
+import './routes.css'
+
+function opClass(op: string): string {
+  if (op.startsWith('create') || op.startsWith('report')) return 'v-ok'
+  if (op.startsWith('update') || op.startsWith('triage') || op.startsWith('bump')) return 'sev-info'
+  if (op.startsWith('delete') || op.startsWith('resolve') || op.startsWith('retract')) return 'v-bad'
+  if (op.startsWith('merge')) return 'v-stale'
+  return 'sev-none' // set_coverage, gc, ratify
+}
+
+export default function Changeset() {
+  const { gen: genParam } = useParams()
+  const gen = Number(genParam)
+  const q = useQuery({
+    queryKey: ['journal', 'one', gen],
+    queryFn: () =>
+      get<{ entries: JournalEntry[]; generation: number }>(`/api/journal?from=${gen}&to=${gen}`),
+    enabled: Number.isFinite(gen) && gen > 0,
+  })
+
+  if (!Number.isFinite(gen) || gen <= 0) return <p className="muted">not a generation number</p>
+  if (q.error)
+    return (
+      <p className="error-inline">
+        {q.error.message}{' '}
+        <a href="#retry" onClick={(e) => { e.preventDefault(); q.refetch() }}>retry</a>
+      </p>
+    )
+  if (!q.data) return <p className="muted">loading…</p>
+
+  const entry = q.data.entries.find((e) => e.generation === gen) ?? q.data.entries[0]
+  const nav = (
+    <p className="row mono">
+      {gen > 1 && <Link to={`/history/${gen - 1}`}>← g{gen - 1}</Link>}
+      <Link to="/journal">journal</Link>
+      <Link to={`/history/${gen + 1}`}>g{gen + 1} →</Link>
+      <Link to={`/history/diff?from=${Math.max(1, gen - 1)}&to=${gen}`}>diff this build</Link>
+    </p>
+  )
+  if (!entry)
+    return (
+      <div>
+        {nav}
+        <p className="muted">no changeset at generation {gen}</p>
+      </div>
+    )
+
+  const dirtied = entry.dirtied ?? []
+  return (
+    <div>
+      <h1 className="mono">g{gen}</h1>
+      {nav}
+      <div className="card">
+        <p style={{ margin: '2px 0' }}>
+          <b>{entry.kind || 'changeset'}</b> · <span className="mono">{entryLabel(entry)}</span> ·{' '}
+          <span className="muted">
+            {entry.rounds} rounds · {entry.tokens} tok
+          </span>
+        </p>
+        {(entry.batch ?? []).length > 0 && (
+          <p style={{ margin: '2px 0' }}>
+            {(entry.batch ?? []).map((g) => (
+              <span key={g} style={{ marginRight: 8 }}>
+                <NodeLink id={g} />
+              </span>
+            ))}
+          </p>
+        )}
+        {dirtied.length > 0 && (
+          <p style={{ margin: '2px 0' }}>
+            {dirtied.map((sec) => {
+              const [doc, section] = sec.includes('#')
+                ? [sec.slice(0, sec.indexOf('#')), sec.slice(sec.indexOf('#') + 1)]
+                : [sec, undefined]
+              return (
+                <span key={sec} style={{ marginRight: 8 }}>
+                  <SectionLink doc={doc} section={section} />
+                </span>
+              )
+            })}
+          </p>
+        )}
+      </div>
+
+      {(entry.resolved_goals ?? []).length > 0 && (
+        <div className="card">
+          <p style={{ margin: '2px 0' }}><b>resolved</b></p>
+          {(entry.resolved_goals ?? []).map((r) => (
+            <p key={r.goal} style={{ margin: '2px 0' }}>
+              <span className="v-ok">✓</span> <NodeLink id={r.goal} />{' '}
+              <span className="muted">{r.justification}</span>
+            </p>
+          ))}
+        </div>
+      )}
+      {(entry.opened_goals ?? []).length > 0 && (
+        <div className="card">
+          <p style={{ margin: '2px 0' }}><b>opened</b></p>
+          {(entry.opened_goals ?? []).map((o) => (
+            <p key={o.goal} style={{ margin: '2px 0' }}>
+              <NodeLink id={o.goal} />{' '}
+              <span className="muted mono">
+                cause: g{o.cause.generation} #{o.cause.mutation}
+                {o.cause.via ? ` via ${o.cause.via}` : ''}
+              </span>
+            </p>
+          ))}
+        </div>
+      )}
+
+      {entry.mutations.length === 0 && <p className="muted">no mutations in this changeset</p>}
+      {entry.mutations.map((m, i) => {
+        const op = String(m.op ?? '')
+        const id = typeof m.id === 'string' ? m.id : typeof m.keep === 'string' ? m.keep : null
+        const reasoning = typeof m.reasoning === 'string' ? m.reasoning : null
+        return (
+          <div key={i} className="card">
+            <p style={{ margin: '2px 0' }}>
+              <span className={`chip ${opClass(op)}`}>{op}</span>
+              {id && <NodeLink id={id} />}
+            </p>
+            {reasoning && <p className="muted" style={{ margin: '2px 0' }}>{reasoning}</p>}
+            <details>
+              <summary>body</summary>
+              <pre className="pack">{JSON.stringify(m, null, 2)}</pre>
+            </details>
+          </div>
+        )
+      })}
+    </div>
+  )
+}

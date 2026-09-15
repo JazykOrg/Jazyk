@@ -206,7 +206,7 @@ fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'static str])> 
         "viewer" => (Some(0), &[]),
         "gui" => (
             Some(0),
-            &["--port", "--no-open", "--watch", "--gui-dist", "--no-token"],
+            &["--port", "--no-open", "--watch", "--gui-dist", "--no-token", "--dev"],
         ),
         "mcp" => (
             Some(1),
@@ -464,7 +464,7 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              directory."
             .to_string(),
         "gui" => format!(
-            "usage: jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token]\n\n\
+            "usage: jazyk gui [--port N] [--no-open] [--watch] [--gui-dist DIR] [--no-token] [--dev]\n\n\
              Start the GUI: one local server with the web app, the JSON API, the event\n\
              stream, and the language server over WebSocket, then open the browser.\n\
              Binds 127.0.0.1 only. The busy default port falls back to an ephemeral one;\n\
@@ -474,7 +474,8 @@ fn cmd_usage(cmd: &str) -> Option<String> {
              --no-open       do not open the browser\n  \
              --watch         start in watch mode: compile on change (default: queue)\n  \
              --gui-dist DIR  serve frontend assets from DIR instead of the embedded build\n  \
-             --no-token      disable the session token check (frontend development)\n\
+             --no-token      disable the session token check (frontend development)\n             --dev           start with the Developer toggle on (the compiler workbench)\n  \
+\
              {}",
             COMMON_LLM
         ),
@@ -612,6 +613,7 @@ fn main() {
             "--no-open" => opts.no_open = true,
             "--watch" => opts.watch = true,
             "--no-token" => opts.no_token = true,
+            "--dev" => opts.dev = true,
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
             "--write" => opts.write = true,

@@ -49,6 +49,8 @@ pub async fn project(State(st): State<SharedState>) -> Json<Value> {
         // Never the api key.
         "llm": { "model": st.llm().model, "baseUrl": st.llm().base_url },
         "version": env!("CARGO_PKG_VERSION"),
+        // --dev: the app starts with the Developer toggle on.
+        "dev": st.dev,
     }))
 }
 
@@ -762,31 +764,6 @@ pub async fn verify_pending(
     let pending =
         crate::verify::pending(&store, &st.gs(), p.filter.as_deref(), p.entity.as_deref());
     Json(json!({ "pending": pending, "counts": crate::verify::pending_counts(&store, &st.gs()) }))
-}
-
-// Every requirement with its derived status, plus rollup counts. Rows are the
-// status map enriched with the owning entity and a nested test object, so the
-// matrix view can group by entity.
-pub async fn verify_matrix(State(st): State<SharedState>) -> Json<Value> {
-    let store = load_store(&st).await;
-    let statuses = crate::verify::status_map(&store, &st.gs());
-    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
-    let mut rows: BTreeMap<String, Value> = BTreeMap::new();
-    for (rid, v) in statuses {
-        let s = v["status"].as_str().unwrap_or("unknown").to_string();
-        *by_status.entry(s).or_default() += 1;
-        let entity = store
-            .graph
-            .requirements
-            .get(&rid)
-            .and_then(|r| r.entities.first().cloned())
-            .unwrap_or_default();
-        let mut row = v.clone();
-        row["entity"] = json!(entity);
-        row["test"] = json!({ "kind": v["kind"], "run": v["run"], "label": v["label"] });
-        rows.insert(rid, row);
-    }
-    Json(json!({ "rows": rows, "counts": by_status }))
 }
 
 pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<String>) -> Response {

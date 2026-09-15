@@ -1,0 +1,397 @@
+/* Route-specific styling app.css does not cover. */
+
+.statrow {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin: 8px 0 16px;
+}
+
+.statrow b {
+  font-size: 18px;
+}
+
+.actionrow {
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+  align-items: center;
+}
+
+/* Build console */
+.joblist .card {
+  cursor: pointer;
+}
+
+.joblist .card.job-sel {
+  border-color: var(--accent);
+}
+
+.card.turn-active {
+  border-left: 4px solid var(--accent);
+}
+
+/* Board cards (docs/frontends/gui.md#board): a resolved card turns green until
+   the build ends, a failed one red, and a card a session holds pulses while the
+   session streams. */
+.goal-card {
+  cursor: pointer;
+}
+
+/* The chips wrap under the target in a narrow column instead of clipping. */
+.goal-card .row {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.goal-card.goal-resolved {
+  border-color: var(--accent);
+}
+
+.goal-card.goal-failed {
+  border-color: var(--err);
+}
+
+.goal-card.goal-session {
+  animation: goal-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes goal-pulse {
+  0%,
+  100% {
+    border-color: var(--line);
+  }
+  50% {
+    border-color: var(--accent);
+  }
+}
+
+.goal-card .goal-err {
+  color: var(--err);
+  margin: 2px 0;
+}
+
+.trace-row .expand {
+  border: none;
+  background: none;
+  padding: 0 4px 0 0;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.trace-row .expand:hover {
+  color: var(--accent);
+  outline: none;
+}
+
+.trace-full {
+  margin: 2px 0 6px 18px;
+}
+
+.trace-row {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 0;
+}
+
+.trace-row.t-muted {
+  color: var(--muted);
+}
+
+.trace-row.t-model {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.trace-row.t-err {
+  color: var(--err);
+}
+
+.trace-row.t-ok {
+  color: var(--accent);
+}
+
+.trace-row.t-warn {
+  color: var(--warn);
+}
+
+/* One model call inside a turn: header always visible, prompt and answer behind
+   the toggle (docs/frontends/gui.md#activity). */
+.round {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+  margin: 4px 0 4px 2px;
+}
+
+.round-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 1px 0;
+}
+
+.round-head .expand {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.round-head .expand:hover {
+  color: var(--accent);
+  outline: none;
+}
+
+.round-body {
+  margin: 2px 0 6px 14px;
+}
+
+.msg > summary {
+  font-size: 12px;
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg-body {
+  margin: 2px 0 6px 12px;
+  max-height: 420px;
+}
+
+.msg-system {
+  color: var(--info);
+}
+.msg-user {
+  color: var(--accent);
+}
+.msg-assistant {
+  color: var(--ink);
+}
+.msg-tool {
+  color: var(--muted);
+}
+
+/* Release diff */
+.diff-line {
+  display: block;
+}
+
+.diff-del {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+}
+
+.diff-add {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* Command palette */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 50;
+}
+
+.palette {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(600px, 90vw);
+  z-index: 51;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3);
+}
+
+.palette-hits {
+  margin-top: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.palette-hit {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.palette-hit.sel {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.oneline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Deliverable browser: tree | read-only viewer | ties sidebar */
+.deliv {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.deliv-tree {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow: auto;
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.deliv-dir {
+  padding: 4px 12px 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.deliv-row {
+  display: flex;
+  align-items: center;
+  border-left: 3px solid transparent;
+}
+
+.deliv-row.active {
+  border-left-color: var(--accent);
+}
+
+.deliv-row.active a.deliv-file {
+  color: var(--accent);
+}
+
+.deliv-row:hover {
+  background: var(--bg);
+}
+
+.deliv-tree a.deliv-file {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 9px;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.deliv-tree a.deliv-file:hover {
+  color: var(--accent);
+}
+
+.deliv-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deliv-count {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+.deliv-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.deliv-pad {
+  padding: 16px 24px;
+}
+
+.deliv-topbar {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.deliv-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.deliv-side {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+/* Traceability marker lines (monaco lines-decorations margin). */
+.dmark-ok {
+  border-left: 3px solid var(--accent);
+}
+
+.dmark-bad {
+  border-left: 3px solid var(--err);
+}
+
+/* Settings form */
+.settings {
+  max-width: 720px;
+}
+
+.settings label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+
+.settings textarea {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0 14px;
+}
+
+.settings input[type='number'] {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 13px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.listrow {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0;
+}

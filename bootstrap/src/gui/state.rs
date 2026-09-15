@@ -21,6 +21,8 @@ pub struct AppState {
     // Set by --gui-dist / JAZYK_GUI_DIST: serve frontend assets from disk instead of
     // the embedded dist.
     pub dist_dir: Option<PathBuf>,
+    // --dev: the app starts with the Developer toggle on (docs/frontends/gui.md#developer-toggle).
+    pub dev: bool,
     // Signals the server to stop (ctrl-c or POST /api/shutdown).
     pub shutdown: tokio::sync::Notify,
     pub events: super::events::EventHub,

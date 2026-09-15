@@ -136,7 +136,11 @@ with no external agent installed, and it is deliberately ignorant of jazyk:
   message chunks, one `tool_call` and `tool_call_update` per MCP call, and token
   usage. A prose reply in a prompt that already made tool calls gets one nudge before
   the prompt ends: weak models forget they are mid-goal more often than they finish
-  silently, and a purely conversational answer still ends the prompt immediately.
+  silently, and a purely conversational answer still ends the prompt immediately. A
+  prose reply that announces an action ("I'll rewrite src/order.rs", "Now I'll record
+  the generation", a line ending in a colon) is not an answer either: it gets a nudge
+  saying announcing is not acting, up to three times per prompt, since a local model
+  ended four of ten generation sessions on such a sentence with the call never made.
   A reply that is empty of both message and calls while carrying reasoning is a
   stall, not an answer: reasoning models narrate the action they intend and stop, as
   if the thinking were visible. The loop answers with a corrective nudge naming that

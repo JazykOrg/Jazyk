@@ -132,6 +132,21 @@ impl Codec for NativeCodec {
 
 struct TextCodec;
 
+// A prose reply that names the action it is about to take instead of taking it.
+// Mirrors docs/frontends/acp.md#the-embedded-agent.
+fn announces_action(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let tail: String = t.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" ");
+    let lower = tail.to_lowercase();
+    t.ends_with(':')
+        || ["i'll ", "i will ", "let me ", "now i ", "next i ", "next, i ", "i'm going to ", "i am going to "]
+            .iter()
+            .any(|p| lower.contains(p))
+}
+
 // An endpoint error about the reply's own JSON: the model's output was cut before a
 // tool call closed. Mirrors docs/frontends/acp.md#the-embedded-agent.
 fn reply_unparsed(err: &str) -> bool {
@@ -328,6 +343,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
     let mut nudged = false;
     let mut empty_nudges = 0u32;
     let mut cut_nudges = 0u32;
+    let mut intent_nudges = 0u32;
     let mut malformed_streak = 0u32;
     while rounds < a.max_rounds {
         if (a.cancelled)() {
@@ -490,6 +506,19 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 a.history.push(json!({"role": "user", "content": nudge}));
                 continue;
             }
+            // An announced action ("I'll rewrite src/order.rs", "Now I'll record
+            // the generation") is not an answer: say so, up to three times, since a
+            // local model ended sessions on such a line with the call never made.
+            // Mirrors docs/frontends/acp.md#the-embedded-agent.
+            let announced = actions
+                .iter()
+                .any(|x| matches!(x, Action::Text(t) if announces_action(t)));
+            if called_any && announced && intent_nudges < 3 {
+                intent_nudges += 1;
+                a.history.push(json!({"role": "user", "content":
+                    "You announced an action but made no tool call, and announcing is not acting: make that call now. If the work is finished, reply with a one-line summary and nothing else."}));
+                continue;
+            }
             if called_any && !nudged {
                 nudged = true;
                 a.history.push(json!({"role": "user", "content":
@@ -599,6 +628,13 @@ mod tests {
         let c = TextCodec;
         let msg = json!({"role": "assistant", "content": "The document describes a shop."});
         assert!(matches!(c.parse(&msg)[0], Action::Text(_)));
+    }
+
+    #[test]
+    fn announced_actions_are_recognized() {
+        assert!(announces_action("All tests pass. Now I'll record the generation with the manifest."));
+        assert!(announces_action("Let me fix src/order.rs first:"));
+        assert!(!announces_action("Generation of ent:stock is complete and recorded."));
     }
 
     #[test]

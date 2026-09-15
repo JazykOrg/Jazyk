@@ -4,7 +4,6 @@
 import { Link, useParams } from 'react-router'
 import { useGraph, useStatus, useView, useViews } from '../lib/queries'
 import { useWords } from '../lib/words'
-import ExploreCard from '../components/ExploreCard'
 import DiagramSvg from '../components/DiagramSvg'
 import { NodeDetail } from '../workbench/Inspector'
 import '../shell/shell.css'
@@ -77,9 +76,10 @@ export function EntityPage() {
             {ent.stereotype && <span className="chip sev-none">«{ent.stereotype}»</span>}
             <span className="mono muted">{eid}</span>
           </div>
-          <ExploreCard id={eid} />
-          <LevelDiagram id={eid} />
-          <NodeDetail id={eid} />
+          <div className="model-page">
+            <LevelDiagram id={eid} />
+            <NodeDetail id={eid} />
+          </div>
         </>
       )}
     </div>
@@ -161,8 +161,10 @@ export function DiagramPage() {
             {v.default && <span className="chip sev-info">default</span>}
             <span className="mono muted">{vid}</span>
           </div>
-          {v.svg ? <DiagramSvg svg={v.svg} /> : <p className="muted">{v.renderError ?? 'no rendering for this diagram yet'}</p>}
-          <NodeDetail id={vid} />
+          <div className="model-page wide">
+            {v.svg ? <DiagramSvg svg={v.svg} className="view-svg diagram-page" /> : <p className="muted">{v.renderError ?? 'no rendering for this diagram yet'}</p>}
+            <NodeDetail id={vid} />
+          </div>
         </>
       )}
     </div>
@@ -183,7 +185,9 @@ export function RequirementPage() {
             <h1 style={{ fontSize: 18 }}>{r.statement}</h1>
             <span className="mono muted">{rid}</span>
           </div>
-          <NodeDetail id={rid} />
+          <div className="model-page">
+            <NodeDetail id={rid} />
+          </div>
         </>
       )}
     </div>

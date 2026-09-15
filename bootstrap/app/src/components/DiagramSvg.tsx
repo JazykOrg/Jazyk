@@ -2,12 +2,27 @@
 // on the renderer's `../<kind>/<slug>.svg` anchor overlays that level view on the
 // map instead of leaving the page (docs/compiler/diagrams.md#drill-down,
 // docs/frontends/gui.md#graph).
+import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { viewIdFromDiagramHref } from '../lib/levels'
 
 export default function DiagramSvg({ svg, className }: { svg: string; className?: string }) {
   const navigate = useNavigate()
   const loc = useLocation()
+  const ref = useRef<HTMLDivElement>(null)
+  // The picture keeps its rendered size: the hard width and height were dropped so
+  // the anchors stay live, so the viewBox gives the natural width back, capped at
+  // the panel (docs/frontends/gui.md#markdown-preview).
+  useEffect(() => {
+    const el = ref.current?.querySelector('svg')
+    if (!el) return
+    const vb = (el.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number)
+    if (vb.length === 4 && vb[2] > 0) {
+      el.style.width = `${vb[2]}px`
+      el.style.maxWidth = '100%'
+      el.style.height = 'auto'
+    }
+  }, [svg])
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const a = (e.target as Element).closest('a')
     if (!a) return
@@ -22,5 +37,5 @@ export default function DiagramSvg({ svg, className }: { svg: string; className?
     next.delete('detail')
     navigate(`/dev/map?${next.toString()}`)
   }
-  return <div className={className ?? 'view-svg'} onClick={onClick} dangerouslySetInnerHTML={{ __html: svg }} />
+  return <div ref={ref} className={className ?? 'view-svg'} onClick={onClick} dangerouslySetInnerHTML={{ __html: svg }} />
 }

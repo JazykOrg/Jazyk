@@ -683,3 +683,211 @@
 .dev-runs .wb-activity.open {
   height: auto;
 }
+
+/* The outline under the document tree (docs/frontends/gui.md#docs). */
+.outline-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 12px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  border-left: 3px solid transparent;
+}
+
+.outline-row:hover {
+  background: var(--bg);
+}
+
+.outline-row.active {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+
+.outline-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--line);
+}
+
+.outline-dot.read {
+  background: var(--accent);
+}
+
+.outline-dot.info {
+  background: var(--info);
+}
+
+.outline-dot.unread {
+  background: transparent;
+  border: 1px solid var(--muted);
+}
+
+.outline-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 4ch;
+}
+
+.outline-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+.outline-chip.agg-ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.outline-chip.agg-bad {
+  color: var(--err);
+  border-color: var(--err);
+}
+.outline-chip.agg-stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+/* The trail (docs/frontends/gui.md#inspector). */
+.trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  margin: 4px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.trail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  text-decoration: none;
+  max-width: 100%;
+}
+
+a.trail-step:hover .trail-label {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.trail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.trail-sub {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trail-arrow {
+  color: var(--muted);
+}
+
+/* The neighborhood widget (docs/frontends/gui.md#explore). */
+.nbh {
+  display: block;
+  max-width: 320px;
+  margin: 4px 0 10px;
+  font-family: var(--sans);
+}
+
+.nbh-edge {
+  stroke: var(--line);
+  stroke-width: 1.2;
+}
+
+.nbh-edge.composition,
+.nbh-edge.contains,
+.nbh-edge.part-of {
+  stroke: var(--accent);
+}
+
+.nbh-edge.dependency,
+.nbh-edge.realization {
+  stroke-dasharray: 3 3;
+}
+
+.nbh-type {
+  font-size: 8px;
+  fill: var(--muted);
+  opacity: 0;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
+}
+
+.nbh-n:hover .nbh-type {
+  opacity: 1;
+}
+
+.nbh-node {
+  fill: var(--panel);
+  stroke: var(--ink);
+  stroke-width: 1.2;
+}
+
+.nbh-n:hover .nbh-node {
+  stroke: var(--accent);
+}
+
+.nbh-n:hover .nbh-name {
+  fill: var(--accent);
+}
+
+.nbh-me {
+  fill: var(--accent);
+}
+
+.nbh-name {
+  font-size: 9.5px;
+  fill: var(--ink);
+}
+
+.nbh-name.me {
+  font-weight: 600;
+}
+
+/* Model pages: the detail reads at a column width; a diagram gets the room it
+   needs but never a font larger than the page (docs/frontends/gui.md#model). */
+.model-page {
+  max-width: 860px;
+}
+
+.model-page.wide {
+  max-width: none;
+}
+
+.model-page .view-svg svg {
+  max-width: 100%;
+  width: auto;
+  max-height: 70vh;
+}
+
+.model-page .diagram-page svg {
+  max-height: none;
+}

@@ -1,6 +1,7 @@
 // The navigator: the left column, one per lens (docs/frontends/gui.md#lenses).
 import { NavLink, useLocation } from 'react-router'
 import Explorer from '../workbench/Explorer'
+import Outline from './Outline'
 import GraphSidebar from '../workbench/GraphSidebar'
 import BoardSidebar from '../workbench/BoardSidebar'
 import { useInbox } from '../lib/product'
@@ -18,7 +19,12 @@ function Row({ to, label, sub, end }: { to: string; label: string; sub?: React.R
 }
 
 function DocsNav() {
-  return <Explorer sections={['docs']} />
+  return (
+    <>
+      <Explorer sections={['docs']} />
+      <Outline />
+    </>
+  )
 }
 
 function ModelNav() {

@@ -4,7 +4,7 @@
 // level view ids. A row opens the node in the inspector and focuses it on the map;
 // a view row, or a level view id on a tree node, overlays the view.
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { useCoverage, useGraph, useMatrix, useTree, useViews } from '../lib/queries'
 import type { Graph, TreeData, TreeNode, TreeRoot } from '../lib/api'
 import { ancestorsOf, levelChain } from '../lib/levels'
@@ -194,6 +194,11 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
 
 export default function GraphSidebar() {
   const [sp, setSp] = useSearchParams()
+  const loc = useLocation()
+  const navigate = useNavigate()
+  // Under the Model lens a row opens its page; under the Developer map it focuses
+  // the map (docs/frontends/gui.md#model).
+  const onMap = loc.pathname.startsWith('/dev/map')
   const list: ListKind = (LISTS as readonly string[]).includes(sp.get('list') ?? '')
     ? (sp.get('list') as ListKind)
     : 'entities'
@@ -222,6 +227,10 @@ export default function GraphSidebar() {
   // Open in the inspector and focus on the map, one click. An entity row is a step
   // of the walk: its card opens and the explorer's position moves with it.
   const openAndFocus = (id: string) => {
+    if (!onMap) {
+      if (id.startsWith('ent:')) return navigate(`/model/entities/${encodeURIComponent(id)}`)
+      if (id.startsWith('req:')) return navigate(`/model/requirements/${encodeURIComponent(id)}`)
+    }
     const next = new URLSearchParams(sp)
     selectNodeParams(next, id)
     next.set('focus', id)
@@ -230,6 +239,7 @@ export default function GraphSidebar() {
 
   // A view row overlays the view and opens it in the inspector.
   const overlayView = (id: string) => {
+    if (!onMap) return navigate(`/model/diagrams/${encodeURIComponent(id)}`)
     const next = new URLSearchParams(sp)
     next.set('node', id)
     next.set('view', id)

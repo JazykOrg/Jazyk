@@ -169,6 +169,82 @@ const [covField, setCov] = stripField()
 const [chgField, setChg] = stripField()
 const [bldField, setBld] = stripField()
 
+// A requirement marker in the left margin: the sentence carries a requirement, the
+// color is its rollup, a click opens it (docs/frontends/gui.md#editor).
+class ReqStrip extends GutterMarker {
+  constructor(
+    readonly cls: string,
+    readonly tip: string,
+    readonly rid: string,
+    readonly open: (rid: string) => void,
+  ) {
+    super()
+  }
+  override eq(o: ReqStrip) {
+    return o.cls === this.cls && o.tip === this.tip && o.rid === this.rid
+  }
+  toDOM() {
+    const s = document.createElement('div')
+    s.className = `jz-req ${this.cls}`
+    s.title = this.tip
+    s.onmousedown = (e) => {
+      e.preventDefault()
+      this.open(this.rid)
+    }
+    return s
+  }
+}
+
+const setReqs = StateEffect.define<RangeSet<ReqStrip>>()
+const reqField = StateField.define<RangeSet<ReqStrip>>({
+  create: () => RangeSet.empty,
+  update(value, tr) {
+    value = value.map(tr.changes)
+    for (const e of tr.effects) if (e.is(setReqs)) value = e.value
+    return value
+  },
+})
+
+// One requirement marker as the editor's owner computes it: the quote to locate,
+// the requirement, its rollup class, and the tooltip.
+export interface ReqMark {
+  quote: string
+  rid: string
+  cls: string
+  tip: string
+}
+
+// An inline band under an anchored sentence: a question or a proposal with its
+// buttons, rendered by the owner into a DOM element (docs/frontends/gui.md#inbox).
+export interface InlineBand {
+  key: string
+  // Where it anchors: a quote to locate, or a 1-based line.
+  quote?: string
+  line?: number
+  render: () => HTMLElement
+}
+
+class BandWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    readonly render: () => HTMLElement,
+  ) {
+    super()
+  }
+  override eq(o: BandWidget) {
+    return o.key === this.key
+  }
+  toDOM() {
+    const d = document.createElement('div')
+    d.className = 'jz-band'
+    d.appendChild(this.render())
+    return d
+  }
+  override ignoreEvent() {
+    return true
+  }
+}
+
 function decoField(): [StateField<DecorationSet>, ReturnType<typeof StateEffect.define<DecorationSet>>] {
   const effect = StateEffect.define<DecorationSet>()
   const field = StateField.define<DecorationSet>({
@@ -187,6 +263,7 @@ const [bandField, setBands] = decoField() // build bands: whole-line backgrounds
 const [linkField, setLinks] = decoField() // entity marks over LSP document links
 const [lensField, setLenses] = decoField() // requirement lenses above their quotes
 const [quoteField, setQuote] = decoField() // the ?quote= highlight
+const [inlineField, setInline] = decoField() // question and proposal bands under sentences
 
 class LensWidget extends WidgetType {
   constructor(
@@ -320,6 +397,9 @@ interface Props {
   onOpenNode?: (id: string) => void
   onMarkers: (markers: Marker[]) => void
   onSave: () => void
+  // Requirement markers in the margin and bands under sentences, located by quote.
+  marks?: ReqMark[]
+  bands?: InlineBand[]
 }
 
 // Whitespace-insensitive quote search, preferring a match at or after fromPos.
@@ -440,6 +520,43 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     } catch {
       // offline; lenses stay as they were
     }
+  }
+
+  const applyMarks = (view: EditorView) => {
+    const p = propsRef.current
+    const open = (rid: string) => p.onOpenNode?.(rid)
+    const ranges = (p.marks ?? [])
+      .map((m) => {
+        const hit = findQuote(view.state, m.quote, 0)
+        if (!hit) return null
+        const line = view.state.doc.lineAt(hit.from)
+        return new ReqStrip(m.cls, m.tip, m.rid, open).range(line.from)
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .sort((a, b) => a.from - b.from)
+    // One marker per line: the first requirement wins the margin, the rest are in
+    // the tooltip's neighbors through the inspector.
+    const seen = new Set<number>()
+    const unique = ranges.filter((r) => (seen.has(r.from) ? false : (seen.add(r.from), true)))
+    view.dispatch({ effects: setReqs.of(RangeSet.of(unique)) })
+  }
+
+  const applyBands = (view: EditorView) => {
+    const p = propsRef.current
+    const decos = (p.bands ?? [])
+      .map((b) => {
+        let pos: number | null = null
+        if (b.quote) {
+          const hit = findQuote(view.state, b.quote, 0)
+          if (hit) pos = view.state.doc.lineAt(hit.to).to
+        }
+        if (pos === null && b.line !== undefined) pos = view.state.doc.line(clampLine(view.state, b.line)).to
+        if (pos === null) return null
+        return Decoration.widget({ widget: new BandWidget(b.key, b.render), side: 1, block: true }).range(pos)
+      })
+      .filter((d): d is NonNullable<typeof d> => d !== null)
+      .sort((a, b) => a.from - b.from)
+    view.dispatch({ effects: setInline.of(Decoration.set(decos, true)) })
   }
 
   const applyCoverage = (view: EditorView) => {
@@ -649,7 +766,10 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       gutter({ class: 'jz-gutter-cov', markers: (v) => v.state.field(covField) }),
       gutter({ class: 'jz-gutter-chg', markers: (v) => v.state.field(chgField) }),
       gutter({ class: 'jz-gutter-bld', markers: (v) => v.state.field(bldField) }),
+      gutter({ class: 'jz-gutter-req', markers: (v) => v.state.field(reqField) }),
       covField,
+      reqField,
+      inlineField,
       chgField,
       bldField,
       bandField,
@@ -663,6 +783,8 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     applyCoverage(view)
     applyBuild(view)
     applyDiffMarks(view)
+    applyMarks(view)
+    applyBands(view)
     const diags = lastDiags.current.get(uri)
     if (diags) pushDiagnostics(view, diags)
     else propsRef.current.onMarkers([])
@@ -740,6 +862,16 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
     if (view) applyDiffMarks(view)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.baseline, props.path])
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) applyMarks(view)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.marks, props.path])
+  useEffect(() => {
+    const view = viewRef.current
+    if (view) applyBands(view)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.bands, props.path])
 
   // The diff view: side-by-side, baseline read-only, the current side editable.
   // Edits forward into the hidden main view, so the document stays one source of

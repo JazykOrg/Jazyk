@@ -255,7 +255,8 @@ Deliverable:
 
 - `GET /api/deliverable`: the generated product as a file listing, each file with the
   entities and requirements the [ledger](../consumers/gen.md#the-ledger) binds to it,
-  and the test artifacts pointing at it. Hidden entries, `target`, `node_modules`, and
+  and the test artifacts pointing at it. The reply also carries the recorded `medium`
+  and `build` from the ledger, the [product form](#product) page's source. Hidden entries, `target`, `node_modules`, and
   `jazyk-out*` directories are skipped, so a deliverable at the project root lists the
   product, not the compiler's output.
 - `GET /api/deliverable/file?path=`: one file's text plus its resolved

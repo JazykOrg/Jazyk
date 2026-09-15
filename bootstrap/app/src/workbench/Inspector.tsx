@@ -13,6 +13,8 @@ import { linkifyIds, useResolveId } from '../components/NodeLink'
 import NodeLink from '../components/NodeLink'
 import DiagramSvg from '../components/DiagramSvg'
 import ExploreCard from '../components/ExploreCard'
+import Neighborhood from '../components/Neighborhood'
+import { EntityTrail, RequirementTrail } from '../components/Trail'
 import SectionLink from '../components/SectionLink'
 import { VerifyChip } from '../components/Chip'
 import {
@@ -482,8 +484,10 @@ export function NodeDetail({ id }: { id: string }) {
     )
     return (
       <>
-        {/* The walk first: the card with its links; the long read follows. */}
+        {/* The trail first, then the walk's card, then the long read. */}
+        <EntityTrail id={id} graph={g} rows={rows} reqIds={reqIds} />
         <ExploreCard id={id} />
+        <Neighborhood id={id} graph={g} />
         <div id="xp-detail" />
         <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} editable />
         {children.length > 0 && (
@@ -559,6 +563,7 @@ export function NodeDetail({ id }: { id: string }) {
     const row = rows[id]
     return (
       <>
+        <RequirementTrail id={id} graph={g} row={row} />
         <RequirementCard id={id} r={req} row={row} editable />
         <ImplementedIn id={id} />
         <h2>verification</h2>

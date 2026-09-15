@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
-import { useCoverage, useDocBaseline, useDocs, useProject } from '../lib/queries'
+import { useCoverage, useDocBaseline, useDocs, useGraph, useMatrix, useProject } from '../lib/queries'
+import { useInlineBands, useReqMarks } from '../ide/overlays'
 import { useApp } from '../lib/store'
 import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
@@ -57,7 +58,13 @@ export default function DocEditor() {
   const { openNode } = useInspector()
   const setEditorDirty = useApp((a) => a.setEditorDirty)
   const [diffMode, setDiffMode] = useState(false)
+  // Reader: the rendered page alone, for reviewers (docs/frontends/gui.md#docs).
+  const [reader, setReader] = useState(false)
   const [preview, setPreview] = useState(readPreviewPref)
+  const graphQ = useGraph()
+  const matrixQ = useMatrix()
+  const marks = useReqMarks(graphQ.data, matrixQ.data?.rows ?? {}, docPath)
+  const bands = useInlineBands(graphQ.data, docPath)
   // The text the preview renders: what the editor holds, a beat behind the keystrokes.
   const [previewText, setPreviewText] = useState('')
   const previewTimer = useRef<number | null>(null)
@@ -389,6 +396,13 @@ export default function DocEditor() {
         {saveErr && <span className="error-inline ide-inline">{saveErr}</span>}
         <div className="ide-topbar-right row">
           <button
+            className={reader ? 'btn-on' : ''}
+            title={reader ? 'back to editing' : 'read the rendered page with the same overlays, no editing'}
+            onClick={() => setReader((v) => !v)}
+          >
+            reader
+          </button>
+          <button
             className={preview ? 'btn-on' : ''}
             title={preview ? 'hide the rendered preview' : 'render the markdown beside the text, live'}
             onClick={togglePreview}
@@ -419,7 +433,7 @@ export default function DocEditor() {
           <button onClick={() => void overwrite()}>overwrite</button>
         </div>
       )}
-      <div className="ide-split">
+      <div className={`ide-split${reader ? ' reader' : ''}`}>
         <CmHost
           ref={hostRef}
           root={root}
@@ -438,8 +452,10 @@ export default function DocEditor() {
           onOpenNode={openNode}
           onMarkers={setMarkers}
           onSave={() => void save()}
+          marks={marks}
+          bands={bands}
         />
-        {preview && !diffMode && (
+        {(preview || reader) && !diffMode && (
           <MarkdownView text={previewText} baseAbs={`${root}/${loaded.path}`} />
         )}
       </div>

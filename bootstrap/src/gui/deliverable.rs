@@ -79,8 +79,13 @@ pub async fn listing(State(st): State<SharedState>) -> Json<Value> {
         files.sort();
         let own = ownership(&out_dir, &gs);
         let empty = json!({ "entities": [], "requirements": [], "tests": [] });
+        // The recorded medium and build, the product form page's source
+        // (docs/frontends/gui.md#product).
+        let ledger = crate::gen::Ledger::load(&out_dir);
         json!({
             "root": gs.deliverable.to_string_lossy(),
+            "medium": ledger.medium,
+            "build": ledger.build,
             "files": files
                 .into_iter()
                 .map(|(path, size)| {

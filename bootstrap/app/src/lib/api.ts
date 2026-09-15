@@ -658,9 +658,27 @@ export interface DelivFileInfo {
   owners: DelivOwners
 }
 
+export interface Medium {
+  form: string
+  produced: string
+  toolchain?: string
+  artifact?: string
+}
+
+export interface BuildSpec {
+  run?: string
+  cwd?: string
+  produces?: string[]
+  lastRun?: { at?: string; exitCode?: number; evidence?: string; [k: string]: unknown } | null
+  [k: string]: unknown
+}
+
 export interface Deliverable {
   root: string
   files: DelivFileInfo[]
+  // The recorded medium and build (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+  medium?: Medium | null
+  build?: BuildSpec | null
 }
 
 // One file under the out directory, as GET /api/out/list reports it.

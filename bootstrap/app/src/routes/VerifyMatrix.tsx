@@ -1,7 +1,9 @@
 // The verification matrix: every ledger row with its derived status, grouped by
 // entity, with the staleness cascade explained per row and run actions.
 import { useState } from 'react'
-import { post, type VerifyRow } from '../lib/api'
+import { post, tokenParam, type VerifyRow } from '../lib/api'
+import { useStatus } from '../lib/queries'
+import { useWords } from '../lib/words'
 import { useMatrix } from '../lib/queries'
 import { useApp } from '../lib/store'
 import NodeLink from '../components/NodeLink'
@@ -16,6 +18,9 @@ export default function VerifyMatrix() {
   const [status, setStatus] = useState<string | null>(null)
   const [entity, setEntity] = useState('')
   const [kind, setKind] = useState<string | null>(null)
+  const w = useWords()
+  const { data: proj } = useStatus()
+  const exportHref = (fmt: string) => `/api/verify/matrix?format=${fmt}${tokenParam() ? `&${tokenParam()}` : ''}`
 
   if (matrix.error)
     return (
@@ -47,14 +52,36 @@ export default function VerifyMatrix() {
 
   return (
     <div>
-      <h1>Verification</h1>
+      <div className="page-head">
+        <h1>{w.trace}</h1>
+        <span className="muted">every requirement against the product: its test, its verdict, its repair</span>
+      </div>
+      <div className="stat-strip">
+        {Object.entries(counts).map(([st, n]) => (
+          <span key={st} className={`stat ${verifyClass(st)}`}>
+            <b>{n}</b> {st}
+          </span>
+        ))}
+        {proj && (
+          <span className="stat" title="sections of the documents the model has read">
+            <b>{proj.coverage.covered}</b>/{proj.coverage.total} sections read
+          </span>
+        )}
+      </div>
       <div className="actionrow">
-        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'verify', targets: [] })}>
-          run all pending
+        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'verify', targets: [] })} title="run every test whose row asks for it">
+          {w.check} everything pending
         </button>
-        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'audit' })}>
-          audit
+        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'audit' })} title="re-run every test, verified rows included">
+          Audit
         </button>
+        <span className="muted">export</span>
+        <a href={exportHref('csv')} download="trace-matrix.csv">
+          csv
+        </a>
+        <a href={exportHref('md')} download="trace-matrix.md">
+          markdown
+        </a>
       </div>
 
       <div className="filterbar">

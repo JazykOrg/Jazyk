@@ -186,18 +186,61 @@ export function GeneratedHome() {
 export function ProductForm() {
   const w = useWords()
   const { data: proj } = useProject()
+  const deliv = useDeliverable()
+  const m = deliv.data?.medium
+  const b = deliv.data?.build
   return (
     <div className="ws-scroll narrow">
       <h1>{w.productForm}</h1>
       <p className="muted">The recorded form of the product: what it is, the toolchain that produces it, the build command, the last run.</p>
-      {proj && (
+      {deliv.data && !m && (
+        <div className="empty-state">
+          <b>Not decided yet</b>
+          The first {w.build.toLowerCase()} decides the form and records it here.
+        </div>
+      )}
+      {m && (
         <div className="card">
           <p className="row" style={{ margin: '2px 0' }}>
-            <b>folder</b> <span className="mono">{proj.deliverable}</span>
+            <b>form</b> <span>{m.form}</span>
+            <span className="chip sev-none">{m.produced}</span>
           </p>
-          <p className="muted" style={{ margin: '2px 0' }}>
-            The form itself is decided by the first build and recorded in the ledger. This page reads it once the ledger exposes it.
+          {m.toolchain && (
+            <p className="row" style={{ margin: '2px 0' }}>
+              <b>toolchain</b> <span className="mono">{m.toolchain}</span>
+            </p>
+          )}
+          {m.artifact && (
+            <p className="row" style={{ margin: '2px 0' }}>
+              <b>artifact</b> <span className="mono">{m.artifact}</span>
+            </p>
+          )}
+          {proj && (
+            <p className="row" style={{ margin: '2px 0' }}>
+              <b>folder</b> <span className="mono">{proj.deliverable}</span>
+            </p>
+          )}
+        </div>
+      )}
+      {b && (
+        <div className="card">
+          <p className="row" style={{ margin: '2px 0' }}>
+            <b>build</b> <span className="mono">{b.run ?? ''}</span>
+            {b.cwd && <span className="muted mono">in {b.cwd}</span>}
           </p>
+          {(b.produces ?? []).length > 0 && (
+            <p className="row" style={{ margin: '2px 0' }}>
+              <b>produces</b> <span className="mono">{(b.produces ?? []).join(', ')}</span>
+            </p>
+          )}
+          {b.lastRun && (
+            <p className="row" style={{ margin: '2px 0' }}>
+              <b>last run</b>
+              <span className={b.lastRun.exitCode === 0 ? 'v-ok' : 'v-bad'}>{b.lastRun.exitCode === 0 ? 'succeeded' : `exit ${b.lastRun.exitCode ?? '?'}`}</span>
+              {b.lastRun.at && <span className="muted mono">{String(b.lastRun.at)}</span>}
+            </p>
+          )}
+          {b.lastRun?.evidence && <p className="muted mono" style={{ margin: '2px 0' }}>{String(b.lastRun.evidence)}</p>}
         </div>
       )}
     </div>

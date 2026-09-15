@@ -3807,6 +3807,25 @@ impl ToolSession {
                 "quote is empty; copy the sentence verbatim from the section".into(),
             ));
         }
+        // The heading is the section's title, not its body: a model that quotes it
+        // hears why (docs/compiler/graph.md#validation-gates).
+        let norm = |s: &str| s.trim_start_matches('#').split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let title = self
+            .snapshot
+            .docs
+            .get(doc)
+            .and_then(|r| r.sections.get(sec))
+            .map(|s| s.title.clone())
+            .unwrap_or_default();
+        if !title.trim().is_empty() && norm(q) == norm(&title) {
+            return Err(ToolError::new(
+                "quote-not-found",
+                format!(
+                    "`{}` is the heading of {}#{}, a title rather than body text, and headings are not quotable; quote a sentence of the section's body (a fact the heading names is stated in the body or nowhere)",
+                    title, doc, sec
+                ),
+            ));
+        }
         if self.snapshot.quote_locates(doc, sec, q) {
             return Ok(q.to_string());
         }
@@ -8035,6 +8054,26 @@ mod tests {
             &json!({"section": "/shop", "state": "non-normative", "note": "navigation only"}),
         )
         .unwrap();
+    }
+
+    // A heading quoted as body text is refused with the reason, not the generic
+    // absence line (docs/compiler/graph.md#validation-gates).
+    #[test]
+    fn heading_quoted_as_body_is_named() {
+        let mut t = session();
+        let err = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "The Cart exists.",
+                    "entities": ["ent:customer"],
+                    "section": "/shop/cart",
+                    "quote": "## Cart",
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "quote-not-found");
+        assert!(err.message.contains("heading"), "{}", err.message);
     }
 
     // Passing the statement statement as the quote is the common miscall; the rejection has to

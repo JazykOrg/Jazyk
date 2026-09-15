@@ -249,7 +249,10 @@ The gates:
 - Every `quote` must appear verbatim in its named section. Locating is
   whitespace-insensitive and forgives markdown escapes (a text-codec model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that
-  locates in the source, so provenance stays verbatim to the document.
+  locates in the source, so provenance stays verbatim to the document. A section's
+  heading is its title, not body text: a quote that is the heading is refused with a
+  message saying so, since a Codex session read `### Chapter 1: Arrival` in the loaded
+  section and quoted it.
 - In a [`reconcile-section`](./goals/reconcile-section.md) session, a mention or
   requirement source must cite the section being reconciled or its document. A quote
   from a document the prose merely links to is rejected (`wrong-document`): the fact is

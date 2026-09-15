@@ -362,6 +362,97 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             docs.insert(rel, Value::String(t));
         }
     }
+    // The graph the session saw: the batch's snapshot when the run left one, else the
+    // current graph, trimmed to the nodes the goal and the calls name
+    // (docs/benchmark/replays.md#where-replays-come-from).
+    let snap = root.join("jazyk-out").join("snapshots").join(label.replace(['/', ':'], "_")).join("graph");
+    let (graph_dir, seeded_from) = if snap.is_dir() {
+        (snap, "the batch's snapshot")
+    } else {
+        (root.join("jazyk-out").join("graph"), "the project's current graph (no snapshot for this batch)")
+    };
+    let read_shard = |name: &str| -> serde_json::Map<String, Value> {
+        std::fs::read_to_string(graph_dir.join(name))
+            .ok()
+            .and_then(|t| serde_norway::from_str::<Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default()
+    };
+    let ents = read_shard("entities.yaml");
+    let reqs = read_shard("requirements.yaml");
+    let views = read_shard("views.yaml");
+    let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let id_re = regex::Regex::new(r"(ent|req|view|crit):[A-Za-z0-9_.-]+").unwrap();
+    for g in &goals {
+        for m in id_re.find_iter(g) {
+            wanted.insert(m.as_str().to_string());
+        }
+    }
+    for (_, args) in &calls {
+        for m in id_re.find_iter(&args.to_string()) {
+            wanted.insert(m.as_str().to_string());
+        }
+    }
+    // Requirements bring their entities; entities bring their parent chain.
+    let mut grow = true;
+    while grow {
+        grow = false;
+        let snapshot: Vec<String> = wanted.iter().cloned().collect();
+        for id in snapshot {
+            if let Some(r) = reqs.get(&id) {
+                for e in r["entities"].as_array().into_iter().flatten() {
+                    if let Some(s) = e.as_str() {
+                        grow |= wanted.insert(s.to_string());
+                    }
+                }
+            }
+            if let Some(e) = ents.get(&id) {
+                if let Some(p) = e["parent"].as_str() {
+                    grow |= wanted.insert(p.to_string());
+                }
+            }
+        }
+    }
+    let sec_ref = |v: &Value| -> Value {
+        json!({"section": format!("{}#{}", v["doc"].as_str().unwrap_or(""), v["section"].as_str().unwrap_or("")), "quote": v["quote"]})
+    };
+    let mut g_ents = serde_json::Map::new();
+    let mut g_reqs = serde_json::Map::new();
+    let mut g_views = serde_json::Map::new();
+    for id in &wanted {
+        if let Some(e) = ents.get(id) {
+            if e["deleted"].as_bool() == Some(true) {
+                continue;
+            }
+            let mut o = serde_json::Map::new();
+            o.insert("name".into(), e["name"].clone());
+            for k in ["aliases", "definition", "stereotype", "parent", "scope", "provenance"] {
+                if !e[k].is_null() && e[k] != json!("") && e[k] != json!([]) {
+                    o.insert(k.into(), e[k].clone());
+                }
+            }
+            o.insert("mentions".into(), json!(e["mentions"].as_array().into_iter().flatten().map(&sec_ref).collect::<Vec<_>>()));
+            g_ents.insert(id.clone(), Value::Object(o));
+        } else if let Some(r) = reqs.get(id) {
+            if r["deleted"].as_bool() == Some(true) {
+                continue;
+            }
+            let mut o = serde_json::Map::new();
+            o.insert("statement".into(), r["statement"].clone());
+            o.insert("entities".into(), r["entities"].clone());
+            if r["source"].is_object() {
+                o.insert("source".into(), sec_ref(&r["source"]));
+            }
+            for k in ["edges", "transition", "facets"] {
+                if !r[k].is_null() && r[k] != json!([]) {
+                    o.insert(k.into(), r[k].clone());
+                }
+            }
+            g_reqs.insert(id.clone(), Value::Object(o));
+        } else if let Some(v) = views.get(id) {
+            g_views.insert(id.clone(), v.clone());
+        }
+    }
     let mut steps: Vec<Value> = Vec::new();
     for (i, (name, args)) in calls.iter().enumerate() {
         if matches!(name.as_str(), "begin_goals" | "abandon_goals") {
@@ -379,18 +470,22 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         "name": format!("{}-{}", trace.file_stem().and_then(|s| s.to_str()).unwrap_or("trace"), label.replace(':', "-")),
         "description": format!("Extracted from {} session {}; trim the fixture, keep the steps that matter, correct the expectations", trace.display(), label),
         "goal": {"kind": kind, "target": target},
-        "given": {"docs": docs},
+        "given": {"docs": docs, "graph": {"entities": g_ents, "requirements": g_reqs, "views": g_views}},
         "steps": steps,
         "assert": [],
     });
     let yaml = serde_norway::to_string(&case).map_err(|e| e.to_string())?;
     Ok(format!(
-        "# Replay {}\n\nExtracted from `{}` session `{}` ({} call(s), goals: {}). The graph the session assumed is not seeded: add the nodes it needs under `given.graph`.\n\n```yaml\n{}```\n",
+        "# Replay {}\n\nExtracted from `{}` session `{}` ({} call(s), goals: {}). The graph is seeded from {}: {} entities, {} requirements, {} views the goal and the calls name. Trim what the scenario does not need.\n\n```yaml\n{}```\n",
         label,
         trace.display(),
         label,
         calls.len(),
         goals.join(", "),
+        seeded_from,
+        g_ents.len(),
+        g_reqs.len(),
+        g_views.len(),
         yaml
     ))
 }

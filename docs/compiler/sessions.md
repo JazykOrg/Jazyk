@@ -452,6 +452,17 @@ Every session's token count lands in `status.yaml` under `costs` (`sessions`, `t
 `by_kind`, `by_class`), so the choice of executor per kind is informed by what each kind
 spends ([storage layout](./graph.md#storage-layout)).
 
+## Snapshots
+
+Every batch a session opens leaves a snapshot of the graph as it stood: the shards under
+`<out>/graph/` and `status.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
+starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
+what makes a session reproducible after the fact: `jazyk replay extract` seeds a
+[replay](../benchmark/replays.md) from it, so the harness answers the recorded calls
+against the state the model actually saw, not the state the run ended in. Snapshots are
+never read by the compiler and cost the size of the shards per batch; delete the
+directory freely.
+
 ## Trace events
 
 The runner translates a session's update stream into structured events: the tool call

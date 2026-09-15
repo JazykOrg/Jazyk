@@ -820,6 +820,30 @@ impl Dirt {
     }
 }
 
+// The graph as a batch saw it: the shards and status.yaml copied under
+// <out>/snapshots/<label>/ once per batch, for replays to seed from.
+// Mirrors docs/compiler/sessions.md#snapshots.
+pub fn snapshot_graph(out: &Path, label: &str) {
+    let dir = out.join("snapshots").join(label.replace(['/', ':'], "_"));
+    if dir.exists() {
+        return;
+    }
+    let g = out.join("graph");
+    let Ok(rd) = std::fs::read_dir(&g) else { return };
+    if crate::vfs::create_dir_all(dir.join("graph")).is_err() {
+        return;
+    }
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
+            if let Some(name) = p.file_name() {
+                std::fs::copy(&p, dir.join("graph").join(name)).ok();
+            }
+        }
+    }
+    std::fs::copy(out.join("status.yaml"), dir.join("status.yaml")).ok();
+}
+
 impl Store {
     pub fn load(out: &Path) -> Store {
         // Readers never take the lock: read the generation counter, load every shard,

@@ -15,10 +15,13 @@ and `toolResult` events carry each call's full arguments and reply.
 label, `b24-1`, or its goal id for a ledger session) into a replay file on stdout: the
 goal, the project's documents as the fixture, the calls in order, and each call's
 recorded outcome as its expectation (`ok`, or the `rule` the harness refused with).
-The author trims the fixture to what the scenario needs (a session late in a build
-assumed graph nodes earlier sessions created: seed them under `given.graph`), keeps
-the steps that matter, and edits the expectations to what the harness should have
-answered. A replay is the finding written down as a test.
+The graph the session saw comes from the batch's
+[snapshot](../compiler/sessions.md#snapshots) when the run left one, else from the
+project's current graph (the file says which): the extractor seeds under `given.graph`
+the goal's targets, every node the calls name, the entities of those requirements, and
+their parent chains, so the goal derives as it did. The author trims the fixture to what
+the scenario needs, keeps the steps that matter, and edits the expectations to what the
+harness should have answered. A replay is the finding written down as a test.
 
 A replay can also be written by hand from a finding, the way a case is: a small
 fixture, the few calls that reproduce the scenario, the expected replies.

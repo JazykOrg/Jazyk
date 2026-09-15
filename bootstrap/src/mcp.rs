@@ -665,6 +665,8 @@ impl McpServer {
             return json!({"error": {"rule": "claimed", "message": format!(
                 "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse ({}s after its last activity; a killed worker's lease lapses on its own)", batch.id, holder, crate::control::LEASE_TTL_SECS)}});
         }
+        // The graph as this batch sees it, for replays (docs/compiler/sessions.md#snapshots).
+        crate::store::snapshot_graph(&self.out, &batch.id);
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(&batch.id));
         }

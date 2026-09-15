@@ -2205,6 +2205,8 @@ pub fn compile_with(
             }
             break;
         }
+        // The graph as this batch sees it, for replays (docs/compiler/sessions.md#snapshots).
+        crate::store::snapshot_graph(out, &batch.id);
         trace.event(TraceEvent::BatchStart {
             label: batch.id.clone(),
             class: batch.class.name().into(),

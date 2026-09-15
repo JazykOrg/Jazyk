@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // `jazyk acp`: the IDE-facing proxy. Upstream it serves the protocol on stdio (the
 // IDE spawned it as its agent); downstream it drives the configured agent. In
 // between: tool injection, doc edit delegation, slash commands, and transparent
@@ -81,10 +82,10 @@ impl ProxyState {
     // next session. Mirrors docs/frontends/acp.md#the-ide-proxy.
     fn init_here(self: &Arc<Self>) -> String {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        if cwd.join("jazyk.toml").exists() {
+        if cwd.join("jazyk.toml").vexists() {
             return format!("{} already holds a jazyk.toml.", cwd.display());
         }
-        if let Err(e) = std::fs::write(cwd.join("jazyk.toml"), crate::cli::INIT_TOML) {
+        if let Err(e) = crate::vfs::write(cwd.join("jazyk.toml"), crate::cli::INIT_TOML) {
             return format!("jazyk: cannot write jazyk.toml: {}", e);
         }
         let made = match crate::cli::init_scaffold(&cwd) {
@@ -663,8 +664,8 @@ fn start_sink(state: &Arc<ProxyState>) {
     use std::io::{BufRead, BufReader, Write};
     let path = state
         .out
-        .join(format!("acp-edit-sink-{}.sock", std::process::id()));
-    let _ = std::fs::remove_file(&path);
+        .join(format!("acp-edit-sink-{}.sock", crate::sys::process_id()));
+    let _ = crate::vfs::remove_file(&path);
     let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
         return;
     };
@@ -859,7 +860,7 @@ fn run_command(
                 };
                 st.building
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+                runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
                 let _ = crate::bind::run_all(&store, &runner, &gs, &[], &trace);
                 crate::gen::run_all(&store, &runner, &gs, &[], false, &trace)
             } else {
@@ -1218,7 +1219,7 @@ fn mirrored_sessions(
 ) -> Vec<agent_client_protocol::schema::v1::SessionInfo> {
     use agent_client_protocol::schema::v1::SessionInfo;
     let mut entries: Vec<(String, String, String)> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(out.join("trace")) {
+    if let Ok(rd) = crate::vfs::read_dir(out.join("trace")) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let Some(stem) = name.strip_suffix(".jsonl") else {
@@ -1261,7 +1262,7 @@ fn mirrored_sessions(
 fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
     use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus};
     let path = out.join("trace").join(format!("{}.jsonl", stem));
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Ok(text) = crate::vfs::read_to_string(&path) else {
         return Vec::new();
     };
     let mut updates: Vec<SessionUpdate> = Vec::new();
@@ -1357,10 +1358,10 @@ fn watch_runs(state: &Arc<ProxyState>) {
     let st = state.clone();
     std::thread::spawn(move || {
         let dir = st.out.join("trace");
-        let mut last: usize = std::fs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
+        let mut last: usize = crate::vfs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
-            let now = std::fs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
+            let now = crate::vfs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
             if now != last {
                 last = now;
                 if let Some(up) = st.up.get() {

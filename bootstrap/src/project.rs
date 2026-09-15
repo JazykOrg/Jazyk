@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Project discovery and settings. A Jazyk project is a directory holding a jazyk.toml,
 // found by walking up from the working directory. Mirrors docs/compiler/project-settings.md.
 use std::collections::BTreeMap;
@@ -96,7 +97,7 @@ pub fn load_global_acp() -> AcpSettings {
         PathBuf::from(&home).join(".jazyk.toml"),
     ];
     for c in candidates {
-        if let Ok(text) = std::fs::read_to_string(&c) {
+        if let Ok(text) = crate::vfs::read_to_string(&c) {
             return parse_acp(&Toml::parse(&text));
         }
     }
@@ -177,7 +178,7 @@ pub fn load_global_executors() -> Executors {
         PathBuf::from(&home).join(".jazyk.toml"),
     ];
     for c in candidates {
-        if let Ok(text) = std::fs::read_to_string(&c) {
+        if let Ok(text) = crate::vfs::read_to_string(&c) {
             return parse_executors(&Toml::parse(&text));
         }
     }
@@ -274,7 +275,7 @@ pub fn load_global_llm() -> GlobalLlm {
         PathBuf::from(&home).join(".jazyk.toml"),
     ];
     for c in candidates {
-        if let Ok(text) = std::fs::read_to_string(&c) {
+        if let Ok(text) = crate::vfs::read_to_string(&c) {
             let t = Toml::parse(&text);
             return GlobalLlm {
                 base_url: t.string("llm.base_url"),
@@ -297,21 +298,21 @@ mod tests {
 
     #[test]
     fn generated_dirs_are_never_doc_input() {
-        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
         for d in [
             "docs",
             "jazyk-out/docsgen",
             "jazyk-out-backup-local/docsgen",
             "elsewhere",
         ] {
-            std::fs::create_dir_all(dir.join(d)).unwrap();
+            crate::vfs::create_dir_all(dir.join(d)).unwrap();
         }
-        std::fs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
-        std::fs::write(dir.join("docs/a.md"), "# A\n").unwrap();
-        std::fs::write(dir.join("jazyk-out/docsgen/x.md"), "# X\n").unwrap();
-        std::fs::write(dir.join("jazyk-out-backup-local/docsgen/y.md"), "# Y\n").unwrap();
-        std::fs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
+        crate::vfs::write(dir.join("jazyk-out/docsgen/x.md"), "# X\n").unwrap();
+        crate::vfs::write(dir.join("jazyk-out-backup-local/docsgen/y.md"), "# Y\n").unwrap();
+        crate::vfs::write(dir.join("elsewhere/z.md"), "# Z\n").unwrap();
         let mut p = Project::load(&dir);
         assert_eq!(
             p.doc_files(),
@@ -320,42 +321,42 @@ mod tests {
         // A relocated out directory (--out) is skipped by path, whatever its name.
         p.out = dir.join("elsewhere");
         assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn default_deliverable_is_root_and_docs_glob_whitelists() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::create_dir_all(dir.join("src")).unwrap();
+            std::env::temp_dir().join(format!("jazyk-deliverable-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::create_dir_all(dir.join("src")).unwrap();
         // No [gen] and no [docs] glob: deliverable defaults to the root, docs to docs/.
-        std::fs::write(dir.join("jazyk.toml"), "").unwrap();
-        std::fs::write(dir.join("docs/a.md"), "# A\n").unwrap();
-        std::fs::write(dir.join("README.md"), "# generated\n").unwrap();
-        std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
+        crate::vfs::write(dir.join("README.md"), "# generated\n").unwrap();
+        crate::vfs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
         let p = Project::load(&dir);
         assert_eq!(p.deliverable_rel(), Some(String::new()));
         assert_eq!(crate::gen::GenSettings::resolve(&p).deliverable, dir);
         assert_eq!(p.doc_files(), vec![dir.join("docs/a.md")]);
         // A deliverable outside the root needs no implicit exclusion.
-        std::fs::write(
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[gen]\ndeliverable = \"../elsewhere\"\n",
         )
         .unwrap();
         assert_eq!(Project::load(&dir).deliverable_rel(), None);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn redirect_delegates_to_nested_project() {
-        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("inner")).unwrap();
-        std::fs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
-        std::fs::write(
+        let dir = std::env::temp_dir().join(format!("jazyk-redirect-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("inner")).unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
+        crate::vfs::write(
             dir.join("inner/jazyk.toml"),
             "[docs]\nglob = [\"**/*.md\"]\n\n[roots]\nfiles = [\"main.md\"]\n",
         )
@@ -364,7 +365,7 @@ mod tests {
         assert_eq!(p.root, dir.join("inner"));
         assert_eq!(p.docs_glob, vec!["**/*.md".to_string()]);
         // A redirect to a directory without jazyk.toml stays at the original root.
-        std::fs::write(dir.join("jazyk.toml"), "redirect = \"missing\"\n").unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"missing\"\n").unwrap();
         let p2 = Project::load(&dir);
         assert_eq!(p2.root, dir);
     }
@@ -373,7 +374,7 @@ mod tests {
 // Does this jazyk.toml delegate elsewhere? Used by discovery: a redirect found above
 // the starting directory is a boundary, not a capture.
 fn redirects(toml_path: &Path) -> bool {
-    std::fs::read_to_string(toml_path)
+    crate::vfs::read_to_string(toml_path)
         .map(|t| Toml::parse(&t).string("redirect").is_some())
         .unwrap_or(false)
 }
@@ -383,7 +384,7 @@ pub fn find_root(start: &Path) -> Option<PathBuf> {
     let mut walked_up = false;
     while let Some(d) = dir {
         let toml = d.join("jazyk.toml");
-        if toml.exists() {
+        if toml.vexists() {
             // A redirect applies where it stands: followed when discovery starts in
             // its directory, a boundary when reached from a subdirectory. The
             // subdirectory then stands alone as an ad hoc project.
@@ -412,7 +413,7 @@ impl Project {
         p.root = root.to_path_buf();
         p.out = root.join("jazyk-out");
         let toml_path = root.join("jazyk.toml");
-        let text = match std::fs::read_to_string(&toml_path) {
+        let text = match crate::vfs::read_to_string(&toml_path) {
             Ok(t) => t,
             Err(_) => return p,
         };
@@ -420,7 +421,7 @@ impl Project {
         if follow_redirect {
             if let Some(dir) = t.string("redirect") {
                 let target = root.join(dir);
-                if target.join("jazyk.toml").exists() {
+                if target.join("jazyk.toml").vexists() {
                     return Self::load_inner(&target, false);
                 }
             }
@@ -548,7 +549,7 @@ impl Project {
 }
 
 fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(rd) = std::fs::read_dir(dir) {
+    if let Ok(rd) = crate::vfs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
@@ -562,7 +563,7 @@ fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
             {
                 continue;
             }
-            if p.is_dir() {
+            if p.vis_dir() {
                 collect_files(&p, out_dir, out);
             } else {
                 out.push(p);
@@ -738,13 +739,13 @@ mod discovery_tests {
     #[test]
     fn redirect_above_is_a_boundary_not_a_capture() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("inner")).unwrap();
-        std::fs::create_dir_all(dir.join("inner/deep")).unwrap();
-        std::fs::create_dir_all(dir.join("side")).unwrap();
-        std::fs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
-        std::fs::write(
+            std::env::temp_dir().join(format!("jazyk-redirect-boundary-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("inner")).unwrap();
+        crate::vfs::create_dir_all(dir.join("inner/deep")).unwrap();
+        crate::vfs::create_dir_all(dir.join("side")).unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "redirect = \"inner\"\n").unwrap();
+        crate::vfs::write(
             dir.join("inner/jazyk.toml"),
             "[docs]\nglob = [\"**/*.md\"]\n",
         )
@@ -757,7 +758,7 @@ mod discovery_tests {
         // A sibling subdirectory is its own place: the redirect above is a boundary.
         assert_eq!(find_root(&dir.join("side")), None);
 
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }
 
@@ -787,7 +788,7 @@ const KNOWN_ARRAYS: &[&str] = &[
 pub fn settings_read(root: &Path) -> serde_json::Value {
     use serde_json::json;
     let path = root.join("jazyk.toml");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = crate::vfs::read_to_string(&path).unwrap_or_default();
     let t = Toml::parse(&text);
     // [acp] keys are known but not form-edited: the writer carries them over verbatim,
     // like the redirect and the api key. [executors] keys are the form's own table.
@@ -808,7 +809,7 @@ pub fn settings_read(root: &Path) -> serde_json::Value {
         .collect();
     let executors = parse_executors(&t);
     json!({
-        "exists": path.exists(),
+        "exists": path.vexists(),
         "hash": crate::model::hash_hex(&text),
         "redirect": t.string("redirect"),
         "unknown": unknown,
@@ -851,7 +852,7 @@ fn toml_list(items: &[String]) -> String {
 // not survive; a redirect or an api_key already in the file is carried over
 // untouched. Returns the new file text.
 pub fn settings_render(root: &Path, s: &serde_json::Value) -> Result<String, String> {
-    let old = Toml::parse(&std::fs::read_to_string(root.join("jazyk.toml")).unwrap_or_default());
+    let old = Toml::parse(&crate::vfs::read_to_string(root.join("jazyk.toml")).unwrap_or_default());
     let list = |v: &serde_json::Value| -> Option<Vec<String>> {
         v.as_array().map(|a| {
             a.iter()
@@ -990,10 +991,10 @@ mod settings_tests {
 
     #[test]
     fn settings_roundtrip_preserves_secret_and_redirect() {
-        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
+        let dir = std::env::temp_dir().join(format!("jazyk-settings-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"**/*.md\"]\n\n[llm]\nmodel = \"m1\"\napi_key = \"sekret\"\n",
         )
@@ -1015,7 +1016,7 @@ mod settings_tests {
         assert!(text.contains("api_key = \"sekret\""));
         assert!(text.contains("model = \"m2\""));
         assert!(text.contains("[executors]\ngc = \"claude\""), "{}", text);
-        std::fs::write(dir.join("jazyk.toml"), &text).unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), &text).unwrap();
         let p = Project::load(&dir);
         assert_eq!(p.llm.model.as_deref(), Some("m2"));
         assert_eq!(
@@ -1032,10 +1033,10 @@ mod settings_tests {
             .unwrap_err();
         assert!(err.contains("executors.chat"), "{}", err);
         // Unknown keys are surfaced so the form refuses instead of dropping them.
-        std::fs::write(dir.join("jazyk.toml"), "[custom]\nthing = \"x\"\n").unwrap();
+        crate::vfs::write(dir.join("jazyk.toml"), "[custom]\nthing = \"x\"\n").unwrap();
         let read2 = settings_read(&dir);
         assert_eq!(read2["unknown"].as_array().unwrap().len(), 1);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }
 

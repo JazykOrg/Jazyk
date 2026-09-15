@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Conversations that outlive the process: one JSON-lines file per chat session under
 // `<out>/sessions/`, the same shape a job trace uses (a metadata first line, then
 // records). The store is per project because a conversation is about a project, and
@@ -43,10 +44,10 @@ fn now() -> String {
 // resumed session keeps one file.
 pub fn open(out: &Path, id: &str, cwd: &Path, agent: &str) {
     let path = path_for(out, id);
-    if path.exists() {
+    if path.vexists() {
         return;
     }
-    std::fs::create_dir_all(dir(out)).ok();
+    crate::vfs::create_dir_all(dir(out)).ok();
     let meta = json!({"kind": "meta", "id": id, "cwd": cwd.display().to_string(),
                       "agent": agent, "startedAt": now()});
     if let Ok(mut f) = std::fs::File::create(&path) {
@@ -56,7 +57,7 @@ pub fn open(out: &Path, id: &str, cwd: &Path, agent: &str) {
 
 pub fn append(out: &Path, id: &str, record: Value) {
     let path = path_for(out, id);
-    if !path.exists() {
+    if !path.vexists() {
         return;
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&path) {
@@ -81,7 +82,7 @@ pub fn record_update(out: &Path, id: &str, update: &Value) {
 // Every recorded conversation for this project, newest first.
 pub fn list(out: &Path) -> Vec<SessionMeta> {
     let mut sessions: Vec<SessionMeta> = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir(out)) else {
+    let Ok(rd) = crate::vfs::read_dir(dir(out)) else {
         return sessions;
     };
     for e in rd.flatten() {
@@ -149,7 +150,7 @@ pub fn turns(out: &Path, id: &str) -> u64 {
 
 // One conversation's records, in order.
 pub fn read(out: &Path, id: &str) -> Vec<Value> {
-    let Ok(text) = std::fs::read_to_string(path_for(out, id)) else {
+    let Ok(text) = crate::vfs::read_to_string(path_for(out, id)) else {
         return Vec::new();
     };
     text.lines()
@@ -178,7 +179,7 @@ pub fn prune(out: &Path, keep: usize) -> usize {
     let all = list(out);
     let mut removed = 0;
     for meta in all.into_iter().skip(keep) {
-        if std::fs::remove_file(path_for(out, &meta.id)).is_ok() {
+        if crate::vfs::remove_file(path_for(out, &meta.id)).is_ok() {
             removed += 1;
         }
     }
@@ -194,8 +195,8 @@ mod tests {
     // Mirrors docs/frontends/acp.md#session-store.
     #[test]
     fn a_conversation_is_written_read_and_listed() {
-        let out = std::env::temp_dir().join(format!("jazyk-sess-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-sess-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let cwd = std::path::Path::new("/tmp/project");
 
         open(&out, "sess-1", cwd, "embedded");
@@ -233,19 +234,19 @@ mod tests {
         open(&out, "../escape", cwd, "embedded");
         assert!(!out
             .parent()
-            .map(|p| p.join("escape.jsonl").exists())
+            .map(|p| p.join("escape.jsonl").vexists())
             .unwrap_or(false));
         assert!(list(&out).iter().any(|m| m.id == "../escape"));
 
         assert_eq!(read(&out, "nope").len(), 0);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // Pruning keeps the conversations a person is most likely to want.
     #[test]
     fn pruning_keeps_the_newest() {
-        let out = std::env::temp_dir().join(format!("jazyk-sess-prune-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-sess-prune-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let cwd = std::path::Path::new("/tmp/project");
         for (i, at) in [("a", "100"), ("b", "200"), ("c", "300")] {
             open(&out, i, cwd, "embedded");
@@ -258,6 +259,6 @@ mod tests {
         assert_eq!(prune(&out, 2), 1);
         let left: Vec<String> = list(&out).into_iter().map(|m| m.id).collect();
         assert_eq!(left, vec!["c".to_string(), "b".to_string()]);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }

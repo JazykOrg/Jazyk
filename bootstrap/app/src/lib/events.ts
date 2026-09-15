@@ -265,3 +265,34 @@ export function startEventStream(qc: QueryClient) {
     clearInterval(sweep)
   }
 }
+
+// The wasm backend has no event stream: it buffers the trace of the running build
+// and the page drains it. Each drained event goes through the same path a streamed
+// one does, so the workbench renders a browser build exactly as it renders a
+// server one (docs/frontends/wasm.md#the-trace).
+export function pushTraceEvents(qc: QueryClient, events: unknown[]) {
+  const app = useApp.getState()
+  let n = 0
+  for (const raw of events) {
+    const event = raw as TraceEvent
+    app.pushTrace({ jobId: 0, seq: n++, event })
+    applyProgress(event)
+    if (event.kind === 'toolCall' && event.name === 'report_feedback')
+      qc.invalidateQueries({ queryKey: ['feedback'] })
+    // A commit lands mid-build; the graph views refresh on it, not at the end.
+    if (event.kind === 'commit' || event.kind === 'sessionDone') {
+      for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'board', 'views', 'tree', 'out'])
+        qc.invalidateQueries({ queryKey: [key] })
+      qc.invalidateQueries({ queryKey: ['node'] })
+    }
+  }
+}
+
+// Everything a commit can change, refetched. The server announces a commit over
+// the event stream; the wasm backend has no stream, so the demo calls this after
+// any write request returns (docs/frontends/wasm.md#the-trace).
+export function refreshAfterWrite(qc: QueryClient) {
+  for (const key of ['status', 'graph', 'coverage', 'journal', 'docs', 'pending', 'matrix', 'overview', 'board', 'views', 'tree', 'preview', 'explain', 'out', 'workers'])
+    qc.invalidateQueries({ queryKey: [key] })
+  qc.invalidateQueries({ queryKey: ['node'] })
+}

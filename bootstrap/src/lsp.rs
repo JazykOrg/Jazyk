@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The language server: thin and read-only, per docs/frontends/lsp.md. It reads the
 // graph store and maps nodes to editor positions. It never compiles; rebuilds run
 // through `jazyk compile` or `jazyk watch`, and the store's generation counter tells
@@ -240,7 +241,7 @@ impl Lsp {
         if let Some(t) = self.overlay.get(doc) {
             return t.clone();
         }
-        std::fs::read_to_string(self.root.join(doc)).unwrap_or_default()
+        crate::vfs::read_to_string(self.root.join(doc)).unwrap_or_default()
     }
 
     // ---- anchoring ----
@@ -450,7 +451,7 @@ impl Lsp {
             .join("diagrams")
             .join(kind)
             .join(format!("{}.svg", slug));
-        p.exists().then_some(p)
+        p.vexists().then_some(p)
     }
 
     // ---- the walk ----
@@ -765,7 +766,7 @@ impl Lsp {
             for site in &row.sites {
                 anchored.insert(site.file.as_str());
                 let abs = self.gen.deliverable.join(&site.file);
-                let text = std::fs::read_to_string(&abs).unwrap_or_default();
+                let text = crate::vfs::read_to_string(&abs).unwrap_or_default();
                 match crate::gen::locate_head(&text, &site.head, site.line) {
                     Some((l, exact)) => code.push(format!(
                         "- [`{}:{}`]({}#L{}){}",
@@ -815,7 +816,7 @@ impl Lsp {
         let line = if t.name.is_empty() {
             None
         } else {
-            std::fs::read_to_string(&artifact).ok().and_then(|text| {
+            crate::vfs::read_to_string(&artifact).ok().and_then(|text| {
                 text.lines()
                     .position(|l| l.contains(&t.name))
                     .map(|i| i + 1)
@@ -838,7 +839,7 @@ impl Lsp {
                 "- [`{}`]({}){}\n",
                 t.artifact,
                 target,
-                if artifact.exists() {
+                if artifact.vexists() {
                     ""
                 } else {
                     " · artifact gone"
@@ -876,7 +877,7 @@ impl Lsp {
             .unwrap_or(ent)
             .to_string();
         let path = self.out.join("docsgen").join(format!("{}.md", slug));
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = crate::vfs::read_to_string(&path).ok()?;
         let heading = format!("### `{}`", rid);
         let line = text
             .lines()
@@ -932,7 +933,7 @@ impl Lsp {
                 .out
                 .join("docsgen")
                 .join(format!("{}.md", slug))
-                .exists()
+                .vexists()
             {
                 continue;
             }
@@ -1141,7 +1142,7 @@ impl Lsp {
             .unwrap_or(ent)
             .to_string();
         let path = self.out.join("docsgen").join(format!("{}.md", slug));
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
             eprintln!(
                 "[jazyk-lsp] {}: no requirements document at {}",
                 resolved,
@@ -1284,7 +1285,7 @@ enum Event {
 fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
     std::thread::spawn(move || {
         let read_generation = |out: &Path| -> u64 {
-            std::fs::read_to_string(out.join("status.yaml"))
+            crate::vfs::read_to_string(out.join("status.yaml"))
                 .ok()
                 .and_then(|t| {
                     t.lines()
@@ -1295,10 +1296,10 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
                 .unwrap_or(0)
         };
         let mut last_gen = read_generation(&out);
-        let mut lock_seen = out.join(".lock").exists();
+        let mut lock_seen = out.join(".lock").vexists();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let lock_now = out.join(".lock").exists();
+            let lock_now = out.join(".lock").vexists();
             if lock_now != lock_seen {
                 lock_seen = lock_now;
                 eprintln!(
@@ -1319,7 +1320,7 @@ fn spawn_store_watcher(out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
             }
             for g in (last_gen + 1)..=gen_now {
                 let path = out.join("journal").join(format!("g{}.yaml", g));
-                let Ok(text) = std::fs::read_to_string(&path) else {
+                let Ok(text) = crate::vfs::read_to_string(&path) else {
                     continue;
                 };
                 let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
@@ -1404,26 +1405,26 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn requirement_card_links_the_requirement_code_and_test() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
         let out = root.join("jazyk-out");
         let deliv = tmp.join("product");
-        std::fs::create_dir_all(deliv.join("src")).unwrap();
-        std::fs::create_dir_all(deliv.join("tests")).unwrap();
-        std::fs::create_dir_all(out.join("docsgen")).unwrap();
+        crate::vfs::create_dir_all(deliv.join("src")).unwrap();
+        crate::vfs::create_dir_all(deliv.join("tests")).unwrap();
+        crate::vfs::create_dir_all(out.join("docsgen")).unwrap();
         // The site anchored at line 1; an inserted header moved it to line 3.
-        std::fs::write(
+        crate::vfs::write(
             deliv.join("src/cart.rs"),
             "// header\n\nfn hold(i: Item) {}\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             deliv.join("tests/cart.rs"),
             "#[test]\nfn req_shop_1_abcd() {}\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             out.join("docsgen").join("cart.md"),
             "# Cart\n\n### `req:shop-1`\n",
         )
@@ -1511,16 +1512,16 @@ mod tests {
             "{}",
             card
         );
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // No ledger row: the requirement still shows, the other two parts say so.
     #[test]
     fn requirement_card_without_a_ledger_row() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-card-none-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         let r = requirement();
         let mut store = Store {
             out: out.clone(),
@@ -1548,7 +1549,7 @@ mod tests {
         assert!(card.contains("– missing"), "{}", card);
         assert!(card.contains("**code** · not generated"), "{}", card);
         assert!(card.contains("**test** · not generated"), "{}", card);
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // The interactive path over the wire: a prompted finding publishes with its
@@ -1558,16 +1559,16 @@ mod tests {
     fn prompted_diagnostic_publishes_offers_actions_and_applies() {
         use crate::model::{Diagnostic, DiagnosticPrompt, PromptOption, SuggestedEdit};
         use crate::store::Op;
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-answer-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let root = tmp.join("proj");
-        std::fs::create_dir_all(root.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        crate::vfs::write(
             root.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             root.join("docs/pay.md"),
             "# Pay\n\nAn Order shall be paid within 30 days.\n",
         )
@@ -1641,7 +1642,7 @@ mod tests {
         let mut wire: Vec<u8> = Vec::new();
         lsp.handle(
             json!({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri,
-                "text": std::fs::read_to_string(root.join("docs/pay.md")).unwrap()}}}),
+                "text": crate::vfs::read_to_string(root.join("docs/pay.md")).unwrap()}}}),
             &mut wire,
         );
         let published = String::from_utf8_lossy(&wire).to_string();
@@ -1674,12 +1675,12 @@ mod tests {
         );
         let applied = String::from_utf8_lossy(&wire3).to_string();
         assert!(applied.contains("applied"), "{}", applied);
-        let text = std::fs::read_to_string(root.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(root.join("docs/pay.md")).unwrap();
         assert!(text.contains("within 21 days"), "{}", text);
         // The refresh inside the command republished without the resolved finding.
         assert!(applied.contains("publishDiagnostics"), "{}", applied);
         assert!(!applied.contains("Which bound holds?"), "{}", applied);
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     fn lsp_at(root: std::path::PathBuf, out: std::path::PathBuf, store: Store) -> Lsp {
@@ -1701,8 +1702,8 @@ mod tests {
 
     fn write_svg(out: &std::path::Path, kind: &str, slug: &str) {
         let dir = out.join("diagrams").join(kind);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(format!("{}.svg", slug)), "<svg/>").unwrap();
+        crate::vfs::create_dir_all(&dir).unwrap();
+        crate::vfs::write(dir.join(format!("{}.svg", slug)), "<svg/>").unwrap();
     }
 
     // The showcase graph with its derived data, its out directory under `tmp`.
@@ -1726,10 +1727,10 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn entity_hover_renders_the_card_in_short_with_its_level() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-walk-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "component", "shop");
         write_svg(&out, "component", "order-service");
         let lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
@@ -1766,7 +1767,7 @@ mod tests {
             root
         );
         assert!(lsp.entity_card_short("ent:nobody").is_none());
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // A leaf: no `Inside` line, its context is its parent's level, and when that
@@ -1774,10 +1775,10 @@ mod tests {
     // Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-leaf-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "component", "order-service");
         let lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
         let o = path_to_uri(&out);
@@ -1805,7 +1806,7 @@ mod tests {
             "{}",
             card
         );
-        std::fs::remove_file(out.join("diagrams/component/order-service.svg")).unwrap();
+        crate::vfs::remove_file(out.join("diagrams/component/order-service.svg")).unwrap();
         let card = lsp.entity_card_short("ent:order-item").unwrap();
         assert!(!card.contains("!["), "{}", card);
         assert!(
@@ -1816,7 +1817,7 @@ mod tests {
             "{}",
             card
         );
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // A derived grouping says so and names its pending ratification proposal.
@@ -1824,10 +1825,10 @@ mod tests {
     #[test]
     fn entity_hover_on_a_derived_grouping_names_its_proposal() {
         use crate::model::{Diagnostic, Entity, Provenance};
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-derived-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
         s.out = out.clone();
         s.graph.entities.insert(
@@ -1881,7 +1882,7 @@ mod tests {
         // A quoted entity carries no such line.
         let plain = lsp.entity_card_short("ent:order").unwrap();
         assert!(!plain.contains("proposal"), "{}", plain);
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // Over the wire: the capability is advertised, hover carries the short card, and
@@ -1889,10 +1890,10 @@ mod tests {
     // defining mention. Mirrors docs/frontends/lsp.md#capabilities.
     #[test]
     fn type_definition_opens_the_card() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-typedef-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut lsp = lsp_at(tmp.clone(), out.clone(), shop_at(&out));
         let mut wire: Vec<u8> = Vec::new();
         lsp.handle(json!({"id": 1, "method": "initialize", "params": {}}), &mut wire);
@@ -1944,7 +1945,7 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&wire)
         );
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     // The requirement card says the statement and embeds the smallest flow view
@@ -1952,10 +1953,10 @@ mod tests {
     #[test]
     fn requirement_card_embeds_the_smallest_flow_view_and_statement() {
         use crate::model::View;
-        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-lsp-flow-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         let out = tmp.join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         write_svg(&out, "usecase", "all");
         write_svg(&out, "sequence", "one");
 
@@ -1987,6 +1988,6 @@ mod tests {
         assert!(card.contains("The Cart shall hold items."), "{}", card);
         assert!(card.contains("![One (sequence)]"), "{}", card);
         assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 }

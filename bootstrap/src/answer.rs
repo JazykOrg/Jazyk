@@ -97,7 +97,7 @@ pub fn answer(
 
     if let Some(e) = edit {
         let path = project.root.join(&e.doc);
-        let old_full = std::fs::read_to_string(&path)
+        let old_full = crate::vfs::read_to_string(&path)
             .map_err(|err| format!("read {}: {}", path.display(), err))?;
         let (parsed, _) = crate::reconcile::parse_all(project);
         // The search is scoped to the option's own section, where the gate validated
@@ -507,15 +507,15 @@ mod tests {
     // stages it), with the ratification proposal the decree filed.
     fn seed_decree(label: &str) -> (Project, PathBuf, String) {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-{}-{}", label, std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+            std::env::temp_dir().join(format!("jazyk-answer-{}-{}", label, crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/pay.md"),
             "# Pay\n\nAn Order is paid within 30 days.\n",
         )
@@ -598,7 +598,7 @@ mod tests {
 
     fn journal_kind(out: &Path, generation: u64) -> crate::model::JournalEntry {
         let path = out.join("journal").join(format!("g{}.yaml", generation));
-        serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+        serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
     }
 
     // Accepting a ratification proposal lands the sentence, flips the fact to quote
@@ -621,7 +621,7 @@ mod tests {
 
         let v = answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
         assert_eq!(v["status"], "applied");
-        let text = std::fs::read_to_string(project.root.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(project.root.join("docs/pay.md")).unwrap();
         assert!(
             text.contains("An Order is paid within 21 days."),
             "{}",
@@ -652,7 +652,7 @@ mod tests {
         // The absorbed hashes: no recompile is owed for the landed sentence.
         let (parsed, _) = crate::reconcile::parse_all(&project);
         assert_eq!(s.docs["docs/pay.md"].content_hash, parsed["docs/pay.md"].0);
-        std::fs::remove_dir_all(&project.root).ok();
+        crate::vfs::remove_dir_all(&project.root).ok();
     }
 
     // A freeform reply on a proposal is the accepted sentence, and becomes the
@@ -662,14 +662,14 @@ mod tests {
         let (project, out, did) = seed_decree("ratify-reword");
         let reworded = "Every Order is paid within 21 days.";
         answer(&project, &out, &did, Reply::Text(reworded.into()), None).unwrap();
-        let text = std::fs::read_to_string(project.root.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(project.root.join("docs/pay.md")).unwrap();
         assert!(text.contains(reworded), "{}", text);
         let s = Store::load(&out);
         let r = &s.graph.requirements["req:pay-1"];
         assert_eq!(r.statement, reworded);
         assert_eq!(r.source.as_ref().unwrap().quote, reworded);
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
-        std::fs::remove_dir_all(&project.root).ok();
+        crate::vfs::remove_dir_all(&project.root).ok();
     }
 
     // Retracting a decree over a formerly quoted requirement restores the prior
@@ -698,9 +698,9 @@ mod tests {
             .has_change(crate::store::CHANGE_PROVENANCE_PENDING, "req:pay-1"));
         assert_eq!(journal_kind(&out, before + 1).kind, "ratify");
         // The document was never touched; the restored quote still locates.
-        let text = std::fs::read_to_string(project.root.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(project.root.join("docs/pay.md")).unwrap();
         assert!(text.contains("within 30 days"), "{}", text);
-        std::fs::remove_dir_all(&project.root).ok();
+        crate::vfs::remove_dir_all(&project.root).ok();
     }
 
     // A fact created by decree has no prior quote to restore: retracting deletes it.
@@ -709,16 +709,16 @@ mod tests {
     fn ratification_retract_deletes_a_decree_created_fact() {
         let dir = std::env::temp_dir().join(format!(
             "jazyk-answer-retract-created-{}",
-            std::process::id()
+            crate::sys::process_id()
         ));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/pay.md"),
             "# Pay\n\nAn Order is paid within 30 days.\n",
         )
@@ -795,7 +795,7 @@ mod tests {
         let s = Store::load(&out);
         assert!(!s.graph.requirements.contains_key(&rid));
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
-        std::fs::remove_dir_all(&project.root).ok();
+        crate::vfs::remove_dir_all(&project.root).ok();
     }
 
     // The edit-answer path end to end: the file changes on disk, the hashes are
@@ -803,15 +803,15 @@ mod tests {
     // applied, and the diagnostic resolves in the same changeset.
     #[test]
     fn edit_answer_is_a_dual_write_that_resolves() {
-        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+        let dir = std::env::temp_dir().join(format!("jazyk-answer-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/pay.md"),
             "# Pay\n\nAn Order shall be paid within 30 days.\n",
         )
@@ -884,7 +884,7 @@ mod tests {
 
         let v = answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
         assert_eq!(v["status"], "applied");
-        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap();
         assert!(text.contains("within 21 days"), "file rewritten: {}", text);
         let s = Store::load(&out);
         let d = &s.graph.diagnostics[&id];
@@ -915,7 +915,7 @@ mod tests {
         );
         // A second answer is refused: the decision is final.
         assert!(answer(&project, &out, &id, Reply::Text("again".into()), None).is_err());
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 
     // The same phrase in an earlier section must not catch the edit: the search is
@@ -923,15 +923,15 @@ mod tests {
     #[test]
     fn edit_answer_lands_in_its_own_section() {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(dir.join("docs")).unwrap();
-        std::fs::write(
+            std::env::temp_dir().join(format!("jazyk-answer-scope-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(dir.join("docs")).unwrap();
+        crate::vfs::write(
             dir.join("jazyk.toml"),
             "[docs]\nglob = [\"docs/**/*.md\"]\n",
         )
         .unwrap();
-        std::fs::write(
+        crate::vfs::write(
             dir.join("docs/pay.md"),
             "# Pay\n\n## Invoices\n\nAn Invoice is due within 30 days.\n\n## Refunds\n\nA Refund is issued within 30 days.\n",
         )
@@ -983,7 +983,7 @@ mod tests {
         drop(s);
 
         answer(&project, &out, &id, Reply::Choice(0), None).unwrap();
-        let text = std::fs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        let text = crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap();
         assert!(
             text.contains("An Invoice is due within 30 days."),
             "the earlier section is untouched: {}",
@@ -994,6 +994,6 @@ mod tests {
             "the edit landed in Refunds: {}",
             text
         );
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

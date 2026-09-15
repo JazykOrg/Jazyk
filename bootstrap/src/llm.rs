@@ -101,7 +101,7 @@ fn semaphore() -> &'static Semaphore {
 }
 // Minimum gap between request starts, so tight failure loops cannot hammer an endpoint.
 // Tunable with JAZYK_MIN_INTERVAL_MS; default 500.
-static LAST_REQUEST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static LAST_REQUEST: Mutex<Option<crate::sys::Instant>> = Mutex::new(None);
 fn pace() {
     let min_ms = std::env::var("JAZYK_MIN_INTERVAL_MS")
         .ok()
@@ -112,7 +112,7 @@ fn pace() {
     }
     let wait = {
         let mut last = LAST_REQUEST.lock().unwrap();
-        let now = std::time::Instant::now();
+        let now = crate::sys::Instant::now();
         let wait = match *last {
             Some(t) => Duration::from_millis(min_ms).saturating_sub(now.duration_since(t)),
             None => Duration::ZERO,
@@ -121,7 +121,7 @@ fn pace() {
         wait
     };
     if !wait.is_zero() {
-        std::thread::sleep(wait);
+        crate::sys::sleep(wait);
     }
 }
 
@@ -157,7 +157,20 @@ fn max_retries() -> usize {
 // content. This is the loop detector: a small model stuck repeating tokens is bounded
 // by the cap, not by its context window. Tunable with JAZYK_MAX_COMPLETION_TOKENS;
 // default 4096. See docs/compiler/project-settings.md#environment-tuning.
+// A cap set by the host, taking the place of the environment where there is none
+// (the browser backend sets it at boot: docs/frontends/wasm.md#the-model). Zero
+// means unset.
+static MAX_COMPLETION_OVERRIDE: AtomicU64 = AtomicU64::new(0);
+
+pub fn set_max_completion_tokens(n: u64) {
+    MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
+}
+
 fn max_completion_tokens() -> u64 {
+    let over = MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed);
+    if over > 0 {
+        return over.max(256);
+    }
     std::env::var("JAZYK_MAX_COMPLETION_TOKENS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
@@ -270,6 +283,17 @@ impl Llm {
     // unexpected) is not an error: the configured model is the only one on offer,
     // which is exactly the state of the world before asking.
     // Mirrors docs/frontends/acp.md#choosing-a-model.
+    #[cfg(target_arch = "wasm32")]
+    pub fn list_models(&self) -> Vec<String> {
+        // The page holds the model; there is no endpoint to enumerate.
+        if self.model.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.model.clone()]
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn list_models(&self) -> Vec<String> {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(5))
@@ -327,7 +351,7 @@ impl Llm {
     ) -> Result<(Value, u64), String> {
         let max = max_retries();
         let mut last = String::new();
-        let started = std::time::Instant::now();
+        let started = crate::sys::Instant::now();
         if verbose() {
             eprintln!("[jazyk] → {} {}", label, step);
         }
@@ -463,7 +487,7 @@ impl Llm {
                                 truncate(&last, 120)
                             ),
                         }
-                        std::thread::sleep(Duration::from_secs(wait));
+                        crate::sys::sleep(Duration::from_secs(wait));
                     } else {
                         break;
                     }
@@ -555,6 +579,38 @@ impl Llm {
         }
         let body = payload.to_string();
 
+        // One transport call: the bytes of a reply, or the assembled message when the
+        // endpoint streamed it. Native speaks HTTP; the browser backend speaks to the
+        // in-page model (docs/frontends/wasm.md#the-model).
+        let resp_body = match self.transport(&body, streaming)? {
+            Transported::Message(m) => return Ok(m),
+            Transported::Body(b) => b,
+        };
+        let v: Value = serde_json::from_str(&resp_body)
+            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
+        let mut msg = v["choices"][0]["message"].clone();
+        if msg.is_null() {
+            return Err(format!(
+                "no message in response :: {}",
+                truncate(&resp_body, 300)
+            ));
+        }
+        // The finish reason rides on the message for the loop to read (a `length`
+        // finish is a reply the completion cap cut); the loop strips it before the
+        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
+        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
+            msg["finish_reason"] = Value::String(f.to_string());
+        }
+        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
+            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
+        });
+        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+        Ok((msg, tokens))
+    }
+
+    // The HTTP transport. Everything above it is protocol, shared by both targets.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn transport(&self, body: &str, streaming: bool) -> Result<Transported, String> {
         // Bound concurrent requests across all worker threads, and pace request starts.
         let _permit = acquire();
         pace();
@@ -595,18 +651,19 @@ impl Llm {
                 BufReader::new(resp.into_reader()),
                 max_completion_tokens(),
                 call_timeout(),
-            );
+            )
+            .map(Transported::Message);
         }
 
         // The same wall clock the stream path enforces: per-read timeouts bound the
         // gap between bytes, this bounds the whole body, so no call outlives
         // JAZYK_CALL_TIMEOUT by more than one read.
-        let deadline = std::time::Instant::now() + call_timeout();
+        let deadline = crate::sys::Instant::now() + call_timeout();
         let mut reader = resp.into_reader().take(64 * 1024 * 1024);
         let mut bytes: Vec<u8> = Vec::new();
         let mut buf = [0u8; 65536];
         loop {
-            if std::time::Instant::now() > deadline {
+            if crate::sys::Instant::now() > deadline {
                 return Err(format!(
                     "call timeout: no complete response within {}s (JAZYK_CALL_TIMEOUT)",
                     call_timeout().as_secs()
@@ -619,27 +676,23 @@ impl Llm {
             }
         }
         let resp_body = String::from_utf8_lossy(&bytes).to_string();
-        let v: Value = serde_json::from_str(&resp_body)
-            .map_err(|e| format!("response json: {} :: {}", e, truncate(&resp_body, 300)))?;
-        let mut msg = v["choices"][0]["message"].clone();
-        if msg.is_null() {
-            return Err(format!(
-                "no message in response :: {}",
-                truncate(&resp_body, 300)
-            ));
-        }
-        // The finish reason rides on the message for the loop to read (a `length`
-        // finish is a reply the completion cap cut); the loop strips it before the
-        // message joins the history. Mirrors docs/frontends/acp.md#the-embedded-agent.
-        if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
-            msg["finish_reason"] = Value::String(f.to_string());
-        }
-        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
-            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
-        });
-        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-        Ok((msg, tokens))
+        Ok(Transported::Body(resp_body))
     }
+
+    // The browser transport. The page holds the model, so a call hands the same
+    // OpenAI-shaped request out to the host and blocks until the host hands a reply
+    // back. Streaming has no transport to stream over: the host answers once.
+    #[cfg(target_arch = "wasm32")]
+    fn transport(&self, body: &str, _streaming: bool) -> Result<Transported, String> {
+        crate::wasm::llm_bridge::chat(body).map(Transported::Body)
+    }
+}
+
+// What a transport hands back: the bytes of a reply, or, when the endpoint streamed,
+// the message already assembled from the chunks.
+enum Transported {
+    Body(String),
+    Message((Value, u64)),
 }
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content
@@ -667,7 +720,7 @@ fn read_stream_message<R: BufRead>(
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
     let mut finish_reason: Option<String> = None;
-    let started = std::time::Instant::now();
+    let started = crate::sys::Instant::now();
     // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
     // still bounding a server that ignores `max_tokens`.
     let cap_chars = (cap_tokens as usize).saturating_mul(6);

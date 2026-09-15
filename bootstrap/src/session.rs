@@ -548,13 +548,13 @@ impl Trace {
     ) -> Trace {
         use std::io::Write;
         let dir = out.join("trace");
-        std::fs::create_dir_all(&dir).ok();
+        crate::vfs::create_dir_all(&dir).ok();
         let started = crate::verify::now_iso();
         let compact: String = started
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
-        let stem = format!("{}-{}-cli{}", compact, kind, std::process::id());
+        let stem = format!("{}-{}-cli{}", compact, kind, crate::sys::process_id());
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

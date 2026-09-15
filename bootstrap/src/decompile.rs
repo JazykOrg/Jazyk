@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Decompilation: code to prose. Draft documents describing what the code under a
 // scope does; the normal compile runs on them, and binding self-checks the result
 // against the same code. Produces documentation files, never graph mutations.
@@ -24,7 +25,7 @@ pub fn drafts_path(out: &Path) -> std::path::PathBuf {
 }
 
 pub fn drafts(out: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(drafts_path(out))
+    crate::vfs::read_to_string(drafts_path(out))
         .ok()
         .and_then(|t| serde_norway::from_str(&t).ok())
         .unwrap_or_default()
@@ -33,9 +34,9 @@ pub fn drafts(out: &Path) -> BTreeMap<String, String> {
 fn record_draft(out: &Path, doc: &str, hash: &str) {
     let mut d = drafts(out);
     d.insert(doc.to_string(), hash.to_string());
-    std::fs::create_dir_all(out.join("decompile")).ok();
+    crate::vfs::create_dir_all(out.join("decompile")).ok();
     if let Ok(text) = serde_norway::to_string(&d) {
-        std::fs::write(drafts_path(out), text).ok();
+        crate::vfs::write(drafts_path(out), text).ok();
     }
 }
 
@@ -135,7 +136,7 @@ pub fn task(proj: &Project, store: &Store, gs: &GenSettings, scope: &str) -> Res
     ordered.sort_by_key(|f| (!looks_like_test(f), (*f).clone()));
     for f in ordered {
         let cap = if looks_like_test(f) { 6_000 } else { 3_000 };
-        let content = std::fs::read_to_string(gs.deliverable.join(f)).unwrap_or_default();
+        let content = crate::vfs::read_to_string(gs.deliverable.join(f)).unwrap_or_default();
         let shown = crate::llm::truncate(&content, cap.min(budget));
         budget = budget.saturating_sub(shown.len());
         inventory.push(json!({
@@ -216,8 +217,8 @@ pub fn submit(
     // A draft never overwrites a document a person wrote or edited: only an
     // unedited draft at the same path (its hash still the recorded one) is replaced
     // (docs/consumers/decompile.md#drafts-land-in-the-docs-tree).
-    if abs.exists() {
-        let on_disk = std::fs::read_to_string(&abs).map(|t| hash_hex(&t)).ok();
+    if abs.vexists() {
+        let on_disk = crate::vfs::read_to_string(&abs).map(|t| hash_hex(&t)).ok();
         let drafted = drafts(out).get(path).cloned();
         if on_disk.is_none() || drafted != on_disk {
             return Err(format!(
@@ -227,11 +228,11 @@ pub fn submit(
         }
     }
     if let Some(dir) = abs.parent() {
-        std::fs::create_dir_all(dir).ok();
+        crate::vfs::create_dir_all(dir).ok();
     }
     let mut text = content.to_string();
     text.push('\n');
-    std::fs::write(&abs, &text).map_err(|e| format!("cannot write `{}`: {}", path, e))?;
+    crate::vfs::write(&abs, &text).map_err(|e| format!("cannot write `{}`: {}", path, e))?;
     record_draft(out, path, &hash_hex(&text));
     if let Some(s) = scope {
         crate::control::consume_decompile(proj, out, s);
@@ -249,7 +250,7 @@ pub fn submit(
 pub fn run_all(
     proj: &Project,
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     scopes_wanted: &[String],
     trace: &crate::session::Trace,
@@ -350,9 +351,9 @@ mod tests {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let root =
-            std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", std::process::id(), n));
-        std::fs::remove_dir_all(&root).ok();
-        std::fs::create_dir_all(&root).unwrap();
+            std::env::temp_dir().join(format!("jazyk-decompile-test-{}-{}", crate::sys::process_id(), n));
+        crate::vfs::remove_dir_all(&root).ok();
+        crate::vfs::create_dir_all(&root).unwrap();
         let mut proj = Project::default();
         proj.root = root.clone();
         proj.out = root.join("jazyk-out");
@@ -372,8 +373,8 @@ mod tests {
     #[test]
     fn draft_tasks_gate_until_released() {
         let (proj, store, gs) = tmp();
-        std::fs::create_dir_all(proj.root.join("src")).unwrap();
-        std::fs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
+        crate::vfs::create_dir_all(proj.root.join("src")).unwrap();
+        crate::vfs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
         let control = crate::control::Control::load(&proj, &store.out);
         let p = pending(&proj, &store, &gs, &control);
         assert_eq!(p.len(), 1);
@@ -388,8 +389,8 @@ mod tests {
     #[test]
     fn a_submitted_draft_lands_and_consumes_the_release() {
         let (proj, store, gs) = tmp();
-        std::fs::create_dir_all(proj.root.join("src")).unwrap();
-        std::fs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
+        crate::vfs::create_dir_all(proj.root.join("src")).unwrap();
+        crate::vfs::write(proj.root.join("src/lib.sh"), "echo hi\n").unwrap();
         crate::control::release_decompile(&proj, &store.out, &["src".into()]);
         let v = submit(
             &proj,
@@ -400,7 +401,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(v["written"], "docs/src.md");
-        assert!(proj.root.join("docs/src.md").exists());
+        assert!(proj.root.join("docs/src.md").vexists());
         assert_eq!(drafts(&store.out).len(), 1);
         let control = crate::control::Control::load(&proj, &store.out);
         assert!(control.released.decompile.is_empty());
@@ -416,7 +417,7 @@ mod tests {
         assert!(err.contains(".."), "{}", err);
         let err = submit(&proj, &store.out, "/tmp/x.md", "# X\n\nBody.", None).unwrap_err();
         assert!(err.contains("absolute"), "{}", err);
-        assert!(!proj.root.join("x.md").exists());
+        assert!(!proj.root.join("x.md").vexists());
     }
 
     // A draft is one document: two H1s are two documents, none is a fragment.
@@ -435,22 +436,22 @@ mod tests {
     #[test]
     fn a_draft_never_overwrites_an_edited_document() {
         let (proj, store, _gs) = tmp();
-        std::fs::create_dir_all(proj.root.join("docs")).unwrap();
-        std::fs::write(proj.root.join("docs/src.md"), "# Src\n\nWritten by hand.\n").unwrap();
+        crate::vfs::create_dir_all(proj.root.join("docs")).unwrap();
+        crate::vfs::write(proj.root.join("docs/src.md"), "# Src\n\nWritten by hand.\n").unwrap();
         let err = submit(&proj, &store.out, "docs/src.md", "# Src\n\nDrafted.", None).unwrap_err();
         assert!(err.contains("not an unedited draft"), "{}", err);
         assert_eq!(
-            std::fs::read_to_string(proj.root.join("docs/src.md")).unwrap(),
+            crate::vfs::read_to_string(proj.root.join("docs/src.md")).unwrap(),
             "# Src\n\nWritten by hand.\n"
         );
         // A draft of its own may be drafted again.
         submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nFirst draft.", None).unwrap();
         submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nSecond draft.", None).unwrap();
-        assert!(std::fs::read_to_string(proj.root.join("docs/lib.md"))
+        assert!(crate::vfs::read_to_string(proj.root.join("docs/lib.md"))
             .unwrap()
             .contains("Second"));
         // Once a person edits it, the draft is theirs.
-        std::fs::write(proj.root.join("docs/lib.md"), "# Lib\n\nSecond draft, reviewed.\n").unwrap();
+        crate::vfs::write(proj.root.join("docs/lib.md"), "# Lib\n\nSecond draft, reviewed.\n").unwrap();
         assert!(submit(&proj, &store.out, "docs/lib.md", "# Lib\n\nThird draft.", None).is_err());
     }
 

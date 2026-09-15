@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Deterministic per-entity requirements documents, level pages, entity cards, and
 // diagram pages: the reading surface between prose and graph. Rendered on every
 // commit, no LLM. Renders the diagrams first so every image link resolves, embeds the
@@ -131,7 +132,7 @@ fn svg_exists(store: &Store, view_id: &str) -> bool {
         .join("diagrams")
         .join(kind)
         .join(format!("{}.svg", s))
-        .exists()
+        .vexists()
 }
 
 const FLOW_KINDS: [&str; 4] = ["use-case", "activity", "sequence", "communication"];
@@ -542,21 +543,21 @@ fn write_level_pages(store: &Store, dir: &std::path::Path) -> usize {
         .iter()
         .map(|t| level_page(t).trim_start_matches("levels/").to_string())
         .collect();
-    if let Ok(rd) = std::fs::read_dir(&levels_dir) {
+    if let Ok(rd) = crate::vfs::read_dir(&levels_dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if name.ends_with(".md") && !live.contains(&name) {
-                std::fs::remove_file(e.path()).ok();
+                crate::vfs::remove_file(e.path()).ok();
             }
         }
     }
     if targets.is_empty() {
         return 0;
     }
-    std::fs::create_dir_all(&levels_dir).ok();
+    crate::vfs::create_dir_all(&levels_dir).ok();
     let mut written = 0;
     for t in &targets {
-        std::fs::write(dir.join(level_page(t)), level_page_text(store, t)).ok();
+        crate::vfs::write(dir.join(level_page(t)), level_page_text(store, t)).ok();
         written += 1;
     }
     written
@@ -814,24 +815,24 @@ fn write_cards(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize {
         .keys()
         .map(|id| format!("{}.md", slug(id)))
         .collect();
-    if let Ok(rd) = std::fs::read_dir(&cards_dir) {
+    if let Ok(rd) = crate::vfs::read_dir(&cards_dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if name.ends_with(".md") && !live.contains(&name) {
-                std::fs::remove_file(e.path()).ok();
+                crate::vfs::remove_file(e.path()).ok();
             }
         }
     }
     if store.graph.entities.is_empty() {
         return 0;
     }
-    std::fs::create_dir_all(&cards_dir).ok();
+    crate::vfs::create_dir_all(&cards_dir).ok();
     let mut written = 0;
     for id in store.graph.entities.keys() {
         let Some(c) = crate::card::entity_card(store, walk, id) else {
             continue;
         };
-        std::fs::write(cards_dir.join(format!("{}.md", slug(id))), card_text(store, &c)).ok();
+        crate::vfs::write(cards_dir.join(format!("{}.md", slug(id))), card_text(store, &c)).ok();
         written += 1;
     }
     written
@@ -1059,16 +1060,16 @@ fn write_view_pages(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize 
         .filter_map(|v| view_page_path(v))
         .map(|p| p.trim_start_matches("docsgen/diagrams/").to_string())
         .collect();
-    if let Ok(kinds) = std::fs::read_dir(&pages_dir) {
+    if let Ok(kinds) = crate::vfs::read_dir(&pages_dir) {
         for k in kinds.flatten() {
             let kind = k.file_name().to_string_lossy().to_string();
-            let Ok(rd) = std::fs::read_dir(k.path()) else {
+            let Ok(rd) = crate::vfs::read_dir(k.path()) else {
                 continue;
             };
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
                 if name.ends_with(".md") && !live.contains(&format!("{}/{}", kind, name)) {
-                    std::fs::remove_file(e.path()).ok();
+                    crate::vfs::remove_file(e.path()).ok();
                 }
             }
         }
@@ -1083,9 +1084,9 @@ fn write_view_pages(store: &Store, walk: &Walk, dir: &std::path::Path) -> usize 
         };
         let file = store.out.join(&path);
         if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).ok();
+            crate::vfs::create_dir_all(parent).ok();
         }
-        std::fs::write(file, view_page_text(store, &p)).ok();
+        crate::vfs::write(file, view_page_text(store, &p)).ok();
         written += 1;
     }
     written
@@ -1301,15 +1302,15 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
     let ledger = crate::gen::Ledger::load(&store.out);
     let instances = instance_types(store);
     let dir = store.out.join("docsgen");
-    std::fs::create_dir_all(&dir).ok();
+    crate::vfs::create_dir_all(&dir).ok();
     // Stale documents for absent entities are removed, so links never mislead.
     let live: BTreeSet<String> = store.graph.entities.keys().map(|id| slug(id)).collect();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
+    if let Ok(rd) = crate::vfs::read_dir(&dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if let Some(stem) = name.strip_suffix(".md") {
                 if stem != "index" && !live.contains(stem) {
-                    std::fs::remove_file(e.path()).ok();
+                    crate::vfs::remove_file(e.path()).ok();
                 }
             }
         }
@@ -1662,7 +1663,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 ));
             }
         }
-        std::fs::write(dir.join(format!("{}.md", slug(id))), s).ok();
+        crate::vfs::write(dir.join(format!("{}.md", slug(id))), s).ok();
         written += 1;
     }
 
@@ -1857,7 +1858,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
             }
         }
         idx.push_str("Reports: [glossary](./glossary.md) · [fragmentation](./fragmentation.md) · [staleness](./staleness.md)\n\n");
-        std::fs::write(dir.join("index.md"), idx).ok();
+        crate::vfs::write(dir.join("index.md"), idx).ok();
         written += write_reports(store, &dir);
     }
     written
@@ -1916,7 +1917,7 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
         g.push_str(&line);
         g.push('\n');
     }
-    std::fs::write(dir.join("glossary.md"), g).ok();
+    crate::vfs::write(dir.join("glossary.md"), g).ok();
     // Fragmentation.
     let mut rows: Vec<(usize, usize, String, String, Vec<String>)> = Vec::new();
     for (id, e) in &store.graph.entities {
@@ -1949,7 +1950,7 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
             docs.join(", ")
         ));
     }
-    std::fs::write(dir.join("fragmentation.md"), f).ok();
+    crate::vfs::write(dir.join("fragmentation.md"), f).ok();
     // Staleness.
     let anchor_of = |subject: &str| -> Option<(String, String)> {
         let rs = store.resolve_id(subject);
@@ -2004,7 +2005,7 @@ fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
         st.push_str(&weak.join("\n"));
         st.push('\n');
     }
-    std::fs::write(dir.join("staleness.md"), st).ok();
+    crate::vfs::write(dir.join("staleness.md"), st).ok();
     3
 }
 
@@ -2029,9 +2030,9 @@ mod tests {
     fn quoted_links_relink_and_section_anchors_take_the_heading() {
         let mut s = Store::default();
         let out = std::env::temp_dir()
-            .join(format!("jazyk-docsgen-links-{}", std::process::id()))
+            .join(format!("jazyk-docsgen-links-{}", crate::sys::process_id()))
             .join("jazyk-out");
-        std::fs::create_dir_all(&out).unwrap();
+        crate::vfs::create_dir_all(&out).unwrap();
         s.out = out.clone();
         assert_eq!(
             relink_quote("- [User Management](./subsystems/user.md)", "docs/backend.md", &s),
@@ -2077,9 +2078,9 @@ mod tests {
             },
         );
         let dir = out.join("docsgen");
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::vfs::create_dir_all(&dir).unwrap();
         write_reports(&s, &dir);
-        let glossary = std::fs::read_to_string(dir.join("glossary.md")).unwrap();
+        let glossary = crate::vfs::read_to_string(dir.join("glossary.md")).unwrap();
         assert!(
             glossary.contains("[docs/main.md#/warehouse-erp/backend](../../docs/main.md#backend)"),
             "{}",
@@ -2090,13 +2091,13 @@ mod tests {
             "{}",
             glossary
         );
-        std::fs::remove_dir_all(out.parent().unwrap()).ok();
+        crate::vfs::remove_dir_all(out.parent().unwrap()).ok();
     }
 
     #[test]
     fn renders_and_prunes() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),
             ..Default::default()
@@ -2129,20 +2130,20 @@ mod tests {
             },
         );
         // A stale file for an entity that no longer exists must be pruned.
-        std::fs::create_dir_all(out.join("docsgen")).ok();
-        std::fs::write(out.join("docsgen/ghost.md"), "old").ok();
+        crate::vfs::create_dir_all(out.join("docsgen")).ok();
+        crate::vfs::write(out.join("docsgen/ghost.md"), "old").ok();
         // A stale card and a stale diagram page are pruned with it.
-        std::fs::create_dir_all(out.join("docsgen/entities")).ok();
-        std::fs::write(out.join("docsgen/entities/ghost.md"), "old").ok();
-        std::fs::create_dir_all(out.join("docsgen/diagrams/class")).ok();
-        std::fs::write(out.join("docsgen/diagrams/class/ghost.md"), "old").ok();
+        crate::vfs::create_dir_all(out.join("docsgen/entities")).ok();
+        crate::vfs::write(out.join("docsgen/entities/ghost.md"), "old").ok();
+        crate::vfs::create_dir_all(out.join("docsgen/diagrams/class")).ok();
+        crate::vfs::write(out.join("docsgen/diagrams/class/ghost.md"), "old").ok();
         // The document, the card, and the three reports: five pages.
         let n = write_all(&s, &gs(&out));
         assert_eq!(n, 5);
-        let doc = std::fs::read_to_string(out.join("docsgen/cart.md")).unwrap();
+        let doc = crate::vfs::read_to_string(out.join("docsgen/cart.md")).unwrap();
         assert!(doc.contains("# Cart"));
         // A one-member scope has no level page: the card's breadcrumb names it plain.
-        let card = std::fs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+        let card = crate::vfs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
         assert!(card.contains("## Sits in\n\nPublic › Cart\n"), "{}", card);
         assert!(doc.contains("req:shop-1"));
         assert!(
@@ -2151,10 +2152,10 @@ mod tests {
             doc
         );
         assert!(doc.contains("[card](./entities/cart.md)"), "{}", doc);
-        assert!(!out.join("docsgen/ghost.md").exists());
-        assert!(!out.join("docsgen/entities/ghost.md").exists());
-        assert!(!out.join("docsgen/diagrams/class/ghost.md").exists());
-        let card = std::fs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+        assert!(!out.join("docsgen/ghost.md").vexists());
+        assert!(!out.join("docsgen/entities/ghost.md").vexists());
+        assert!(!out.join("docsgen/diagrams/class/ghost.md").vexists());
+        let card = crate::vfs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
         assert!(card.contains("# Cart\n\n`ent:cart` · holds items\n"), "{}", card);
         assert!(card.contains("## Inside\n\na leaf\n"), "{}", card);
         assert!(
@@ -2171,16 +2172,16 @@ mod tests {
     #[test]
     fn showcase_page_embeds_images_and_cross_links() {
         let out =
-            std::env::temp_dir().join(format!("jazyk-docsgen-showcase-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(&out).unwrap();
+            std::env::temp_dir().join(format!("jazyk-docsgen-showcase-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
         s.out = out.clone();
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         write_all(&s, &gs(&out));
 
-        let page = std::fs::read_to_string(out.join("docsgen/order.md")).unwrap();
+        let page = crate::vfs::read_to_string(out.join("docsgen/order.md")).unwrap();
         // The images, in the stated order: the level neighborhood (the parent's level
         // view, order-service holding four children; the order itself holds none), own
         // state view, the flow view naming the order. The scope root's level view and
@@ -2239,12 +2240,12 @@ mod tests {
             page
         );
         // The rendered files exist, so the links resolve.
-        assert!(out.join("diagrams/state/order.svg").exists());
+        assert!(out.join("diagrams/state/order.svg").vexists());
 
         // The index embeds the structural level views as images (no mermaid), the
         // scope root's (view:component/public: shop is a system, customer an actor)
         // and the shop's, lists every view, and cross-links the pages.
-        let idx = std::fs::read_to_string(out.join("docsgen/index.md")).unwrap();
+        let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
         assert!(
             idx.contains("](../diagrams/component/public.svg)"),
             "{}",
@@ -2255,7 +2256,7 @@ mod tests {
         assert!(!idx.contains("mermaid"), "{}", idx);
         assert!(idx.contains("- [Order](./order.md) `ent:order`"), "{}", idx);
         assert!(idx.contains("`view:usecase/shop`"), "{}", idx);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The showcase graph's level pages: the scope root and every node with a level
@@ -2265,33 +2266,33 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#level-pages.
     #[test]
     fn level_pages_nest_as_the_containment_tree() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(&out).unwrap();
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
         s.out = out.clone();
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         // A stale page for a node that lost its level is pruned.
-        std::fs::create_dir_all(out.join("docsgen/levels")).unwrap();
-        std::fs::write(out.join("docsgen/levels/ghost.md"), "old").unwrap();
+        crate::vfs::create_dir_all(out.join("docsgen/levels")).unwrap();
+        crate::vfs::write(out.join("docsgen/levels/ghost.md"), "old").unwrap();
         write_all(&s, &gs(&out));
         let levels = out.join("docsgen/levels");
 
         // A page per level: the scope root, the shop (two services), the order
         // service (four children). No page for the inventory service (one child)
         // nor for a leaf.
-        assert!(levels.join("scope-public.md").exists());
-        assert!(levels.join("shop.md").exists());
-        assert!(levels.join("order-service.md").exists());
-        assert!(!levels.join("inventory-service.md").exists());
-        assert!(!levels.join("checkout-api.md").exists());
-        assert!(!levels.join("ghost.md").exists());
+        assert!(levels.join("scope-public.md").vexists());
+        assert!(levels.join("shop.md").vexists());
+        assert!(levels.join("order-service.md").vexists());
+        assert!(!levels.join("inventory-service.md").vexists());
+        assert!(!levels.join("checkout-api.md").vexists());
+        assert!(!levels.join("ghost.md").vexists());
 
         // The order service's page: the breadcrumb chain root → shop → node (the node
         // unlinked), the header with the entity page link, the level view embedded
         // with paths one directory up, the members linked to their entity pages.
-        let page = std::fs::read_to_string(levels.join("order-service.md")).unwrap();
+        let page = crate::vfs::read_to_string(levels.join("order-service.md")).unwrap();
         assert!(
             page.starts_with("[Public](./scope-public.md) › [Shop](./shop.md) › Order Service\n"),
             "{}",
@@ -2329,7 +2330,7 @@ mod tests {
         // The shop's page links down to the order service's level page with its child
         // count and not to the inventory service's; the customer, an outside entity
         // the lifted edge brings into the view, is not a member.
-        let shop = std::fs::read_to_string(levels.join("shop.md")).unwrap();
+        let shop = crate::vfs::read_to_string(levels.join("shop.md")).unwrap();
         assert!(
             shop.starts_with("[Public](./scope-public.md) › Shop\n"),
             "{}",
@@ -2354,7 +2355,7 @@ mod tests {
 
         // The root page: unlinked breadcrumb, the scope's level view, the shop as a
         // member with its link down, the flow view lifted into the root level.
-        let root = std::fs::read_to_string(levels.join("scope-public.md")).unwrap();
+        let root = crate::vfs::read_to_string(levels.join("scope-public.md")).unwrap();
         assert!(
             root.starts_with("Public\n\n# Public\n\n`scope:public` · scope `public`"),
             "{}",
@@ -2380,13 +2381,13 @@ mod tests {
         );
 
         // The index links the root level page from the scope's caption.
-        let idx = std::fs::read_to_string(out.join("docsgen/index.md")).unwrap();
+        let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
         assert!(
             idx.contains("level page: [Public](./levels/scope-public.md)"),
             "{}",
             idx
         );
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The showcase graph's walk: a card per entity under entities/ listing one level
@@ -2396,9 +2397,9 @@ mod tests {
     // docs/consumers/docsgen.md#diagram-pages.
     #[test]
     fn cards_and_diagram_pages_walk_the_graph() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
-        std::fs::create_dir_all(&out).unwrap();
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
         let mut s = crate::derive::tests::showcase_store();
         s.out = out.clone();
         let mut batch = crate::store::RecordBatch::new(1);
@@ -2411,7 +2412,7 @@ mod tests {
         // its level page, the shop to its card), the context and inside views embedded
         // two directories up with card links in the captions, the relationships,
         // the flow at the shop's level, the sibling, the children, the long reads.
-        let card = std::fs::read_to_string(cards.join("order-service.md")).unwrap();
+        let card = crate::vfs::read_to_string(cards.join("order-service.md")).unwrap();
         assert!(
             card.starts_with("# Order Service\n\n`ent:order-service` · «service»"),
             "{}",
@@ -2452,13 +2453,13 @@ mod tests {
         );
         // The three reports the index links.
         let out_dir = out.join("docsgen");
-        let glossary = std::fs::read_to_string(out_dir.join("glossary.md")).unwrap();
+        let glossary = crate::vfs::read_to_string(out_dir.join("glossary.md")).unwrap();
         assert!(glossary.contains("- **Customer**"), "{}", glossary);
         assert!(glossary.contains("[card](./entities/customer.md)"), "{}", glossary);
-        assert!(out_dir.join("fragmentation.md").exists());
-        let staleness = std::fs::read_to_string(out_dir.join("staleness.md")).unwrap();
+        assert!(out_dir.join("fragmentation.md").vexists());
+        let staleness = crate::vfs::read_to_string(out_dir.join("staleness.md")).unwrap();
         assert!(staleness.starts_with("# Staleness"), "{}", staleness);
-        let index = std::fs::read_to_string(out_dir.join("index.md")).unwrap();
+        let index = crate::vfs::read_to_string(out_dir.join("index.md")).unwrap();
         assert!(index.contains("[glossary](./glossary.md)"), "{}", index);
         assert!(
             card.contains("[use case](../diagrams/usecase/shop-shop.md) · [sequence](../diagrams/sequence/shop-shop.md)"),
@@ -2492,7 +2493,7 @@ mod tests {
         assert!(!card.contains(".svg]]"), "{}", card);
 
         // A leaf's card: a leaf inside, no children, its context the parent's level.
-        let leaf = std::fs::read_to_string(cards.join("order-item.md")).unwrap();
+        let leaf = crate::vfs::read_to_string(cards.join("order-item.md")).unwrap();
         assert!(leaf.contains("## Inside\n\na leaf\n"), "{}", leaf);
         assert!(!leaf.contains("## Children"), "{}", leaf);
         assert!(
@@ -2510,7 +2511,7 @@ mod tests {
         // sits three directories up, the legend links every drawn entity to its card
         // and the ones with a level to their level view's page, and the views around
         // are the shop's flow views, the root's view above, the order service's below.
-        let page = std::fs::read_to_string(pages.join("component/shop.md")).unwrap();
+        let page = crate::vfs::read_to_string(pages.join("component/shop.md")).unwrap();
         assert!(
             page.starts_with("# Shop\n\n`view:component/shop` · component · "),
             "{}",
@@ -2560,7 +2561,7 @@ mod tests {
 
         // The shop level's sequence page: the steps as drawn, each id linked to its
         // block in a requirements document, the ends linked to their cards.
-        let seq = std::fs::read_to_string(pages.join("sequence/shop-shop.md")).unwrap();
+        let seq = crate::vfs::read_to_string(pages.join("sequence/shop-shop.md")).unwrap();
         assert!(
             seq.contains("## Level\n\n[Public](../../levels/scope-public.md) › [Shop](../../entities/shop.md) · level page: [Shop](../../levels/shop.md)\n"),
             "{}",
@@ -2578,13 +2579,13 @@ mod tests {
         );
 
         // The state view's page belongs to its machine, not to a level.
-        let state = std::fs::read_to_string(pages.join("state/order.md")).unwrap();
+        let state = crate::vfs::read_to_string(pages.join("state/order.md")).unwrap();
         assert!(
             state.contains("## Level\n\nthe state machine of [Order](../../entities/order.md)\n"),
             "{}",
             state
         );
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // A pending ratification proposal renders as its prompt on the entity page, and
@@ -2592,8 +2593,8 @@ mod tests {
     // Mirrors docs/consumers/docsgen.md#ratification-proposals.
     #[test]
     fn ratification_proposal_renders_as_a_prompt() {
-        let out = std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-docsgen-ratify-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let mut s = Store {
             out: out.clone(),
             ..Default::default()
@@ -2646,7 +2647,7 @@ mod tests {
             },
         );
         write_all(&s, &gs(&out));
-        let page = std::fs::read_to_string(out.join("docsgen/pricing.md")).unwrap();
+        let page = crate::vfs::read_to_string(out.join("docsgen/pricing.md")).unwrap();
         assert!(page.contains("## Proposals"), "{}", page);
         assert!(
             page.contains("> The order service contains a pricing module."),
@@ -2664,9 +2665,9 @@ mod tests {
             "the header names the provenance: {}",
             page
         );
-        let idx = std::fs::read_to_string(out.join("docsgen/index.md")).unwrap();
+        let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
         assert!(idx.contains("## Ratification"), "{}", idx);
         assert!(idx.contains("### `docs/orders.md`"), "{}", idx);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }

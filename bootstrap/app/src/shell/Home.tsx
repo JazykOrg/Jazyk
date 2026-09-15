@@ -2,6 +2,7 @@
 // entries exist; the served project is the first row.
 import { Link } from 'react-router'
 import { useCapabilities } from '../lib/capabilities'
+import { folderPickerAvailable } from '../lib/folder'
 import { useProjects, type ProjectSummary } from '../lib/product'
 import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
@@ -76,7 +77,11 @@ export default function Home() {
               Open {proj.root.replace(/\/+$/, '').split('/').pop()} →
             </Link>
           )}
-          {kind === 'folder-picker' && <button onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder'))}>Open folder…</button>}
+          {(kind === 'folder-picker' || (kind === 'bundled' && folderPickerAvailable())) && (
+            <button onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder'))} title="a directory with a jazyk.toml; edits and builds write back into it">
+              Open folder…
+            </button>
+          )}
           {kind === 'bundled' && (
             <select onChange={(e) => window.dispatchEvent(new CustomEvent('jazyk:open-demo', { detail: e.target.value }))} defaultValue="">
               <option value="" disabled>

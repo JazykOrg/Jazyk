@@ -310,7 +310,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         };
         st.jobs.set_stem(id, &stem);
         let trace_path = st.out.join("trace").join(format!("{}.jsonl", stem));
-        std::fs::create_dir_all(st.out.join("trace")).ok();
+        crate::vfs::create_dir_all(st.out.join("trace")).ok();
         let writer: Arc<Mutex<Option<std::fs::File>>> = Arc::new(Mutex::new(
             std::fs::OpenOptions::new()
                 .create(true)
@@ -387,7 +387,7 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
             let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
-            runner.set_build_token(Some(format!("internal-{}", std::process::id())));
+            runner.set_build_token(Some(format!("internal-{}", crate::sys::process_id())));
             let store = crate::store::Store::load(&st.out);
             // Binding first, same as `jazyk gen`: owed binds classify each requirement
             // and the bound tests become the acceptance gates.
@@ -559,7 +559,7 @@ fn write_line(writer: &Arc<Mutex<Option<std::fs::File>>>, v: &Value) {
 // Remove transcripts past the retention window. Runs once per server start.
 pub fn sweep_traces(out: &std::path::Path) {
     let dir = out.join("trace");
-    let Ok(rd) = std::fs::read_dir(&dir) else {
+    let Ok(rd) = crate::vfs::read_dir(&dir) else {
         return;
     };
     let cutoff = std::time::SystemTime::now()
@@ -571,7 +571,7 @@ pub fn sweep_traces(out: &std::path::Path) {
         }
         if let Ok(md) = e.metadata() {
             if md.modified().map(|m| m < cutoff).unwrap_or(false) {
-                let _ = std::fs::remove_file(&p);
+                let _ = crate::vfs::remove_file(&p);
             }
         }
     }
@@ -587,7 +587,7 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
     let dir = st.out.join("trace");
     let list = tokio::task::spawn_blocking(move || {
         let mut items: Vec<((String, std::time::SystemTime), Value)> = Vec::new();
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        let Ok(rd) = crate::vfs::read_dir(&dir) else {
             return Vec::new();
         };
         for e in rd.flatten() {
@@ -595,7 +595,7 @@ pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
             if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else {
+            let Ok(text) = crate::vfs::read_to_string(&p) else {
                 continue;
             };
             let mut lines = text.lines();
@@ -665,7 +665,7 @@ pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<Str
         return super::api::err(StatusCode::BAD_REQUEST, "invalid trace name");
     };
     let result = tokio::task::spawn_blocking(move || -> Option<Value> {
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = crate::vfs::read_to_string(&path).ok()?;
         let mut meta = Value::Null;
         let mut outcome = Value::Null;
         let mut events: Vec<Value> = Vec::new();
@@ -704,7 +704,7 @@ pub async fn get_trace_event(
         return super::api::err(StatusCode::BAD_REQUEST, "invalid trace name");
     };
     let found = tokio::task::spawn_blocking(move || -> Option<Value> {
-        let text = std::fs::read_to_string(&path).ok()?;
+        let text = crate::vfs::read_to_string(&path).ok()?;
         text.lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .find(|v| v["n"].as_u64() == Some(n))

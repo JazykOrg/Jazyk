@@ -3496,7 +3496,7 @@ pub fn journal_resolved_goals(out: &std::path::Path) -> BTreeSet<String> {
 pub fn read_journal(out: &std::path::Path) -> Vec<JournalEntry> {
     let dir = out.join("journal");
     let mut entries: Vec<(u64, JournalEntry)> = Vec::new();
-    let Ok(rd) = std::fs::read_dir(&dir) else {
+    let Ok(rd) = crate::vfs::read_dir(&dir) else {
         return Vec::new();
     };
     for e in rd.flatten() {
@@ -3508,7 +3508,7 @@ pub fn read_journal(out: &std::path::Path) -> Vec<JournalEntry> {
         else {
             continue;
         };
-        let Ok(text) = std::fs::read_to_string(e.path()) else {
+        let Ok(text) = crate::vfs::read_to_string(e.path()) else {
             continue;
         };
         let Ok(mut entry) = serde_norway::from_str::<JournalEntry>(&text) else {
@@ -5223,6 +5223,7 @@ impl GoalKind for AbstractEntity {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::vfs::VPathExt;
 
     #[test]
     fn registry_covers_seventeen_kinds_with_pages_and_prompts() {
@@ -5236,7 +5237,7 @@ pub(crate) mod tests {
                 k.kind()
             );
             assert!(
-                std::path::Path::new(&page).exists(),
+                std::path::Path::new(&page).vexists(),
                 "{} has no page",
                 k.kind()
             );

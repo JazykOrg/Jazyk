@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The live event stream. One SSE feed multiplexes job lifecycle, store changes,
 // document changes, and worklist sizes. Mirrors docs/frontends/gui.md#events.
 //
@@ -212,12 +213,12 @@ pub fn recompute_pending(st: &SharedState) {
 pub fn spawn_store_watcher(st: SharedState) {
     tokio::spawn(async move {
         let mut last_gen = read_generation(&st.out);
-        let mut lock_seen = st.out.join(".lock").exists();
+        let mut lock_seen = st.out.join(".lock").vexists();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            let lock_now = st.out.join(".lock").exists();
+            let lock_now = st.out.join(".lock").vexists();
             if lock_now != lock_seen {
                 lock_seen = lock_now;
                 st.events.emit("store.lock", json!({ "held": lock_now }));
@@ -230,7 +231,7 @@ pub fn spawn_store_watcher(st: SharedState) {
             if gen_now > last_gen {
                 for g in (last_gen + 1)..=gen_now {
                     let path = st.out.join("journal").join(format!("g{}.yaml", g));
-                    let Ok(text) = std::fs::read_to_string(&path) else {
+                    let Ok(text) = crate::vfs::read_to_string(&path) else {
                         continue;
                     };
                     let Ok(entry) = serde_norway::from_str::<Value>(&text) else {
@@ -269,7 +270,7 @@ pub fn spawn_control_watcher(st: SharedState) {
             };
             s.push_str(&meta(&crate::control::Control::path(&st.out)));
             for dir in ["workers", "leases"] {
-                if let Ok(entries) = std::fs::read_dir(st.out.join(dir)) {
+                if let Ok(entries) = crate::vfs::read_dir(st.out.join(dir)) {
                     let mut names: Vec<String> = entries
                         .flatten()
                         .map(|e| format!("{}{}", e.file_name().to_string_lossy(), meta(&e.path())))
@@ -352,7 +353,7 @@ pub fn spawn_docs_watcher(st: SharedState) {
             let store = crate::store::Store::load(&st.out);
             let graph_stale = st.proj().doc_files().iter().any(|f| {
                 let rel = super::api::rel_doc(&st.proj().root, f);
-                match (std::fs::read_to_string(f), store.docs.get(&rel)) {
+                match (crate::vfs::read_to_string(f), store.docs.get(&rel)) {
                     (Ok(text), Some(rec)) => crate::model::hash_hex(&text) != rec.content_hash,
                     (Ok(_), None) => true,
                     _ => false,

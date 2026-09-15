@@ -724,7 +724,7 @@ fn checked_path(root: &std::path::Path, path: &std::path::Path) -> Result<PathBu
 fn read_text_file(root: &std::path::Path, req: &ReadTextFileRequest) -> Result<String, String> {
     let path = checked_path(root, &req.path)?;
     let text =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+        crate::vfs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let start = req.line.map(|l| l.saturating_sub(1) as usize).unwrap_or(0);
     let take = req.limit.map(|l| l as usize).unwrap_or(usize::MAX);
     if start == 0 && take == usize::MAX {
@@ -741,10 +741,10 @@ fn read_text_file(root: &std::path::Path, req: &ReadTextFileRequest) -> Result<S
 fn write_text_file(root: &std::path::Path, req: &WriteTextFileRequest) -> Result<(), String> {
     let path = checked_path(root, &req.path)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        crate::vfs::create_dir_all(parent)
             .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
     }
-    std::fs::write(&path, &req.content).map_err(|e| format!("write {}: {}", path.display(), e))
+    crate::vfs::write(&path, &req.content).map_err(|e| format!("write {}: {}", path.display(), e))
 }
 
 // Suppress unused warnings for items later phases wire up.
@@ -754,6 +754,7 @@ fn _unused(_: &PromptRequest, _: &ContentBlock) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::VPathExt;
     use std::io::{Read, Write};
 
     // A one-shot fake OpenAI endpoint: every POST answers a canned non-streaming
@@ -818,13 +819,13 @@ mod tests {
     #[test]
     fn host_runs_a_prompt_through_the_embedded_agent() {
         let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/jazyk");
-        if !bin.exists() {
+        if !bin.vexists() {
             eprintln!("skipping: {} not built", bin.display());
             return;
         }
         let (url, _listener) = fake_endpoint("hello from the fake endpoint");
-        let dir = std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("jazyk-acp-host-test-{}", crate::sys::process_id()));
+        crate::vfs::create_dir_all(&dir).unwrap();
 
         let agent = ResolvedAgent {
             name: "embedded".into(),
@@ -864,6 +865,6 @@ mod tests {
         assert!(!outcome.idled);
         let text = got.lock().unwrap().join("");
         assert!(text.contains("hello from the fake endpoint"), "{}", text);
-        std::fs::remove_dir_all(&dir).ok();
+        crate::vfs::remove_dir_all(&dir).ok();
     }
 }

@@ -8,10 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::sys::now_unix()
 }
 
 // A worker file older than this (seconds since its heartbeat) is stale and swept.
@@ -54,7 +51,7 @@ impl Control {
 
     // Load the live control state; absent fields fall back to the project defaults.
     pub fn load(proj: &Project, out: &Path) -> Control {
-        let mut c: Control = std::fs::read_to_string(Self::path(out))
+        let mut c: Control = crate::vfs::read_to_string(Self::path(out))
             .ok()
             .and_then(|t| serde_norway::from_str(&t).ok())
             .unwrap_or_default();
@@ -71,11 +68,11 @@ impl Control {
     }
 
     pub fn save(&self, out: &Path) {
-        std::fs::create_dir_all(out).ok();
+        crate::vfs::create_dir_all(out).ok();
         if let Ok(text) = serde_norway::to_string(self) {
             let tmp = Self::path(out).with_extension("yaml.tmp");
-            if std::fs::write(&tmp, text).is_ok() {
-                std::fs::rename(&tmp, Self::path(out)).ok();
+            if crate::vfs::write(&tmp, text).is_ok() {
+                crate::vfs::rename(&tmp, Self::path(out)).ok();
             }
         }
     }
@@ -130,7 +127,7 @@ pub fn current_doc_hashes(proj: &Project) -> BTreeMap<String, String> {
                 .strip_prefix(&proj.root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| f.to_string_lossy().to_string());
-            std::fs::read_to_string(f)
+            crate::vfs::read_to_string(f)
                 .ok()
                 .map(|t| (rel, crate::model::hash_hex(&t)))
         })
@@ -166,12 +163,12 @@ pub struct WorkerHandle {
 }
 
 pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
-    let id = format!("{}-{}", std::process::id(), now() % 100_000);
+    let id = format!("{}-{}", crate::sys::process_id(), now() % 100_000);
     let worker = Worker {
         id,
         kind: kind.to_string(),
         client: client.to_string(),
-        pid: std::process::id(),
+        pid: crate::sys::process_id(),
         started_at: now(),
         heartbeat_at: now(),
         task: String::new(),
@@ -186,9 +183,9 @@ pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
 
 impl WorkerHandle {
     fn write(&self) {
-        std::fs::create_dir_all(workers_dir(&self.out)).ok();
+        crate::vfs::create_dir_all(workers_dir(&self.out)).ok();
         if let Ok(text) = serde_norway::to_string(&self.worker) {
-            std::fs::write(
+            crate::vfs::write(
                 workers_dir(&self.out).join(format!("{}.yaml", self.worker.id)),
                 text,
             )
@@ -217,7 +214,7 @@ impl WorkerHandle {
 
 impl Drop for WorkerHandle {
     fn drop(&mut self) {
-        std::fs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id))).ok();
+        crate::vfs::remove_file(workers_dir(&self.out).join(format!("{}.yaml", self.worker.id))).ok();
     }
 }
 
@@ -225,19 +222,19 @@ impl Drop for WorkerHandle {
 // side effect: dead sessions disappear instead of haunting the panel.
 pub fn workers(out: &Path) -> Vec<Worker> {
     let mut v = Vec::new();
-    let Ok(entries) = std::fs::read_dir(workers_dir(out)) else {
+    let Ok(entries) = crate::vfs::read_dir(workers_dir(out)) else {
         return v;
     };
     for e in entries.flatten() {
-        let Ok(text) = std::fs::read_to_string(e.path()) else {
+        let Ok(text) = crate::vfs::read_to_string(e.path()) else {
             continue;
         };
         let Ok(w) = serde_norway::from_str::<Worker>(&text) else {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         };
         if now().saturating_sub(w.heartbeat_at) > WORKER_STALE_SECS {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         }
         v.push(w);
@@ -309,7 +306,7 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
 // Claim a goal batch: the lease names the goals it holds, so the board shows
 // claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
-    std::fs::create_dir_all(leases_dir(out)).ok();
+    crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
     if let Some(l) = read_lease(&path) {
         // Re-entrant for the same worker: a retry after its own failed attempt
@@ -317,7 +314,7 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
         if l.expires_at > now() && l.worker != worker {
             return Err(l.worker);
         }
-        std::fs::remove_file(&path).ok();
+        crate::vfs::remove_file(&path).ok();
     }
     let lease = Lease {
         task: task.to_string(),
@@ -327,16 +324,8 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
         goals: goals.to_vec(),
     };
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut f) => {
-            use std::io::Write;
-            f.write_all(text.as_bytes()).ok();
-            Ok(())
-        }
+    match crate::vfs::create_new(&path, &text) {
+        Ok(()) => Ok(()),
         // Lost the race to another claimant between the check and the create.
         Err(_) => Err(read_lease(&path)
             .map(|l| l.worker)
@@ -349,32 +338,32 @@ pub fn refresh_lease(out: &Path, task: &str) {
     if let Some(mut l) = read_lease(&path) {
         l.expires_at = now() + LEASE_TTL_SECS;
         if let Ok(text) = serde_norway::to_string(&l) {
-            std::fs::write(&path, text).ok();
+            crate::vfs::write(&path, text).ok();
         }
     }
 }
 
 pub fn release_lease(out: &Path, task: &str) {
-    std::fs::remove_file(lease_file(out, task)).ok();
+    crate::vfs::remove_file(lease_file(out, task)).ok();
 }
 
 fn read_lease(path: &Path) -> Option<Lease> {
-    serde_norway::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    serde_norway::from_str(&crate::vfs::read_to_string(path).ok()?).ok()
 }
 
 // The live leases by task. Expired files are swept.
 pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
     let mut m = BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(leases_dir(out)) else {
+    let Ok(entries) = crate::vfs::read_dir(leases_dir(out)) else {
         return m;
     };
     for e in entries.flatten() {
         let Some(l) = read_lease(&e.path()) else {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         };
         if l.expires_at <= now() {
-            std::fs::remove_file(e.path()).ok();
+            crate::vfs::remove_file(e.path()).ok();
             continue;
         }
         m.insert(l.task.clone(), l);
@@ -407,12 +396,18 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
     claim(
         out,
         BUILD_LEASE,
-        &format!("internal-{}", std::process::id()),
+        &format!("internal-{}", crate::sys::process_id()),
     )
     .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (out2, stop2) = (out.to_path_buf(), stop.clone());
+    // The heartbeat keeps a long build's lease fresh so a watchdog does not reclaim
+    // it. A browser tab runs one backend on one thread, with nothing to reclaim it
+    // and no thread to spare (docs/frontends/wasm.md#the-seams).
+    #[cfg(target_arch = "wasm32")]
+    let _ = (&out2, &stop2);
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(move || {
         while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(30));
@@ -450,10 +445,10 @@ mod tests {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let d = std::env::temp_dir().join(format!(
             "jazyk-control-test-{}-{}",
-            std::process::id(),
+            crate::sys::process_id(),
             N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&d).unwrap();
+        crate::vfs::create_dir_all(&d).unwrap();
         d
     }
 
@@ -468,7 +463,7 @@ mod tests {
             task_leases(&out).get("docs/a.md").map(|l| l.worker.clone()),
             Some("w2".into())
         );
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The lease file name is injective: a goal id with `:` and `/` round-trips, and
@@ -492,7 +487,7 @@ mod tests {
         assert_eq!(all["b3-1"].goals, vec![id.to_string()]);
         release_lease(&out, "b3-1");
         assert!(leases(&out).is_empty());
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
@@ -506,7 +501,7 @@ mod tests {
             assert_eq!(ws[0].task, "docs/a.md");
         }
         assert!(workers(&out).is_empty());
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
@@ -521,6 +516,6 @@ mod tests {
         let c = Control::load(&proj, &out);
         assert_eq!(c.released.generate, 0);
         assert_eq!(c.compile, "manual");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 }

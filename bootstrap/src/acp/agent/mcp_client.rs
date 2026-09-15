@@ -1,3 +1,4 @@
+pub use crate::agent_loop::GenericTool;
 // Minimal sync MCP client over stdio, for the embedded agent: spawn each server a
 // session names, list its tools, dispatch calls. Line-delimited JSON-RPC, the same
 // framing the jazyk MCP server speaks. The embedded agent knows nothing about jazyk;
@@ -16,14 +17,6 @@ pub struct McpServerConn {
     stdout: BufReader<ChildStdout>,
     next_id: u64,
     pub tools: Vec<GenericTool>,
-}
-
-// A tool as the MCP server describes it: what the generic loop offers the model.
-#[derive(Clone, Debug)]
-pub struct GenericTool {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
 }
 
 impl McpServerConn {

@@ -492,7 +492,7 @@ beside the product word wherever both apply.
 ## Backends and capabilities
 
 One app, three backends. The [server](#serving) (`jazyk gui`) serves everything; the
-demo runs a bundled example in the tab; the browser backend (the `wasm-backend` branch) runs the
+demo runs a bundled example in the tab; the [browser backend](./wasm.md) runs the
 compiler in the tab over a folder on the computer. The backends do not change the
 layout. They change what the backend can do, so the app reads one descriptor and
 renders against it:

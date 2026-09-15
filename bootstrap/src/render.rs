@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Diagrams: one emitter per view kind, each a pure function of the store snapshot and
 // the view, producing PlantUML text; lifting and collapse over the containment tree;
 // over-limit auto-collapse; the render seam; the files under <out>/diagrams/.
@@ -26,6 +27,12 @@ impl std::error::Error for RenderError {}
 
 // PlantUML text to SVG. In process through plantuml-little; the official native binary
 // named by JAZYK_PLANTUML is the authorized swap. Mirrors docs/compiler/diagrams.md#the-renderer.
+//
+// The conversion links Graphviz as a C archive, so it is the one part of rendering
+// that stays native. In the browser backend the emitters still run and every view
+// still emits its `.puml`; the `.svg` beside it is whatever the project was seeded
+// with. See docs/frontends/wasm.md#diagrams.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn render_svg(puml: &str) -> Result<String, RenderError> {
     match std::env::var("JAZYK_PLANTUML") {
         Ok(bin) if !bin.trim().is_empty() => native_svg(bin.trim(), puml),
@@ -38,6 +45,7 @@ pub fn render_svg(puml: &str) -> Result<String, RenderError> {
 // as part of the name (a class takes its alias as its label, an actor splits in two)
 // and never emits an anchor, so the links come off before conversion and go back on
 // as anchors after; the official binary behind JAZYK_PLANTUML does both itself.
+#[cfg(not(target_arch = "wasm32"))]
 fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     match std::panic::catch_unwind(|| plantuml_little::convert(&plain)) {
@@ -54,6 +62,21 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn render_svg(_puml: &str) -> Result<String, RenderError> {
+    Err(RenderError(
+        "the browser backend does not convert PlantUML: Graphviz is a C archive".to_string(),
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn render_png(_svg: &str) -> Result<Vec<u8>, RenderError> {
+    Err(RenderError(
+        "the browser backend does not rasterize: resvg needs the native fonts".to_string(),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -87,6 +110,7 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
 }
 
 // The system fonts, loaded once per process: text measures as a viewer would draw it.
+#[cfg(not(target_arch = "wasm32"))]
 fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
     static FONTS: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
     FONTS
@@ -99,6 +123,7 @@ fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
 }
 
 // SVG to PNG bytes through resvg.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = fonts();
@@ -1711,8 +1736,8 @@ pub struct RenderReport {
 }
 
 fn remove_if_present(path: &Path) {
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    if path.vexists() {
+        let _ = crate::vfs::remove_file(path);
     }
 }
 
@@ -1735,8 +1760,8 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
         let puml_path = base.with_extension("puml");
         let svg_path = base.with_extension("svg");
         let png_path = base.with_extension("png");
-        let unchanged = svg_path.exists()
-            && std::fs::read_to_string(&puml_path)
+        let unchanged = svg_path.vexists()
+            && crate::vfs::read_to_string(&puml_path)
                 .ok()
                 .is_some_and(|on_disk| on_disk == puml);
         if unchanged {
@@ -1744,18 +1769,18 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
             continue;
         }
         if let Some(dir) = base.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
+            if let Err(e) = crate::vfs::create_dir_all(dir) {
                 report.failed.push((id, e.to_string()));
                 continue;
             }
         }
-        if let Err(e) = std::fs::write(&puml_path, &puml) {
+        if let Err(e) = crate::vfs::write(&puml_path, &puml) {
             report.failed.push((id, e.to_string()));
             continue;
         }
         remove_if_present(&png_path);
         match render_svg(&puml) {
-            Ok(svg) => match std::fs::write(&svg_path, svg) {
+            Ok(svg) => match crate::vfs::write(&svg_path, svg) {
                 Ok(()) => report.rendered.push(id),
                 Err(e) => report.failed.push((id, e.to_string())),
             },
@@ -1766,15 +1791,15 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
         }
     }
     let dir = out.join("diagrams");
-    let Ok(kinds) = std::fs::read_dir(&dir) else {
+    let Ok(kinds) = crate::vfs::read_dir(&dir) else {
         return report;
     };
     for kind in kinds.flatten() {
         let kind_dir = kind.path();
-        if !kind_dir.is_dir() {
+        if !kind_dir.vis_dir() {
             continue;
         }
-        let Ok(files) = std::fs::read_dir(&kind_dir) else {
+        let Ok(files) = crate::vfs::read_dir(&kind_dir) else {
             continue;
         };
         for file in files.flatten() {
@@ -1787,7 +1812,7 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
             if keep.contains(&base) {
                 continue;
             }
-            let _ = std::fs::remove_file(&path);
+            let _ = crate::vfs::remove_file(&path);
             let rel = format!(
                 "{}/{}",
                 kind.file_name().to_string_lossy(),
@@ -1799,8 +1824,8 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
                 report.removed.push(rel);
             }
         }
-        if std::fs::read_dir(&kind_dir).is_ok_and(|mut d| d.next().is_none()) {
-            let _ = std::fs::remove_dir(&kind_dir);
+        if crate::vfs::read_dir(&kind_dir).is_ok_and(|mut d| d.next().is_none()) {
+            let _ = crate::vfs::remove_dir(&kind_dir);
         }
     }
     report
@@ -1819,13 +1844,13 @@ pub fn png_for(out: &Path, view_id: &str) -> Result<PathBuf, RenderError> {
     let base =
         diagram_base(out, view_id).ok_or_else(|| RenderError(format!("no view {}", view_id)))?;
     let png_path = base.with_extension("png");
-    if png_path.exists() {
+    if png_path.vexists() {
         return Ok(png_path);
     }
-    let svg = std::fs::read_to_string(base.with_extension("svg"))
+    let svg = crate::vfs::read_to_string(base.with_extension("svg"))
         .map_err(|_| RenderError(format!("{} is not rendered", view_id)))?;
     let png = render_png(&svg)?;
-    std::fs::write(&png_path, png).map_err(|e| RenderError(e.to_string()))?;
+    crate::vfs::write(&png_path, png).map_err(|e| RenderError(e.to_string()))?;
     Ok(png_path)
 }
 
@@ -2935,7 +2960,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tmp("native");
         let stub = dir.join("plantuml");
-        std::fs::write(
+        crate::vfs::write(
             &stub,
             "#!/bin/sh\ntest \"$1\" = -tsvg && test \"$2\" = -pipe && cat\n",
         )
@@ -2946,7 +2971,7 @@ mod tests {
         let err = native_svg("/usr/bin/false", puml).unwrap_err();
         assert!(err.0.contains("exited with"), "{}", err);
         assert!(native_svg(dir.join("missing").to_str().unwrap(), puml).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::vfs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2959,9 +2984,9 @@ mod tests {
 
     fn tmp(label: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, crate::sys::process_id()));
+        let _ = crate::vfs::remove_dir_all(&dir);
+        crate::vfs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -2991,12 +3016,12 @@ mod tests {
         assert!(expected.contains(&root_view(&s)[5..].to_string()));
         for rel in &expected {
             assert!(
-                out.join("diagrams").join(format!("{}.puml", rel)).exists(),
+                out.join("diagrams").join(format!("{}.puml", rel)).vexists(),
                 "{}",
                 rel
             );
             assert!(
-                out.join("diagrams").join(format!("{}.svg", rel)).exists(),
+                out.join("diagrams").join(format!("{}.svg", rel)).vexists(),
                 "{}",
                 rel
             );
@@ -3009,7 +3034,7 @@ mod tests {
         assert!(again.removed.is_empty());
         // A png on request, dropped when the puml changes.
         let png = png_for(&out, "view:state/order").unwrap();
-        assert!(png.exists());
+        assert!(png.vexists());
         assert_eq!(png_for(&out, "view:state/order").unwrap(), png);
         assert!(png_for(&out, "view:state/nope").is_err());
         // A deleted curated view loses its files; a machine without a state view still
@@ -3023,13 +3048,13 @@ mod tests {
             .title = "Checkout flow".into();
         let third = render_all(&s, &out);
         assert_eq!(third.removed, vec!["sequence/checkout".to_string()]);
-        assert!(!out.join("diagrams/sequence/checkout.svg").exists());
-        assert!(out.join("diagrams/state/order.svg").exists());
+        assert!(!out.join("diagrams/sequence/checkout.svg").vexists());
+        assert!(out.join("diagrams/state/order.svg").vexists());
         assert!(third
             .rendered
             .contains(&"view:usecase/checkout".to_string()));
         assert!(third.skipped.contains(&"view:state/order".to_string()));
-        assert!(png.exists());
+        assert!(png.vexists());
         s.graph
             .requirements
             .get_mut("req:shop-7")
@@ -3041,7 +3066,7 @@ mod tests {
         recompute(&mut s, "g3", &mut RecordBatch::new(3));
         let fourth = render_all(&s, &out);
         assert!(fourth.rendered.contains(&"view:state/order".to_string()));
-        assert!(!png.exists());
-        let _ = std::fs::remove_dir_all(&out);
+        assert!(!png.vexists());
+        let _ = crate::vfs::remove_dir_all(&out);
     }
 }

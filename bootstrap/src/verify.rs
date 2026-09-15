@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // Verification: run the tests the ledger records and feed verdicts back. Status is
 // derived, never stored; every staleness flip is a hash comparison. Mirrors
 // docs/consumers/gen.md (the ledger, runners) and
@@ -16,7 +17,7 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
         return ("missing".into(), "requirement-gone".into());
     };
     let artifact = artifact_path(&store.out, gs, &row.test);
-    if !artifact.exists() {
+    if !artifact.vexists() {
         return ("missing".into(), "artifact-gone".into());
     }
     // A programmatic artifact that no longer carries the declared test name judges
@@ -77,7 +78,7 @@ pub fn status_of(store: &Store, rid: &str, row: &ReqRow, gs: &GenSettings) -> (S
 // nothing: a row without one names no test.
 fn artifact_names(artifact: &std::path::Path, name: &str) -> bool {
     !name.trim().is_empty()
-        && std::fs::read_to_string(artifact)
+        && crate::vfs::read_to_string(artifact)
             .map(|c| c.contains(name))
             .unwrap_or(false)
 }
@@ -303,7 +304,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
     let pack = crate::context::ledger_context(store, &rid);
     let artifact = artifact_path(&store.out, gs, &row.test);
     let criteria = if row.test.kind == "llm" {
-        std::fs::read_to_string(&artifact).unwrap_or_default()
+        crate::vfs::read_to_string(&artifact).unwrap_or_default()
     } else {
         String::new()
     };
@@ -438,13 +439,9 @@ pub struct ProgRun {
 // Run one programmatic test reference under the deliverable.
 fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, String> {
     let cwd = gs.deliverable.join(&t.cwd);
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&t.run)
-        .current_dir(&cwd)
-        .output()
+    let out = crate::sys::run_shell(&t.run, &cwd)
         .map_err(|e| format!("failed to run `{}` in {}: {}", t.run, cwd.display(), e))?;
-    let pass = out.status.success();
+    let pass = out.success;
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
     let tail: String = evidence
@@ -459,7 +456,7 @@ fn run_test_ref(gs: &GenSettings, t: &crate::gen::TestRef) -> Result<ProgRun, St
     let tail = crate::llm::truncate(&tail, 300);
     Ok(ProgRun {
         pass,
-        code: out.status.code().unwrap_or(-1),
+        code: out.code,
         evidence: format!("{}: {}", t.run, tail),
         tail,
     })
@@ -541,11 +538,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
         ));
     }
     let cwd = gs.deliverable.join(&row.test.cwd);
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(&row.test.run)
-        .current_dir(&cwd)
-        .output()
+    let out = crate::sys::run_shell(&row.test.run, &cwd)
         .map_err(|e| {
             format!(
                 "failed to run `{}` in {}: {}",
@@ -554,7 +547,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
                 e
             )
         })?;
-    let pass = out.status.success();
+    let pass = out.success;
     let mut evidence = String::from_utf8_lossy(&out.stdout).to_string();
     evidence.push_str(&String::from_utf8_lossy(&out.stderr));
     let tail: String = evidence
@@ -569,7 +562,7 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     let tail = crate::llm::truncate(&tail, 300);
     Ok(ProgRun {
         pass,
-        code: out.status.code().unwrap_or(-1),
+        code: out.code,
         evidence: format!("{}: {}", row.test.run, tail),
         tail,
     })
@@ -805,7 +798,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
             continue;
         };
         let artifact = artifact_path(&store.out, gs, &row.test);
-        let content = std::fs::read_to_string(&artifact).unwrap_or_default();
+        let content = crate::vfs::read_to_string(&artifact).unwrap_or_default();
         if !artifact_stands_for(&content, &rid, &r.statement) {
             continue;
         }
@@ -849,7 +842,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         }
         let name = crate::gen::test_name(rid, &r.statement);
         for (path, is_criteria) in &scan {
-            let Ok(content) = std::fs::read_to_string(path) else {
+            let Ok(content) = crate::vfs::read_to_string(path) else {
                 continue;
             };
             if !artifact_stands_for(&content, rid, &r.statement) {
@@ -946,13 +939,13 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
 
 // Files under a root, skipping build and VCS directories, bounded to text-sized files.
 fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criteria: bool) {
-    let Ok(rd) = std::fs::read_dir(root) else {
+    let Ok(rd) = crate::vfs::read_dir(root) else {
         return;
     };
     for e in rd.flatten() {
         let path = e.path();
         let name = e.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
+        if path.vis_dir() {
             if !matches!(name.as_str(), "target" | "node_modules" | ".git")
                 && !name.starts_with("jazyk-out")
             {
@@ -970,10 +963,7 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
 // UTC ISO 8601 from the system clock, no dependencies. Civil-from-days per Howard
 // Hinnant's algorithm.
 pub fn now_iso() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0) as i64;
+    let secs = crate::sys::now_unix() as i64;
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -1065,11 +1055,11 @@ mod tests {
             worker: "agentic".into(),
             code: Vec::new(),
         };
-        std::fs::create_dir_all(gs.deliverable.join("src")).unwrap();
-        std::fs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("src")).unwrap();
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// product").unwrap();
-        std::fs::write(
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// product").unwrap();
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("// req:shop-1 hash:x\nfn {}() {{}}\n", name),
         )
@@ -1091,8 +1081,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#deletion-prunes-the-ledger.
     #[test]
     fn requirement_gone_rows_are_not_actionable() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gone-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // The row exists; then the requirement is deleted from the graph.
         s.graph.requirements.remove("req:shop-1");
@@ -1109,8 +1099,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     #[test]
     fn a_runner_failure_is_not_a_failing_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-verify-runner-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
 
         record_runner_failure(&s, "req:shop-1", 127, "sh: pytest: command not found");
@@ -1143,7 +1133,7 @@ mod tests {
         mark(&s, "req:shop-1", "pass", None, Some("judged"), None, &gs).unwrap();
         let ledger = Ledger::load(&out);
         assert_eq!(ledger.requirements["req:shop-1"].exit_code, None);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The run_tests path never records a runner failure as a failing requirement:
@@ -1151,8 +1141,8 @@ mod tests {
     // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
     #[test]
     fn run_selected_routes_runner_failures() {
-        let out = std::env::temp_dir().join(format!("jazyk-runsel-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-runsel-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         {
             let mut ledger = Ledger::load(&out);
@@ -1168,13 +1158,13 @@ mod tests {
         assert_eq!(row.verdict, "none");
         assert_eq!(row.exit_code, Some(127));
         assert_eq!(status_of(&s, "req:shop-1", row, &gs).1, "runner-failed");
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
     fn status_matrix_and_cascade() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-verify-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
 
         // Fresh row: unverified, never-run.
@@ -1188,14 +1178,14 @@ mod tests {
         assert!(pending(&s, &gs, None, None).is_empty());
 
         // Hand-editing an implementing file flips stale-code.
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// edited product").unwrap();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// edited product").unwrap();
         let p = pending(&s, &gs, None, None);
         assert_eq!(p[0]["status"], "stale-code");
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
 
         // Editing the test artifact flips stale-test.
         let name = test_name("req:shop-1", "The Cart shall hold items.");
-        std::fs::write(
+        crate::vfs::write(
             gs.deliverable.join("tests/cart.rs"),
             format!("// changed\nfn {}() {{}}\n", name),
         )
@@ -1241,8 +1231,8 @@ mod tests {
 
     #[test]
     fn audit_never_launders_stale_requirement() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-audit-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
         // Reword the requirement: stale-requirement.
@@ -1271,11 +1261,11 @@ mod tests {
     // name is not in it. Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn missing_rows_surface_and_audit_rebuilds() {
-        let out = std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-rebuild-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // Wipe the ledger: the row must surface as missing/not-generated with a repair.
-        std::fs::remove_file(crate::gen::Ledger::path(&out)).unwrap();
+        crate::vfs::remove_file(crate::gen::Ledger::path(&out)).unwrap();
         let p = pending(&s, &gs, None, None);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["status"], "missing");
@@ -1303,8 +1293,8 @@ mod tests {
             },
         );
         let crit = out.join("gen").join("criteria");
-        std::fs::create_dir_all(&crit).unwrap();
-        std::fs::write(
+        crate::vfs::create_dir_all(&crit).unwrap();
+        crate::vfs::write(
             crit.join("req-shop-2.md"),
             format!(
                 "---\nrequirement: req:shop-2\nhash: {}\n---\n\n# Verify req:shop-2\n",
@@ -1322,7 +1312,7 @@ mod tests {
         // A second audit refreshes it in place instead of losing it.
         let r = audit(&s, &gs);
         assert_eq!(r["refreshed"], 1, "{}", r);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // An audit rebaselines hashes, never verdicts: a verified row whose implementing
@@ -1330,12 +1320,12 @@ mod tests {
     // Mirrors docs/consumers/gen.md#runners.
     #[test]
     fn audit_drops_a_verdict_whose_bytes_moved() {
-        let out = std::env::temp_dir().join(format!("jazyk-audit-reset-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-audit-reset-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
         assert!(pending(&s, &gs, None, None).is_empty());
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// edited by hand").unwrap();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// edited by hand").unwrap();
         assert_eq!(pending(&s, &gs, None, None)[0]["status"], "stale-code");
         let r = audit(&s, &gs);
         assert_eq!(r["verdictReset"].as_array().unwrap().len(), 1, "{}", r);
@@ -1347,7 +1337,7 @@ mod tests {
         let r = audit(&s, &gs);
         assert!(r["verdictReset"].as_array().unwrap().is_empty(), "{}", r);
         assert!(pending(&s, &gs, None, None).is_empty());
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // A programmatic artifact that lost its declared test name judges nothing: the
@@ -1355,11 +1345,11 @@ mod tests {
     // rerun could not resolve. Mirrors docs/consumers/gen.md#status-is-derived-never-stored.
     #[test]
     fn a_renamed_test_is_bind_work_not_a_rerun() {
-        let out = std::env::temp_dir().join(format!("jazyk-name-lost-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-name-lost-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
-        std::fs::write(gs.deliverable.join("tests/cart.rs"), "fn renamed() {}\n").unwrap();
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), "fn renamed() {}\n").unwrap();
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(
@@ -1377,15 +1367,15 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.contains("artifact-gone") && err.contains("jazyk gen ent:cart"), "{}", err);
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     // The verify gate holds exactly when a verdict stands on a current row; every
     // other state names the call that lands it. Mirrors docs/compiler/goals/verify.md#gate.
     #[test]
     fn the_verify_gate_reads_the_landed_verdict() {
-        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", std::process::id()));
-        std::fs::remove_dir_all(&out).ok();
+        let out = std::env::temp_dir().join(format!("jazyk-verify-gate-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("no verdict") && err.contains("run_tests"), "{}", err);
@@ -1393,7 +1383,7 @@ mod tests {
         gate(&s, &gs, "req:shop-1").unwrap();
         mark(&s, "req:shop-1", "fail", None, Some("boom"), Some(1), &gs).unwrap();
         gate(&s, &gs, "req:shop-1").unwrap();
-        std::fs::write(gs.deliverable.join("src/cart.rs"), "// moved").unwrap();
+        crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// moved").unwrap();
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("stale-code"), "{}", err);
         mark(&s, "req:shop-1", "pass", None, None, None, &gs).unwrap();
@@ -1401,7 +1391,7 @@ mod tests {
         let err = gate(&s, &gs, "req:shop-1").unwrap_err();
         assert!(err.contains("moved since") && err.contains("jazyk gen"), "{}", err);
         assert!(gate(&s, &gs, "req:none").unwrap_err().contains("bind work"));
-        std::fs::remove_dir_all(&out).ok();
+        crate::vfs::remove_dir_all(&out).ok();
     }
 
     #[test]
@@ -1455,7 +1445,7 @@ pub fn select_rows(
 // Mirrors docs/consumers/gen.md#runners.
 pub fn run_all(
     store: &Store,
-    runner: &crate::acp::runner::AcpRunner,
+    runner: &dyn crate::runner::SessionRunner,
     gs: &GenSettings,
     targets: &[String],
     kind: Option<&str>,
@@ -1508,7 +1498,7 @@ pub fn run_all(
                     let mut evidence_input = String::new();
                     for f in task_pkg["files"].as_array().cloned().unwrap_or_default() {
                         if let Some(f) = f.as_str() {
-                            if let Ok(content) = std::fs::read_to_string(gs.deliverable.join(f)) {
+                            if let Ok(content) = crate::vfs::read_to_string(gs.deliverable.join(f)) {
                                 evidence_input.push_str(&format!(
                                     "\n=== {} ===\n{}",
                                     f,

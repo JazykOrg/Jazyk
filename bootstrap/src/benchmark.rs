@@ -1,3 +1,4 @@
+use crate::vfs::VPathExt;
 // The benchmark frontend: decides whether a model is capable of driving compilation
 // turns. Runs every case under both codecs in a sandbox store, grades with
 // deterministic checks, no LLM judge. Mirrors docs/benchmark/benchmark.md.
@@ -380,7 +381,7 @@ fn fixture_ops(case: &Case) -> Result<Vec<crate::store::Op>, String> {
 // change and hints a build would give it. A fixture the commit refuses, or one that
 // derives no such goal, is a fixture error. Mirrors docs/benchmark/cases.md#derived-goals.
 pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal), String> {
-    std::fs::create_dir_all(tmp).map_err(|e| e.to_string())?;
+    crate::vfs::create_dir_all(tmp).map_err(|e| e.to_string())?;
     let mut store = sandbox_docs(case, tmp);
     let ops = fixture_ops(case)?;
     let report = store.apply(ops, &crate::store::Commit::store("edit"));
@@ -959,7 +960,7 @@ pub fn eval_workflow_check(
                 Some(e) if e.files.is_empty() => Some("the manifest recorded no files".into()),
                 Some(e) => {
                     for f in &e.files {
-                        if !gs.deliverable.join(f).exists() {
+                        if !gs.deliverable.join(f).vexists() {
                             return Some(format!("recorded file `{}` does not exist", f));
                         }
                     }
@@ -1019,9 +1020,9 @@ pub fn eval_workflow_check(
                     continue;
                 }
                 let p = gs.deliverable.join(f);
-                if let Ok(text) = std::fs::read_to_string(&p) {
+                if let Ok(text) = crate::vfs::read_to_string(&p) {
                     if text.contains(needle) {
-                        std::fs::write(&p, text.replace(needle, "BROKEN")).ok();
+                        crate::vfs::write(&p, text.replace(needle, "BROKEN")).ok();
                         touched.push((p, text));
                     }
                 }
@@ -1034,7 +1035,7 @@ pub fn eval_workflow_check(
             }
             let verdict = crate::verify::run_programmatic(store, rid, gs);
             for (p, text) in &touched {
-                std::fs::write(p, text).ok();
+                crate::vfs::write(p, text).ok();
             }
             match verdict {
                 Ok(r) if r.pass => Some(format!(
@@ -1074,9 +1075,9 @@ pub fn seed_verification(
     for (f, text) in &case.deliverable {
         let p = gs.deliverable.join(f);
         if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent).ok();
+            crate::vfs::create_dir_all(parent).ok();
         }
-        std::fs::write(&p, text).map_err(|e| e.to_string())?;
+        crate::vfs::write(&p, text).map_err(|e| e.to_string())?;
     }
     let files: Vec<String> = case.deliverable.keys().cloned().collect();
     let artifact = format!("criteria/req-{}.md", crate::gen::req_slug(rid));
@@ -1091,9 +1092,9 @@ pub fn seed_verification(
     );
     let crit_path = store.out.join("gen").join(&artifact);
     if let Some(parent) = crit_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        crate::vfs::create_dir_all(parent).ok();
     }
-    std::fs::write(&crit_path, &criteria).map_err(|e| e.to_string())?;
+    crate::vfs::write(&crit_path, &criteria).map_err(|e| e.to_string())?;
     let test = crate::gen::TestRef {
         kind: "llm".into(),
         label: "judge".into(),
@@ -1263,9 +1264,9 @@ fn run_case_turn(
     // what the model saw and said. Mirrors docs/benchmark/benchmark.md#running-a-subset.
     if let Some(path) = transcript {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).ok();
+            crate::vfs::create_dir_all(dir).ok();
         }
-        std::fs::write(
+        crate::vfs::write(
             path,
             serde_json::to_string_pretty(&history).unwrap_or_default(),
         )
@@ -1282,8 +1283,8 @@ pub fn run(llm: &Llm, out: &std::path::Path) -> i32 {
 // A project copied whole into a sandbox, except what is never state: the repository,
 // build output, and installed packages.
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
+    crate::vfs::create_dir_all(to)?;
+    for entry in crate::vfs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
         let n = name.to_string_lossy();
@@ -1292,10 +1293,10 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
         }
         let src = entry.path();
         let dst = to.join(&name);
-        if src.is_dir() {
+        if src.vis_dir() {
             copy_tree(&src, &dst)?;
         } else {
-            std::fs::copy(&src, &dst)?;
+            crate::vfs::copy(&src, &dst)?;
         }
     }
     Ok(())
@@ -1309,10 +1310,10 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     use crate::model::GoalState;
     let tmp = std::env::temp_dir().join(format!(
         "jazyk-snippet-{}-{}",
-        std::process::id(),
+        crate::sys::process_id(),
         crate::md::slug(goal_id)
     ));
-    std::fs::remove_dir_all(&tmp).ok();
+    crate::vfs::remove_dir_all(&tmp).ok();
     if let Err(e) = copy_tree(root, &tmp) {
         eprintln!(
             "jazyk: cannot copy {} into a sandbox: {}",
@@ -1393,7 +1394,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     let item = WorkItem::from_goal(&goal);
     let gs = crate::gen::GenSettings::resolve(&proj);
     let trace_dir = proj.out.join("benchmark").join("trace");
-    std::fs::create_dir_all(&trace_dir).ok();
+    crate::vfs::create_dir_all(&trace_dir).ok();
     let transcript = trace_dir.join(format!("snippet-{}.json", crate::md::slug(goal_id)));
     println!("snippet: {} in {}", goal_id, tmp.display());
     let (ops, rounds, failed, commit) = run_case_turn(
@@ -1553,10 +1554,10 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             llm::set_tools_mode(mode);
             let tmp = std::env::temp_dir().join(format!(
                 "jazyk-bench-{}-{}",
-                std::process::id(),
+                crate::sys::process_id(),
                 case.name
             ));
-            std::fs::remove_dir_all(&tmp).ok();
+            crate::vfs::remove_dir_all(&tmp).ok();
             // A derived-goal case seeds through a real commit and takes its goal off
             // the board; a fixture error fails the case before any turn runs.
             // Mirrors docs/benchmark/cases.md#derived-goals.
@@ -1603,7 +1604,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                 worker: "agentic".into(),
                 code: Vec::new(),
             };
-            std::fs::create_dir_all(&gs.deliverable).ok();
+            crate::vfs::create_dir_all(&gs.deliverable).ok();
             let mut fail: Option<String> = None;
             let mut aborted = false;
             let (rounds, staged) = if case.task_type == "verify-requirement" {
@@ -1736,7 +1737,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             let e = tier_sum.entry(tier_key(&case.tier)).or_insert((0.0, 0));
             e.0 += case_score;
             e.1 += 1;
-            std::fs::remove_dir_all(&tmp).ok();
+            crate::vfs::remove_dir_all(&tmp).ok();
             case_results.push((
                 case.name.clone(),
                 serde_json::json!({
@@ -1924,9 +1925,9 @@ pub fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Val
         return;
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        crate::vfs::create_dir_all(parent).ok();
     }
-    let mut root: Value = std::fs::read_to_string(&path)
+    let mut root: Value = crate::vfs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_norway::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::json!({"runs": []}));
@@ -1945,7 +1946,7 @@ pub fn append_history(model: &str, base_url: &str, codec_reports: &[(String, Val
         runs.push(entry);
     }
     if let Ok(text) = serde_norway::to_string(&root) {
-        std::fs::write(&path, text).ok();
+        crate::vfs::write(&path, text).ok();
     }
 }
 
@@ -1984,7 +1985,7 @@ pub fn all_results(out: &std::path::Path) -> Value {
         }
     }
     if let Some(path) = home_history_path() {
-        if let Some(hist) = std::fs::read_to_string(&path)
+        if let Some(hist) = crate::vfs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_norway::from_str::<Value>(&s).ok())
         {
@@ -2016,7 +2017,7 @@ pub fn all_results(out: &std::path::Path) -> Value {
         }
     }
     let project = out.join("benchmark").join("results.yaml");
-    if let Some(v) = std::fs::read_to_string(&project)
+    if let Some(v) = crate::vfs::read_to_string(&project)
         .ok()
         .and_then(|s| serde_norway::from_str::<Value>(&s).ok())
     {
@@ -2051,7 +2052,7 @@ fn score_json(t: &str, measured: &dyn Fn(&str) -> bool, tier_score: &dyn Fn(&str
 
 fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, Value)]) {
     let path = out.join("benchmark").join("results.yaml");
-    let mut all: BTreeMap<String, Value> = std::fs::read_to_string(&path)
+    let mut all: BTreeMap<String, Value> = crate::vfs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_norway::from_str(&s).ok())
         .unwrap_or_default();
@@ -2067,10 +2068,10 @@ fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, V
             "codecs": codec_reports.iter().cloned().collect::<BTreeMap<String, Value>>(),
         }),
     );
-    if std::fs::create_dir_all(path.parent().unwrap()).is_ok() {
+    if crate::vfs::create_dir_all(path.parent().unwrap()).is_ok() {
         match serde_norway::to_string(&all) {
             Ok(y) => {
-                if let Err(e) = std::fs::write(&path, y) {
+                if let Err(e) = crate::vfs::write(&path, y) {
                     eprintln!("jazyk: could not write {}: {}", path.display(), e);
                 } else {
                     println!("\nresults: {}", path.display());
@@ -2150,8 +2151,8 @@ mod tests {
     }
 
     fn own_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("jazyk-bench-test-{}-{}", std::process::id(), name));
-        std::fs::remove_dir_all(&d).ok();
+        let d = std::env::temp_dir().join(format!("jazyk-bench-test-{}-{}", crate::sys::process_id(), name));
+        crate::vfs::remove_dir_all(&d).ok();
         d
     }
 
@@ -2245,7 +2246,7 @@ mod tests {
                 }
                 _ => {}
             }
-            std::fs::remove_dir_all(&tmp).ok();
+            crate::vfs::remove_dir_all(&tmp).ok();
         }
     }
 
@@ -2438,8 +2439,8 @@ mod tests {
 
     #[test]
     fn results_file_updates_in_place_per_model() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", std::process::id()));
-        std::fs::remove_dir_all(&tmp).ok();
+        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
         write_results(
             &tmp,
             "model-a",
@@ -2458,14 +2459,14 @@ mod tests {
                 serde_json::json!({"verdict": "extraction"}),
             )],
         );
-        let s = std::fs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
+        let s = crate::vfs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
         let all: BTreeMap<String, Value> = serde_norway::from_str(&s).unwrap();
         assert_eq!(all.len(), 2);
         // The re-grade replaced model-a's entry; model-b survived untouched.
         assert_eq!(all["model-a"]["codecs"]["native"]["verdict"], "extraction");
         assert_eq!(all["model-b"]["codecs"]["text"]["verdict"], "extraction");
         assert_eq!(all["model-a"]["caseSetHash"], all["model-b"]["caseSetHash"]);
-        std::fs::remove_dir_all(&tmp).ok();
+        crate::vfs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

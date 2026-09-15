@@ -323,7 +323,9 @@ order:
   way `compile` derives it, so on a tree with pending edits `status` shows the goals
   the next build will run,
 - [coverage](../compiler/compilation.md#coverage) percentage,
-- open diagnostics by severity,
+- open diagnostics by severity, ratification proposals excluded,
+- the ratification proposals awaiting an answer, as one count, when any stand
+  ([ratification proposals](../compiler/model/diagnostic.md#ratification-proposals)),
 - the medium warning, when the ledger's medium and the recorded run commands disagree
   ([the medium](../consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)),
 - the shape line: the entity count per depth of the containment tree (the
@@ -356,6 +358,7 @@ verdict: converged, 2 blocked, 1 optional advised
 board: 0 open (0 compile, 0 gc), 2 blocked, 0 parked, 0 failed, 1 optional
 coverage: 96% (185 of 193 sections)
 diagnostics: 1 error, 4 warnings
+proposals: 12 await ratification (`jazyk answer` lists them)
 shape: 3 / 11 / 42 nodes per depth; fan-out 2-9: 12, 10-15: 2, over 15: 0
 cost: 41 sessions, 310k tokens (78% reconcile-section)
 unattached: 3 file(s), 120 line(s) (worst cart at 0.32)

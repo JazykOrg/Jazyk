@@ -1615,6 +1615,7 @@ pub(crate) fn status_report(
         },
         "coverage": {"percent": pct, "covered": covered, "total": total},
         "diagnostics": by_sev,
+        "proposals": store.pending_proposals(),
         "medium": medium,
         "shape": {"perDepth": shape.per_depth, "bands": shape.bands, "line": shape_line(store)},
         "cost": cost,
@@ -1653,6 +1654,7 @@ pub(crate) fn render_status(r: &serde_json::Value) -> String {
         c["percent"], c["covered"], c["total"]
     ));
     let diags = r["diagnostics"].as_object();
+    let proposals = r["proposals"].as_u64().unwrap_or(0);
     s.push_str(&format!(
         "diagnostics: {}\n",
         match diags {
@@ -1667,6 +1669,12 @@ pub(crate) fn render_status(r: &serde_json::Value) -> String {
             _ => "none".to_string(),
         }
     ));
+    if proposals > 0 {
+        s.push_str(&format!(
+            "proposals: {} await ratification (`jazyk answer` lists them)\n",
+            proposals
+        ));
+    }
     if let Some(m) = r["medium"].as_str() {
         s.push_str(&format!("medium: {}\n", m));
     }

@@ -206,7 +206,10 @@ non-quote provenance.
 
 - `subjects`: the fact's node. For an attribute, the entity, the `message` naming the
   attribute.
-- `severity`: `warning`.
+- `severity`: `info`. A proposal is a question for the author, not a fault in the
+  documents, and the counts that ride beside a verdict leave proposals out: an org
+  handbook once showed "diagnostics: 264" of which 238 were proposals, burying one
+  error and four findings. `jazyk status` counts them on their own line.
 - `reasoning`: for a derived fact, the session's reasoning and its `from`; for a decree,
   the author, the time, and the note.
 - `prompt`: the question, one `edit` option that inserts the proposed sentence, and one

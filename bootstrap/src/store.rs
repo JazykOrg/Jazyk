@@ -1761,11 +1761,25 @@ impl Store {
     pub fn open_diag_counts(&self) -> BTreeMap<String, u64> {
         let mut m: BTreeMap<String, u64> = BTreeMap::new();
         for d in self.graph.diagnostics.values() {
-            if d.lifecycle == "open" && d.triage.as_deref() != Some("suppressed") {
+            // Proposals are questions, counted on their own line
+            // (docs/compiler/model/diagnostic.md#ratification-proposals).
+            if d.lifecycle == "open"
+                && d.triage.as_deref() != Some("suppressed")
+                && d.rule != "ratification-pending"
+            {
                 *m.entry(d.severity.clone()).or_insert(0) += 1;
             }
         }
         m
+    }
+
+    // Open ratification proposals: one per derived or decreed fact that stands.
+    pub fn pending_proposals(&self) -> u64 {
+        self.graph
+            .diagnostics
+            .values()
+            .filter(|d| d.lifecycle == "open" && d.rule == "ratification-pending")
+            .count() as u64
     }
 
     // An open judged diagnostic naming this node: reason enough for a pair judgment
@@ -2416,7 +2430,7 @@ impl Store {
         });
         Diagnostic {
             rule: "ratification-pending".to_string(),
-            severity: "warning".to_string(),
+            severity: "info".to_string(),
             subjects: vec![subject.to_string()],
             message: format!("{} is {} and no document states it.", what, kind),
             reasoning: Some(reasoning),

@@ -65,6 +65,20 @@ pub struct Case {
     pub coverage: BTreeMap<String, String>,
     pub lint: Linting,
     pub checks: Vec<(String, Value)>,
+    // Replays only: the scripted calls. Mirrors docs/benchmark/replays.md#replay-format.
+    pub steps: Vec<Step>,
+}
+
+// One scripted call of a replay and the reply the harness must give.
+// Mirrors docs/benchmark/replays.md#replay-format.
+#[derive(Clone, Debug)]
+pub struct Step {
+    pub call: String,
+    pub args: Value,
+    pub ok: Option<bool>,
+    pub rule: Option<String>,
+    pub contains: Option<String>,
+    pub absent: Option<String>,
 }
 
 impl Case {
@@ -86,7 +100,7 @@ pub fn case_set_hash() -> String {
 // A case whose fixture holds a fenced code block needs a four-backtick outer fence
 // (CommonMark's own rule); the closer must match the opener's length, so inner
 // three-backtick fences pass through as content.
-fn yaml_blocks(md: &str) -> Vec<String> {
+pub fn yaml_blocks(md: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur: Option<(String, usize)> = None;
     for line in md.lines() {
@@ -112,17 +126,9 @@ fn yaml_blocks(md: &str) -> Vec<String> {
     out
 }
 
-pub fn parse_cases() -> Vec<Case> {
-    let mut cases = Vec::new();
-    for file in CASE_FILES {
-        for block in yaml_blocks(file) {
-            let v: Value = match serde_norway::from_str(&block) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("jazyk: bad case yaml: {}", e);
-                    continue;
-                }
-            };
+// One case from its yaml value. Mirrors docs/benchmark/cases.md#case-format.
+pub fn case_from_value(v: &Value) -> Case {
+    {
             let obj = |x: &Value| -> BTreeMap<String, Value> {
                 x.as_object()
                     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -146,7 +152,7 @@ pub fn parse_cases() -> Vec<Case> {
                 _ => 6,
             };
             let kind = v["goal"]["kind"].as_str().unwrap_or_default().to_string();
-            cases.push(Case {
+            Case {
                 name: v["name"].as_str().unwrap_or("unnamed").to_string(),
                 par_rounds: v["par"]["rounds"].as_u64().unwrap_or(default_par) as u32,
                 deliverable: obj(&v["given"]["deliverable"])
@@ -191,7 +197,41 @@ pub fn parse_cases() -> Vec<Case> {
                             .collect()
                     })
                     .unwrap_or_default(),
-            });
+                steps: v["steps"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|st| {
+                                let call = st["call"].as_str()?.to_string();
+                                let e = &st["expect"];
+                                Some(Step {
+                                    call,
+                                    args: if st["args"].is_null() { serde_json::json!({}) } else { st["args"].clone() },
+                                    ok: e["ok"].as_bool(),
+                                    rule: e["rule"].as_str().map(String::from),
+                                    contains: e["contains"].as_str().map(String::from),
+                                    absent: e["absent"].as_str().map(String::from),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+    }
+}
+
+pub fn parse_cases() -> Vec<Case> {
+    let mut cases = Vec::new();
+    for file in CASE_FILES {
+        for block in yaml_blocks(file) {
+            let v: Value = match serde_norway::from_str(&block) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("jazyk: bad case yaml: {}", e);
+                    continue;
+                }
+            };
+            cases.push(case_from_value(&v));
         }
     }
     // A case with no checks is unwinnable and grades a lie (0/0); a fixture whose
@@ -273,7 +313,7 @@ fn view_of(v: &Value) -> Result<View, String> {
 }
 
 // A sandbox store holding the fixture's documents and coverage, no graph nodes yet.
-fn sandbox_docs(case: &Case, tmp: &std::path::Path) -> Store {
+pub fn sandbox_docs(case: &Case, tmp: &std::path::Path) -> Store {
     let mut s = Store {
         out: tmp.to_path_buf(),
         ..Default::default()
@@ -1137,18 +1177,23 @@ enum TurnFail {
     GoalFailed(String),
 }
 
-fn run_case_turn(
-    llm: &Llm,
+// A case's session before any call: the tool session over the sandbox snapshot,
+// the prompt a build would assemble, and the goal's toolset. A benchmark turn drives
+// it with a model; a replay drives it with scripted steps.
+// Mirrors docs/benchmark/replays.md#replay-format.
+pub struct CaseSession {
+    pub session: crate::tools::ToolSession,
+    pub prompt: String,
+    pub tools: Vec<crate::acp::agent::mcp_client::GenericTool>,
+}
+
+pub fn case_session(
     snapshot: Store,
     item: &crate::model::WorkItem,
     lint: &crate::project::Linting,
     gs: &crate::gen::GenSettings,
-    transcript: Option<&std::path::Path>,
-    // A snippet runs a goal the board derived, change and hints intact; a case
-    // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
     derived: Option<&crate::model::Goal>,
-) -> (Vec<crate::store::Op>, u32, Option<TurnFail>, crate::store::Commit) {
-    use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
+) -> CaseSession {
     use crate::acp::agent::mcp_client::GenericTool;
     use crate::tools::{catalog, toolset, ToolSession, WorkScope};
     let goal = match derived {
@@ -1174,23 +1219,37 @@ fn run_case_turn(
             parameters: t.parameters.clone(),
         })
         .collect();
-    let session = std::cell::RefCell::new({
-        let mut s = ToolSession::new(
-            snapshot,
-            scope,
-            crate::limits::SESSION_MUTATIONS,
-            crate::limits::CONTEXT_BUDGET,
-        );
-        s.gen = gs.clone();
-        s.loaded = loaded;
-        s.skills = skills;
-        s.caller = crate::feedback::Caller {
-            source: "benchmark".into(),
-            target: item.target.clone(),
-            ..Default::default()
-        };
-        s
-    });
+    let mut s = ToolSession::new(
+        snapshot,
+        scope,
+        crate::limits::SESSION_MUTATIONS,
+        crate::limits::CONTEXT_BUDGET,
+    );
+    s.gen = gs.clone();
+    s.loaded = loaded;
+    s.skills = skills;
+    s.caller = crate::feedback::Caller {
+        source: "benchmark".into(),
+        target: item.target.clone(),
+        ..Default::default()
+    };
+    CaseSession { session: s, prompt, tools }
+}
+
+fn run_case_turn(
+    llm: &Llm,
+    snapshot: Store,
+    item: &crate::model::WorkItem,
+    lint: &crate::project::Linting,
+    gs: &crate::gen::GenSettings,
+    transcript: Option<&std::path::Path>,
+    // A snippet runs a goal the board derived, change and hints intact; a case
+    // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
+    derived: Option<&crate::model::Goal>,
+) -> (Vec<crate::store::Op>, u32, Option<TurnFail>, crate::store::Commit) {
+    use crate::acp::agent::agent_loop::{self, AgentEvent, LoopArgs, Stop};
+    let CaseSession { session, prompt, tools } = case_session(snapshot, item, lint, gs, derived);
+    let session = std::cell::RefCell::new(session);
     let mut history = vec![serde_json::json!({"role": "user", "content": prompt})];
     let rounds = std::cell::Cell::new(0u32);
     let mut dispatch = |name: &str, args: &serde_json::Value| -> Result<String, String> {

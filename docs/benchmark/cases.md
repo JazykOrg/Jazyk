@@ -69,6 +69,9 @@ Cases exist for ten goal kinds: the four the landing graded first
 - `assert`: an array of checks. All must pass. Each check is deterministic and runs over
   the staged mutations and the resulting graph. Patterns are regular expressions,
   matched case-insensitively. See [checks](#checks).
+- `steps` (replays only): the scripted calls of a [replay](./replays.md#replay-format).
+  A case with `steps` is a replay: `jazyk benchmark` skips it and `jazyk replay` runs
+  it.
 
 ## Checks
 

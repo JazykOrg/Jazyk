@@ -9,6 +9,38 @@ type: object
 required: [name, description, goal, given, assert]
 additionalProperties: false
 properties:
+  steps:
+    description: >-
+      Replays only: the scripted tool calls the session runs without a model, in
+      order, each with the reply the harness must give. See replays.md
+    type: array
+    items:
+      type: object
+      required: [call]
+      additionalProperties: false
+      properties:
+        call:
+          description: A tool name from the goal's toolset
+          type: string
+        args:
+          description: The call's arguments
+          type: object
+        expect:
+          description: The reply the harness must give; ok true when omitted
+          type: object
+          additionalProperties: false
+          properties:
+            ok:
+              type: boolean
+            rule:
+              description: The error rule the reply must carry
+              type: string
+            contains:
+              description: A pattern the reply must match, case-insensitive
+              type: string
+            absent:
+              description: A pattern the reply must not match
+              type: string
   name:
     description: Unique case name, usually the case file stem
     type: string

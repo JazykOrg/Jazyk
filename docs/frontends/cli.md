@@ -633,6 +633,15 @@ rebuild refreshes it. `--stdio` is accepted and changes nothing: LSP clients app
 to name the transport (the VS Code client library does), and a server that refused it
 would crash on every start.
 
+### jazyk replay
+
+`jazyk replay [file|dir...]` runs [replays](../benchmark/replays.md): cases whose tool
+calls are scripted, graded against the harness without a model. It prints one line
+per step and per check and exits non-zero on any mismatch. With no argument it runs
+the replays under `docs/benchmark/replays/`. `jazyk replay extract <trace.jsonl>
+<label>` writes a replay for one session of a trace to stdout, the recorded outcomes
+as its expectations, for the author to trim and correct.
+
 ### jazyk benchmark
 
 Grade whether the configured [agent](../compiler/project-settings.md#acp) and model

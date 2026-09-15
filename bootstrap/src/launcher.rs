@@ -1,4 +1,4 @@
-use crate::{acp, benchmark, cli, docsgen, gen, lsp, mcp, render, store};
+use crate::{acp, benchmark, cli, docsgen, gen, lsp, mcp, render, replay, store};
 use crate::vfs::VPathExt;
 // Load a .env file by walking up from the current directory. Does not override existing env vars.
 fn load_dotenv() {
@@ -193,6 +193,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "answer" => (Some(1), &["--option", "--text"]),
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
+        "replay" => (None, &[]),
         _ => return None,
     })
 }
@@ -495,6 +496,11 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              {}",
             COMMON_OUT
         ),
+        "replay" => "usage: jazyk replay [file|dir...]\n       jazyk replay extract <trace.jsonl> <label>\n\n\
+             Run replays: cases whose tool calls are scripted, graded against the\n\
+             harness without a model. No argument runs docs/benchmark/replays.\n\
+             `extract` writes one session of a trace as a replay to stdout.\n\n\
+             exit: 0 when every step and check holds, 1 otherwise".to_string(),
         "benchmark" => format!(
             "usage: jazyk benchmark [case...]\n\n\
              Grade the configured model: every benchmark case runs under both codecs\n\
@@ -793,6 +799,9 @@ pub fn run() {
             lsp::Lsp::new(proj.root.clone(), out, gs).run();
             0
         }
+        // Replays: scripted sessions against the harness, no model
+        // (docs/benchmark/replays.md).
+        "replay" => replay::run_cli(&positional),
         "benchmark" => {
             let (_proj, llm, out) = cli::resolve(&[], &opts);
             // `--goal` runs one goal's session from a copy of a real project.

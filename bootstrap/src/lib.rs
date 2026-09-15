@@ -28,6 +28,7 @@ pub mod md;
 pub mod model;
 pub mod project;
 pub mod reconcile;
+pub mod replay;
 pub mod render;
 pub mod runner;
 pub mod session;

@@ -59,6 +59,12 @@ field. See [cases](./cases.md#case-format).
   skipped and count as failed, as on an abort. Every fixture is resolvable by design,
   so a failure claim measures the model, not the fixture.
 
+## Replays
+
+A [replay](./replays.md) is a case whose tool calls are scripted: it grades the
+harness, not a model, and verifies a fix against the recorded scenario that exposed
+it in seconds. `jazyk replay extract` writes one from any session's trace.
+
 ## Running a subset
 
 `jazyk benchmark [case...]` grades only the named cases (e.g. `jazyk benchmark

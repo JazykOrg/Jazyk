@@ -161,7 +161,12 @@ a tester can check it on its own. Two tests decide where to split:
   fail as not-REST or as not-Go: two requirements, both quoting the same sentence.
 - Keep together what one check verifies. "Uploads accept PNG, JPEG, and GIF" is one
   obligation with three values, not three requirements. Splitting it adds nodes, not
-  information.
+  information. A sentence listing several properties of one subject ("an outdoor gear
+  retailer with about 120 employees, a warehouse in Boulder, and four stores") is one
+  statement carrying the values, each value also an
+  [attribute](../model/entity.md#attributes) of the subject; it splits only when a
+  property binds a different part of the deliverable. An org corpus once turned that
+  sentence into four requirements, each reviewed, paired, given two criteria, and tested.
 
 Neither direction is a goal in itself. Never shred one behavior into fragments to raise
 the count, and never fuse independent obligations to lower it. When unsure, ask what
@@ -205,11 +210,15 @@ the inventory system does, a requirement only, never an entity. A named stored f
 stays requirement detail until statements are about the field itself. A sub-system
 list ("the sub-systems are: User Management, Inventory Management") ties each listed
 sub-system to its parent, and the lead-in's subject is that parent: an entity too,
-minted if absent, with each item's requirement referencing both, declaring the pair in
-`edges` as a `composition` from the parent to the part, and the part's `parent` set to
-the whole. An item that is a link still counts: under "The sub-systems are:", the item
-`[User Management](./user.md)` states that the parent includes the User Management
-sub-system. The link is navigation; the item's text is a fact.
+minted if absent. The membership is one obligation (one check lists the parts), so it
+is one statement quoting the lead-in, referencing the whole and every part, declaring
+one `composition` edge from the whole to each part in `edges`, and each part's `parent`
+set to the whole. An item's own description ("Operations, which runs the warehouse and
+the stores") is that part's own statement, quoting the item. An item that is a link
+still counts: under "The sub-systems are:", the item `[User Management](./user.md)`
+states that the parent includes the User Management sub-system. The link is navigation;
+the item's text is a fact. A four-department list once yielded nine statements where
+five carry the same information.
 
 ## Code blocks state obligations
 

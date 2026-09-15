@@ -21,7 +21,7 @@ Never restate. A criterion whose normalized text equals the statement is refused
 
 Verdicts. `complete`: the criteria cover the requirement's shape, derived or stated. `stated-only`: the documents' own criteria cover it and you added none. `open-question`: a value nobody stated keeps a criterion from being written, and the question stands as a prompt.
 
-Density. Two to five per requirement is usual. One is the floor binding waits for. A constraint that is one check ("Each user email is unique") takes one positive and one negative criterion. Do not pad: a criterion that adds no situation the others lack is noise a test will repeat.
+Density. One per requirement is the norm: the situation the statement describes, with concrete values. The shape adds the rest and nothing else: a bound adds the edge and the value past it, a conditional adds its negative, a quality adds its measure, a transition adds its guard's other side. A plain fact or a structural statement ("The company has four departments", "Backend is a REST API") takes one criterion and no negative: a contrived negative ("The Boulder Warehouse Crew is not a department") is a test that repeats the positive. Do not pad: a criterion that adds no situation the others lack is noise a test will repeat. An org handbook once carried 251 criteria for 126 requirements, most of them such pairs.
 
 Wording. Present tense, the actor first when there is one, the values in the sentence, backticks around literal identifiers and values that must match verbatim. Optional `given`, `when`, `then` split the same sentence for a test writer; `statement` stays the one line.
 

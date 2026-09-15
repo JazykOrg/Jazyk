@@ -63,7 +63,8 @@ reworded sentence refreshes it in place ([mutations](../graph.md#mutations)).
   case of every conditional, the measure of every quality.
 - Never restates the requirement (`criterion-restates`), never names a function, a table,
   or a file: the deliverable's shape is generation's business.
-- Two to five per requirement is the usual density; one is the floor
+- One per requirement is the norm, the shape of the statement adding the rest (a
+  bound's edge, a conditional's negative, a quality's measure); one is the floor
   [bind](../../consumers/bind.md) waits for; none is a `criterion-missing` finding.
 
 The [criteria skill](../skills/criteria.md) carries the method.

@@ -31,15 +31,23 @@ The page, in order:
 - `## Diagrams`: the rendered views the entity appears in
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
 - `## Requirements`: one block per requirement that names the entity, under a `###`
-  heading whose text is the requirement id (e.g. `### req:orders-6`). The block carries
+  heading whose text is the requirement id (e.g. `### req:orders-6`). The section opens
+  with an index when it holds more than five blocks: one line per requirement, the id
+  linked to its block and the statement, so a page like a novel lead's (103
+  requirements, 54KB) reads from the top. The blocks are grouped by the source document
+  and section they quote, in document order, each group opened by a bold line naming
+  the document and the section title; derived and decreed requirements group last under
+  their provenance. The block carries
   the `statement`, the facets (with the `measure` of a `quality` facet), the edges as
   `a → b (type, cardinality)`, the transition when one is declared, and the provenance:
-  the verbatim quote with its source section for a quote-provenanced requirement, the
+  the verbatim quote with its source section for a quote-provenanced requirement (the
+  quote is omitted when it equals the statement, whitespace and case aside, since a
+  page once repeated every statement twice), the
   upstream nodes and reasoning for a derived one, the author, time, and note for a decree.
   Under the block, `Criteria:` lists the requirement's [criteria](../compiler/model/criterion.md),
   one line each: id, `kind`, the statement, its quote's section or `proposed` for a derived
   one, and the test verdict from the ledger when a row exists; a requirement with none
-  says `no criteria`.
+  shows no criteria line.
   A relative link inside a quote is rewritten to resolve from the page (a bullet quoting
   `[User Management](./subsystems/user.md)` from `docs/backend.md` links to
   `../../docs/subsystems/user.md`; an anchor-only link such as `(#api-endpoints)` points
@@ -68,8 +76,8 @@ with each statement pointing back at the exact source sentence.
 
 When the [ledger](./gen.md#the-ledger) holds a row for a requirement, its block carries a
 verification line: the derived status, the test name and kind, the last run time, and the
-evidence. A requirement with no row reads the derived status `missing` (reason
-`not-generated`, [statuses](./gen.md#status-is-derived-never-stored)). The status derives at render
+evidence. A requirement with no row shows no verification line (a project without a
+ledger once read `missing` a hundred times on one page). The status derives at render
 time ([status is derived](./gen.md#status-is-derived-never-stored)), so the document never
 shows a stored stale flag.
 

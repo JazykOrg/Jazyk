@@ -1441,10 +1441,70 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
         rids.sort();
         if !rids.is_empty() {
             s.push_str("## Requirements\n\n");
+            // Grouped by source document and section in document order, derived and
+            // decreed last; an index opens a long section
+            // (docs/consumers/docsgen.md#the-requirements-document).
+            let group_key = |rid: &String| -> (usize, String, String) {
+                match store.graph.requirements.get(rid).and_then(|r| r.source.as_ref()) {
+                    Some(src) => {
+                        let order = store
+                            .docs
+                            .get(&src.doc)
+                            .map(|rec| {
+                                rec.sections
+                                    .keys()
+                                    .position(|k| k == &src.section)
+                                    .unwrap_or(usize::MAX)
+                            })
+                            .unwrap_or(usize::MAX);
+                        (0, src.doc.clone(), format!("{:08}{}", order, src.section))
+                    }
+                    None => (1, String::new(), String::new()),
+                }
+            };
+            rids.sort_by(|a, b| group_key(a).cmp(&group_key(b)).then(a.cmp(b)));
+            if rids.len() > 5 {
+                for rid in &rids {
+                    if let Some(r) = store.graph.requirements.get(rid) {
+                        s.push_str(&format!(
+                            "- [`{}`](#{}) {}\n",
+                            rid,
+                            rid.replace(':', ""),
+                            r.statement
+                        ));
+                    }
+                }
+                s.push('\n');
+            }
+            let mut last_group: Option<(String, String)> = None;
             for rid in &rids {
                 let Some(r) = store.graph.requirements.get(rid) else {
                     continue;
                 };
+                let group = match r.source.as_ref() {
+                    Some(src) => (src.doc.clone(), src.section.clone()),
+                    None => (String::new(), String::new()),
+                };
+                if last_group.as_ref() != Some(&group) {
+                    let title = match r.source.as_ref() {
+                        Some(src) => {
+                            let t = store
+                                .docs
+                                .get(&src.doc)
+                                .and_then(|rec| rec.sections.get(&src.section))
+                                .map(|sec| sec.title.clone())
+                                .unwrap_or_default();
+                            if t.is_empty() {
+                                format!("**{}**", src.doc)
+                            } else {
+                                format!("**{} § {}**", src.doc, t)
+                            }
+                        }
+                        None => "**Derived and decreed**".to_string(),
+                    };
+                    s.push_str(&format!("{}\n\n", title));
+                    last_group = Some(group);
+                }
                 s.push_str(&format!("### `{}`\n\n{}\n\n", rid, r.statement));
                 if !r.facets.is_empty() {
                     let fs: Vec<String> = r
@@ -1485,7 +1545,16 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     s.push_str(&line);
                     s.push_str("\n\n");
                 }
+                let same = |a: &str, b: &str| {
+                    a.split_whitespace().collect::<String>().to_lowercase()
+                        == b.split_whitespace().collect::<String>().to_lowercase()
+                };
                 match r.source.as_ref() {
+                    // The quote is omitted when it equals the statement: a page once
+                    // repeated every statement twice.
+                    Some(src) if same(&src.quote, &r.statement) => {
+                        s.push_str(&format!("Source: `{}#{}`", src.doc, src.section))
+                    }
                     Some(src) => s.push_str(&format!(
                         "> {}\n\nSource: `{}#{}`",
                         relink_quote(
@@ -1514,9 +1583,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 // The requirement's criteria with their test verdicts
                 // (docs/consumers/docsgen.md#the-requirements-document).
                 let crits = store.criteria_of(rid);
-                if crits.is_empty() {
-                    s.push_str("Criteria: none\n\n");
-                } else {
+                if !crits.is_empty() {
                     s.push_str("Criteria:\n\n");
                     for cid in &crits {
                         if let Some(c) = store.graph.criteria.get(cid) {
@@ -1538,7 +1605,8 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     }
                     s.push('\n');
                 }
-                if let Some(v) = vmap.get(rid.as_str()) {
+                // No row, no line (docs/consumers/docsgen.md#the-requirements-document).
+                if let Some(v) = vmap.get(rid.as_str()).filter(|v| v["status"].as_str() != Some("missing")) {
                     let status = v["status"].as_str().unwrap_or("missing");
                     let mut line = format!("Verification: `{}`", status);
                     if let Some(name) = v["name"].as_str() {

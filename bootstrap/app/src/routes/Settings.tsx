@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
 import { useProject } from '../lib/queries'
+import { useCapabilities } from '../lib/capabilities'
 import './routes.css'
 
 interface SettingsPayload {
@@ -92,6 +93,45 @@ function ListEditor({
         <p className="muted mono" style={{ margin: '4px 0' }}>default: {fallback.join('  ')}</p>
       )}
       <button onClick={() => onChange([...items, ''])}>add</button>
+    </div>
+  )
+}
+
+// The backend kind and what it can do (docs/frontends/gui.md#settings).
+function Connection() {
+  const caps = useCapabilities()
+  const c = caps.data
+  if (!c) return <p className="muted">reading the backend's capabilities…</p>
+  const yes = (v: boolean) => (v ? 'yes' : 'no')
+  return (
+    <div className="settings-grid">
+      <p style={{ margin: '2px 0' }}>
+        <b>backend</b> <span className="mono">{c.backend}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>documents</b> <span className="mono">{c.docs}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>live updates</b> <span className="mono">{c.events}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>language server</b> <span className="mono">{yes(c.lsp)}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>can run</b> <span className="mono">{c.jobs.join(', ') || 'nothing'}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>agent</b> <span className="mono">{c.agent}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>model</b> <span className="mono">{c.model}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>renders diagrams</b> <span className="mono">{c.rendering}</span>
+      </p>
+      <p style={{ margin: '2px 0' }}>
+        <b>persistence</b> <span className="mono">{c.persistence}</span>
+      </p>
     </div>
   )
 }
@@ -225,7 +265,7 @@ export default function Settings() {
       <ListEditor items={f.roots} onChange={(v) => set({ roots: v })} />
       <p className="muted">files that seed the link-graph schedule</p>
 
-      <h2>Generation</h2>
+      <h2>Product</h2>
       <label>
         deliverable directory
         <input
@@ -236,7 +276,8 @@ export default function Settings() {
         />
       </label>
 
-      <h2>Executors</h2>
+      <h2>Model and agent</h2>
+      <h3>Executors</h3>
       <p className="muted">
         which agent profile runs each goal kind or class; unset kinds fall back to the
         class, then the [acp] agent
@@ -267,7 +308,7 @@ export default function Settings() {
       ))}
       <button onClick={() => set({ executors: [...f.executors, { key: '', value: '' }] })}>add</button>
 
-      <h2>LLM</h2>
+      <h3>Model</h3>
       <div className="settings-grid">
         <label>
           base url
@@ -300,6 +341,9 @@ export default function Settings() {
         session and build limits are a built-in registry, not settings; a node's own
         threshold is raised from its board card (dismiss)
       </p>
+
+      <h2>Connection</h2>
+      <Connection />
 
       <div className="actionrow">
         <button disabled={!dirty || blocked || saving} onClick={save}>

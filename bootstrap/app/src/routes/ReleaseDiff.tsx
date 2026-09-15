@@ -83,7 +83,7 @@ export default function ReleaseDiff() {
 
   return (
     <div>
-      <h1>Release diff</h1>
+      <h1>What changed</h1>
       <div className="filterbar mono">
         from{' '}
         <input

@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { get, entryLabel, type JournalEntry } from '../lib/api'
 import NodeLink from '../components/NodeLink'
 import SectionLink from '../components/SectionLink'
+import { useWords } from '../lib/words'
 import './routes.css'
 
 function opClass(op: string): string {
@@ -16,9 +17,19 @@ function opClass(op: string): string {
   return 'sev-none' // set_coverage, gc, ratify
 }
 
+const HUMAN: Record<string, string> = {
+  edit: 'You edited a document',
+  'dual-write': 'You edited a fact and its sentence',
+  decree: 'You edited a fact in the model',
+  ratify: 'You accepted a proposal',
+  answer: 'You answered a question',
+  triage: 'You triaged a problem',
+}
+
 export default function Changeset() {
   const { gen: genParam } = useParams()
   const gen = Number(genParam)
+  const w = useWords()
   const q = useQuery({
     queryKey: ['journal', 'one', gen],
     queryFn: () =>
@@ -38,11 +49,11 @@ export default function Changeset() {
 
   const entry = q.data.entries.find((e) => e.generation === gen) ?? q.data.entries[0]
   const nav = (
-    <p className="row mono">
-      {gen > 1 && <Link to={`/history/${gen - 1}`}>← g{gen - 1}</Link>}
-      <Link to="/journal">journal</Link>
-      <Link to={`/history/${gen + 1}`}>g{gen + 1} →</Link>
-      <Link to={`/history/diff?from=${Math.max(1, gen - 1)}&to=${gen}`}>diff this build</Link>
+    <p className="row">
+      {gen > 1 && <Link to={`/history/${gen - 1}`}>← {w.syncNumber(gen - 1)}</Link>}
+      <Link to="/history">{w.history}</Link>
+      <Link to={`/history/${gen + 1}`}>{w.syncNumber(gen + 1)} →</Link>
+      <Link to={`/history/diff?from=${Math.max(1, gen - 1)}&to=${gen}`}>what changed in it</Link>
     </p>
   )
   if (!entry)
@@ -54,15 +65,25 @@ export default function Changeset() {
     )
 
   const dirtied = entry.dirtied ?? []
+  const human = entry.kind ? HUMAN[entry.kind] : undefined
   return (
     <div>
-      <h1 className="mono">g{gen}</h1>
+      <h1>{w.syncNumber(gen)}</h1>
       {nav}
       <div className="card">
         <p style={{ margin: '2px 0' }}>
-          <b>{entry.kind || 'changeset'}</b> · <span className="mono">{entryLabel(entry)}</span> ·{' '}
+          <b>{human ?? (w.dev ? entry.kind || 'changeset' : 'A sync')}</b>
+          {w.dev && (
+            <>
+              {' '}
+              · <span className="mono">{entryLabel(entry)}</span>
+            </>
+          )}
+          {' '}
           <span className="muted">
-            {entry.rounds} rounds · {entry.tokens} tok
+            {entry.mutations.length} change{entry.mutations.length === 1 ? '' : 's'}
+            {entry.rounds > 0 ? ` · ${entry.rounds} rounds` : ''}
+            {entry.tokens > 0 ? ` · ${Math.round(entry.tokens / 1000)}k tokens` : ''}
           </span>
         </p>
         {(entry.batch ?? []).length > 0 && (
@@ -92,7 +113,7 @@ export default function Changeset() {
 
       {(entry.resolved_goals ?? []).length > 0 && (
         <div className="card">
-          <p style={{ margin: '2px 0' }}><b>resolved</b></p>
+          <p style={{ margin: '2px 0' }}><b>Work it finished</b></p>
           {(entry.resolved_goals ?? []).map((r) => (
             <p key={r.goal} style={{ margin: '2px 0' }}>
               <span className="v-ok">✓</span> <NodeLink id={r.goal} />{' '}
@@ -103,7 +124,7 @@ export default function Changeset() {
       )}
       {(entry.opened_goals ?? []).length > 0 && (
         <div className="card">
-          <p style={{ margin: '2px 0' }}><b>opened</b></p>
+          <p style={{ margin: '2px 0' }}><b>Work it opened</b></p>
           {(entry.opened_goals ?? []).map((o) => (
             <p key={o.goal} style={{ margin: '2px 0' }}>
               <NodeLink id={o.goal} />{' '}
@@ -116,7 +137,8 @@ export default function Changeset() {
         </div>
       )}
 
-      {entry.mutations.length === 0 && <p className="muted">no mutations in this changeset</p>}
+      {entry.mutations.length === 0 && <p className="muted">nothing changed in the model</p>}
+      {entry.mutations.length > 0 && <h2>Changes</h2>}
       {entry.mutations.map((m, i) => {
         const op = String(m.op ?? '')
         const id = typeof m.id === 'string' ? m.id : typeof m.keep === 'string' ? m.keep : null
@@ -128,10 +150,12 @@ export default function Changeset() {
               {id && <NodeLink id={id} />}
             </p>
             {reasoning && <p className="muted" style={{ margin: '2px 0' }}>{reasoning}</p>}
-            <details>
-              <summary>body</summary>
-              <pre className="pack">{JSON.stringify(m, null, 2)}</pre>
-            </details>
+            {w.dev && (
+              <details>
+                <summary>body</summary>
+                <pre className="pack">{JSON.stringify(m, null, 2)}</pre>
+              </details>
+            )}
           </div>
         )
       })}

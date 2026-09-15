@@ -689,7 +689,7 @@ button.btn-on {
 }
 .chat-toggle:hover,
 .chat-new:hover {
-  color: var(--fg);
+  color: var(--ink);
 }
 .chat-head {
   display: flex;
@@ -701,7 +701,6 @@ button.btn-on {
 .chat-title {
   flex: 1;
   color: var(--muted);
-  text-transform: lowercase;
   letter-spacing: 0.06em;
 }
 .chat-sessions {
@@ -891,12 +890,28 @@ button.btn-on {
   flex-direction: column;
   gap: 6px;
 }
+.chat-context {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.chat-context:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+
 .chat-input textarea {
   width: 100%;
   min-height: 54px;
   resize: vertical;
   background: var(--bg);
-  color: var(--fg);
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
@@ -915,7 +930,7 @@ button.btn-on {
 .chat-completions button {
   background: none;
   border: none;
-  color: var(--fg);
+  color: var(--ink);
   text-align: left;
   cursor: pointer;
   padding: 2px 4px;

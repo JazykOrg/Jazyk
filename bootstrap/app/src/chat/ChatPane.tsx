@@ -2,9 +2,11 @@
 // talk to the configured ACP agent; follow entries render the running build from the
 // live trace the jobs already stream. Mirrors docs/frontends/gui.md#chat.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
-import { get, post } from '../lib/api'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
+import { get, post, verdictText } from '../lib/api'
 import { useApp, type ChatUpdateRow, type TurnProgress } from '../lib/store'
+import { useCapabilities } from '../lib/capabilities'
+import { useWords, verdictWords } from '../lib/words'
 
 interface Command {
   name: string
@@ -101,8 +103,59 @@ function chatRows(updates: ChatUpdateRow[]): Row[] {
   return rows
 }
 
+// A batch in plain words: what the session does and to what
+// (docs/frontends/gui.md#chat). The Developer toggle keeps the goal ids beside it.
+function batchWords(goals: { kind?: string; target?: string }[], dev: boolean): string {
+  if (goals.length === 0) return 'working'
+  const first = goals[0]
+  const kind = first.kind ?? ''
+  const target = first.target ?? ''
+  const doc = target.includes('#') ? target.slice(0, target.indexOf('#')) : target
+  const name = (t: string) => t.replace(/^(ent|req|view):/, '')
+  let text: string
+  switch (kind) {
+    case 'reconcile-section':
+      text = `Reading ${doc}${goals.length > 1 ? `, ${goals.length} sections` : ''}`
+      break
+    case 'place-anchors':
+      text = `Re-anchoring ${doc}`
+      break
+    case 'rejudge-pair':
+      text = `Comparing ${goals.length} pair${goals.length === 1 ? '' : 's'} of requirements`
+      break
+    case 'review-entity':
+      text = `Reviewing ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
+      break
+    case 'retrace':
+      text = `Re-tracing ${name(target)}`
+      break
+    case 'conform-instance':
+      text = `Checking ${name(target)} against its type`
+      break
+    case 'bind':
+      text = `Binding ${goals.length} requirement${goals.length === 1 ? '' : 's'} to the product`
+      break
+    case 'generate':
+      text = `Building ${name(target)}${goals.length > 1 ? ` and ${goals.length - 1} more` : ''}`
+      break
+    case 'verify':
+      text = `Checking ${goals.length} requirement${goals.length === 1 ? '' : 's'}`
+      break
+    case 'declare-edges':
+    case 'dedupe-candidates':
+    case 'curate-view':
+    case 'split-view':
+    case 'abstract-entity':
+      text = `Tidying the model: ${kind.replace('-', ' ')} on ${name(target)}`
+      break
+    default:
+      text = `${kind} ${target}`
+  }
+  return dev ? `${text} (${goals.map((g) => `${g.kind} ${g.target}`).join(' · ')})` : text
+}
+
 // Follow entries: the running build's trace rows, filtered by job.
-function followRows(trace: { jobId: number; seq: number; event: Record<string, unknown> }[], jobId: number): Row[] {
+function followRows(trace: { jobId: number; seq: number; event: Record<string, unknown> }[], jobId: number, dev: boolean): Row[] {
   const rows: Row[] = []
   for (const { jobId: j, seq, event } of trace) {
     if (j !== jobId) continue
@@ -116,12 +169,12 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
         rows.push({
           key: `b${seq}`,
           kind: 'marker',
-          text: `▷ ${label}: ${goals.map((g) => `${g.kind} ${g.target}`).join(' · ')}`,
+          text: `▷ ${batchWords(goals, dev)}${dev ? ` [${label}]` : ''}`,
         })
         break
       }
       case 'sessionStart':
-        rows.push({ key: `s${seq}`, kind: 'marker', text: `▶ ${label}` })
+        if (dev) rows.push({ key: `s${seq}`, kind: 'marker', text: `▶ ${label}` })
         break
       case 'goal': {
         const tail = String(event.justification ?? event.reason ?? '')
@@ -133,7 +186,7 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
         break
       }
       case 'modelText':
-        rows.push({ key: `m${seq}`, kind: 'thought', text: String(event.text ?? '') })
+        if (dev) rows.push({ key: `m${seq}`, kind: 'thought', text: String(event.text ?? '') })
         break
       case 'toolCall':
         rows.push({
@@ -163,11 +216,50 @@ function followRows(trace: { jobId: number; seq: number; event: Record<string, u
           detail: String(event.message ?? ''),
         })
         break
+      case 'genEntityStart':
+        rows.push({ key: `ge${seq}`, kind: 'marker', text: `▷ Building ${String(event.entity ?? '').replace(/^ent:/, '')}${event.stage ? ` (${String(event.stage)})` : ''}` })
+        break
+      case 'genEntityDone':
+        rows.push({
+          key: `gd${seq}`,
+          kind: 'marker',
+          text: `✓ Built ${String(event.entity ?? '').replace(/^ent:/, '')}${Array.isArray(event.files) ? `: ${(event.files as string[]).join(', ')}` : ''}`,
+        })
+        break
+      case 'genEntitySkipped':
+        rows.push({ key: `gs${seq}`, kind: 'marker', text: `· Skipped ${String(event.entity ?? '').replace(/^ent:/, '')}${event.reason ? `: ${String(event.reason)}` : ''}` })
+        break
+      case 'genEntityFailed':
+        rows.push({ key: `gf${seq}`, kind: 'marker', text: `✗ ${String(event.entity ?? '').replace(/^ent:/, '')}: ${String(event.error ?? event.reason ?? 'failed')}` })
+        break
+      case 'verifyRowStart':
+        rows.push({ key: `vs${seq}`, kind: 'tool', text: `Checking ${String(event.requirement ?? '')}`, status: 'pending', detail: String(event.test ?? '') })
+        break
+      case 'verifyRowDone': {
+        const rid = String(event.requirement ?? '')
+        const pass = String(event.verdict ?? '') === 'pass'
+        let closed = false
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (rows[i].kind === 'tool' && rows[i].status === 'pending' && rows[i].text === `Checking ${rid}`) {
+            rows[i] = { ...rows[i], text: `${pass ? 'Verified' : 'Failing'} ${rid}`, status: pass ? 'ok' : 'failed', detail: String(event.evidence ?? event.run ?? '') }
+            closed = true
+            break
+          }
+        }
+        if (!closed) rows.push({ key: `vd${seq}`, kind: 'tool', text: `${pass ? 'Verified' : 'Failing'} ${rid}`, status: pass ? 'ok' : 'failed', detail: String(event.evidence ?? '') })
+        break
+      }
+      case 'verifyRowStale':
+        rows.push({ key: `vt${seq}`, kind: 'tool', text: `Stale ${String(event.requirement ?? '')}`, status: 'pending', detail: `${String(event.status ?? '')}: ${String(event.reason ?? '')}` })
+        break
+      case 'verifyRowError':
+        rows.push({ key: `ve${seq}`, kind: 'tool', text: `Could not check ${String(event.requirement ?? '')}`, status: 'failed', detail: String(event.error ?? event.reason ?? '') })
+        break
       case 'sessionDone':
-        rows.push({ key: `d${seq}`, kind: 'marker', text: `✓ ${label}` })
+        rows.push({ key: `d${seq}`, kind: 'marker', text: dev ? `✓ ${label}` : `✓ done${event.summary ? `: ${String(event.summary)}` : ''}` })
         break
       case 'sessionFailed':
-        rows.push({ key: `f${seq}`, kind: 'marker', text: `✗ ${label}: ${String(event.error ?? '')}` })
+        rows.push({ key: `f${seq}`, kind: 'marker', text: `✗ ${dev ? `${label}: ` : ''}${String(event.error ?? 'failed')}` })
         break
       default:
         break
@@ -286,11 +378,17 @@ function OpenPane({ close }: { close: () => void }) {
   const jobs = useApp((a) => a.jobs)
   const selected = useApp((a) => a.chatSelected)
   const select = useApp((a) => a.selectChat)
+  const caps = useCapabilities()
+  const w = useWords()
+  const noAgent = caps.data?.agent === 'none'
 
-  // Follow entries: one per live or recent job that has trace rows.
+  // Build threads: one per job this page has seen, live ones first
+  // (docs/frontends/gui.md#chat).
   const followIds = useMemo(() => {
+    const live = (j: { state: string }) => j.state === 'running' || j.state === 'queued'
     return Object.values(jobs)
-      .filter((j) => j.state === 'running' || j.state === 'queued')
+      .sort((a, b) => Number(live(b)) - Number(live(a)) || b.id - a.id)
+      .slice(0, 8)
       .map((j) => `follow-${j.id}`)
   }, [jobs])
 
@@ -308,20 +406,27 @@ function OpenPane({ close }: { close: () => void }) {
   return (
     <div className="wb-chat">
       <div className="chat-head">
-        <span className="chat-title">chat</span>
-        <button className="chat-new" onClick={() => void newChat()} title="new chat session">
-          +
-        </button>
+        <span className="chat-title">Chat</span>
+        {!noAgent && (
+          <button className="chat-new" onClick={() => void newChat()} title="new conversation with the agent">
+            +
+          </button>
+        )}
         <button className="chat-toggle" onClick={close} title="collapse">
           ›
         </button>
       </div>
       <div className="chat-sessions">
-        {followIds.map((id) => (
-          <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)}>
-            <span className="dot running" /> build {id.slice(7)}
-          </button>
-        ))}
+        {followIds.map((id) => {
+          const j = jobs[Number(id.slice(7))]
+          const live = j && (j.state === 'running' || j.state === 'queued')
+          const verb = j?.kind.kind === 'compile' ? w.sync : j?.kind.kind === 'gen' ? w.build : j?.kind.kind === 'verify' || j?.kind.kind === 'audit' ? w.check : (j?.kind.kind ?? 'build')
+          return (
+            <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)} title={`build thread for job ${id.slice(7)}`}>
+              <span className={`dot ${live ? 'running' : j?.state === 'failed' ? 'failed' : ''}`} /> {verb} #{id.slice(7)}
+            </button>
+          )
+        })}
         {chatIds.map((id) => (
           <button key={id} className={`chat-sess ${active === id ? 'active' : ''}`} onClick={() => select(id)}>
             <span className={`dot ${sessions[id].state}`} /> {sessions[id].title}
@@ -335,7 +440,11 @@ function OpenPane({ close }: { close: () => void }) {
         <ChatView id={active} />
       ) : (
         <div className="chat-empty muted">
-          <p>no sessions. start one with +, or run a build and follow it here.</p>
+          {noAgent ? (
+            <p>This backend has no agent to talk to. Syncs still show here as build threads while they run.</p>
+          ) : (
+            <p>No conversations yet. Start one with +, or run a sync and follow it here.</p>
+          )}
         </div>
       )}
     </div>
@@ -356,7 +465,8 @@ function extractLoaded(texts: string[]): string | null {
 
 function LoadedPanel({ block }: { block: string | null }) {
   const [open, setOpen] = useState(true)
-  if (!block) return null
+  const dev = useApp((a) => a.dev)
+  if (!block || !dev) return null
   return (
     <div className="chat-plan" style={{ borderTop: '1px solid var(--line)' }}>
       <button className="chat-toggle" onClick={() => setOpen(!open)}>
@@ -369,6 +479,7 @@ function LoadedPanel({ block }: { block: string | null }) {
 
 function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
   const endRef = useRef<HTMLDivElement>(null)
+  const dev = useApp((a) => a.dev)
   useEffect(() => {
     if (follow) endRef.current?.scrollIntoView({ block: 'end' })
   }, [rows.length, follow])
@@ -381,7 +492,7 @@ function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
               <summary>
                 <span className={`tool-dot ${r.status}`} /> {r.text}
               </summary>
-              {r.detail && <pre>{r.detail}</pre>}
+              {r.detail && dev && <pre>{r.detail}</pre>}
             </details>
           ) : (
             <pre>{r.text}</pre>
@@ -393,8 +504,22 @@ function Transcript({ rows, follow }: { rows: Row[]; follow: boolean }) {
   )
 }
 
+// The current selection as context for a question: the inspected node, or the
+// open document (docs/frontends/gui.md#chat).
+function useSelectionContext(): string | null {
+  const loc = useLocation()
+  const [sp] = useSearchParams()
+  const node = sp.get('node')
+  if (node) return node
+  const prefixes = ['/docs/', '/model/entities/', '/model/requirements/', '/product/files/']
+  for (const pre of prefixes) if (loc.pathname.startsWith(pre)) return decodeURIComponent(loc.pathname.slice(pre.length))
+  return null
+}
+
 function ChatView({ id }: { id: string }) {
   const updates = useApp((a) => a.chatUpdates[id])
+  const context = useSelectionContext()
+  const dev = useApp((a) => a.dev)
   const seedChatUpdates = useApp((a) => a.seedChatUpdates)
   const info = useApp((a) => a.chatSessions[id])
   const [text, setText] = useState('')
@@ -413,7 +538,10 @@ function ChatView({ id }: { id: string }) {
       .catch(() => {})
   }, [])
 
-  const rows = useMemo(() => chatRows(updates ?? []), [updates])
+  const rows = useMemo(() => {
+    const all = chatRows(updates ?? [])
+    return dev ? all : all.filter((r) => r.kind !== 'thought')
+  }, [updates, dev])
   const running = info?.state === 'running'
   // The loaded set as the agent's tool replies rendered it, newest wins.
   const loadedBlock = useMemo(
@@ -454,9 +582,14 @@ function ChatView({ id }: { id: string }) {
             ))}
           </div>
         )}
+        {context && !text && (
+          <button className="chat-context" onClick={() => setText(`About ${context}: `)} title="start the question with what you are looking at">
+            ask about {context.length > 40 ? `${context.slice(0, 38)}…` : context}
+          </button>
+        )}
         <textarea
           value={text}
-          placeholder={running ? 'the agent is working…' : 'message the agent, or / for commands'}
+          placeholder={running ? 'the agent is working…' : 'ask the agent, or / for commands'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -514,8 +647,34 @@ function FollowView({ jobId }: { jobId: number }) {
   const followMode = useApp((a) => a.chatFollow)
   const setFollowMode = useApp((a) => a.setChatFollow)
   const navigate = useNavigate()
+  const dev = useApp((a) => a.dev)
+  const job = useApp((a) => a.jobs[jobId])
 
-  const rows = useMemo(() => followRows(trace as never, jobId), [trace, jobId])
+  const rows = useMemo(() => {
+    const out = followRows(trace as never, jobId, dev)
+    if (job && job.state !== 'running' && job.state !== 'queued') {
+      const r = job.result as { verdict?: { state?: string } | string } | null
+      const v = r?.verdict
+      const counted = r
+        ? Object.entries(r)
+            .filter(([k, x]) => k !== 'verdict' && typeof x === 'number' && x !== 0)
+            .map(([k, x]) => `${x} ${k.replace(/([A-Z])/g, ' $1').toLowerCase()}`)
+            .join(', ')
+        : ''
+      const line =
+        typeof v === 'string'
+          ? dev
+            ? v
+            : v.replace(/^converged.*/, 'Up to date').replace(/^incomplete.*/, 'Sync incomplete')
+          : v && typeof v === 'object'
+            ? dev
+              ? verdictText(v as never)
+              : verdictWords(v as never, false)
+            : counted || job.state
+      out.push({ key: 'end', kind: 'marker', text: job.state === 'failed' ? `✗ ${line}` : `■ ${line}` })
+    }
+    return out
+  }, [trace, jobId, dev, job])
   const plan: TurnProgress[] = useMemo(
     () => Object.values(turns).sort((a, b) => a.since - b.since),
     [turns],
@@ -558,7 +717,14 @@ function FollowView({ jobId }: { jobId: number }) {
             <span className="plan-mark">
               {t.state === 'done' ? '✓' : t.state === 'failed' ? '✗' : t.state === 'running' ? '●' : '○'}
             </span>{' '}
-            {t.label} <span className="muted">{t.task} {t.target}</span>
+            {batchWords([{ kind: t.task, target: t.target }], dev)}
+            {t.sections.length > 0 && (
+              <span className="muted">
+                {' '}
+                {t.touched.length}/{t.sections.length}
+              </span>
+            )}
+            {dev && <span className="muted"> {t.label}</span>}
           </div>
         ))}
       </div>

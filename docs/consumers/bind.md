@@ -47,7 +47,10 @@ steps:
   it as verified. A binder once listed a handbook page that named a role without
   stating any of its criteria, and the row read as a contradiction.
 - Search for an existing test per criterion. Bind to it when found; never write a
-  duplicate beside it. One test per criterion, keyed by the criterion id and its
+  duplicate beside it. A test written for an unimplemented criterion fails by design
+  but must be one an implementation can pass: it asserts the refusal or outcome the
+  criterion states, never a contradiction of its own input (the embedded agent once
+  asserted that an order built from no items has items, a gate nothing could clear). One test per criterion, keyed by the criterion id and its
   statement hash; the requirement's row groups them. One file per requirement may hold
   every criterion's test, and each entry's `run` then selects its own test by name, since
   a command that runs the whole file judges every criterion at once. A test carrying this statement's hash in its name or marker

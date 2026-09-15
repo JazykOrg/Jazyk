@@ -905,6 +905,23 @@ The loop continued onto the org corpus and onto generation:
   action that never re-enters the history, and `write_text_file` appends so a long
   file is written in parts.
 
+- The review of every collected run (2026-09-15; `jazyk-runs/review-2026-09-15.md`,
+  1183 sessions audited) found the cost and the shallowness in one place: statement
+  fragmentation. The doctrine's one-requirement-per-fact and per-bullet rules turned six
+  novel documents into 294 statements (113 sharing a quote with another, 67 quoting a
+  list item), a four-department list into nine statements, and 126 org requirements
+  into 251 criteria, each statement then reviewed, paired, given a positive and a
+  contrived negative criterion, tested, and dumped as a docsgen block (a novel lead's
+  page: 54KB, 103 blocks). The judgment sessions themselves were cheap and sound, and
+  errors were under 2% of calls on every executor. The changes: a parts list is one
+  membership statement with an edge per part, a property list one statement with
+  attributes, one criterion per requirement the norm; docsgen pages open with an index
+  and group by document and section; ratification proposals count on their own line;
+  a failed abstract-entity goal stands within a fifth of growth. Fixes are now verified
+  by replays (`jazyk replay`, scripted sessions against the harness, seconds, no model)
+  and by single-session benchmark cases; the embedded agent (qwen3.8:27b) scored the
+  new `enumeration` and `properties` cases 1.00 in six and seven rounds.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

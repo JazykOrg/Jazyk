@@ -7281,7 +7281,10 @@ mod tests {
             .expect("the requirement staged");
         assert!(spun.transition.is_none());
         assert!(spun.edges.is_empty());
-        assert!(spun.facets.is_empty());
+        // The blank facet row dropped; the real one stands, as the mandatory facet
+        // requires (docs/compiler/model/requirement.md#facets).
+        assert_eq!(spun.facets.len(), 1);
+        assert_eq!(spun.facets[0].facet, "behavior");
         // Hollow items inside otherwise-real arguments drop the same way: ""
         // aliases, blank attribute rows, a hollow per-attribute provenance
         // (falls back to the call's quote), "" entity ids, and empty edge

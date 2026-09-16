@@ -111,7 +111,7 @@ for an obligation, and a facetless statement is invisible to everything downstre
 create without one is refused (`facets-missing`), naming the four; `constraint` is the
 honest answer for a plain stated fact. A novel's plot document once left 40 of its 55
 statements facetless, so its story joined no flow, gave no branch, and shaped no test,
-with nothing to say so. A [dual write](../graph.md#dual-writes) records the author's own
+with nothing to say so. A [dual write](../../frontends/acp.md#dual-write-tools) records the author's own
 sentence as a `constraint`, the honest facet of a stated fact, which a review may
 sharpen.
 

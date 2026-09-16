@@ -1463,16 +1463,43 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                 }
             };
             rids.sort_by(|a, b| group_key(a).cmp(&group_key(b)).then(a.cmp(b)));
+            // One line per source group: where the statements come from, before
+            // they come (docs/consumers/docsgen.md#the-requirements-document).
             if rids.len() > 5 {
+                let mut groups: Vec<(String, String, usize)> = Vec::new();
                 for rid in &rids {
-                    if let Some(r) = store.graph.requirements.get(rid) {
-                        s.push_str(&format!(
-                            "- [`{}`](#{}) {}\n",
-                            rid,
-                            rid.replace(':', ""),
-                            r.statement
-                        ));
+                    let Some(r) = store.graph.requirements.get(rid) else {
+                        continue;
+                    };
+                    let label = match r.source.as_ref() {
+                        Some(src) => {
+                            let t = store
+                                .docs
+                                .get(&src.doc)
+                                .and_then(|rec| rec.sections.get(&src.section))
+                                .map(|sec| sec.title.clone())
+                                .unwrap_or_default();
+                            if t.is_empty() {
+                                src.doc.clone()
+                            } else {
+                                format!("{} § {}", src.doc, t)
+                            }
+                        }
+                        None => "Derived and decreed".to_string(),
+                    };
+                    match groups.last_mut() {
+                        Some((l, _, n)) if *l == label => *n += 1,
+                        _ => groups.push((label, rid.replace(':', ""), 1)),
                     }
+                }
+                for (label, anchor, n) in &groups {
+                    s.push_str(&format!(
+                        "- [{}](#{}): {} statement{}\n",
+                        label,
+                        anchor,
+                        n,
+                        if *n == 1 { "" } else { "s" }
+                    ));
                 }
                 s.push('\n');
             }

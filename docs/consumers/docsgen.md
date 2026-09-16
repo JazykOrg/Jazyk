@@ -32,9 +32,11 @@ The page, in order:
   ([diagrams on entity pages](#diagrams-on-entity-pages)).
 - `## Requirements`: one block per requirement that names the entity, under a `###`
   heading whose text is the requirement id (e.g. `### req:orders-6`). The section opens
-  with an index when it holds more than five blocks: one line per requirement, the id
-  linked to its block and the statement, so a page like a novel lead's (103
-  requirements, 54KB) reads from the top. The blocks are grouped by the source document
+  with an index when it holds more than five blocks: one line per source group, the
+  document and section title linked to its first block, with the number of statements
+  it holds, so a page like a novel lead's (103 requirements over fifteen sections)
+  shows where its statements come from before it shows them. An index of every
+  statement would repeat the page. The blocks are grouped by the source document
   and section they quote, in document order, each group opened by a bold line naming
   the document and the section title; derived and decreed requirements group last under
   their provenance. The block carries

@@ -107,22 +107,26 @@ worked scene is not merged into Scene and does not become a second Scene type.
 
 ## Flow clusters and default views
 
-Clusters keyed (actor, document), members in document order:
-- `ines-marlow-plot`: 11 scenes (ch1 s3; ch3 s2, s3, s4; ch4 s1; ch5 s2, s3; ch6 s3;
-  ch7 s1, s2; ch8 s2). Under the 12 soft limit, so no `split-view`.
-- `theo-brandt-plot`: 6 (ch1 s1; ch2 s1; ch4 s2; ch5 s4; ch6 s2; ch8 s1).
-- `callum-pryce-plot`: 3 (ch2 s2; ch5 s1; ch7 s3).
-- `dot-feeney-plot`: 3 (ch1 s2; ch3 s1; ch6 s1).
-- `ines-marlow-arcs`: 4 and `theo-brandt-arcs`: 5, when the transitions carry
-  `behavior` (the usual judgment).
+Clusters are keyed by document, the author's own cut of the story into flows
+([flow clusters](../docs/compiler/model/view.md#level-views)); the characters are read
+off the members as the actors of the picture. Members in document order:
+- `plot`: the scenes of plot.md whose statements carry `behavior` or `failure-mode`,
+  every chapter in order. The four characters are its actors.
+- `arcs`: the stance changes of arcs.md, when the transitions carry `behavior` (the
+  usual judgment).
+- `characters` and `readme`: the behavior their documents state, two or more members
+  each.
 
-Default views: `view:usecase/<cluster>` titled `<character>: Plot` (and `: Arcs`), and
-`view:sequence/<cluster>` over the members that carry an edge (Ines, Theo, Callum, and
-Dot in plot.md each have at least one). `view:state/ines-marlow`,
-`view:state/theo-brandt`. `view:object/scene`. One `view:class/<scope>` per scope (one
-scope expected; its name is not graded). `view:component/<root>` for each containment
-root with children (Port Alder, Marlow family, Manuscript) derives mechanically and is
-not graded.
+Default views: `view:usecase/<doc-stem>` titled by the document, and
+`view:sequence/<doc-stem>` over the members that carry an edge.
+`view:state/ines-marlow`, `view:state/theo-brandt`. `view:object/scene`. One
+`view:class/<scope>` per scope (one scope expected; its name is not graded).
+`view:component/<root>` for each containment root with children (Port Alder, Marlow
+family, Manuscript) derives mechanically and is not graded.
+
+A statement narrating a scene is a `behavior` of the character who acts in it: a compile
+whose plot statements all read `constraint` derives no plot flow and is a finding about
+the extraction, not about the clustering.
 
 ## Planted traps
 

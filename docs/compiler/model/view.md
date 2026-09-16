@@ -237,11 +237,13 @@ Flow clusters are deterministic:
 - Every requirement with a `behavior` facet joins a cluster in every level at least one
   of its entities lifts to. A `failure-mode` requirement joins too, so the branches it
   gives are in the flow. See [facets](./requirement.md#facets).
-- The cluster key is the requirement's actor, as lifted to the level, and its document.
-  The actor is the entity labeled `actor` among the requirement's `entities` (the first
-  such, in listed order), or the first listed entity when none is an actor. The cluster
-  slug is `<actor-slug>-<doc-stem>`, and the view id prefixes it with the level's node
-  slug.
+- The cluster key is the requirement's document, the author's own cut of the subject
+  into flows. The cluster slug is `<doc-stem>`, and the view id prefixes it with the
+  level's node slug. The actors are read off the members when the view renders (the
+  entities labeled `actor`), never baked into the key: keying on the leading entity
+  once derived `Product: Inventory` with Shipment as its actor, and a corpus whose
+  actors carry a domain stereotype (a novel's characters are `character`, not `actor`)
+  would derive no flow views at all.
 - Members are in document order. A cluster of fewer than two members derives no flow
   view; a lone behavior requirement is the flow placement check's finding
   (`unplaced-behavior`), which feeds `curate-view`.

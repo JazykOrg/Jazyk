@@ -408,6 +408,7 @@ mod tests {
                     "entities": ["ent:shop"],
                     "section": "docs/shop.md#/shop",
                     "quote": "The shop stores orders.",
+                    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
                 }),
             )
             .expect("requirement stages");

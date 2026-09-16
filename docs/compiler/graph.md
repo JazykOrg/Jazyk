@@ -246,6 +246,8 @@ The gates:
   spacing variant of an existing id, or an entity named by its exact name or alias,
   resolves to the unique matching node. Only genuine absence or ambiguity is an error,
   and the error names the nearest candidates.
+- Every requirement carries at least one `facet`
+  ([facets](./model/requirement.md#facets)); a create without one is refused.
 - Every `quote` must appear verbatim in its named section. Locating is
   whitespace-insensitive and forgives markdown escapes (a text-codec model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that

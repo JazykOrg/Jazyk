@@ -5376,8 +5376,15 @@ impl ToolSession {
                 } else {
                     Some(self.parse_transition(&args["transition"], &entities)?)
                 };
+                // Every requirement carries at least one facet: the four kinds are
+                // exhaustive, and a facetless statement joins no flow, gives no
+                // branch, and shapes no test
+                // (docs/compiler/model/requirement.md#facets).
                 let facets = if !Self::present(&args["facets"]) {
-                    Vec::new()
+                    return Err(ToolError::new(
+                        "facets-missing",
+                        "a requirement carries at least one facet: behavior (the subject does something), constraint (an invariant it holds), failure-mode (what happens when something goes wrong), or quality (a measured bound, with measure); a plain stated fact is a constraint".into(),
+                    ));
                 } else {
                     parse_facets(&args["facets"])?
                 };
@@ -7224,6 +7231,22 @@ mod tests {
                     "provenance": {"derived": {"from": [], "reasoning": ""}}
                 }),
             )
+            .unwrap_err();
+        // An empty list is absent, and an absent facet is refused: the two doctrines
+        // meet here (docs/compiler/model/requirement.md#facets).
+        assert_eq!(v.rule, "facets-missing");
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "The gadget holds items.",
+                    "entities": ["ent:gadget"],
+                    "section": "/shop/cart", "quote": "holds items",
+                    "edges": [],
+                    "facets": [{"facet": "constraint", "reasoning": "an invariant the gadget holds"}],
+                    "provenance": {"derived": {"from": [], "reasoning": ""}}
+                }),
+            )
             .unwrap();
         assert_eq!(v["created"], true);
         // The doctrine covers structured optionals too: an all-empty transition
@@ -7237,7 +7260,8 @@ mod tests {
                     "statement": "A customer intends to buy the items.",
                     "entities": ["ent:customer", "ent:gadget"],
                     "section": "/shop/cart", "quote": "intends to buy",
-                    "edges": [{}], "facets": [{}],
+                    "edges": [{}],
+                    "facets": [{}, {"facet": "behavior", "reasoning": "the customer acts"}],
                     "transition": {"subject": "", "from": "", "to": "", "trigger": "", "guard": ""}
                 }),
             )
@@ -7285,6 +7309,7 @@ mod tests {
             .dispatch(
                 "upsert_requirement",
                 &json!({
+                    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
                     "statement": "The sprocket gadget pair holds.",
                     "entities": ["ent:sprocket", "ent:gadget", ""],
                     "section": "/shop/cart", "quote": "a Customer intends",
@@ -7683,7 +7708,7 @@ mod tests {
         let err = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Cart holds items.", "entities": ["ent:cart"]}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Cart holds items.", "entities": ["ent:cart"]}),
             )
             .unwrap_err();
         assert_eq!(err.rule, "provenance-required");
@@ -8070,6 +8095,7 @@ mod tests {
         t.dispatch(
             "upsert_requirement",
             &json!({
+                "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
                 "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
                 "entities": ["ent:customer"],
                 "section": "/shop/cart",
@@ -8126,6 +8152,7 @@ mod tests {
             .dispatch(
                 "upsert_requirement",
                 &json!({
+                    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
                     "statement": "The Cart exists.",
                     "entities": ["ent:customer"],
                     "section": "/shop/cart",
@@ -8146,6 +8173,7 @@ mod tests {
             .dispatch(
                 "upsert_requirement",
                 &json!({
+                    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
                     "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
                     "entities": ["ent:customer"],
                     "section": "/shop/cart",
@@ -8216,11 +8244,11 @@ mod tests {
     fn requirement_needs_a_statement_and_known_entities() {
         let mut t = session();
         let err = t
-            .dispatch("upsert_requirement", &json!({"statement": "   ", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
+            .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "   ", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap_err();
         assert_eq!(err.rule, "bad-args");
         let err2 = t
-            .dispatch("upsert_requirement", &json!({"statement": "The Cart holds items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
+            .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Cart holds items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap_err();
         assert_eq!(err2.rule, "unknown-id");
         assert!(
@@ -8230,7 +8258,7 @@ mod tests {
         );
         // Free-form statements land: no shape gate stands between prose and the graph.
         let ok = t
-            .dispatch("upsert_requirement", &json!({"statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
+            .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
             .unwrap();
         assert_eq!(ok["created"], true);
     }
@@ -8263,7 +8291,8 @@ mod tests {
         let rid = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Shopping Cart holds the items a Customer intends to buy.",
+                &json!({
+    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],"statement": "The Shopping Cart holds the items a Customer intends to buy.",
                         "entities": ["ent:customer"], "section": "/shop/cart",
                         "quote": "The Shopping Cart holds items a Customer intends to buy."}),
             )
@@ -8506,7 +8535,7 @@ mod tests {
         let r = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Shopping Cart holds items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart holds items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
             )
             .unwrap();
         let rid = r["id"].as_str().unwrap().to_string();
@@ -8567,7 +8596,7 @@ mod tests {
         assert_eq!(id, "ent:shopping-cart");
         t.dispatch(
             "upsert_requirement",
-            &json!({"statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
+            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
         )
         .unwrap();
         t.dispatch(
@@ -8615,7 +8644,7 @@ mod tests {
         .unwrap();
         t.dispatch(
             "upsert_requirement",
-            &json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
         )
         .unwrap();
         t.dispatch(
@@ -8665,7 +8694,7 @@ mod tests {
         let err = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
             )
             .unwrap_err();
         assert_eq!(err.rule, "bad-edge");
@@ -8678,14 +8707,14 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
             )
             .unwrap();
         assert_eq!(v["created"], true);
         let v2 = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
             )
             .unwrap();
         assert_eq!(v2["created"], true);
@@ -8708,7 +8737,7 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
             )
             .unwrap();
         assert_eq!(v["created"], true);
@@ -8871,7 +8900,7 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
             )
             .unwrap();
         assert_eq!(v["id"], "req:shop-1");
@@ -8899,7 +8928,7 @@ mod tests {
             &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
         )
         .unwrap();
-        let args = json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
+        let args = json!({"facets": [{"facet": "constraint", "reasoning": "an invariant the cart holds"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
         let v1 = t.dispatch("upsert_requirement", &args).unwrap();
         assert_eq!(v1["created"], true);
         // The identical call again is idempotent within the turn: same id, one staged op.
@@ -8923,7 +8952,7 @@ mod tests {
         let v = t
             .dispatch(
                 "upsert_requirement",
-                &json!({"statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+                &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
             )
             .unwrap();
         assert_eq!(v["id"], "req:shop-1");

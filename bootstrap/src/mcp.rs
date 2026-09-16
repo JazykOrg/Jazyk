@@ -2585,7 +2585,10 @@ impl McpServer {
             .unwrap_or_default();
         self.dual_commit(
             edit,
-            ("upsert_requirement", json!({"statement": statement, "entities": entities, "section": format!("{}#{}", doc, section), "quote": text})),
+            // The author's own sentence is a stated fact: `constraint` is its honest
+            // facet, and a review may sharpen it
+            // (docs/compiler/model/requirement.md#facets).
+            ("upsert_requirement", json!({"statement": statement, "entities": entities, "section": format!("{}#{}", doc, section), "quote": text, "facets": [{"facet": "constraint", "reasoning": "stated by the author in the document"}]})),
             &doc,
         )
     }

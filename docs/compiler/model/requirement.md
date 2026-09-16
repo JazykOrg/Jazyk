@@ -105,8 +105,15 @@ transition statement usually also carries a `behavior` facet, which places it in
 ## Facets
 
 `facets: [{facet, reasoning, measure?}]`. A facet is a judgment recorded at extraction,
-with its reasoning. Nothing derives a facet from the wording; the model states it. A
-requirement may carry several facets, or none.
+with its reasoning. Nothing derives a facet from the wording; the model states it. Every
+requirement carries at least one, and may carry several: the four kinds are exhaustive
+for an obligation, and a facetless statement is invisible to everything downstream. A
+create without one is refused (`facets-missing`), naming the four; `constraint` is the
+honest answer for a plain stated fact. A novel's plot document once left 40 of its 55
+statements facetless, so its story joined no flow, gave no branch, and shaped no test,
+with nothing to say so. A [dual write](../graph.md#dual-writes) records the author's own
+sentence as a `constraint`, the honest facet of a stated fact, which a review may
+sharpen.
 
 - `behavior`: the subject does something, in response to an event or as a step. Behavior
   requirements cluster into flow views. A behavior requirement placed in no flow view and

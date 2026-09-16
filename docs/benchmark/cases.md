@@ -93,8 +93,10 @@ Graph checks:
   tombstoned or redirected.
 - `requirementExists {statementPattern, entity}`: a requirement whose `statement`
   matches the pattern references the entity.
-- `attributeExists {entity, name}`: the entity carries an attribute of this name
-  (case-insensitive).
+- `attributeExists {entity, name}`: the entity carries an attribute whose name matches
+  this pattern, case-insensitive. The wording of an attribute name is the model's
+  ("employee count" and "employees" are the same fact), so the check matches a pattern,
+  never a literal.
 - `criteriaCount {requirement?, statementPattern?, min?, max?}`: the number of
   criteria, of one requirement by id or of the requirements whose statement matches
   the pattern, is within bounds. `max: 1` on a plain fact says no contrived negative

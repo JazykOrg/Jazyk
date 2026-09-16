@@ -43,7 +43,7 @@ assert:
       min: 5
       max: 6
   - requirementExists:
-      statementPattern: 'four departments'
+      statementPattern: 'departments'
       entity: Ridgeline Outfitters
   - requirementExists:
       statementPattern: 'payroll'

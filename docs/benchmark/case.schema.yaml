@@ -289,7 +289,9 @@ definitions:
         description: An entity the requirement must reference, by id or exact name
         type: string
   attributeExists:
-    description: The entity carries an attribute of this name, case-insensitive
+    description: >-
+      The entity carries an attribute whose name matches this pattern,
+      case-insensitive; attribute wording is the model's
     type: object
     required: [entity, name]
     additionalProperties: false
@@ -297,6 +299,7 @@ definitions:
       entity:
         type: string
       name:
+        description: A regular expression matched against the attribute names
         type: string
   criteriaCount:
     description: >-

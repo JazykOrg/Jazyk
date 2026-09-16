@@ -605,17 +605,25 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             let Some(ent_id) = find_entity(store, ent) else {
                 return Some(format!("entity {} not found", ent));
             };
-            let name = arg["name"].as_str().unwrap_or_default().to_lowercase();
-            let has = store
+            let rx = match compile(arg["name"].as_str().unwrap_or_default()) {
+                Ok(r) => r,
+                Err(e) => return Some(e),
+            };
+            let names: Vec<String> = store
                 .graph
                 .entities
                 .get(&ent_id)
-                .map(|e| e.attributes.iter().any(|a| a.name.to_lowercase() == name))
-                .unwrap_or(false);
-            if has {
+                .map(|e| e.attributes.iter().map(|a| a.name.clone()).collect())
+                .unwrap_or_default();
+            if names.iter().any(|n| rx.is_match(n)) {
                 None
             } else {
-                Some(format!("{} has no attribute `{}`", ent, name))
+                Some(format!(
+                    "{} has no attribute matching `{}`; its attributes: {}",
+                    ent,
+                    arg["name"].as_str().unwrap_or_default(),
+                    if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
+                ))
             }
         }
         "criteriaCount" => {

@@ -30,7 +30,10 @@ assert:
       entity: Store
   - attributeExists:
       entity: Ridgeline Outfitters
-      name: employees
+      name: 'employee'
+  - attributeExists:
+      entity: Ridgeline Outfitters
+      name: 'warehouse|boulder'
   - coverageSet:
       section: 'docs/company.md#/ridgeline-outfitters'
       state: covered

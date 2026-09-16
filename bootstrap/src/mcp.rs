@@ -85,6 +85,8 @@ struct BenchRun {
 struct OpenCase {
     idx: usize,
     item: WorkItem,
+    // The goal the fixture derived, when the kind derives one.
+    derived: Option<crate::model::Goal>,
     // The sandbox master: staged work applies here at finish, checks read it.
     store: Store,
     session: ToolSession,
@@ -1163,7 +1165,22 @@ impl McpServer {
             case.name
         ));
         crate::vfs::remove_dir_all(&tmp).ok();
-        let store = crate::benchmark::sandbox(case, &tmp);
+        // A derived-goal case seeds through a real commit and takes its goal off the
+        // board, as an endpoint run does (docs/benchmark/benchmark.md#agent-run-benchmarks).
+        let mut derived: Option<crate::model::Goal> = None;
+        let store = if case.derives_goal() {
+            match crate::benchmark::seed_derived(case, &tmp) {
+                Ok((s, g)) => {
+                    derived = Some(g);
+                    s
+                }
+                Err(e) => {
+                    return json!({"error": {"rule": "fixture", "message": e}});
+                }
+            }
+        } else {
+            crate::benchmark::sandbox(case, &tmp)
+        };
         let gs = crate::gen::GenSettings {
             configured: true,
             deliverable: tmp.join("deliverable"),
@@ -1171,19 +1188,22 @@ impl McpServer {
             code: Vec::new(),
         };
         crate::vfs::create_dir_all(&gs.deliverable).ok();
-        let item = WorkItem {
-            task: case.task_type.clone(),
-            target: case.target.clone(),
-            dirty_sections: match case.task_type.as_str() {
-                "reconcile-doc" => store
-                    .docs
-                    .get(&case.target)
-                    .map(|r| r.sections.keys().cloned().collect())
-                    .unwrap_or_default(),
-                _ => Vec::new(),
+        let item = match &derived {
+            Some(g) => WorkItem::from_goal(g),
+            None => WorkItem {
+                task: case.task_type.clone(),
+                target: case.target.clone(),
+                dirty_sections: match case.task_type.as_str() {
+                    "reconcile-doc" => store
+                        .docs
+                        .get(&case.target)
+                        .map(|r| r.sections.keys().cloned().collect())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                },
+                stale_anchors: Vec::new(),
+                proposals: Vec::new(),
             },
-            stale_anchors: Vec::new(),
-            proposals: Vec::new(),
         };
         let mut reply = json!({
             "case": {"name": case.name, "tier": case.tier, "task": case.task_type, "target": case.target},
@@ -1203,31 +1223,36 @@ impl McpServer {
                 });
             }
             _ => {
-                let goal = item.to_goal(crate::model::GoalState::Open);
-                reply["instructions"] =
-                    json!(crate::session::preview_with(
-                        &store,
-                        std::slice::from_ref(&goal),
-                        &case.lint
-                    ));
                 if case.task_type == "generate-entity" {
                     reply["deliverableDir"] = json!(gs.deliverable.to_string_lossy());
                     reply["note"] = json!("write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open");
                 }
             }
         }
-        let scope = WorkScope::from_item(&item);
-        let mut session = ToolSession::new(
+        // One code path builds the case session, so an agent and an endpoint face the
+        // same prompt, scope, loaded set, and skills
+        // (docs/benchmark/benchmark.md#agent-run-benchmarks).
+        let crate::benchmark::CaseSession {
+            mut session,
+            prompt,
+            ..
+        } = crate::benchmark::case_session(
             store.clone(),
-            scope,
-            self.mutation_limit,
-            self.context_budget,
+            &item,
+            &case.lint,
+            &gs,
+            derived.as_ref(),
         );
+        if case.task_type != "verify-requirement" {
+            reply["instructions"] = json!(prompt);
+            reply["package"] = json!(session.render_status_full());
+        }
         session.gen = gs.clone();
         session.caller = self.caller("benchmark", &case.name);
         b.open = Some(OpenCase {
             idx,
             item,
+            derived,
             store,
             session,
             calls: 0,
@@ -1253,7 +1278,12 @@ impl McpServer {
         // Turn cases face the same done gates a turn does; a rejection keeps the case
         // open, same contract as done on a batch.
         let mut staged_count = 0usize;
-        if case.task_type == "reconcile-doc" || case.task_type.starts_with("review-") {
+        // Every case but generation and verification commits through done
+        // (docs/benchmark/benchmark.md#agent-run-benchmarks).
+        if !matches!(
+            case.task_type.as_str(),
+            "generate-entity" | "verify-requirement"
+        ) {
             let summary = params["arguments"]["summary"]
                 .as_str()
                 .unwrap_or("(finish)")
@@ -1266,7 +1296,11 @@ impl McpServer {
             let staged = std::mem::take(&mut o.session.staged);
             staged_count = staged.len();
             if !staged.is_empty() {
-                o.store.apply(staged, &o.item.commit(o.calls, 0));
+                let commit = match &o.derived {
+                    Some(_) => o.session.commit(o.calls, 0),
+                    None => o.item.commit(o.calls, 0),
+                };
+                o.store.apply(staged, &commit);
             }
         }
         if case.task_type == "verify-requirement" {
@@ -2805,6 +2839,88 @@ mod tests {
         )
         .unwrap();
         dir
+    }
+
+    // The agent-run benchmark runs a derived-goal case end to end: the fixture seeds
+    // and derives, the session opens holding its prompt's loaded set, and finish_case
+    // commits the staged work before grading. A serving that committed only extraction
+    // and review cases scored an agent zero on three correct criteria.
+    // Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
+    #[test]
+    fn benchmark_serving_commits_a_derived_goal_case() {
+        let dir = bare_dir("bench-derived");
+        let project = crate::project::Project::load(&dir);
+        let out = project.out.clone();
+        let s = McpServer::with_bridge(
+            project,
+            out,
+            vec!["benchmark".to_string()],
+            false,
+            BridgeFlags::default(),
+        );
+        let call = |name: &str, args: Value| -> Value {
+            let r = s
+                .handle("tools/call", &json!({"name": name, "arguments": args}))
+                .unwrap();
+            let text = r["content"][0]["text"].as_str().unwrap_or_default();
+            serde_json::from_str(text).unwrap_or(Value::String(text.to_string()))
+        };
+        let begun = call("begin_case", json!({"case": "criteria-density"}));
+        assert_eq!(begun["case"]["name"], "criteria-density", "{}", begun);
+        assert!(
+            begun["instructions"].as_str().unwrap_or_default().contains("derive-criteria"),
+            "the prompt names the goal: {}",
+            begun["instructions"]
+        );
+        assert!(
+            begun["package"].as_str().unwrap_or_default().contains("req:company-1"),
+            "the session opens holding its prompt's loaded set: {}",
+            begun["package"]
+        );
+        let staged = call(
+            "upsert_criterion",
+            json!({
+                "requirement": "req:company-1",
+                "kind": "positive",
+                "statement": "An observer counting the company's departments finds exactly 4 departments.",
+                "provenance": {"derived": {"from": ["req:company-1"], "reasoning": "covers the stated count"}},
+            }),
+        );
+        assert!(staged["id"].is_string(), "{}", staged);
+        let second = call(
+            "upsert_criterion",
+            json!({
+                "requirement": "req:company-2",
+                "kind": "boundary",
+                "statement": "A claim for `500` dollars needs no approval from the head of department.",
+                "provenance": {"derived": {"from": ["req:company-2"], "reasoning": "the value at the edge"}},
+            }),
+        );
+        assert!(second["id"].is_string(), "{}", second);
+        let third = call(
+            "upsert_criterion",
+            json!({
+                "requirement": "req:company-2",
+                "kind": "boundary",
+                "statement": "A claim for `501` dollars needs the head of department's approval.",
+                "provenance": {"derived": {"from": ["req:company-2"], "reasoning": "the value past the edge"}},
+            }),
+        );
+        assert!(third["id"].is_string(), "{}", third);
+        let marked = call(
+            "mark_goal_done",
+            json!({
+                "goal": "g:derive-criteria:ent:company",
+                "justification": "Each requirement carries the criteria its shape needs.",
+                "evidence": {"requirements": [
+                    {"id": "req:company-1", "criteria": [staged["id"]], "verdict": "complete"},
+                    {"id": "req:company-2", "criteria": [second["id"], third["id"]], "verdict": "complete"},
+                ]},
+            }),
+        );
+        assert!(marked["marked"].is_string(), "{}", marked);
+        let scored = call("finish_case", json!({"summary": "criteria derived"}));
+        assert_eq!(scored["scored"]["score"], json!(1.0), "{}", scored);
     }
 
     // A verify serving for an agent with no editor of its own lists the read-only

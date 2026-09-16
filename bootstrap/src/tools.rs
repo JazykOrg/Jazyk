@@ -1463,7 +1463,7 @@ impl ToolSession {
         p
     }
 
-    fn render_status_full(&self) -> String {
+    pub fn render_status_full(&self) -> String {
         self.with_staged_notes(self.loaded.render_status(
             &self.skills.index_line(),
             self.skills.rendered_chars(),

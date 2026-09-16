@@ -176,7 +176,11 @@ work with the same write tools a compile session holds:
   ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)): top-level
   `instructions` (the assembled session prompt for the case's goal) plus a `package`
   (the loaded set), built from the case fixture (including the case's own lint rules,
-  not the serving project's). A generation case names the sandbox deliverable
+  not the serving project's). The fixture seeds exactly as an endpoint run seeds it: a
+  [derived-goal](./cases.md#derived-goals) case commits its fixture and takes its goal
+  off the board, with the goal's `change` and hints intact, and the session opens
+  holding the loaded set its prompt lists. Both paths build the case session through
+  one code path, so an agent and an endpoint face the same session. A generation case names the sandbox deliverable
   directory by absolute path: the agent writes there with its own file tools, records
   with `record_generation`, and proves the work with `run_tests`, all against the
   sandbox. A verification case's package carries the statement, the quote, and the
@@ -185,7 +189,10 @@ work with the same write tools a compile session holds:
   stages into the project, gated by the case's goal kind.
 - `finish_case({summary?, verdict?, evidence?})`: run the goal's gate and the `done`
   gates, apply the staged work to the sandbox, grade with the case's deterministic
-  checks, and return the score with the first failing check named. The sandbox is
+  checks, and return the score with the first failing check named. Every case but
+  generation and verification finishes this way, whatever its goal kind: a serving that
+  committed only extraction and review cases graded six kinds against their untouched
+  fixtures, and an agent that had staged three criteria correctly scored zero. The sandbox is
   discarded either way.
 - `benchmark_report({model})`: after the last case, compute tier scores and workflow
   verdicts, append the run to the [machine-wide history](#machine-wide-history), and

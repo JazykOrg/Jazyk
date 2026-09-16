@@ -83,7 +83,8 @@ assert:
 `jazyk replay <file|dir>...` runs every replay in the named files and directories and
 prints one line per step (`ok`, or the mismatch: what was expected and what the
 harness answered) and one per check, then a summary; the exit code is non-zero when
-any step or check fails. With no argument it runs [`replays/`](./replays). The
+any step or check fails. With no argument it runs [`replays/`](./replays). A named file holding no replay is an
+error, never a silent pass: an unclosed fence once graded nothing and exited 0. The
 replays under `replays/` also run under `cargo test`, so a harness change that breaks
 a recorded scenario fails the build.
 

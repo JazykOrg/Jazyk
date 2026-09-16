@@ -64,6 +64,7 @@ pub fn parse_paths(paths: &[PathBuf]) -> Result<Vec<Case>, String> {
         } else {
             vec![text]
         };
+        let before = cases.len();
         for block in blocks {
             let v: Value = serde_norway::from_str(&block)
                 .map_err(|e| format!("{}: bad yaml: {}", f.display(), e))?;
@@ -72,6 +73,14 @@ pub fn parse_paths(paths: &[PathBuf]) -> Result<Vec<Case>, String> {
                 return Err(format!("{}: `{}` has no steps; a replay scripts its calls", f.display(), case.name));
             }
             cases.push(case);
+        }
+        // A file that grades nothing is an error, never a silent pass
+        // (docs/benchmark/replays.md#running-replays).
+        if cases.len() == before {
+            return Err(format!(
+                "{}: no replay found; a replay is a fenced ```yaml block (an unclosed fence reads as none)",
+                f.display()
+            ));
         }
     }
     Ok(cases)

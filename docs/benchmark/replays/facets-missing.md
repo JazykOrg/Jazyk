@@ -47,6 +47,16 @@ steps:
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
       facets: [{facet: behavior, reasoning: the character acts on the page}]
     expect: {ok: true}
+  - call: set_coverage
+    args: {section: docs/plot.md#/plot, state: non-normative, note: a front door over the chapter}
+  - call: set_coverage
+    args: {section: docs/plot.md#/plot/chapter-1, state: covered, note: the arrival sentence is the chapter's one statement}
+  - call: mark_goal_done
+    args:
+      goal: g:reconcile-section:docs/plot.md
+      justification: The chapter's one sentence is extracted as a behavior of Theo Brandt.
+  - call: done
+    args: {summary: the arrival statement, faceted}
 assert:
   - requirementExists: {statementPattern: 'afternoon ferry', entity: Theo Brandt}
 ```

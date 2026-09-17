@@ -83,16 +83,14 @@ conformant, no `nonconformant-instance`. `view:object/team` renders it as
 
 ## Flow clusters and default views
 
-- hiring.md: one cluster keyed on the actor among each step's entities. When Candidate
-  is the only actor label, the cluster is `candidate-hiring`, title "Candidate: Hiring",
-  and every stage change is a member. A split into a Recruiter cluster and a Hiring
-  Manager cluster is acceptable when each has two or more members. Each cluster with two
-  or more members yields `view:usecase/<cluster>` and `view:sequence/<cluster>` sharing
-  a title.
-- expenses.md: between one and three clusters (Employee, Manager, Finance, by which
-  actor each step lists first). "Employee: Expenses" is expected with the submit and
-  resubmit steps at least. The two `failure-mode` steps (missing receipt, non-business
-  line) are members of some cluster, so no `unrepresented-failure-mode`.
+- hiring.md: one cluster, keyed on the document
+  ([flow clusters](../docs/compiler/model/view.md#level-views)): `hiring`, titled by the
+  document, with every stage change a member. The actors (Candidate, Recruiter, Hiring
+  Manager) are read off the members and draw as stick figures. It yields
+  `view:usecase/hiring` and `view:sequence/hiring` over the members that carry an edge.
+- expenses.md: one cluster, `expenses`, with the submit and resubmit steps at least. The
+  two `failure-mode` steps (missing receipt, non-business line) are members, so no
+  `unrepresented-failure-mode`.
 - Structural defaults are level views, one per node with two or more children, the
   scope root included (docs/compiler/model/view.md#level-views); members are the direct
   children plus every outside entity with a lifted edge into the level, no `query`.
@@ -115,9 +113,9 @@ conformant, no `nonconformant-instance`. `view:object/team` renders it as
     Application into People through the Recruiter; Employee into Finance through the
     reimbursement).
   - Deeper flow views cluster the behavior requirements that lift into a level under
-    `view:usecase/<node-slug>-<cluster-slug>` and `view:sequence/...`
-    (`view:usecase/ridgeline-outfitters-employee-expenses` when the expenses steps lift
-    into the departments' level). The root form keeps the unprefixed ids above.
+    `view:usecase/<node-slug>-<doc-stem>` and `view:sequence/...`
+    (`view:usecase/ridgeline-outfitters-expenses` when the expenses steps lift into the
+    departments' level). The root form keeps the unprefixed ids above.
     Mechanism-faithful surplus, not graded.
 - `view:state/application`, `view:object/team`.
 - No timing view derives (timing views are curated). The time bounds in hiring.md

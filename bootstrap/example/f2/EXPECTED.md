@@ -13,10 +13,15 @@ Core entities (must exist), with the stereotype and parent the prose supports:
   ("Each Customer shall have a unique Email address").
 - Operator (borderline): `actor`, the subject of admin.md's commands and of "Operators
   manage the system with the Admin CLI". Acceptable to leave unminted (see flows).
-- Admin CLI: `cli` or `tool`, never `actor` ("the operator's tool for running Orderly").
-  Parent Orderly: `orderly serve` starts the system, so the tool is part of it.
-- Inventory: parent Orderly ("The warehouse side is covered by Inventory").
-- Catalog: parent Orderly (the Catalog is what Orderly sells through).
+- Admin CLI: a stereotype naming the tool (`cli` or `tool`), never `actor` ("the
+  operator's tool for running Orderly"); no stereotype is a weaker result, not a
+  failure. Parent Orderly is acceptable (`orderly serve` starts the system), and so is
+  no parent: the front door states no containment, and a document that only says what
+  the system's parts cover leaves the top level flat
+  ([enumerations](../../../docs/compiler/concepts/statements.md#enumerations)).
+- Inventory, Catalog: parent Orderly or no parent, on the same rule ("The warehouse side
+  is covered by Inventory" states coverage, not containment). A parent outside Orderly
+  is wrong.
 - Order, Payment, Shipment, Return, Product, Stock (or Inventory's `Stock`): domain
   concepts. Parent Orderly or one of its parts is acceptable, no parent is acceptable, a
   parent outside Orderly is wrong. Product carries `name`, `price` ("A Product has a name
@@ -113,18 +118,19 @@ instance of Product. No `instantiation` edge, no `conform-instance` goal, no
 
 ## Flow clusters and default views
 
-Behavior-facet requirements cluster by actor (the first `actor` among the requirement's
-entities, else its first entity) and document. Clusters of two or more derive a
+Behavior-facet requirements cluster by document, the author's own cut of the subject
+into flows ([flow clusters](../../../docs/compiler/model/view.md#level-views)); the
+actors are read off the members when the view renders. Clusters of two or more derive a
 `use-case` and a `sequence` view sharing a title. A sequence view derives only when at
 least two members carry an edge; a use-case view without a sequence twin is
 mechanism-faithful for an edge-poor cluster. Expected:
 
 | cluster | members (document order) | views |
 | --- | --- | --- |
-| shipping.md (actor Customer) | delivers a packed Order to its buyer; tracking link on dispatch; two failed attempts, return and refund (`failure-mode`) | `view:usecase/shipping`, `view:sequence/shipping`, title `Shipping` |
-| admin.md (actor Operator) | `orderly serve` starts the system; `orderly report` for the daily numbers; every Order from the selected period | `view:usecase/admin`, `view:sequence/admin`, title `Admin CLI` |
-| returns.md (actor Customer) | brings goods back into Inventory; open a Return within 30 days of delivery | `view:usecase/returns`, `view:sequence/returns`, title `Returns` |
-| orders.md (actor Customer, likely) | a Customer places an Order; submit, reserve Stock | `view:usecase/orders`, `view:sequence/orders`, title `Order` |
+| shipping.md (actors: Customer) | delivers a packed Order to its buyer; tracking link on dispatch; two failed attempts, return and refund (`failure-mode`) | `view:usecase/shipping`, `view:sequence/shipping`, title `Shipping` |
+| admin.md (actors: Operator) | `orderly serve` starts the system; `orderly report` for the daily numbers; every Order from the selected period | `view:usecase/admin`, `view:sequence/admin`, title `Admin CLI` |
+| returns.md (actors: Customer) | brings goods back into Inventory; open a Return within 30 days of delivery | `view:usecase/returns`, `view:sequence/returns`, title `Returns` |
+| orders.md (actors: Customer) | a Customer places an Order; submit, reserve Stock | `view:usecase/orders`, `view:sequence/orders`, title `Order` |
 
 When Operator is not minted, the admin.md cluster still derives (`admin`, title
 `Admin CLI`) and the use case draws no actor, never the Admin CLI as a stick figure.

@@ -177,12 +177,11 @@ the extraction, not about the clustering.
 - State (`view:state/ines-marlow`): `[*] --> stranger`, four arrows up to `beloved`.
   State (`view:state/theo-brandt`): `[*] --> stranger`, five arrows; two leave
   `acquaintance` with the same label, which is the visible nondeterminism.
-- Use case (`view:usecase/ines-marlow-plot` and the others): one use case per cluster
-  titled `Ines Marlow: Plot`; with characters labeled `actor` the acting character
-  connects to it.
-- Sequence (`view:sequence/ines-marlow-plot` and the others): messages between
-  characters in chapter order, e.g. Ines → Dot "asks for the harbor ledger", Ines →
-  Theo "confronts about the survey", Ines → Theo "asks Theo to stay".
-- Activity: no default; a curated activity twin of the Ines plot view shows the
-  chapter 5 failure as the branch (the lease page cut out, the council votes to
-  proceed).
+- Use case (`view:usecase/plot`, `view:usecase/arcs`, and the other documents with two
+  or more flow members): one use case per document, titled by the document; a character
+  the members label `actor` connects to it as a stick figure.
+- Sequence (`view:sequence/plot` and the others): messages between characters in
+  chapter order, e.g. Ines → Dot "asks for the harbor ledger", Ines → Theo "confronts
+  about the survey", Ines → Theo "asks Theo to stay".
+- Activity: no default; a curated activity twin of the plot view shows the chapter 5
+  failure as the branch (the lease page cut out, the council votes to proceed).

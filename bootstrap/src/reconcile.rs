@@ -3174,6 +3174,134 @@ mod tests {
         assert_eq!(hits[0].1, ["ent:island"]);
     }
 
+    // Eight checks had no test and had never fired in fifteen measured iterations: a
+    // check nobody has seen fire and nobody tests is a check nobody knows works.
+    // Mirrors docs/compiler/compilation.md#checks.
+    #[test]
+    fn coverage_checks_flag_an_unprocessed_and_a_suspicious_section() {
+        let mut s = Store::default();
+        seed_doc(
+            &mut s,
+            "shop.md",
+            "# Shop\n\n## Cart\nThe Cart holds items a Customer intends to buy.\n\n## Notes\nThe Cart shall keep every item until checkout.\n",
+        );
+        s.docs.get_mut("shop.md").unwrap().coverage.insert(
+            "/shop/notes".into(),
+            crate::model::Coverage {
+                state: "non-normative".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
+        let f = checks(&s, &Project::default());
+        let uncovered = rules_for(&f, "uncovered-section");
+        assert!(
+            uncovered.iter().any(|h| h.1 == ["shop.md#/shop/cart"]),
+            "{:?}",
+            uncovered
+        );
+        let suspicious = rules_for(&f, "suspicious-non-normative");
+        assert_eq!(suspicious.len(), 1, "{:?}", suspicious);
+        assert_eq!(suspicious[0].1, ["shop.md#/shop/notes"]);
+    }
+
+    #[test]
+    fn stale_provenance_flags_a_quote_that_no_longer_locates() {
+        let mut s = Store::default();
+        seed_doc(&mut s, "shop.md", "# Shop\nThe Cart holds items.\n");
+        s.graph.requirements.insert(
+            "req:shop-1".into(),
+            req(
+                "The Cart holds items a Customer intends to buy.",
+                "ent:cart",
+                "shop.md",
+                "/shop",
+                "The Cart holds items a Customer intends to buy.",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:shop-2".into(),
+            req(
+                "The Cart holds items.",
+                "ent:cart",
+                "shop.md",
+                "/shop",
+                "The Cart holds items.",
+            ),
+        );
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "stale-provenance");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["req:shop-1"]);
+    }
+
+    #[test]
+    fn document_size_checks_flag_a_long_section_and_a_wide_document() {
+        let mut s = Store::default();
+        let long = format!("# Big\n{}\n", "The system shall respond quickly. ".repeat(400));
+        seed_doc(&mut s, "big.md", &long);
+        let mut wide = String::from("# Wide\n");
+        for i in 0..crate::limits::MAX_DOC_SECTIONS + 2 {
+            wide.push_str(&format!("\n## Section {}\nThe system shall hold.\n", i));
+        }
+        seed_doc(&mut s, "wide.md", &wide);
+        let f = checks(&s, &Project::default());
+        let big = rules_for(&f, "section-too-large");
+        assert!(big.iter().any(|h| h.1 == ["big.md#/big"]), "{:?}", big);
+        let doc = rules_for(&f, "doc-too-large");
+        assert_eq!(doc.len(), 1, "{:?}", doc);
+        assert!(doc[0].3.contains("split the document"), "{}", doc[0].3);
+    }
+
+    #[test]
+    fn unreachable_state_flags_a_state_no_path_reaches() {
+        let mut s = Store::default();
+        s.graph.state_machines.insert(
+            "sm:order".into(),
+            crate::model::StateMachine {
+                subject: "ent:order".into(),
+                states: vec![
+                    "placed".into(),
+                    "paid".into(),
+                    "archived".into(),
+                    "purged".into(),
+                ],
+                // `archived` and `purged` enter each other and nothing else enters
+                // them: a cycle detached from the initial state, which is the shape
+                // the check catches.
+                transitions: vec![
+                    crate::model::StateTransition {
+                        from: "archived".into(),
+                        to: "purged".into(),
+                        trigger: Some("retention lapses".into()),
+                        guard: None,
+                        requirements: vec!["req:orders-2".into()],
+                    },
+                    crate::model::StateTransition {
+                        from: "purged".into(),
+                        to: "archived".into(),
+                        trigger: Some("restored from backup".into()),
+                        guard: None,
+                        requirements: vec!["req:orders-3".into()],
+                    },
+                    crate::model::StateTransition {
+                        from: "placed".into(),
+                        to: "paid".into(),
+                        trigger: Some("payment confirmed".into()),
+                        guard: None,
+                        requirements: vec!["req:orders-1".into()],
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "unreachable-state");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:order"]);
+        assert!(hits[0].3.contains("archived"), "{}", hits[0].3);
+    }
+
     #[test]
     fn empty_file_flagged_with_zero_llm_calls() {
         let mut s = Store::default();

@@ -69,7 +69,9 @@ that its single statement would not. They file diagnostics with the subject enti
 the `subjects`, update them in place while the condition holds, and resolve them when it
 clears. See [checks](../compilation.md#checks).
 
-- `unreachable-state` (warning): a state no path from the initial state reaches. With
+- `unreachable-state` (warning): a state no path from the initial state reaches. A state
+  nothing enters is itself an initial state, so what this catches is a group of states
+  that only enter each other, detached from the flow. With
   several candidate initial states, reachability is computed from all of them jointly.
   With no candidate (every state has an incoming transition), the check does not fire.
   One diagnostic per machine, the message naming the states.

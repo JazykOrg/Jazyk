@@ -230,7 +230,7 @@ pub async fn triage(
                 id: rid.clone(),
                 triage,
             }],
-            &item.commit(0, 0),
+            &item.commit(0, None),
         );
         Ok(json!({ "id": rid, "diagnostic": store.graph.diagnostics.get(&rid) }))
     })

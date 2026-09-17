@@ -737,7 +737,7 @@ impl WorkItem {
 
     // The commit this item lands as: a session entry naming its goal, or the
     // store-level kind. Mirrors docs/compiler/graph.md#journal.
-    pub fn commit(&self, rounds: u32, tokens: u64) -> crate::store::Commit {
+    pub fn commit(&self, rounds: u32, tokens: Option<u64>) -> crate::store::Commit {
         let kind = self.journal_kind();
         crate::store::Commit {
             kind: kind.to_string(),
@@ -1030,8 +1030,11 @@ pub struct JournalEntry {
     pub opened_goals: Vec<OpenedGoal>,
     #[serde(default)]
     pub rounds: u32,
-    #[serde(default)]
-    pub tokens: u64,
+    // Absent when an external agent drove the session: its spend is unknowable from
+    // here, and zero would price the build at nothing.
+    // Mirrors docs/compiler/graph.md#journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
 }
 
 // The budgets the last build used.

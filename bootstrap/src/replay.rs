@@ -281,12 +281,12 @@ pub fn run_case(case: &Case) -> ReplayReport {
     // seeded fixture (docs/benchmark/replays.md#replay-format).
     let staged = session.staged.len();
     if session.done.is_some() && staged > 0 {
-        let commit = session.commit(0, 0);
+        let commit = session.commit(0, None);
         let ops = std::mem::take(&mut session.staged);
         if derived.is_some() {
             store.apply(ops, &commit);
         } else {
-            store.apply(ops, &item.commit(0, 0));
+            store.apply(ops, &item.commit(0, None));
         }
     }
     for (kind, arg) in &case.checks {

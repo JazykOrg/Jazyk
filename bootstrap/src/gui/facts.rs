@@ -416,7 +416,7 @@ mod tests {
         let mut store = Store::load(&out);
         let (parsed, _) = crate::reconcile::parse_all(&proj);
         store.sync_docs(&parsed);
-        let report = store.apply(ops, &Commit::session(vec![], 1, 0));
+        let report = store.apply(ops, &Commit::session(vec![], 1, None));
         assert!(
             report.skipped.is_empty(),
             "seed commit: {:?}",

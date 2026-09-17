@@ -1439,7 +1439,7 @@ fn run_case_turn(
         )
         .ok();
     }
-    let commit = s.commit(rounds.get(), 0);
+    let commit = s.commit(rounds.get(), Some(0));
     (std::mem::take(&mut s.staged), rounds.get(), failed, commit)
 }
 
@@ -1855,7 +1855,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                             if derived_goal.is_some() {
                                 store.apply(staged_ops, &commit);
                             } else {
-                                store.apply(staged_ops, &item.commit(rounds_n, 0));
+                                store.apply(staged_ops, &item.commit(rounds_n, Some(0)));
                             }
                         }
                     }

@@ -956,7 +956,7 @@ impl McpServer {
             h.refresh(Some(""));
         }
         let staged = std::mem::take(&mut o.session.staged);
-        let commit = o.session.commit(o.rounds, 0);
+        let commit = o.session.commit(o.rounds, None);
         let resolved_ids: Vec<String> = commit.resolved.iter().map(|r| r.goal.clone()).collect();
         let mut s = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
@@ -1297,8 +1297,8 @@ impl McpServer {
             staged_count = staged.len();
             if !staged.is_empty() {
                 let commit = match &o.derived {
-                    Some(_) => o.session.commit(o.calls, 0),
-                    None => o.item.commit(o.calls, 0),
+                    Some(_) => o.session.commit(o.calls, None),
+                    None => o.item.commit(o.calls, None),
                 };
                 o.store.apply(staged, &commit);
             }
@@ -2233,7 +2233,7 @@ impl McpServer {
                             let mut s = Store::load(&self.out);
                             let report = s.apply(
                                 session.staged,
-                                &crate::store::Commit::session(Vec::new(), 1, 0),
+                                &crate::store::Commit::session(Vec::new(), 1, None),
                             );
                             let mut v = v;
                             v["committed"] = json!(report.applied);
@@ -2466,7 +2466,7 @@ impl McpServer {
             stale_anchors: vec![],
             proposals: Vec::new(),
         };
-        let report = s.apply(ops, &item.commit(1, 0));
+        let report = s.apply(ops, &item.commit(1, None));
         if !report.skipped.is_empty() {
             return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
         }

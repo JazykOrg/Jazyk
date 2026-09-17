@@ -2278,6 +2278,15 @@ pub fn compile_with(
         }
         // The session's commits live on disk; the store catches up, the sweep runs, the
         // board re-derives, and the goals the commit opened are recorded on its entry.
+        // The turn's measured spend lands on the entries it wrote: the commit itself
+        // happened inside the serving, before the cost was known
+        // (docs/compiler/graph.md#journal).
+        crate::store::Store::stamp_tokens(
+            out,
+            gen_before,
+            crate::store::read_generation(out),
+            report.tokens,
+        );
         reload(&mut store, out, &parsed);
         sweep(&mut store, trace);
         let before = board;
@@ -2901,10 +2910,12 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
     ) {
         if n.kind == "session" {
             *sessions += 1;
+            // An external session reports no tokens: it counts as a session and adds
+            // nothing to the spend (docs/compiler/graph.md#journal).
             let t = entries
                 .iter()
                 .find(|e| e.generation == n.generation)
-                .map(|e| e.tokens)
+                .and_then(|e| e.tokens)
                 .unwrap_or(0);
             *tokens += t;
             if let Some((k, _)) = n.batch.first().and_then(|g| goals::parse_goal_id(g)) {
@@ -4330,7 +4341,7 @@ mod tests {
                     via: "entities".into(),
                 },
             }],
-            tokens: 9_800,
+            tokens: Some(9_800),
             ..Default::default()
         };
         crate::vfs::write(
@@ -4665,7 +4676,7 @@ mod tests {
         }
 
         // Step 2: one commit lands the level and crosses the limit on the backend.
-        let report = s.apply(ops, &Commit::session(Vec::new(), 1, 0));
+        let report = s.apply(ops, &Commit::session(Vec::new(), 1, None));
         assert!(report.skipped.is_empty(), "{:?}", report.skipped);
         let crossed = report
             .changes
@@ -4785,7 +4796,7 @@ mod tests {
         // Step 5: the changeset commits; the groupings stand, the record clears, and the
         // level views derive.
         let staged = std::mem::take(&mut t.staged);
-        let commit = t.commit(2, 0);
+        let commit = t.commit(2, None);
         assert_eq!(commit.resolved.len(), 1);
         assert_eq!(commit.resolved[0].goal, goal.id);
         let report = s.apply(staged, &commit);

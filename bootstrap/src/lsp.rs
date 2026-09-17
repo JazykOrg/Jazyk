@@ -1628,7 +1628,7 @@ mod tests {
                 stale_anchors: vec![],
                 proposals: Vec::new(),
             }
-            .commit(0, 0),
+            .commit(0, None),
         );
         let id = s.graph.diagnostics.keys().next().unwrap().clone();
         drop(s);

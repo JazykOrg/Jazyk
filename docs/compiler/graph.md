@@ -486,7 +486,13 @@ tokens: 9800
 The entry kinds:
 
 - `session`: a goal batch's changeset. Carries `batch`, `mutations`, `rounds`, `tokens`,
-  and the model's `reasoning` where a mutation gave one.
+  and the model's `reasoning` where a mutation gave one. The entry commits inside the
+  serving, before the turn's cost is known, so `tokens` is stamped afterwards by the
+  build that measured it, split across the entries that turn wrote. A session an
+  external agent drove ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp))
+  spends tokens the harness never sees, so its entry carries no `tokens` at all rather
+  than claiming zero: reading `tokens: 0` on every session, a person would price a build
+  at nothing. `rounds` counts the session's rounds, or an external agent's tool calls.
 - `edit`: a human save that dirtied sections. Written at the start of a build when the
   parse finds changes, one mutation per dirtied or removed section, so the root of every
   ripple is itself a generation. Carries `dirtied`.

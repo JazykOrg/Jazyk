@@ -349,7 +349,9 @@ pub struct Commit {
     pub batch: Vec<String>,
     pub resolved: Vec<Resolved>,
     pub rounds: u32,
-    pub tokens: u64,
+    // None when an external agent drove the session: its spend is unknowable here
+    // (docs/compiler/graph.md#journal).
+    pub tokens: Option<u64>,
     // A changeset that lands whole or not at all: one skipped op rolls the graph
     // back and nothing is journaled (a retract, docs/compiler/goals/ratify.md#retract).
     pub all_or_nothing: bool,
@@ -365,7 +367,7 @@ impl Commit {
         }
     }
 
-    pub fn session(batch: Vec<String>, rounds: u32, tokens: u64) -> Commit {
+    pub fn session(batch: Vec<String>, rounds: u32, tokens: Option<u64>) -> Commit {
         Commit {
             kind: "session".to_string(),
             batch,
@@ -988,6 +990,38 @@ impl Store {
             rounds: commit.rounds,
             tokens: commit.tokens,
             ..Default::default()
+        }
+    }
+
+    // Stamp the session's measured spend onto the entries a session just wrote: the
+    // entry commits inside the serving, before the runner knows what the turn cost.
+    // Mirrors docs/compiler/graph.md#journal.
+    pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64) {
+        if tokens == 0 || to <= from {
+            return;
+        }
+        let gens: Vec<u64> = (from + 1..=to).collect();
+        let share = tokens / gens.len().max(1) as u64;
+        for (i, g) in gens.iter().enumerate() {
+            let p = out.join("journal").join(format!("g{}.yaml", g));
+            let Ok(text) = crate::vfs::read_to_string(&p) else {
+                continue;
+            };
+            let Ok(mut entry) = serde_norway::from_str::<JournalEntry>(&text) else {
+                continue;
+            };
+            if entry.kind != "session" || entry.tokens.is_some() {
+                continue;
+            }
+            // The remainder rides on the last entry, so the parts sum to the spend.
+            entry.tokens = Some(if i + 1 == gens.len() {
+                tokens - share * (gens.len() as u64 - 1)
+            } else {
+                share
+            });
+            if let Ok(out_text) = serde_norway::to_string(&entry) {
+                crate::vfs::write(&p, out_text).ok();
+            }
         }
     }
 
@@ -4703,7 +4737,7 @@ impl Store {
             self.status.spent.sessions += 1;
         }
         self.status.spent.rounds += commit.rounds as u64;
-        self.status.spent.tokens += commit.tokens;
+        self.status.spent.tokens += commit.tokens.unwrap_or(0);
         // An accepted pair verdict marks the partner judged on every created or
         // revised record of either side that stood before this commit; the records
         // this commit lands start with an empty list, so a side repaired in the
@@ -5816,7 +5850,7 @@ mod tests {
     }
 
     fn session() -> Commit {
-        wi().commit(1, 0)
+        wi().commit(1, None)
     }
 
     fn mention(doc: &str, sec: &str, quote: &str) -> SourceRef {
@@ -5897,7 +5931,7 @@ mod tests {
                 criterion: quoted("Given the lines 321, 654, 453, the utility outputs 321, 453, 654"),
             },
         ];
-        let r = s.apply(ops, &wi().commit(3, 100));
+        let r = s.apply(ops, &wi().commit(3, Some(100)));
         assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
         assert_eq!(ids, vec!["crit:t-1", "crit:t-2"], "{:?}", ids);
@@ -5917,7 +5951,7 @@ mod tests {
                 source: None,
                 provenance: None,
             }],
-            &wi().commit(4, 100),
+            &wi().commit(4, Some(100)),
         );
         assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-2"));
         assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
@@ -5927,7 +5961,7 @@ mod tests {
                 id: "req:t-1".into(),
                 reason: "gone".into(),
             }],
-            &wi().commit(5, 100),
+            &wi().commit(5, Some(100)),
         );
         assert!(s.graph.criteria.is_empty());
         assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
@@ -6187,7 +6221,7 @@ mod tests {
         assert!(entry.opened_goals.is_empty());
         assert_eq!(Store::load(&s.out).status.version, STORE_VERSION);
         // Resolved goals ride on the entry; opened goals land after the board re-derives.
-        let mut commit = wi().commit(2, 10);
+        let mut commit = wi().commit(2, Some(10));
         commit.resolved.push(Resolved {
             goal: "g:reconcile-section:t.md".into(),
             justification: "covered".into(),
@@ -6306,7 +6340,7 @@ mod tests {
                 id: "ent:cart".into(),
                 entity: e.clone(),
             }],
-            &wi().commit(1, 10),
+            &wi().commit(1, Some(10)),
         );
         assert_eq!(r.applied, 1);
         assert!(s.graph.entities.contains_key("ent:cart"));
@@ -6321,7 +6355,7 @@ mod tests {
                 id: "ent:cart-x".into(),
                 entity: e2,
             }],
-            &wi().commit(1, 10),
+            &wi().commit(1, Some(10)),
         );
         assert_eq!(s.graph.entities.len(), 1);
         assert_eq!(s.graph.entities["ent:cart"].mentions.len(), 2);
@@ -6432,7 +6466,7 @@ mod tests {
                 },
             },
         ];
-        let r = s.apply(ops, &wi().commit(3, 100));
+        let r = s.apply(ops, &wi().commit(3, Some(100)));
         assert_eq!(r.applied, 3);
         let req = &s.graph.requirements["req:t-1"];
         assert_eq!(
@@ -7902,6 +7936,48 @@ mod tests {
 
     // A save that dirtied sections is a generation of its own with its records.
     // Mirrors docs/compiler/graph.md#journal.
+    // The journal's `tokens` is the session's measured spend, stamped after the turn:
+    // the entry commits inside the serving, before the cost is known, and a zero
+    // would price the build at nothing (docs/compiler/graph.md#journal).
+    #[test]
+    fn measured_spend_stamps_the_entries_a_session_wrote() {
+        let out = own_dir("stamp-tokens");
+        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        let write = |g: u64, kind: &str, tokens: Option<u64>| {
+            let entry = JournalEntry {
+                build: format!("g{}", g),
+                generation: g,
+                kind: kind.to_string(),
+                tokens,
+                ..Default::default()
+            };
+            crate::vfs::write(
+                out.join("journal").join(format!("g{}.yaml", g)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        };
+        write(1, "edit", None);
+        write(2, "session", None);
+        write(3, "session", None);
+        Store::stamp_tokens(&out, 1, 3, 901);
+        let read = |g: u64| -> JournalEntry {
+            serde_norway::from_str(
+                &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        // The two session entries carry the whole spend between them; the edit entry,
+        // which no session wrote, stays without one.
+        assert_eq!(read(2).tokens, Some(450));
+        assert_eq!(read(3).tokens, Some(451));
+        assert_eq!(read(1).tokens, None);
+        // A second stamp over the same generations leaves the first one's numbers.
+        Store::stamp_tokens(&out, 1, 3, 100);
+        assert_eq!(read(2).tokens, Some(450));
+    }
+
     #[test]
     fn sync_docs_journals_an_edit_entry_with_section_records() {
         let mut s = Store {
@@ -9330,7 +9406,7 @@ mod tests {
                     from: from("The cart holds items a customer intends to buy."),
                 },
             ],
-            &align_item.commit(1, 0),
+            &align_item.commit(1, None),
         );
         assert_eq!(report.applied, 3, "{:?}", report.skipped);
         assert!(s.status.alignment.is_empty());
@@ -9616,7 +9692,7 @@ mod tests {
         assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:p08"));
         assert!(s.status.has_change(CHANGE_REQ_CREATED, "req:p12"));
         // The session resolves the hub against req:p12 (score 4, opened first).
-        let mut commit = Commit::session(vec![pair("req:p12")], 3, 0);
+        let mut commit = Commit::session(vec![pair("req:p12")], 3, None);
         commit.resolved.push(Resolved {
             goal: pair("req:p12"),
             justification: "consistent: different obligations".into(),
@@ -9653,7 +9729,7 @@ mod tests {
         for r in batch.records() {
             s.status.record_change(r.clone());
         }
-        let mut commit = Commit::session(vec![pair("req:p01")], 3, 0);
+        let mut commit = Commit::session(vec![pair("req:p01")], 3, None);
         commit.resolved.push(Resolved {
             goal: pair("req:p01"),
             justification: "consistent".into(),
@@ -9671,7 +9747,7 @@ mod tests {
         let plan = crate::goals::pair_plan(&s);
         assert!(plan.open.iter().all(|g| g.id != pair("req:p01")));
         // A failed pair marks nothing judged.
-        let mut commit = Commit::session(vec![pair("req:p02")], 3, 0);
+        let mut commit = Commit::session(vec![pair("req:p02")], 3, None);
         commit.resolved.clear();
         s.apply(vec![], &commit);
         assert!(s

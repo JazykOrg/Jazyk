@@ -1413,7 +1413,7 @@ impl ToolSession {
 
     // The commit this session lands as: kind `session`, the batch's goal ids, and the
     // resolutions with their justifications. Mirrors docs/compiler/graph.md#journal.
-    pub fn commit(&self, rounds: u32, tokens: u64) -> crate::store::Commit {
+    pub fn commit(&self, rounds: u32, tokens: Option<u64>) -> crate::store::Commit {
         let resolved = self
             .outcomes
             .iter()
@@ -9310,7 +9310,7 @@ mod tests {
         assert!(open.iter().any(|g| g == "g:rejudge-pair:req:b~req:c"), "{}", v);
         // One resolution per goal with its own justification and evidence, as the
         // journal records them; one diagnostic staged for the contradiction.
-        let commit = t.commit(1, 0);
+        let commit = t.commit(1, None);
         assert_eq!(commit.resolved.len(), 2);
         let by_goal: BTreeMap<&str, &Resolved> =
             commit.resolved.iter().map(|r| (r.goal.as_str(), r)).collect();
@@ -9492,7 +9492,7 @@ mod tests {
             if diagnostic.rule == "duplicate-requirement" && diagnostic.severity == "info"));
         assert!(matches!(&t.staged[1], Op::ResolveDiagnostic { id, .. } if id == "diag:contradiction-7"));
         // The duplicate resolution carries the diagnostic that carried it.
-        let commit = t.commit(1, 0);
+        let commit = t.commit(1, None);
         assert_eq!(commit.resolved.len(), 2);
         // A verbatim re-send of an accepted entry is marked, then refused; the
         // re-report answers with the same id and stages an update, never a second finding.

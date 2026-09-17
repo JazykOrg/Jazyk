@@ -4359,7 +4359,7 @@ pub fn gen_one(
     if !ops.is_empty() {
         ws.apply(
             ops,
-            &crate::store::Commit::session(vec![format!("g:generate:{}", id)], 0, 0),
+            &crate::store::Commit::session(vec![format!("g:generate:{}", id)], 0, None),
         );
     }
     Ok(files.len())

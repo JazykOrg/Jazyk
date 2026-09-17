@@ -2695,7 +2695,7 @@ mod tests {
                     via: "entities".into(),
                 },
             }],
-            tokens: 21_000,
+            tokens: Some(21_000),
             ..Default::default()
         };
         let g3 = JournalEntry {
@@ -2708,7 +2708,7 @@ mod tests {
                 justification: "consistent".into(),
                 evidence: serde_json::Value::Null,
             }],
-            tokens: 8_000,
+            tokens: Some(8_000),
             ..Default::default()
         };
         for (n, e) in [(1, &g1), (2, &g2), (3, &g3)] {

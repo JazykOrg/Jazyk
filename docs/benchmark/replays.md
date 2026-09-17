@@ -81,8 +81,10 @@ assert:
 ## Running replays
 
 `jazyk replay <file|dir>...` runs every replay in the named files and directories and
-prints one line per step (`ok`, or the mismatch: what was expected and what the
-harness answered) and one per check, then a summary; the exit code is non-zero when
+prints one line per step and one per check, then a summary. A step's line says what the
+harness actually did, not only that the expectation held: `ok` for a reply, `ok
+(refused: <rule>)` for an expected refusal, or the mismatch with what was expected and
+what came back. A reader who cannot tell a refusal from a reply cannot read the log; the exit code is non-zero when
 any step or check fails. With no argument it runs [`replays/`](./replays). A named file holding no replay is an
 error, never a silent pass: an unclosed fence once graded nothing and exited 0. The
 replays under `replays/` also run under `cargo test`, so a harness change that breaks

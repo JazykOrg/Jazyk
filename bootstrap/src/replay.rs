@@ -128,7 +128,14 @@ fn judge(step: &Step, reply: &Result<Value, crate::tools::ToolError>) -> (bool, 
         }
     }
     if problems.is_empty() {
-        (true, clip(&text))
+        // The line says what happened, not only that the expectation held
+        // (docs/benchmark/replays.md#running-replays).
+        let what = if is_err {
+            format!("refused: {}", rule)
+        } else {
+            String::new()
+        };
+        (true, what)
     } else {
         (false, problems.join("; "))
     }
@@ -302,7 +309,11 @@ pub fn print_report(r: &ReplayReport) {
             i + 1,
             s.call,
             if s.ok { "ok" } else { "FAIL " },
-            if s.ok { String::new() } else { s.detail.clone() }
+            match (s.ok, s.detail.is_empty()) {
+                (true, true) => String::new(),
+                (true, false) => format!(" ({})", s.detail),
+                _ => s.detail.clone(),
+            }
         );
     }
     for (k, f) in &r.checks {

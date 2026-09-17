@@ -3177,6 +3177,35 @@ mod tests {
     // Eight checks had no test and had never fired in fifteen measured iterations: a
     // check nobody has seen fire and nobody tests is a check nobody knows works.
     // Mirrors docs/compiler/compilation.md#checks.
+    // Flip detection over natural keys: an id carrying a collision suffix while a
+    // tombstone holds the base slug is a key deleted and recreated.
+    // Mirrors docs/compiler/reconciler.md#flip-detection.
+    #[test]
+    fn unstable_extraction_flags_a_recreated_natural_key() {
+        let mut s = Store::default();
+        seed_doc(&mut s, "shop.md", "# Shop\nThe Cart holds items.\n");
+        let named = |n: &str| Entity {
+            name: n.to_string(),
+            ..Default::default()
+        };
+        s.graph
+            .entities
+            .insert("ent:cart-2".into(), named("Cart"));
+        s.graph
+            .entities
+            .insert("ent:basket-2".into(), named("Basket"));
+        // A tombstone is an empty redirect: the key was deleted, not merged.
+        s.graph.redirects.insert("ent:cart".into(), String::new());
+        s.graph
+            .redirects
+            .insert("ent:basket".into(), "ent:trolley".into());
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "unstable-extraction");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:cart-2"]);
+        assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
+    }
+
     #[test]
     fn coverage_checks_flag_an_unprocessed_and_a_suspicious_section() {
         let mut s = Store::default();

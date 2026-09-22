@@ -455,7 +455,10 @@ Without a root it walks the last build: the cascade rooted at the generation the
 opened with, the whole-build report.
 
 - For a target (a node id): the last cascade that touched it, from the human edit at
-  its root through the generations that followed.
+  its root through the generations that followed. A cascade is rooted at an entry that
+  carries goals (a session, an edit, a decree); an entry that only records a check run
+  names the node without explaining it, so it is skipped when choosing the root. Rooting
+  there printed one line and no chain for a requirement a whole build had worked on.
 - For a generation (`g87`, or `87`): the full tree forward from it. Rooted at the
   generation a build opened with, this is the whole-build report: the causality DAG,
   the cost totals (sessions, tokens, per goal kind), and the parked and failed goals

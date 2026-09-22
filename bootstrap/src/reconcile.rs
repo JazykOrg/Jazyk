@@ -2848,7 +2848,19 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
                     .any(|d| d.starts_with(&format!("{}#", root)) || d == root)
         })?
     } else {
-        let last = entries.iter().rev().find(|e| touches(e, root))?;
+        // A cascade roots at an entry that carries goals; a check run names the node
+        // without explaining it (docs/frontends/cli.md#jazyk-ripple).
+        let roots_a_cascade = |e: &JournalEntry| {
+            e.kind == "edit"
+                || !e.batch.is_empty()
+                || !e.resolved_goals.is_empty()
+                || !e.opened_goals.is_empty()
+        };
+        let last = entries
+            .iter()
+            .rev()
+            .find(|e| touches(e, root) && roots_a_cascade(e))
+            .or_else(|| entries.iter().rev().find(|e| touches(e, root)))?;
         // The last cascade that touched it: back to its root, then forward.
         let mut cur = last;
         let mut hops = 0;
@@ -4465,9 +4477,27 @@ mod tests {
             "{}",
             text
         );
-        // A node root finds the last cascade that touched it and starts at its edit.
+        // A node root finds the last cascade that touched it and starts at its edit,
+        // skipping a later check run that names the node but carries no goals
+        // (docs/frontends/cli.md#jazyk-ripple).
+        let checks = JournalEntry {
+            build: "g95".into(),
+            generation: 95,
+            kind: "checks".into(),
+            mutations: vec![serde_json::json!({
+                "op": "diagnostic_filed",
+                "subject": "req:orders-6",
+            })],
+            ..Default::default()
+        };
+        crate::vfs::write(
+            dir.join("journal/g95.yaml"),
+            serde_norway::to_string(&checks).unwrap(),
+        )
+        .unwrap();
         let by_node = ripple(&s, "req:orders-6", false).unwrap();
         assert_eq!(by_node.root.generation, 87);
+        assert_eq!(by_node.root.kind, "edit");
         let back = ripple(&s, "89", true).unwrap();
         assert_eq!(back.root.generation, 87);
         assert_eq!(back.root.children[0].generation, 88);

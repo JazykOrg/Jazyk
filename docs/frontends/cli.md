@@ -479,6 +479,19 @@ gc: no goals derived
 converged: 4 sessions, 2 recomputes, 29k tokens
 ```
 
+A session that resolved one goal prints as one line, as above. A batch that resolved
+several prints a header naming the kinds and the count, then one line per goal with its
+target and its justification, indented under it:
+
+```
+├─ rejudge-pair ×8 g44
+│    req:expenses-10~req:expenses-11: consistent, one states the deadline and the other the handoff
+│    req:expenses-11~req:expenses-17: consistent, different steps of the same claim
+```
+
+Joining eight goals and their justifications into one line, as this once did, put the
+whole batch past the width of any terminal.
+
 Every line is a journal entry; every indent is a goal with its cause and justification
 on record. The `recomputed at commit` line is
 [derived data](../compiler/graph.md#derived-data) following the requirement without a

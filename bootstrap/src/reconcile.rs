@@ -2951,12 +2951,50 @@ pub fn ripple(store: &Store, root: &str, back: bool) -> Option<RippleTree> {
 
 // Plain text, one line per journal entry, indented per goal.
 pub fn render_ripple(tree: &RippleTree) -> String {
+    // A batch that resolved several goals prints a header and one line per goal:
+    // joining them put the whole batch past any terminal's width.
+    // Mirrors docs/frontends/cli.md#jazyk-ripple.
+    fn many(n: &RippleNode) -> bool {
+        n.resolved.len() > 1
+    }
+    fn header(n: &RippleNode) -> String {
+        let mut kinds: Vec<&str> = n
+            .batch
+            .iter()
+            .filter_map(|g| goals::parse_goal_id(g).map(|(k, _)| k))
+            .collect();
+        kinds.dedup();
+        format!(
+            "{} x{} g{}",
+            kinds.join(", "),
+            n.resolved.len(),
+            n.generation
+        )
+    }
     fn line(n: &RippleNode) -> String {
+        if many(n) {
+            return header(n);
+        }
         let mut s = format!("{} g{}", n.label, n.generation);
         if !n.summary.is_empty() {
             s.push_str(&format!(": {}", n.summary));
         }
         s
+    }
+    fn goal_lines(n: &RippleNode, prefix: &str, out: &mut String) {
+        if !many(n) {
+            return;
+        }
+        for r in &n.resolved {
+            let target = goals::parse_goal_id(&r.goal)
+                .map(|(_, t)| t.to_string())
+                .unwrap_or_else(|| r.goal.clone());
+            if r.justification.is_empty() {
+                out.push_str(&format!("{}  {}\n", prefix, target));
+            } else {
+                out.push_str(&format!("{}  {}: {}\n", prefix, target, r.justification));
+            }
+        }
     }
     fn walk(n: &RippleNode, prefix: &str, out: &mut String) {
         for r in &n.recomputed {
@@ -2972,6 +3010,7 @@ pub fn render_ripple(tree: &RippleTree) -> String {
                 line(c)
             ));
             let next = format!("{}{}", prefix, if last { "   " } else { "│  " });
+            goal_lines(c, &next, out);
             walk(c, &next, out);
         }
     }
@@ -2981,6 +3020,7 @@ pub fn render_ripple(tree: &RippleTree) -> String {
         tree.root.kind,
         line(&tree.root).trim_start_matches(&format!("{} ", tree.root.kind))
     ));
+    goal_lines(&tree.root, "", &mut out);
     walk(&tree.root, "", &mut out);
     let gc: usize = tree
         .by_kind
@@ -4390,6 +4430,41 @@ mod tests {
             text
         );
         assert!(text.contains("19k tokens"), "{}", text);
+        // A batch that resolved several goals prints a header and one line per goal:
+        // joining them ran past any terminal's width
+        // (docs/frontends/cli.md#jazyk-ripple).
+        let mut many = tree.root.children[0].children[0].clone();
+        many.resolved = vec![
+            Resolved {
+                goal: "g:rejudge-pair:req:orders-6~req:payment-9".into(),
+                justification: "consistent: one states the deadline, the other the handoff".into(),
+                evidence: serde_json::Value::Null,
+            },
+            Resolved {
+                goal: "g:rejudge-pair:req:orders-6~req:orders-7".into(),
+                justification: "duplicate: both state the 30 day hold".into(),
+                evidence: serde_json::Value::Null,
+            },
+        ];
+        many.batch = vec![
+            "g:rejudge-pair:req:orders-6~req:payment-9".into(),
+            "g:rejudge-pair:req:orders-6~req:orders-7".into(),
+        ];
+        let mut wide = tree.clone();
+        wide.root.children[0].children[0] = many;
+        let text = render_ripple(&wide);
+        assert!(text.contains("rejudge-pair x2 g89"), "{}", text);
+        assert!(
+            text.contains("req:orders-6~req:orders-7: duplicate: both state the 30 day hold"),
+            "{}",
+            text
+        );
+        // The one-goal shape is unchanged: kind, target, generation, justification.
+        assert!(
+            text.contains("reconcile-section docs/orders.md#/orders/holds g88: req:orders-6 revised"),
+            "{}",
+            text
+        );
         // A node root finds the last cascade that touched it and starts at its edit.
         let by_node = ripple(&s, "req:orders-6", false).unwrap();
         assert_eq!(by_node.root.generation, 87);

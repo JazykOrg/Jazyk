@@ -3,7 +3,7 @@
 Grades what a criterion observes. For software, the observer uses the product the way
 its user does: a client sends a request and reads the response. Inspecting a contract, a
 specification, or a configuration is not an observation, and a criterion framed that way
-lets a descriptor object pass for a server. A generated ERP once read verified on every
+lets a descriptor object pass for a server. A requirement that states only the technology ("built using Node.js and Express") may take no criterion and an `invented-choice` question instead: nothing a user does observes it. A generated ERP once read verified on every
 criterion with no server at all, its first criterion reading "a client examines the
 integration contract" (see [criteria](../../compiler/skills/criteria.md)).
 
@@ -46,7 +46,7 @@ assert:
       pattern: 'contract|specification|spec\b|config|examin|inspect|document'
       max: 0
   - criteriaMatching:
-      pattern: 'request|respon|endpoint|GET |POST |call'
+      pattern: 'request|respon|endpoint|GET |POST |call|sees|shows|opens|displays|lists'
       min: 1
   - criteriaCount:
       requirement: req:backend-2

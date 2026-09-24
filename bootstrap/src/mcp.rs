@@ -1119,7 +1119,7 @@ impl McpServer {
                 } else {
                     json!("pending")
                 };
-                json!({"name": c.name, "tier": c.tier, "task": c.task_type, "state": state})
+                json!(format!("{} ({}, {}): {}", c.name, c.tier, c.task_type, state.as_str().unwrap_or("")))
             })
             .collect();
         let done = b.scored.len();
@@ -1130,7 +1130,7 @@ impl McpServer {
             "next": if done >= cases.len() {
                 "all cases scored; call benchmark_report with an honest model name"
             } else {
-                "begin_case claims the first pending case"
+                "begin_case {case: <name>} claims that case; with no name, the first pending one"
             },
         })
     }
@@ -2213,6 +2213,7 @@ impl McpServer {
                 if store.docs.is_empty()
                     && store.graph.entities.is_empty()
                     && !self.modes.iter().any(|m| m == "compile")
+                    && name != "report_feedback"
                 {
                     return Ok(text_result(
                         json!({"error": {"rule": "no-build", "message": "no graph found; run `jazyk compile` first (or connect a compile serving)"}}),
@@ -2928,6 +2929,15 @@ mod tests {
         assert!(marked["marked"].is_string(), "{}", marked);
         let scored = call("finish_case", json!({"summary": "criteria derived"}));
         assert_eq!(scored["scored"]["score"], json!(1.0), "{}", scored);
+        // One line per case, so a long list stays readable to an agent whose client
+        // truncates replies (Codex's guard refused a case it could not see listed).
+        let list = call("benchmark_cases", json!({}));
+        let rows = list["cases"].as_array().unwrap();
+        assert!(rows.iter().all(|r| r.is_string()), "{}", list);
+        assert!(rows.iter().any(|r| r == "criteria-density (review, derive-criteria): scored 1.0"), "{}", list);
+        // Feedback answers with no graph in the serving's out directory.
+        let fed = call("report_feedback", json!({"kind": "wrong", "subject": "begin_case", "message": "a test note"}));
+        assert!(fed.get("error").is_none(), "{}", fed);
     }
 
     // A verify serving for an agent with no editor of its own lists the read-only

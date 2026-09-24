@@ -169,8 +169,10 @@ A coding agent is graded the same way an endpoint is: by performing the cases. T
 claimable goal against a throwaway sandbox store, and the agent under test does the
 work with the same write tools a compile session holds:
 
-- `benchmark_cases()`: the case list with each case's tier and state (pending, scored,
-  open), and the run's progress.
+- `benchmark_cases()`: the case list, one line per case (its name, tier, task, and
+  state: pending, scored, open), and the run's progress. A pretty-printed object per
+  case ran past what Codex shows of a reply at 31 cases, and its approval guard refused
+  `begin_case` on a named case it could not see in the list.
 - `begin_case({case?})`: claim the named case or the first pending one. The reply has
   the shape a `begin_goals` reply has
   ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)): top-level

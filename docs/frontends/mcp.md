@@ -442,7 +442,8 @@ Reads load the persisted graph from the out directory (see
 [storage layout](../compiler/graph.md#storage-layout)). The server never compiles on
 its own. If no graph exists yet, the compile toolset offers the board (a first build
 is a board where every section is unprocessed); the other toolsets answer with
-guidance to compile first.
+guidance to compile first. `report_feedback` answers either way: it writes only the
+feedback log, never the graph.
 
 Readers do not lock. They read the generation counter, load shards, and retry if the
 counter moved mid-read. Writers respect the store lock, so one changeset commits at a

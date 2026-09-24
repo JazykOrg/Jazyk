@@ -9,10 +9,12 @@ import { useApp } from '../lib/store'
 import { shapeWords, verdictWords } from '../lib/words'
 import Wizard, { useSettingsExists } from './Wizard'
 
-const DEMOS = [
+// The bundled examples (docs/frontends/gui.md#home). The editor entry fetches the
+// fixture named by the id.
+export const DEMOS = [
   { id: 'shop', name: 'The shop', blurb: 'a small online shop, three entities' },
   { id: 'sort', name: 'The sort utility', blurb: 'a sort described near pseudo-code, with its code and tests' },
-  { id: 'erp', name: 'The ERP', blurb: 'a warehouse system across eight documents' },
+  { id: 'erp', name: 'The ERP', blurb: 'a warehouse system across six documents' },
   { id: 'slides', name: 'The slide deck', blurb: 'a deck specified per slide, built to a file' },
   { id: 'novel', name: 'The novel', blurb: 'a narrative: characters, arcs, settings' },
   { id: 'org', name: 'The organization', blurb: 'a company handbook' },
@@ -82,19 +84,26 @@ export default function Home() {
               Open folder…
             </button>
           )}
-          {kind === 'bundled' && (
-            <select onChange={(e) => window.dispatchEvent(new CustomEvent('jazyk:open-demo', { detail: e.target.value }))} defaultValue="">
-              <option value="" disabled>
-                Try a demo…
-              </option>
-              {DEMOS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}: {d.blurb}
-                </option>
-              ))}
-            </select>
-          )}
         </div>
+
+        {kind === 'bundled' && (
+          <>
+            <h2>Demos</h2>
+            <div className="demos">
+              {DEMOS.map((d) => (
+                <button
+                  key={d.id}
+                  className="demo"
+                  onClick={() => window.dispatchEvent(new CustomEvent('jazyk:open-demo', { detail: d.id }))}
+                  title="opens in this tab; changes stay in the tab"
+                >
+                  <span className="name">{d.name}</span>
+                  <span className="blurb">{d.blurb}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {kind === 'list' && (
           <>

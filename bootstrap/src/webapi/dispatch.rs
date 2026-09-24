@@ -382,11 +382,13 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
         }
         ("GET", "/questions") => ok(json!({ "questions": [] })),
         ("GET", "/gen/pending") => ok(json!({ "pending": [] })),
-        ("GET", "/verify/pending") => ok(json!({ "pending": [] })),
-        ("GET", "/verify/matrix") => ok(json!({ "rows": [] })),
-        ("GET", "/benchmarks") => ok(json!({ "runs": [] })),
+        // Each empty answer keeps the native handler's shape (gui.md#api): the pages
+        // index `rows` and `counts` as objects and crash on an array or a hole.
+        ("GET", "/verify/pending") => ok(json!({ "pending": [], "counts": {} })),
+        ("GET", "/verify/matrix") => ok(json!({ "rows": {}, "counts": {} })),
+        ("GET", "/benchmarks") => ok(json!({ "caseSetHash": "", "results": [] })),
         ("GET", "/benchmarks/models") => ok(json!({ "models": [] })),
-        ("GET", "/deliverable") => ok(json!({ "files": [] })),
+        ("GET", "/deliverable") => ok(json!({ "root": "", "files": [], "medium": null, "build": null })),
         ("GET", "/trace") => ok(json!({ "traces": [] })),
 
         ("GET", "/watch") => ok(json!({ "watch": false })),

@@ -7,8 +7,9 @@
 #   DNS:          Porkbun, apex ALIAS + www CNAME to the CloudFront domain
 #
 # Nothing is built: the files here are the site. Everything but the HTML pages is
-# cached for a week, the HTML pages are not cached, and the whole distribution is
-# invalidated afterwards. Details in README.md.
+# cached for a week, the HTML pages are not cached, both syncs delete what the
+# directory no longer has, and the whole distribution is invalidated afterwards.
+# Details in README.md.
 #
 # Locally this uses AWS_PROFILE=smotana. In GitHub Actions the OIDC role's
 # credentials arrive in the environment, so the profile is left alone.
@@ -28,7 +29,7 @@ aws s3 sync . "s3://$BUCKET/" --delete \
   --exclude 'deploy.sh' --exclude 'README.md' --exclude '.DS_Store' --exclude '*.html' \
   --cache-control "max-age=604800"
 
-aws s3 sync . "s3://$BUCKET/" \
+aws s3 sync . "s3://$BUCKET/" --delete \
   --exclude '*' --include '*.html' \
   --cache-control "max-age=0"
 

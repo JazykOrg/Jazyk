@@ -82,7 +82,7 @@ loaded set as a stub.
   further). Each entry carries id, rule, severity, lifecycle, triage, subjects,
   message, whether it carries an unanswered prompt, and `owner: harness` on the
   build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
-  `unstable-*`), which no session resolves
+  `criterion-missing`, `unstable-*`), which no session resolves
   ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)). This is the read surface for
   document health; without it an agent can only learn diagnostic state by reading the
   out directory off disk.
@@ -218,8 +218,9 @@ a mutating reply previews the goals the mutation will open
   natural-key upsert; this tool only maintains the question. Never touches a human-set
   `answer` or `triage`.
 - `resolve_diagnostic({id, reason})`. Refused on a harness-owned rule
-  (`incomplete-build`, `ratification-pending`, `unstable-*`), naming the owner: the
-  build settles those itself ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)).
+  (`incomplete-build`, `ratification-pending`, `criterion-missing`, `unstable-*`),
+  naming the owner: the build settles those itself (a `criterion-missing` clears when a
+  [`derive-criteria`](./goals/derive-criteria.md) goal lands a criterion) ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)).
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
   `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
   counts as absent. `non-normative` is rejected for a section that already yielded a

@@ -159,7 +159,10 @@ Computed by the harness and rendered under the goal block:
   stale hint.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
   naming the entity itself ride in the loaded set. Harness-owned rules
-  (`incomplete-build`, `ratification-pending`, `unstable-*`) are left out: the build
+  (`incomplete-build`, `ratification-pending`, `criterion-missing`, `unstable-*`) are
+  left out: a review can neither add a criterion nor clear the check that refiles it,
+  and listing them once made every review recite seven "stands" entries and write a
+  three-sentence justification the gate refused. The build
   settles them, and a review never resolves them
   ([lifecycle](../model/diagnostic.md#lifecycle-and-triage)).
 - `level views: <view id> (this entity), <view id> (the level above)`: the structural

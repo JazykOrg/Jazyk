@@ -5698,8 +5698,67 @@ pub(crate) mod tests {
                 updated: None,
             },
         );
+        // A criterion-missing finding is the build's too: a review can neither add a
+        // criterion nor clear the check that refiles it
+        // (docs/compiler/goals/review-entity.md#hints).
+        s.graph.requirements.insert(
+            "req:backend-1".into(),
+            Requirement {
+                statement: "The Backend serves the REST API.".into(),
+                entities: vec!["ent:backend".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.diagnostics.insert(
+            "diag:criterion-missing-1".into(),
+            crate::model::Diagnostic {
+                rule: "criterion-missing".into(),
+                severity: "warning".into(),
+                subjects: vec![s
+                    .requirements_referencing("ent:backend")
+                    .first()
+                    .cloned()
+                    .expect("the fixture's backend carries a requirement")],
+                message: "no acceptance criterion".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+        let rid = s.requirements_referencing("ent:backend")[0].clone();
+        s.graph.diagnostics.insert(
+            "diag:ambiguity-1".into(),
+            crate::model::Diagnostic {
+                rule: "ambiguity".into(),
+                severity: "warning".into(),
+                subjects: vec![rid],
+                message: "two readings".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
         let goals = ReviewEntity.derive_goals(&s, &gen_settings());
         let g = goals.iter().find(|g| g.target == "ent:backend").unwrap();
+        // The control: a finding a review can act on is listed on the same requirement.
+        assert!(
+            g.hints.iter().any(|h| h.contains("diag:ambiguity-1")),
+            "{:?}",
+            g.hints
+        );
+        assert!(
+            !g.hints.iter().any(|h| h.contains("criterion-missing")),
+            "{:?}",
+            g.hints
+        );
         let own = crate::derive::level_view_id(&s, "ent:backend").unwrap();
         let parent = crate::derive::level_view_id(&s, "scope:public").unwrap();
         assert!(

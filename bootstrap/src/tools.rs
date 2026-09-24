@@ -1311,8 +1311,13 @@ pub enum GoalOutcome {
 // One session's tool serving: reads answer from the snapshot, writes stage into the changeset.
 // The build's own bookkeeping rules, settled by the harness and never a session's to
 // resolve. Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+// Mirrors docs/compiler/tools.md#read-tools: `criterion-missing` clears when a
+// derive-criteria goal lands a criterion, and a review can do neither.
 pub fn harness_owned_rule(rule: &str) -> bool {
-    rule == "incomplete-build" || rule == "ratification-pending" || rule.starts_with("unstable-")
+    rule == "incomplete-build"
+        || rule == "ratification-pending"
+        || rule == "criterion-missing"
+        || rule.starts_with("unstable-")
 }
 
 pub struct ToolSession {

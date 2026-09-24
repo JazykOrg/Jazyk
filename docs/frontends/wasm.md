@@ -115,7 +115,7 @@ implementations satisfy it.
   closure that calls `tools/call` on that serving.
 
 The serving is the same one a native session gets, in the same mode, so the
-[gates](../compiler/graph.md#gates), the staged changeset, and the atomic commit are
+[gates](../compiler/graph.md#validation-gates), the staged changeset, and the atomic commit are
 the ones every other front door uses. What landed is read from the
 [journal](../compiler/graph.md#journal) through `crate::runner::journal_diff`, never
 from the model's word. A batch the model leaves open never commits: the changeset is

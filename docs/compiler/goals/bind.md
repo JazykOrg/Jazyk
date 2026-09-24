@@ -140,7 +140,7 @@ context                            the requirement's neighborhood (../context.md
    one, runs it, and records with `record_binding`. The statement's shape suggests the
    test's shape (an event → a scenario, an invariant → a property check, an unwanted
    behavior → a negative check, a state condition → a stateful check), and the test
-   must be [falsifiable](../../consumers/gen.md#tests-tie-requirements-to-the-deliverable):
+   must be [falsifiable](../../consumers/gen.md#tests-tie-criteria-to-the-deliverable):
    when no falsifiable programmatic assertion exists, the kind is `llm` and the
    artifact is a [criteria file](../../consumers/gen.md#criteria-files-for-llm-tests).
 

@@ -13,7 +13,8 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 24] = [
+const CASE_FILES: [&str; 25] = [
+    include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
     include_str!("../../docs/benchmark/cases/criteria-density.md"),
@@ -599,6 +600,23 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     && r.entities.iter().any(|e| store.resolve_id(e) == ent_id)
             });
             (!found).then(|| format!("no requirement matching `{}` on {}", pat, ent_id))
+        }
+        "criteriaMatching" => {
+            let rx = match compile(arg["pattern"].as_str().unwrap_or_default()) {
+                Ok(r) => r,
+                Err(e) => return Some(e),
+            };
+            let n = store
+                .graph
+                .criteria
+                .values()
+                .filter(|c| match arg["requirement"].as_str() {
+                    Some(rid) => store.resolve_id(&c.requirement) == store.resolve_id(rid),
+                    None => true,
+                })
+                .filter(|c| rx.is_match(&c.statement))
+                .count();
+            within(n, arg, "matching criteria")
         }
         "attributeExists" => {
             let ent = arg["entity"].as_str().unwrap_or_default();
@@ -2291,9 +2309,9 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-one files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-two files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 30);
+        assert_eq!(cases.len(), 31);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2319,7 +2337,7 @@ mod tests {
         assert_eq!(extract.checks.len(), 6);
         // Tier defaults to extraction; the review and structure cases declare theirs.
         assert_eq!(extract.tier, "extraction");
-        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 10);
+        assert_eq!(cases.iter().filter(|c| c.tier == "review").count(), 11);
         assert_eq!(cases.iter().filter(|c| c.tier == "structure").count(), 6);
         let lint = cases.iter().find(|c| c.name == "review-lint").unwrap();
         assert_eq!(lint.lint.warnings.len(), 1);
@@ -2365,7 +2383,7 @@ mod tests {
     fn derived_cases_seed_and_derive_their_goal() {
         let cases = parse_cases();
         let derived: Vec<&Case> = cases.iter().filter(|c| c.derives_goal()).collect();
-        assert_eq!(derived.len(), 11);
+        assert_eq!(derived.len(), 12);
         for case in derived {
             let tmp = own_dir(&case.name);
             let (store, goal) = seed_derived(case, &tmp)

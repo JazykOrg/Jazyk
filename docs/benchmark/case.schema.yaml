@@ -203,6 +203,8 @@ definitions:
         $ref: '#/definitions/criteriaCount'
       attributeExists:
         $ref: '#/definitions/attributeExists'
+      criteriaMatching:
+        $ref: '#/definitions/criteriaMatching'
       relationshipExists:
         $ref: '#/definitions/relationshipExists'
       edgeDeclared:
@@ -288,6 +290,25 @@ definitions:
       entity:
         description: An entity the requirement must reference, by id or exact name
         type: string
+  criteriaMatching:
+    description: >-
+      The number of criteria whose own statement matches the pattern, optionally of one
+      requirement, is within bounds
+    type: object
+    required: [pattern]
+    additionalProperties: false
+    properties:
+      pattern:
+        description: A regular expression matched against each criterion's statement
+        type: string
+      requirement:
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
   attributeExists:
     description: >-
       The entity carries an attribute whose name matches this pattern,

@@ -61,6 +61,8 @@ The tree holds paths and bytes. A directory is implied by any file under it, so 
 project seeded as a flat list of files needs no directory records. The host fills it
 before the backend boots:
 
+- `reset()` empties the tree. The host calls it before seeding another project, so
+  a second demo opened in the tab does not inherit the first one's files.
 - `seed_file(path, bytes)` writes one file.
 - `boot(root)` adopts the tree as the project and answers the resolved project, or an
   error naming what the tree is missing.

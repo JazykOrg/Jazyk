@@ -4,7 +4,7 @@
 // blocks on Atomics.wait until the page answers.
 // See docs/frontends/wasm.md#the-worker.
 
-import init, { boot, enable_fs_sink, list_files, request, seed_file, set_model } from './jazyk.js'
+import init, { boot, enable_fs_sink, list_files, request, reset, seed_file, set_model } from './jazyk.js'
 import { installBridge } from './bridge.js'
 
 const ROOT = '/project'
@@ -56,6 +56,8 @@ self.onmessage = async (e: MessageEvent<Req>) => {
 
     switch (msg.kind) {
       case 'seed': {
+        // A project opened over another starts from an empty tree.
+        reset()
         for (const [rel, content] of Object.entries(msg.files)) {
           const bytes = typeof content === 'string' ? encoder.encode(content) : content
           seed_file(`${ROOT}/${rel}`, bytes)

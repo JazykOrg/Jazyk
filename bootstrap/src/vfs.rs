@@ -438,6 +438,13 @@ mod imp {
     pub fn list_all() -> Vec<PathBuf> {
         FILES.with(|f| f.borrow().keys().cloned().collect())
     }
+
+    // Empty the tree, so a project seeded after another starts from nothing rather
+    // than over the first one's files.
+    pub fn reset() {
+        FILES.with(|f| f.borrow_mut().clear());
+        DIRS.with(|d| d.borrow_mut().clear());
+    }
 }
 
 pub use imp::*;

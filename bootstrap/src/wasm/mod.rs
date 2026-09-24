@@ -37,6 +37,13 @@ pub fn seed_file(path: &str, bytes: &[u8]) {
     crate::vfs::seed(std::path::Path::new(path), bytes.to_vec());
 }
 
+// Empty the tree. The host calls this before seeding another project, so a second
+// demo opened in the tab does not inherit the first one's files.
+#[wasm_bindgen]
+pub fn reset() {
+    crate::vfs::reset();
+}
+
 // Adopt the seeded tree as the project. Answers the resolved project as JSON, or an
 // error naming what the tree is missing.
 #[wasm_bindgen]

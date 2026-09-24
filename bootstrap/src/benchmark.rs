@@ -1313,7 +1313,9 @@ pub fn case_session_batch(
         None => WorkScope::from_item(item),
     };
     // The case's own lint rules ride on the project block (docs/benchmark/cases.md).
-    let prompt = crate::session::preview_with(&snapshot, &goals, lint);
+    // The batch is open and the toolset holds no begin_goals: the open-batch protocol
+    // line (docs/compiler/sessions.md#the-prompt).
+    let prompt = crate::session::open_batch_prompt(&snapshot, &goals, lint);
     // The session holds what its prompt lists, as a build session does
     // (docs/benchmark/benchmark.md#runs): the same seeding `begin_goals` applies.
     let (loaded, skills) = crate::session::initial_loaded(&snapshot, &goals);
@@ -2252,6 +2254,39 @@ fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A case session runs in process with its batch open and no begin_goals among its
+    // tools, so its prompt never tells the model to claim it
+    // (docs/compiler/sessions.md#the-prompt).
+    #[test]
+    fn a_case_session_prompt_carries_the_open_batch_protocol() {
+        let cases = parse_cases();
+        let case = cases.iter().find(|c| c.name == "extract").unwrap();
+        let tmp = own_dir("open-batch-prompt");
+        let store = sandbox(case, &tmp);
+        let item = crate::model::WorkItem {
+            task: case.task_type.clone(),
+            target: case.target.clone(),
+            dirty_sections: store
+                .docs
+                .get(&case.target)
+                .map(|r| r.sections.keys().cloned().collect())
+                .unwrap_or_default(),
+            stale_anchors: Vec::new(),
+            proposals: Vec::new(),
+        };
+        let gs = crate::gen::GenSettings {
+            configured: true,
+            deliverable: tmp.join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        let cs = case_session(store, &item, &case.lint, &gs, None);
+        assert!(cs.prompt.contains("which is already open"), "{}", cs.prompt);
+        assert!(!cs.prompt.contains("First call `begin_goals`"), "{}", cs.prompt);
+        assert!(!cs.tools.iter().any(|t| t.name == "begin_goals"));
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
 
     #[test]
     fn parses_all_embedded_cases() {

@@ -1,0 +1,1 @@
+PROTOCOL: the `jazyk` tools carry this batch, {target}, which is already open: its goals and tools are yours, and there is nothing to claim. Stage findings with the write tools, mark each goal, and finish with `done` and a one-line summary; if `done` is rejected, repair exactly what the error names and call it again. Do exactly this one batch, then stop.

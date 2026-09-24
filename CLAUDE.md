@@ -120,7 +120,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `$id` `https://jazyk.org/schemas/*.json`). `docs/site.md` specs jazyk.org;
   `docs/TODO.md` is the live work list.
 - Payloads: `docs/compiler/goals/prompts/` (agent-contract.md, feedback-note.md,
-  worker-protocol.md, serving-protocol.md, one contract paragraph per model-executed
+  worker-protocol.md, serving-protocol.md, open-batch-protocol.md, one contract paragraph per model-executed
   goal kind, and the
   generation payloads bind-contract.md, generate-contract.md,
   decompile-contract.md) and `docs/compiler/skills/` (extraction,

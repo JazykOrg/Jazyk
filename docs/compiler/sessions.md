@@ -78,7 +78,13 @@ prompt, so it can be shown before it is spent. The parts, in order:
    to call `begin_goals` first; [`serving-protocol.md`](./goals/prompts/serving-protocol.md)
    when `begin_goals` itself returns the prompt over a standalone MCP serving, which
    says the batch is claimed and not to call `begin_goals` again for it. The two lines
-   describe one loop from either side of the claim.
+   describe one loop from either side of the claim. A session run in process with its
+   batch already open (a [benchmark](../benchmark/benchmark.md#runs) case, a
+   [snippet](../benchmark/benchmark.md#snippets-from-a-real-project), a
+   [replay](../benchmark/replays.md)) gets
+   [`open-batch-protocol.md`](./goals/prompts/open-batch-protocol.md) instead: its tools
+   hold no `begin_goals`, and every probe of a local model once opened by noting that its
+   instructions named a tool it did not have.
 
 E.g., a tier 2 batch after a session revised `req:orders-6` (contract paragraphs
 shortened here; the real ones are the payload files):

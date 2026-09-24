@@ -659,6 +659,10 @@ const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/goals/prompts/feed
 
 // The protocol line; {target} is the batch id.
 const WORKER_PROTOCOL: &str = include_str!("../../docs/compiler/goals/prompts/worker-protocol.md");
+// A session run in process with its batch already open: no claim, no begin_goals.
+// Mirrors docs/compiler/sessions.md#the-prompt.
+const OPEN_BATCH_PROTOCOL: &str =
+    include_str!("../../docs/compiler/goals/prompts/open-batch-protocol.md");
 // The protocol line for a prompt returned by begin_goals itself: the batch is already
 // claimed when the agent reads it. Mirrors docs/compiler/sessions.md#the-prompt.
 const SERVING_PROTOCOL: &str =
@@ -670,6 +674,7 @@ const SERVING_PROTOCOL: &str =
 pub enum Protocol {
     Worker,
     Serving,
+    OpenBatch,
 }
 
 // The note rides directly under the first paragraph: the first says what the session
@@ -1253,6 +1258,7 @@ pub fn session_prompt_elided(
     let line = match protocol {
         Protocol::Worker => WORKER_PROTOCOL,
         Protocol::Serving => SERVING_PROTOCOL,
+        Protocol::OpenBatch => OPEN_BATCH_PROTOCOL,
     };
     s.push_str(&line.replace("{target}", &project_block.batch));
     if !s.ends_with('\n') {
@@ -1355,6 +1361,24 @@ pub fn preview_with(store: &Store, batch: &[Goal], lint: &crate::project::Lintin
     let (loaded, skills) = initial_loaded(store, batch);
     let pb = ProjectBlock::compute(store, batch, "auto").with_lint(lint);
     session_prompt(store, batch, &loaded, &skills, &pb)
+}
+
+// The prompt of a session run in process with its batch already open (a benchmark
+// case, a snippet, a replay): the same prompt with the open-batch protocol line.
+// Mirrors docs/compiler/sessions.md#the-prompt.
+pub fn open_batch_prompt(store: &Store, batch: &[Goal], lint: &crate::project::Linting) -> String {
+    let (loaded, skills) = initial_loaded(store, batch);
+    let pb = ProjectBlock::compute(store, batch, "auto").with_lint(lint);
+    session_prompt_elided(
+        store,
+        batch,
+        &loaded,
+        &skills,
+        &pb,
+        true,
+        &BTreeSet::new(),
+        Protocol::OpenBatch,
+    )
 }
 
 // One line naming a requirement's provenance, whichever kind it carries.

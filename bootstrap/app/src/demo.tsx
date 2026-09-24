@@ -18,7 +18,7 @@ import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './l
 import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents, refreshAfterWrite } from './lib/events'
 import { FolderMirror, pickFolder, readFolder } from './lib/folder'
-import demoProject from './wasm-backend/demo-project.json'
+import { DEMOS } from './shell/Home'
 import './tokens.css'
 import './app.css'
 
@@ -95,10 +95,16 @@ function loadModelInBackground(say: (l: string) => void) {
     })
 }
 
-// The one bundled project (docs/frontends/wasm.md#the-demo). Home lists every
-// example; only this one travels in the page.
-const BUNDLED: Record<string, WasmProject> = {
-  shop: { files: demoProject as Record<string, string>, name: 'The shop' },
+// The bundled projects (docs/frontends/wasm.md#the-demo): one fixture per example,
+// packed by scripts/pack-demos.sh, fetched when picked rather than carried in the
+// page.
+async function fetchDemo(id: string): Promise<WasmProject> {
+  const demo = DEMOS.find((d) => d.id === id)
+  if (!demo) throw new Error(`no demo named ${id}`)
+  const res = await fetch(`demos/${id}.json`)
+  if (!res.ok) throw new Error(`${demo.name}: the fixture failed to load (${res.status})`)
+  const files = (await res.json()) as Record<string, string>
+  return { files, name: demo.name }
 }
 
 async function boot() {
@@ -125,13 +131,12 @@ async function boot() {
 
   window.addEventListener('jazyk:open-demo', (e) => {
     const id = String((e as CustomEvent).detail ?? '')
-    const p = BUNDLED[id]
-    if (!p) {
-      console.warn(`[jazyk demo] only the shop is bundled in this build; ${id} is not`)
-      window.alert(`Only "The shop" is bundled in this build.`)
-      return
-    }
-    void opened(p)
+    fetchDemo(id)
+      .then(opened)
+      .catch((err) => {
+        console.warn('[jazyk demo]', err)
+        window.alert(err instanceof Error ? err.message : String(err))
+      })
   })
   window.addEventListener('jazyk:pick-folder', async () => {
     try {

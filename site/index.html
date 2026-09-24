@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jazyk — Compiler for natural language</title>
-  <meta name="description" content="Jazyk is a compiler for natural language. It treats prose documentation as source code and maintains a persistent semantic graph of entities, requirements, views, and diagnostics, reconciled against the docs, with every UML diagram rendered from it level by level." />
+  <title>Jazyk: English as a programming language</title>
+  <meta name="description" content="Jazyk is a compiler for documentation. Docs become requirements, architecture, design, source code, and tests. Edits trickle down to the code. Problems trickle up to the docs as warnings and errors." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -20,133 +20,259 @@
         <img src="/favicon.svg" alt="" class="h-7 w-7" />
         Jazyk
       </a>
-      <div class="flex items-center gap-6 text-sm">
-        <a href="/compilation/" class="hover:text-brand">Compilation</a>
-        <a href="/levels/" class="hover:text-brand">Levels</a>
-        <a href="/graph/" class="hover:text-brand">Graph</a>
-        <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">GitHub</a>
-      </div>
+      <a href="https://jazyk.dev" class="text-sm font-medium text-brand hover:underline">Open the editor</a>
     </nav>
   </header>
 
   <main>
-    <!-- Hero -->
-    <section class="mx-auto max-w-5xl px-6 py-20 text-center">
-      <img src="/favicon.svg" alt="Jazyk" class="mx-auto h-24 w-24" />
-      <h1 class="mt-6 text-5xl font-bold tracking-tight text-slate-900">
-        Jazyk <span class="text-2xl font-normal text-slate-400">/ˈjazɪk/</span>
-      </h1>
-      <p class="mt-4 text-xl text-slate-600">Compiler for natural language</p>
-    </section>
-
-    <!-- Usage diagram -->
-    <section class="mx-auto max-w-5xl px-6 pb-20">
-      <div class="grid gap-4 md:grid-cols-3 items-stretch">
-        <div class="rounded-lg border border-slate-200 p-5">
-          <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Input</div>
-          <div class="mt-1 font-semibold text-slate-900">Documentation</div>
-          <p class="mt-2 text-sm text-slate-600">Loose prose: requirements, product use cases, design pages. The compiler does not constrain the English you write.</p>
-        </div>
-        <div class="rounded-lg border-2 border-brand bg-brand/5 p-5">
-          <div class="text-xs font-semibold uppercase tracking-wide text-brand">Process</div>
-          <div class="mt-1 font-semibold text-slate-900">Reconciliation</div>
-          <p class="mt-2 text-sm text-slate-600">A deterministic harness finds what changed and derives goals from it; bounded LLM sessions resolve the goals, one batch at a time, behind validation gates.</p>
-        </div>
-        <div class="rounded-lg border border-slate-200 p-5">
-          <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Output</div>
-          <div class="mt-1 font-semibold text-slate-900">The semantic graph</div>
-          <p class="mt-2 text-sm text-slate-600">Entities in one containment tree, requirement statements with verbatim quotes, views, derived relationships and state machines, sticky diagnostics. Persistent, edited in place, never regenerated. Every UML diagram renders from it.</p>
-        </div>
+    <section class="mx-auto max-w-5xl px-6 pt-16 pb-12">
+      <h1 class="text-5xl font-bold tracking-tight text-slate-900">Jazyk <span class="text-2xl font-normal text-slate-400 align-middle">/ˈjazɪk/</span></h1>
+      <p class="mt-3 text-2xl text-slate-600">English as a programming language.</p>
+      <div class="mt-8 max-w-3xl space-y-4 text-lg leading-relaxed text-slate-700">
+        <p>A compiler that turns documentation into requirements, architecture, design, source code, and tests. Every requirement gets a test.</p>
+        <p>An edit to the docs trickles down to the code, including migration, deployment, and rollback. A problem downstream trickles up to the docs as a warning or an error: a hole, an ambiguity, a contradiction.</p>
+        <p>Open the docs in an IDE. Each sentence links to its requirement, design, code, and tests. Warnings and errors show inline. The compiler runs on your own coding AI.</p>
       </div>
-
-      <div class="mt-4 grid gap-4 md:grid-cols-2">
-        <div class="rounded-lg border border-slate-200 p-5">
-          <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Control</div>
-          <ul class="mt-2 space-y-1 text-sm text-slate-600">
-            <li><span class="font-medium text-slate-800">CLI</span> to compile, watch, query, and answer</li>
-            <li><span class="font-medium text-slate-800">MCP</span> so agents read the same graph through the same tools</li>
-            <li><span class="font-medium text-slate-800">IDE</span> via the Language Server Protocol: hover an entity, see its card</li>
-            <li><span class="font-medium text-slate-800">GUI</span> with the containment tree, the diagrams, and the questions the build asks</li>
-          </ul>
-        </div>
-        <div class="rounded-lg border border-slate-200 p-5">
-          <div class="text-xs font-semibold uppercase tracking-wide text-slate-400">Usages</div>
-          <ul class="mt-2 space-y-1 text-sm text-slate-600">
-            <li><span class="font-medium text-slate-800">Diagrams</span>: every UML kind, one set per level, drill-down between them</li>
-            <li><span class="font-medium text-slate-800">Code generation</span>: one unit per entity, every requirement verified by a real test run</li>
-            <li><span class="font-medium text-slate-800">Documentation</span>: a card per entity, a page per diagram, a walk</li>
-            <li><span class="font-medium text-slate-800">Model benchmark</span>: grades whether a model can drive compilation</li>
-          </ul>
-        </div>
+      <div class="mt-8 flex flex-wrap items-center gap-4">
+        <a href="https://jazyk.dev" class="rounded-md bg-brand px-5 py-2.5 font-medium text-white hover:opacity-90">Open the editor</a>
+        <span class="text-sm text-slate-500">Demo projects, or a folder on your computer. Runs in the browser.</span>
       </div>
     </section>
 
-    <!-- Thesis -->
     <section class="border-t border-slate-200 bg-slate-50">
-      <div class="mx-auto max-w-3xl px-6 py-16 space-y-10">
-        <div>
-          <h2 class="text-2xl font-bold text-slate-900">The thesis</h2>
-          <p class="mt-3 text-slate-600">Open-ended prompts to a model are unreliable; small, well-defined ones are not. Jazyk decomposes loose documentation into many small, well-defined units, entities and the requirement statements attached to them, so everything downstream operates in the reliable regime.</p>
-          <p class="mt-3 text-slate-600">The graph, not the prose, is the build artifact. It persists across builds: nodes are created once and edited in place, ids never change, and human triage on a finding survives every rebuild. Every fact carries its provenance: a verbatim quote, a derivation from upstream facts, or a human decree. Downstream tools bind to entity ids and stay bound.</p>
-        </div>
+      <div class="mx-auto max-w-5xl px-6 py-12">
+        <h2 class="text-2xl font-bold text-slate-900">One example: a sort utility</h2>
+        <p class="mt-2 text-slate-600">Two documents in, one program and its tests out. Each block is a real file of the project, condensed.</p>
 
-        <div>
-          <h2 class="text-2xl font-bold text-slate-900">A session, as it runs</h2>
-          <p class="mt-3 text-slate-600">Compilation is model-driven but harness-governed. The harness derives goals from what changed and hands a session a batch of them. The model reads the dirty sections, searches the graph before creating anything, and stages mutations that commit only if every validation gate passes; each staged mutation previews the goals it will open. From a real trace, condensed:</p>
-          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>[b10-1] g:reconcile-section:docs/checkout.md#/checkout, #/checkout/rules
-→ read_section {"ref":"docs/checkout.md#/checkout"}
-→ search {"query":"Checkout"}
-← {"hits":[],"entityCount":16, ...}
-→ upsert_entity {"name":"Checkout","stereotype":"process",
-   "definition":"A Checkout turns a Cart into an Order.",
-   "mention":{"quote":"A Checkout turns a Cart into an Order.",
-              "section":"docs/checkout.md#/checkout"}}
-← {"id":"ent:checkout","created":true,
-   "opens":["abstract-entity scope:public (fan-out 12 over soft 9, optional)"]}
-→ upsert_requirement {"statement":"A Checkout turns a Cart into an Order.",
-   "quote":"A Checkout turns a Cart into an Order.",
-   "entities":["ent:checkout","ent:cart","ent:order"],
-   "edges":[{"a":"ent:checkout","b":"ent:cart","type":"association"}, ...]}
-← {"id":"req:checkout-8","created":true,
-   "opens":["review-entity ent:checkout (requirements changed)", ...]}
-→ set_coverage {"section":"docs/checkout.md#/checkout","state":"covered", ...}
-→ mark_goal_done {"goal":"g:reconcile-section:docs/checkout.md#/checkout",
-   "justification":"The /checkout section's eight definition sentences each
-   state what a domain part is or does and are extracted as req:checkout-1
-   through req:checkout-8 ..."}
-→ done
-← {"committed":true,"generation":11,"applied":24,
-   "opened":["g:abstract-entity:scope:public","g:review-entity:ent:checkout", ...]}</code></pre>
-        </div>
+        <div class="mt-8 grid gap-8 md:grid-cols-2">
 
-        <div>
-          <h2 class="text-2xl font-bold text-slate-900">Changes stay small</h2>
-          <p class="mt-3 text-slate-600">A rebuild with nothing changed derives zero goals and makes zero LLM calls. Editing one sentence dirties one section: one goal reconciles it, the mutations it stages open the judgment goals on the touched entities and pairs, and the graph diff is additive. Contradictions across documents surface as sticky diagnostics with the compiler's reasoning attached and a question the owner answers, each option an exact edit to a document.</p>
-          <pre class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700"><code>diag:contradiction-1  error  [req:orders-4, req:payment-3]
-  Payment deadline conflict: orders says "An Order shall be paid within 21
-  days of placement; otherwise the system shall cancel it." while payment
-  says "An Order shall be paid within 30 days of placement."
-  Should the Order payment deadline be 21 days or 30 days?
-  0  Use 21 days in payment rules (edit docs/payment.md /payment/rules)
-  1  Use 30 days in order lifecycle (edit docs/orders.md /order/lifecycle)</code></pre>
-        </div>
+          <div>
+            <h3 class="font-semibold text-slate-900">Docs</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>docs/main.js.md</code>, written by hand.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code># Main.ts
 
-        <div>
-          <h2 class="text-2xl font-bold text-slate-900">Levels</h2>
-          <p class="mt-3 text-slate-600">Requirements stay on the entities the documents state. Those entities summarize into groupings, and those into higher still, under a children limit the harness enforces and a name the model chooses from the documents. Every level gets its own structural, use case, and sequence diagrams, and digging into an entity shows the level below it. A grouping no document states carries a proposal for the sentence the documents should gain: the compiler proposes the architecture chapter the documents never wrote, and the owner accepts or retracts it.</p>
-          <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4">
-            <a href="/levels/#top"><img src="/levels/top-level.svg" width="402" height="181" class="mx-auto block" alt="Component diagram of the top level of the ledger example: Ledger, Checkout, Orders, Platform, Shipping" /></a>
+This is a simple sorting algorithm CLI utility
+similar to the `sort` CLI command.
+
+## CLI args
+
+When invoked, `sort` allows the following CLI args:
+- `-r` reverses sorting order to descending
+
+## Execution
+
+Read CLI arguments, keep track of:
+- Reverse order with `-r`
+Read in from STDIN line by line:
+    For current line, strip out whitespace before and after
+    If stripped line is empty string, continue to next line
+    Add stripped line to lines
+Sort lines ascending. Or descending if reverse order
+Print all sorted lines delimited by newline</code></pre>
           </div>
-          <p class="mt-2 text-sm text-slate-500">The top level of a real build: five boxes over thirty-two entities four levels deep. The line between Checkout and Orders stands for four sentences, one of them "A Checkout turns a Cart into an Order." <a href="/levels/" class="text-brand hover:underline">Dig in.</a></p>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Requirements</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/requirements.yaml</code>. One per obligation, each with the sentence it came from.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>req:main-js-3:
+  statement: When invoked, the Sort CLI allows the `-r` CLI arg,
+    which reverses the sorting order to descending.
+  entities: [ent:sort-cli]
+  facets:
+  - facet: behavior
+  source:
+    doc: docs/main.js.md
+    section: /main-ts/cli-args
+    quote: '- `-r` reverses sorting order to descending'
+
+req:main-js-8:
+  statement: If the stripped line is an empty string,
+    the Sort CLI continues to the next line.
+  entities: [ent:sort-cli]
+  facets:
+  - facet: failure-mode
+  source:
+    doc: docs/main.js.md
+    section: /main-ts/execution
+    quote: If stripped line is empty string, continue to next line</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Acceptance criteria</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>code/criteria/req-main-js-3.md</code>. How a verifier confirms one requirement.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>---
+requirement: req:main-js-3
+hash: 1abb960e6eac267c
+---
+
+# Statement
+
+The sort utility shall be a script.
+
+# Quote
+
+> This is a script written in javascript.
+
+# Implementing files
+
+- main.js
+
+# Steps to confirm
+
+1. Read `main.js` and confirm it is a single interpretable
+   source file, not a compiled artifact.
+2. Confirm it carries a `#!/usr/bin/env node` shebang line.
+3. Run `printf 'b\na\n' | node main.js` and confirm it
+   executes as-is, with no build step.
+
+# Verdict contract
+
+Reply PASS if `main.js` is directly interpretable source
+executed by node with no build step and carries a shebang.
+Reply FAIL otherwise.</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Architecture</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/entities.yaml</code> and the class diagram rendered from it. One program, so one box. A larger project gets components, actors, containment, and a diagram per level.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>ent:sort-cli:
+  name: Sort CLI
+  definition: A simple sorting algorithm CLI utility
+    similar to the `sort` CLI command.
+  stereotype: cli
+  mentions:
+  - doc: docs/main.js.md
+    section: /main-ts
+    quote: This is a simple sorting algorithm CLI utility
+      similar to the `sort` CLI command.
+  - doc: docs/main.js.md
+    section: /main-ts/cli-args
+    quote: '- `-r` reverses sorting order to descending'
+  # 12 mentions in all
+
+@startuml
+class "Sort CLI" as sort_cli &lt;&lt;cli&gt;&gt;
+@enduml</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Design</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/views.yaml</code>. The execution flow as a use case view, its steps the requirements in document order.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>view:usecase/sort-cli-main-js:
+  kind: use-case
+  title: 'Sort CLI: Main.ts'
+  members:
+  - req:main-js-3
+  - req:main-js-4
+  - req:main-js-5
+  - req:main-js-6
+  - req:main-js-7
+  - req:main-js-8
+  - req:main-js-9
+  - req:main-js-10
+  - req:main-js-11
+  provenance:
+    derived:
+      from: [ent:sort-cli, req:main-js-3, req:main-js-4, ...]
+      reasoning: 'default view: use-case per flow cluster'
+  default: true</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Code</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>code/main.js</code>, generated.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>#!/usr/bin/env node
+'use strict';
+
+function parseArgs(argv) {
+  const reverse = argv.includes('-r');
+  return { reverse };
+}
+
+function processRawLines(rawLines) {
+  const lines = [];
+  for (const rawLine of rawLines) {
+    const stripped = rawLine.trim();
+    if (stripped === '') continue;
+    lines.push(stripped);
+  }
+  return lines;
+}
+
+function sortLines(lines, reverse) {
+  const sorted = lines.slice().sort();
+  if (reverse) sorted.reverse();
+  return sorted;
+}
+
+async function main() {
+  const { reverse } = parseArgs(process.argv.slice(2));
+  const lines = await readStdinLines(process.stdin);
+  printLines(sortLines(lines, reverse), process.stdout);
+}</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Tests</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>code/test/main.test.js</code>, generated. Each test is named for the requirement it covers.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>test('req_main_js_5_d8e51eea', () => {
+  // -r reverses sorting order to descending.
+  assert.strictEqual(runCli(['-r'], 'a\nc\nb\n'), 'c\nb\na\n');
+});
+
+test('req_main_js_10_4112a225', () => {
+  // Leading and trailing whitespace is stripped from each line.
+  assert.strictEqual(runCli([], '  b  \n\ta \n'), 'a\nb\n');
+});
+
+test('req_main_js_11_2fea0114', () => {
+  // Lines that are empty after stripping are skipped.
+  assert.strictEqual(runCli([], 'b\n\n   \n\t\na\n'), 'a\nb\n');
+});
+
+test('req_main_test_js_2_1c6d8c96', () => {
+  // Reverse order case: documented input/expected output
+  // with the reverse flag on.
+  assert.strictEqual(runCli(['-r'], '321\n654\n453\n'),
+    '654\n453\n321\n');
+});</code></pre>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-slate-900">Diagnostics</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/diagnostics.yaml</code>. What trickles up. Each names the sentence or section it is about and stays until the docs change.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>diag:uncovered-section-1:
+  rule: uncovered-section
+  severity: warning
+  subjects:
+  - docs/main.test.js.md#/main-test-js/suite/reverse-order
+  message: section docs/main.test.js.md#/main-test-js/suite/reverse-order
+    is unprocessed after the build
+
+diag:unplaced-behavior-1:
+  rule: unplaced-behavior
+  severity: info
+  subjects:
+  - req:main-test-js-1
+  message: req:main-test-js-1 is a behavior requirement in no flow view
+    and excluded from none</code></pre>
+          </div>
+
         </div>
       </div>
+    </section>
+
+    <section class="mx-auto max-w-5xl px-6 py-12">
+      <h2 class="text-2xl font-bold text-slate-900">Try it</h2>
+      <p class="mt-2 max-w-3xl text-slate-600">The editor runs in the browser. Open one of the demo projects, or a folder on your computer with a <code>jazyk.toml</code> in it, and read the documents, the requirements, the diagrams, and the diagnostics compiled from them.</p>
+      <a href="https://jazyk.dev" class="mt-5 inline-block rounded-md bg-brand px-5 py-2.5 font-medium text-white hover:opacity-90">jazyk.dev</a>
     </section>
   </main>
 
   <footer class="border-t border-slate-200">
     <div class="mx-auto max-w-5xl px-6 py-8 text-sm text-slate-500 flex items-center justify-between">
-      <span>Jazyk — tongue, in Slavic languages.</span>
-      <a href="https://github.com/JazykOrg/Jazyk" class="hover:text-brand">github.com/JazykOrg/Jazyk</a>
+      <span>Jazyk: tongue, in Slavic languages.</span>
+      <a href="https://jazyk.dev" class="hover:text-brand">jazyk.dev</a>
     </div>
   </footer>
 </body>

@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "build:demo": "sh scripts/build-wasm.sh && tsc -b && JAZYK_DEMO=1 vite build",
-    "preview:demo": "JAZYK_DEMO=1 vite preview --outDir dist-demo"
+    "preview:demo": "JAZYK_DEMO=1 vite preview --outDir dist-demo",
+    "pack-demos": "sh scripts/pack-demos.sh"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

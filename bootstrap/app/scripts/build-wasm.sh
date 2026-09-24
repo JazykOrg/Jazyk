@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build the browser backend: the wasm library, its bindings, a stable re-export for
-# the model bridge, and the demo project fixture.
+# Build the browser backend: the wasm library, its bindings, and a stable re-export
+# for the model bridge. The demo fixtures are packed separately by pack-demos.sh.
 # See docs/frontends/wasm.md#building.
 set -e
 cd "$(dirname "$0")/../.."   # bootstrap/
@@ -41,8 +41,5 @@ cat > "$OUT/bridge.js" <<EOF
 // after a content hash; the worker imports this stable path instead.
 export { installBridge, bridgeReady } from './$SNIPPET'
 EOF
-
-echo "==> demo fixture"
-node app/scripts/pack-demo.mjs example/f1 "$OUT/demo-project.json"
 
 ls -la "$OUT"/jazyk_bg.wasm

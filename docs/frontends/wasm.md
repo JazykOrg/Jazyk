@@ -53,7 +53,7 @@ Three modules carry everything the two targets do not share. Each mirrors the
 
 Modules that need a process, a socket, a terminal, or file watching are gated off the
 wasm build in `src/lib.rs`: `acp`, `cli`, `gui`, `lsp`, `viewer`, `benchmark`,
-`answer`, `parallel`, `jsonrpc`, `launcher`.
+`answer`, `parallel`, `jsonrpc`, `launcher`, `replay`.
 
 ### Filesystem
 
@@ -214,16 +214,19 @@ folder flips the descriptor to `backend: wasm`, `persistence: browser`. The mode
 loads behind all of it, because every read works without one and only a build
 needs it; `jobs` lists `compile` once the model is ready.
 
-The fixture is `bootstrap/example/f1` compiled to convergence: its documents, its
-`jazyk.toml`, and its whole `jazyk-out` (the shards, the journal, the coverage, the
-rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON the demo
-imports. Traces and session transcripts are left out. Home lists every example;
-only the shop travels in the page.
+Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
+and its whole `jazyk-out` as last built (the shards, the journal, the coverage, the
+rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON per example
+under `app/public/demos/`. Traces, session transcripts, leases, sockets, dotfiles,
+and an archived out directory are left out. The fixtures are committed, since the
+examples' out directories are not, and `npm run pack-demos` repacks all of them
+after an example is rebuilt. The page fetches a fixture when its demo is picked
+rather than carrying them all.
 
 So a visitor lands on a populated graph rather than an empty one: the entities, the
-requirements, the views, the diagrams, and a `converged` verdict. Editing a document
-dirties its sections, which opens goals, and a build runs them through the model in
-the page.
+requirements, the views, the diagrams, and the verdict the last build left. Editing
+a document dirties its sections, which opens goals, and a build runs them through
+the model in the page.
 
 ## Building
 
@@ -231,10 +234,10 @@ the page.
 
 - `scripts/build-wasm.sh`: `cargo build --target wasm32-unknown-unknown --lib
   --release`, then `wasm-bindgen --target web`, then a stable re-export for the model
-  bridge (wasm-bindgen names its snippet directory after a content hash), then the
-  demo fixture.
-- `vite build` with `JAZYK_DEMO=1`, which builds `demo.html` into `dist-demo/`.
-  `npm run preview:demo` serves it with the isolation headers.
+  bridge (wasm-bindgen names its snippet directory after a content hash).
+- `vite build` with `JAZYK_DEMO=1`, which builds `demo.html` into `dist-demo/` as
+  `index.html` (the editor is the root of its site) beside the fixtures from
+  `public/demos/`. `npm run preview:demo` serves it with the isolation headers.
 
 The demo lands in its own directory so the dist the binary embeds never grows a 7MB
 module. `npm run build` is unchanged and still builds only the workbench.
@@ -256,9 +259,9 @@ and no build can run. That means two headers on the document:
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
 
-The Vite dev server and `vite preview` set both. [jazyk.org](../site.md) is served
-from S3 through CloudFront, which sets them with a response headers policy on the
-demo's path; nothing client-side is needed.
+The Vite dev server and `vite preview` set both. [jazyk.dev](../site.md#the-editor)
+serves the page from S3 through CloudFront, which sets them with a response headers
+policy; nothing client-side is needed.
 
 ## What a tab does not do
 

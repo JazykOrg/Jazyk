@@ -8,22 +8,17 @@ build step. Specified in [`../docs/site.md`](../docs/site.md).
 
 | File | Route |
 | --- | --- |
-| `index.html` | `/` |
-| `compilation/index.html` | `/compilation` |
-| `levels/index.html` | `/levels` |
-| `graph/index.html` | `/graph` |
-| `artifact/index.html` | `/artifact`, redirects to `/graph` |
+| `index.html` | `/`, the one page: the pitch and the sort example's snippets |
 | `favicon.svg` | `/favicon.svg` |
 | `404.html` | served with status 404 for any path that has no object |
 | `deploy.sh` | the publishing pipeline, not uploaded |
 
-## Assets
+## Snippets
 
-`levels/*.svg` are renderings copied from the `example-ledger` project's built
-`jazyk-out/diagrams/` (`component/public`, `class/checkout`, `class/funds`,
-`sequence/checkout-checkout`), with the drill-down anchors rewritten to point down
-the levels page instead of into the out directory. Re-copy them after a rebuild of
-the example changes the pictures; the site never links into an example directory.
+The example blocks on the page are files of `example-sort` (its documents, its
+`code/`, and its `jazyk-out/graph/` shards), condensed where a line would wrap.
+Re-copy them after a rebuild of the example changes them; the site never links into
+an example directory.
 
 ## Preview locally
 
@@ -51,6 +46,10 @@ Specified in [`../docs/site.md`](../docs/site.md#hosting).
 | Deploy role | `jazyk-site-deploy`, assumed by GitHub Actions through OIDC for `JazykOrg/Jazyk` on `master` only |
 
 The bucket is reachable only through CloudFront.
+
+[jazyk.dev](https://jazyk.dev), the editor in the browser, is hosted the same way from
+`bootstrap/app`: `hosting.sh` there creates its pieces and `deploy.sh` publishes
+`dist-demo/`, specified in [`../docs/site.md`](../docs/site.md#the-editor).
 
 ## DNS
 

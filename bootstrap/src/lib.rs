@@ -28,7 +28,6 @@ pub mod md;
 pub mod model;
 pub mod project;
 pub mod reconcile;
-pub mod replay;
 pub mod render;
 pub mod runner;
 pub mod session;
@@ -58,6 +57,8 @@ pub mod launcher;
 pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod parallel;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod viewer;
 

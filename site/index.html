@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Jazyk: English as a programming language</title>
-  <meta name="description" content="Jazyk is a compiler for documentation. Docs become requirements, architecture, design, source code, and tests. Edits trickle down to the code. Problems trickle up to the docs as warnings and errors." />
+  <meta name="description" content="Jazyk is a compiler for documentation. Docs become requirements, acceptance criteria, architecture, design, source code, and tests. Edits trickle down to the code. Problems trickle up to the docs as warnings and errors." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -29,7 +29,7 @@
       <h1 class="text-5xl font-bold tracking-tight text-slate-900">Jazyk <span class="text-2xl font-normal text-slate-400 align-middle">/ˈjazɪk/</span></h1>
       <p class="mt-3 text-2xl text-slate-600">English as a programming language.</p>
       <div class="mt-8 max-w-3xl space-y-4 text-lg leading-relaxed text-slate-700">
-        <p>A compiler that turns documentation into requirements, architecture, design, source code, and tests. Every requirement gets a test.</p>
+        <p>A compiler that turns documentation → requirements → acceptance criteria → architecture → design → source code → tests. Every requirement gets a test.</p>
         <p>An edit to the docs trickles down to the code, including migration, deployment, and rollback. A problem downstream trickles up to the docs as a warning or an error: a hole, an ambiguity, a contradiction.</p>
         <p>Open the docs in an IDE. Each sentence links to its requirement, design, code, and tests. Warnings and errors show inline. The compiler runs on your own coding AI.</p>
       </div>
@@ -41,18 +41,17 @@
 
     <section class="border-t border-slate-200 bg-slate-50">
       <div class="mx-auto max-w-5xl px-6 py-12">
-        <h2 class="text-2xl font-bold text-slate-900">One example: a sort utility</h2>
-        <p class="mt-2 text-slate-600">Two documents in, one program and its tests out. Each block is a real file of the project, condensed.</p>
+        <h2 class="text-2xl font-bold text-slate-900">Example</h2>
+        <p class="mt-2 text-slate-600">A sort utility. Two documents in, one program and its tests out.</p>
 
-        <div class="mt-8 grid gap-8 md:grid-cols-2">
+        <div class="mt-10 space-y-12">
 
           <div>
-            <h3 class="font-semibold text-slate-900">Docs</h3>
+            <h3 class="text-lg font-semibold text-slate-900">1. Docs</h3>
             <p class="mt-1 text-sm text-slate-500"><code>docs/main.js.md</code>, written by hand.</p>
             <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code># Main.ts
 
-This is a simple sorting algorithm CLI utility
-similar to the `sort` CLI command.
+This is a simple sorting algorithm CLI utility similar to the `sort` CLI command.
 
 ## CLI args
 
@@ -72,114 +71,89 @@ Print all sorted lines delimited by newline</code></pre>
           </div>
 
           <div>
-            <h3 class="font-semibold text-slate-900">Requirements</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/requirements.yaml</code>. One per obligation, each with the sentence it came from.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>req:main-js-3:
-  statement: When invoked, the Sort CLI allows the `-r` CLI arg,
-    which reverses the sorting order to descending.
-  entities: [ent:sort-cli]
-  facets:
-  - facet: behavior
-  source:
-    doc: docs/main.js.md
-    section: /main-ts/cli-args
-    quote: '- `-r` reverses sorting order to descending'
+            <h3 class="text-lg font-semibold text-slate-900">2. Requirements and acceptance criteria</h3>
+            <p class="mt-1 text-sm text-slate-500">One requirement per obligation, each with the sentence it came from. Under each, the criteria: one condition, one outcome, concrete values.</p>
+            <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700">
+              <div class="flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">req:main-js-3</code>
+                <div>
+                  <div>When invoked, the Sort CLI allows the <code>-r</code> CLI arg, which reverses the sorting order to descending.</div>
+                  <div class="text-xs text-slate-400">Quote: <code>- `-r` reverses sorting order to descending</code></div>
+                </div>
+              </div>
+              <div class="mt-2 ml-8 flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">crit:main-js-1</code>
+                <div>Given <code>a</code>, <code>c</code>, <code>b</code> on STDIN, <code>sort -r</code> prints <code>c</code>, <code>b</code>, <code>a</code>.</div>
+              </div>
+              <div class="mt-1 ml-8 flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">crit:main-js-2</code>
+                <div>Given <code>a</code>, <code>c</code>, <code>b</code> on STDIN and no <code>-r</code>, <code>sort</code> prints <code>a</code>, <code>b</code>, <code>c</code>.</div>
+              </div>
 
-req:main-js-8:
-  statement: If the stripped line is an empty string,
-    the Sort CLI continues to the next line.
-  entities: [ent:sort-cli]
-  facets:
-  - facet: failure-mode
-  source:
-    doc: docs/main.js.md
-    section: /main-ts/execution
-    quote: If stripped line is empty string, continue to next line</code></pre>
+              <div class="mt-5 flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">req:main-js-8</code>
+                <div>
+                  <div>If the stripped line is an empty string, the Sort CLI continues to the next line.</div>
+                  <div class="text-xs text-slate-400">Quote: <code>If stripped line is empty string, continue to next line</code></div>
+                </div>
+              </div>
+              <div class="mt-2 ml-8 flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">crit:main-js-3</code>
+                <div>Given <code>b</code>, an empty line, a line of three spaces, and <code>a</code> on STDIN, <code>sort</code> prints <code>a</code>, <code>b</code>.</div>
+              </div>
+              <div class="mt-1 ml-8 flex gap-3">
+                <code class="shrink-0 text-xs text-slate-400 pt-0.5">crit:main-js-4</code>
+                <div>Given only empty and whitespace lines on STDIN, <code>sort</code> prints nothing.</div>
+              </div>
+            </div>
           </div>
 
           <div>
-            <h3 class="font-semibold text-slate-900">Acceptance criteria</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>code/criteria/req-main-js-3.md</code>. How a verifier confirms one requirement.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>---
-requirement: req:main-js-3
-hash: 1abb960e6eac267c
----
-
-# Statement
-
-The sort utility shall be a script.
-
-# Quote
-
-> This is a script written in javascript.
-
-# Implementing files
-
-- main.js
-
-# Steps to confirm
-
-1. Read `main.js` and confirm it is a single interpretable
-   source file, not a compiled artifact.
-2. Confirm it carries a `#!/usr/bin/env node` shebang line.
-3. Run `printf 'b\na\n' | node main.js` and confirm it
-   executes as-is, with no build step.
-
-# Verdict contract
-
-Reply PASS if `main.js` is directly interpretable source
-executed by node with no build step and carries a shebang.
-Reply FAIL otherwise.</code></pre>
+            <h3 class="text-lg font-semibold text-slate-900">3. Architecture</h3>
+            <p class="mt-1 text-sm text-slate-500">Diagrams rendered from the graph. The sort utility is one box, so these are from the ledger example, a shop across four documents: the top level, the classes under Checkout, and the Checkout flow. Every arrow is a sentence.</p>
+            <div class="mt-3 grid gap-4 md:grid-cols-3">
+              <figure class="rounded-lg border border-slate-200 bg-white p-4">
+                <img src="/example/top-level.svg" width="402" height="181" class="mx-auto block max-w-full h-auto" alt="Component diagram of the ledger's top level: Ledger, Checkout, Orders, Platform, Shipping" />
+                <figcaption class="mt-2 text-xs text-slate-500">Top level, component view</figcaption>
+              </figure>
+              <figure class="rounded-lg border border-slate-200 bg-white p-4">
+                <img src="/example/checkout-classes.svg" width="470" height="195" class="mx-auto block max-w-full h-auto" alt="Class diagram of Checkout's children: Address, Funds, Receipt, Pricing, Order, Payment, Selection" />
+                <figcaption class="mt-2 text-xs text-slate-500">Checkout, class view</figcaption>
+              </figure>
+              <figure class="rounded-lg border border-slate-200 bg-white p-4">
+                <img src="/example/checkout-flow.svg" width="610" height="250" class="mx-auto block max-w-full h-auto" alt="Sequence diagram between Checkout and Orders, one arrow per requirement" />
+                <figcaption class="mt-2 text-xs text-slate-500">Checkout, sequence view</figcaption>
+              </figure>
+            </div>
           </div>
 
           <div>
-            <h3 class="font-semibold text-slate-900">Architecture</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/entities.yaml</code> and the class diagram rendered from it. One program, so one box. A larger project gets components, actors, containment, and a diagram per level.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>ent:sort-cli:
-  name: Sort CLI
-  definition: A simple sorting algorithm CLI utility
-    similar to the `sort` CLI command.
-  stereotype: cli
-  mentions:
-  - doc: docs/main.js.md
-    section: /main-ts
-    quote: This is a simple sorting algorithm CLI utility
-      similar to the `sort` CLI command.
-  - doc: docs/main.js.md
-    section: /main-ts/cli-args
-    quote: '- `-r` reverses sorting order to descending'
-  # 12 mentions in all
+            <h3 class="text-lg font-semibold text-slate-900">4. Tests</h3>
+            <p class="mt-1 text-sm text-slate-500"><code>code/test/main.test.js</code>, generated. Each test is named for the requirement it covers and asserts its criteria.</p>
+            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>test('req_main_js_5_d8e51eea', () => {
+  // -r reverses sorting order to descending.
+  assert.strictEqual(runCli(['-r'], 'a\nc\nb\n'), 'c\nb\na\n');
+});
 
-@startuml
-class "Sort CLI" as sort_cli &lt;&lt;cli&gt;&gt;
-@enduml</code></pre>
+test('req_main_js_16_6c7e91df', () => {
+  // Default sort order (no -r) is ascending.
+  assert.strictEqual(runCli([], 'c\na\nb\n'), 'a\nb\nc\n');
+  assert.deepStrictEqual(sortLines(['c', 'a', 'b'], false), ['a', 'b', 'c']);
+});
+
+test('req_main_js_11_2fea0114', () => {
+  // Lines that are empty after stripping are skipped.
+  assert.strictEqual(runCli([], 'b\n\n   \n\t\na\n'), 'a\nb\n');
+});
+
+test('req_main_js_12_881a9320', () => {
+  // Every non-empty stripped line is added to the accumulated lines.
+  assert.deepStrictEqual(processRawLines([' x ', '', 'y', '   ']), ['x', 'y']);
+});</code></pre>
           </div>
 
           <div>
-            <h3 class="font-semibold text-slate-900">Design</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/views.yaml</code>. The execution flow as a use case view, its steps the requirements in document order.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>view:usecase/sort-cli-main-js:
-  kind: use-case
-  title: 'Sort CLI: Main.ts'
-  members:
-  - req:main-js-3
-  - req:main-js-4
-  - req:main-js-5
-  - req:main-js-6
-  - req:main-js-7
-  - req:main-js-8
-  - req:main-js-9
-  - req:main-js-10
-  - req:main-js-11
-  provenance:
-    derived:
-      from: [ent:sort-cli, req:main-js-3, req:main-js-4, ...]
-      reasoning: 'default view: use-case per flow cluster'
-  default: true</code></pre>
-          </div>
-
-          <div>
-            <h3 class="font-semibold text-slate-900">Code</h3>
+            <h3 class="text-lg font-semibold text-slate-900">5. Code</h3>
             <p class="mt-1 text-sm text-slate-500"><code>code/main.js</code>, generated.</p>
             <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>#!/usr/bin/env node
 'use strict';
@@ -205,57 +179,15 @@ function sortLines(lines, reverse) {
   return sorted;
 }
 
+function printLines(lines, out) {
+  out.write(lines.join('\n') + (lines.length > 0 ? '\n' : ''));
+}
+
 async function main() {
   const { reverse } = parseArgs(process.argv.slice(2));
   const lines = await readStdinLines(process.stdin);
   printLines(sortLines(lines, reverse), process.stdout);
 }</code></pre>
-          </div>
-
-          <div>
-            <h3 class="font-semibold text-slate-900">Tests</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>code/test/main.test.js</code>, generated. Each test is named for the requirement it covers.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>test('req_main_js_5_d8e51eea', () => {
-  // -r reverses sorting order to descending.
-  assert.strictEqual(runCli(['-r'], 'a\nc\nb\n'), 'c\nb\na\n');
-});
-
-test('req_main_js_10_4112a225', () => {
-  // Leading and trailing whitespace is stripped from each line.
-  assert.strictEqual(runCli([], '  b  \n\ta \n'), 'a\nb\n');
-});
-
-test('req_main_js_11_2fea0114', () => {
-  // Lines that are empty after stripping are skipped.
-  assert.strictEqual(runCli([], 'b\n\n   \n\t\na\n'), 'a\nb\n');
-});
-
-test('req_main_test_js_2_1c6d8c96', () => {
-  // Reverse order case: documented input/expected output
-  // with the reverse flag on.
-  assert.strictEqual(runCli(['-r'], '321\n654\n453\n'),
-    '654\n453\n321\n');
-});</code></pre>
-          </div>
-
-          <div>
-            <h3 class="font-semibold text-slate-900">Diagnostics</h3>
-            <p class="mt-1 text-sm text-slate-500"><code>jazyk-out/graph/diagnostics.yaml</code>. What trickles up. Each names the sentence or section it is about and stays until the docs change.</p>
-            <pre class="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700"><code>diag:uncovered-section-1:
-  rule: uncovered-section
-  severity: warning
-  subjects:
-  - docs/main.test.js.md#/main-test-js/suite/reverse-order
-  message: section docs/main.test.js.md#/main-test-js/suite/reverse-order
-    is unprocessed after the build
-
-diag:unplaced-behavior-1:
-  rule: unplaced-behavior
-  severity: info
-  subjects:
-  - req:main-test-js-1
-  message: req:main-test-js-1 is a behavior requirement in no flow view
-    and excluded from none</code></pre>
           </div>
 
         </div>

@@ -42,17 +42,27 @@ One page.
 
 - Hero: "Jazyk", pronunciation "/ˈjazɪk/", subtitle "English as a programming
   language".
-- The pitch, in a paragraph: a compiler that turns documentation into requirements,
-  architecture, design, source code, and tests, one test per requirement. A change to
-  the docs trickles down to the code, including migration, deployment, rollback. A
-  problem downstream trickles up to the docs as a warning or an error: a hole, an
-  ambiguity, a contradiction. The docs open in an IDE, each sentence linked to its
-  requirement, design, code, and tests, the diagnostics inline. The compiler runs on
-  the reader's own coding AI.
-- One example, the sort utility (`example-sort`), as a grid of snippets, each a real
-  file of the project condensed: the document, the requirements shard, an acceptance
-  criterion, the entity shard with its class diagram source, the use case view, the
-  code, the tests bound to requirement ids, and the diagnostics shard.
+- The pitch, in a paragraph: a compiler that turns documentation → requirements →
+  acceptance criteria → architecture → design → source code → tests, one test per
+  requirement. A change to the docs trickles down to the code, including migration,
+  deployment, rollback. A problem downstream trickles up to the docs as a warning or
+  an error: a hole, an ambiguity, a contradiction. The docs open in an IDE, each
+  sentence linked to its requirement, design, code, and tests, the diagnostics
+  inline. The compiler runs on the reader's own coding AI.
+- One example, the sort utility (`example-sort`), as numbered sections one under the
+  other:
+  - Docs: the document, condensed.
+  - Requirements and acceptance criteria: two requirements as the graph states them,
+    each with its quote, and under each two criteria in the
+    [criterion](./compiler/model/criterion.md) form (one condition, one outcome,
+    concrete values), indented.
+  - Architecture: three diagrams side by side. The sort utility is one entity, so
+    the diagrams are the ledger example's, real renderings copied into the site: the
+    top level's component view, the Checkout level's class view, and the Checkout
+    sequence view.
+  - Tests: the generated tests that assert the criteria above, named for their
+    requirements.
+  - Code: the generated program, condensed.
 - A link to [the editor](#the-editor) to open the demos or a folder.
 - No link to the repository.
 

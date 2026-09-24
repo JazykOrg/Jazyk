@@ -945,7 +945,7 @@ The loop continued onto the org corpus and onto generation:
   probes on the local model wrote behavioral criteria under the old and new skill alike
   and bound to the descriptor test under three contract wordings, so the criteria skill
   now says an observation uses the product as its user does, and the
-  `criteria-observation` case grades it (qwen3.8:27b 1.00 on both codecs, a client sending an HTTP request and a user seeing the listed products; Codex's recorded criterion fails it). A deterministic signal for a verified row whose
+  `criteria-observation` case grades it (qwen3.8:27b 1.00 on both codecs, a client sending an HTTP request and a user seeing the listed products; Codex's recorded erp criterion fails it; Codex itself now scores it 1.00, observing the listing as a user and asking an `invented-choice` question for the technology-only statement). The same review cases exposed two serving defects, both fixed: a pretty-printed case list Codex's approval guard could not see a named case in, and `report_feedback` refused as `no-build` after a case closed. review-lint went from 0.50 to 1.00 on qwen3.8:27b once the review evidence named each project lint rule, and Codex scores it 1.00. A deterministic signal for a verified row whose
   files hold no executable code is still open.
 
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by

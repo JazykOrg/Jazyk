@@ -38,6 +38,9 @@ given:
     coverage:
       docs/shop.md#/shop: covered
 steps:
+  - call: graph_status
+    args: {}
+    expect: {contains: 'docs/shop.md#/shop\s+section body'}
   - call: load
     args: {target: req:shop-1}
   - call: upsert_criterion

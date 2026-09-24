@@ -65,8 +65,11 @@ runs first by construction.
 
 ## What the model sees
 
-The entity as a stub, each listed requirement in full with its criteria under it, the
-sections the hints name loadable by reference. The contract paragraph is
+The entity as a stub, each listed requirement in full with its criteria under it, and
+the source section of each listed requirement in full, once per section: the values a
+criterion needs live there, and a session that had to fetch them spent one to nine
+`read_section` rounds before its first criterion (every criteria session of one f2
+run did). A section past the loaded set's budget arrives as a handle. The contract paragraph is
 `goals/prompts/derive-criteria.md`.
 
 ## Tools

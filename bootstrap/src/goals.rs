@@ -2550,17 +2550,29 @@ impl GoalKind for DeriveCriteria {
     fn ready(&self, _goal: &Goal, board: &Board) -> Ready {
         tier3_ready(board)
     }
-    fn pack(&self, _store: &Store, batch: &[Goal]) -> String {
+    fn pack(&self, store: &Store, batch: &[Goal]) -> String {
         let mut lines = Vec::new();
+        // The source section of each listed requirement, once: the criterion's values
+        // live there (docs/compiler/goals/derive-criteria.md#what-the-model-sees).
+        let mut sections: Vec<String> = Vec::new();
         for g in batch {
             lines.push(format!("- {} stub", g.target));
             for key in ["none", "revised"] {
                 for r in g.change[key].as_array().into_iter().flatten() {
                     if let Some(id) = r.as_str() {
                         lines.push(format!("- {} full", id));
+                        if let Some(src) = store.graph.requirements.get(id).and_then(|q| q.source.as_ref()) {
+                            let sec = format!("{}#{}", src.doc, src.section);
+                            if !sections.contains(&sec) {
+                                sections.push(sec);
+                            }
+                        }
                     }
                 }
             }
+        }
+        for sec in sections {
+            lines.push(format!("- {} full", sec));
         }
         lines.join("\n")
     }

@@ -51,7 +51,12 @@ steps:
   it as verified. A binder once listed a handbook page that named a role without
   stating any of its criteria, and the row read as a contradiction.
 - Search for an existing test per criterion. Bind to it when found; never write a
-  duplicate beside it. A test written for an unimplemented criterion fails by design
+  duplicate beside it. The exception is a test that reads a description of the artifact
+  rather than driving it (it imports a constant, an object literal, or a table naming
+  what the artifact should be): it is rewritten in place under the same name so it
+  drives the artifact. Reuse otherwise wins: a single bind session on a generated ERP
+  found a passing test that asserted `backendApi.style === 'REST'` on a descriptor
+  object, bound to it, and recorded a backend with no server as verified. A test written for an unimplemented criterion fails by design
   but must be one an implementation can pass: it asserts the refusal or outcome the
   criterion states, never a contradiction of its own input (the embedded agent once
   asserted that an order built from no items has items, a gate nothing could clear). One test per criterion, keyed by the criterion id and its

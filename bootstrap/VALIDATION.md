@@ -922,6 +922,32 @@ The loop continued onto the org corpus and onto generation:
   and by single-session benchmark cases; the embedded agent (qwen3.8:27b) scored the
   new `enumeration` and `properties` cases 1.00 in six and seven rounds.
 
+- f2 under the new doctrine (2026-09-24, qwen3.8:27b through Ollama, the embedded
+  agent): converged at 100 percent coverage with all six planted traps holding, 44
+  requirements (46 before), none facetless (four before), and 60 criteria (68). The
+  five `facets-missing` refusals were definitional statements the model recorded with a
+  facet in the same session, one round each. Reading its sessions found five defects,
+  each verified by a replay or a unit test proven to fail without the fix and never by a
+  rerun: a criterion copying a sibling requirement word for word passed the gate (the
+  `criterion-restates` gate now compares against every statement); reviews recited up
+  to eight `criterion-missing` findings they could neither act on nor clear (a
+  harness-owned rule now); every criteria session spent one to nine `read_section`
+  rounds before its first criterion (it opens holding the source sections); 22 of 389
+  recorded bindings across three runs listed their own tests as implementation (dropped
+  and named now); 25 of 44 docsgen blocks printed the quote and a statement differing
+  only by `shall` (the quote is omitted). Every benchmark case, snippet, and replay
+  session had been told to call `begin_goals` with no such tool (an open-batch protocol
+  line now).
+- The erp generation Codex had finished green reads verified on 42 of 42 criteria with
+  no server: `npm start` names a missing file, the frontend prints a constant, and
+  nothing uses Express or PostgreSQL. The tests assert descriptor objects, rooted in a
+  derived criterion "when a client examines the integration contract". Single-session
+  probes on the local model wrote behavioral criteria under the old and new skill alike
+  and bound to the descriptor test under three contract wordings, so the criteria skill
+  now says an observation uses the product as its user does, and the
+  `criteria-observation` case grades it (qwen3.8:27b 1.00 on both codecs, a client sending an HTTP request and a user seeing the listed products; Codex's recorded criterion fails it). A deterministic signal for a verified row whose
+  files hold no executable code is still open.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

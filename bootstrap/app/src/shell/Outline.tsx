@@ -39,9 +39,10 @@ export default function Outline() {
 
   if (!docPath || !rec) return null
   const rows = matrix.data?.rows ?? {}
-  const sections = Object.entries(rec.sections)
-    .filter(([, s]) => s.kind !== 'root')
-    .sort((a, b) => a[1].order - b[1].order)
+  // Every section, the top-level ones included (a document's `# heading`, or
+  // several), in document order: `order` counts siblings, so the start line is
+  // what puts a parent before its children and one tree before the next.
+  const sections = Object.entries(rec.sections).sort(([, a], [, b]) => (a.lines?.[0] ?? 0) - (b.lines?.[0] ?? 0) || a.order - b.order)
   if (sections.length === 0) return null
   return (
     <div className="wb-explorer-section outline">

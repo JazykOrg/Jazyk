@@ -628,8 +628,10 @@ and deleted from the tree through the documents API; a delete asks for a second 
 never a dialog.
 
 Under the tree, the open document's outline: its sections from the
-[section tree](../compiler/parsing.md), each with its read state (Read, Informational
-with its note, Not read yet). Clicking a section scrolls the editor to it.
+[section tree](../compiler/parsing.md) in document order, the top-level ones included
+(the document's `# heading`, or each of them when it has several) with their
+subsections indented under them, each with its read state (Read, Informational with
+its note, Not read yet). Clicking a section scrolls the editor to it.
 
 The center is the [editor](#editor). A Reader toggle renders the document with the
 same overlays and no editing, for reviewers.

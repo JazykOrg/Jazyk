@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "jazyk": {
+      "command": "jazyk",
+      "args": [
+        "mcp",
+        "compile,generate,verify,decompile,benchmark,chat,graph"
+      ]
+    }
+  }
+}

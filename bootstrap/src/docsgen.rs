@@ -1572,9 +1572,38 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
                     s.push_str(&line);
                     s.push_str("\n\n");
                 }
+                // The quote says what the statement says once case, punctuation,
+                // link targets, articles, modal verbs, and a trailing `s` are set aside
+                // (docs/consumers/docsgen.md#the-requirements-document).
                 let same = |a: &str, b: &str| {
-                    a.split_whitespace().collect::<String>().to_lowercase()
-                        == b.split_whitespace().collect::<String>().to_lowercase()
+                    let norm = |s: &str| -> Vec<String> {
+                        let unlinked = regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)")
+                            .map(|re| re.replace_all(s, "$1").to_string())
+                            .unwrap_or_else(|_| s.to_string());
+                        unlinked
+                            .to_lowercase()
+                            .split(|c: char| !(c.is_alphanumeric() || c == '`'))
+                            .map(|w| if w == "cannot" { "not" } else { w })
+                            .filter(|w| {
+                                !w.is_empty()
+                                    && ![
+                                        "shall", "must", "will", "should", "can", "then", "the",
+                                        "a", "an",
+                                    ]
+                                    .contains(w)
+                            })
+                            .map(|w| {
+                                if w.len() > 4 && w.ends_with("ies") {
+                                    format!("{}y", &w[..w.len() - 3])
+                                } else if w.len() > 3 && w.ends_with('s') {
+                                    w[..w.len() - 1].to_string()
+                                } else {
+                                    w.to_string()
+                                }
+                            })
+                            .collect()
+                    };
+                    norm(a) == norm(b)
                 };
                 match r.source.as_ref() {
                     // The quote is omitted when it equals the statement: a page once
@@ -2224,6 +2253,22 @@ mod tests {
                 ..Default::default()
             },
         );
+        // A quote that says what its statement says, once "shall" and the verb's
+        // ending are set aside, is omitted (docs/consumers/docsgen.md#the-requirements-document).
+        s.graph.requirements.insert(
+            "req:shop-2".into(),
+            Requirement {
+                statement: "The Cart notifies the Customer when it empties.".into(),
+                entities: vec!["ent:cart".into()],
+                edges: vec![],
+                source: Some(SourceRef {
+                    doc: "shop.md".into(),
+                    section: "/shop".into(),
+                    quote: "The Cart shall notify the Customer when it empties.".into(),
+                }),
+                ..Default::default()
+            },
+        );
         // A stale file for an entity that no longer exists must be pruned.
         crate::vfs::create_dir_all(out.join("docsgen")).ok();
         crate::vfs::write(out.join("docsgen/ghost.md"), "old").ok();
@@ -2247,6 +2292,11 @@ mod tests {
             doc
         );
         assert!(doc.contains("[card](./entities/cart.md)"), "{}", doc);
+        assert!(
+            !doc.contains("> The Cart shall notify the Customer"),
+            "a quote equal to its statement but for the modal is omitted: {}",
+            doc
+        );
         assert!(!out.join("docsgen/ghost.md").vexists());
         assert!(!out.join("docsgen/entities/ghost.md").vexists());
         assert!(!out.join("docsgen/diagrams/class/ghost.md").vexists());
@@ -2254,7 +2304,7 @@ mod tests {
         assert!(card.contains("# Cart\n\n`ent:cart` · holds items\n"), "{}", card);
         assert!(card.contains("## Inside\n\na leaf\n"), "{}", card);
         assert!(
-            card.contains("- [Requirements document](../cart.md) (1 requirement)"),
+            card.contains("- [Requirements document](../cart.md) (2 requirements)"),
             "{}",
             card
         );

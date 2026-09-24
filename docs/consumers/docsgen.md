@@ -43,8 +43,11 @@ The page, in order:
   the `statement`, the facets (with the `measure` of a `quality` facet), the edges as
   `a → b (type, cardinality)`, the transition when one is declared, and the provenance:
   the verbatim quote with its source section for a quote-provenanced requirement (the
-  quote is omitted when it equals the statement, whitespace and case aside, since a
-  page once repeated every statement twice), the
+  quote is omitted when it says what the statement says, which is the common case: the
+  words equal once case, punctuation, link targets, articles, `then`, the modal verbs
+  (`shall`, `must`, `will`, `should`, `can`, with `cannot` read as `not`), and a verb's
+  or plural's ending are set aside; on f2 25 of 44 blocks
+  repeated their statement with only "shall" added), the
   upstream nodes and reasoning for a derived one, the author, time, and note for a decree.
   Under the block, `Criteria:` lists the requirement's [criteria](../compiler/model/criterion.md),
   one line each: id, `kind`, the statement, its quote's section or `proposed` for a derived

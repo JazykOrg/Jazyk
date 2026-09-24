@@ -52,6 +52,16 @@ This scratch space is a live document to outline the work for this documentation
   judgment gates is the first target: a gate checks that a verdict exists, only a
   planted ground truth grades whether it is true. Refresh `known-results.yaml` on the
   new case set hash; remote runs cost money, approve per run.
+- A verified ledger with no product. A programmatic row's verdict is its exit code
+  ([verify](./compiler/goals/verify.md)), so a test that imports a descriptor object
+  (an object literal naming the framework, the database, and the endpoints) and asserts
+  its fields passes, and a deliverable with no server can read verified on every row.
+  The criteria skill and the bind contract now say an observation uses the product as
+  its user does ([criteria](./compiler/skills/criteria.md)), and the
+  `criteria-observation` case grades it. What is still missing is a deterministic
+  signal. One candidate: the [medium](./consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated)
+  records a start or smoke command for a software deliverable, and a row cannot read
+  verified while that command fails. Owner decision.
 - Parallel sessions. Compilation is sequential by design (one build under the build
   lease, one session at a time, [execution](./compiler/sessions.md#execution)); nothing
   depends on parallelism, so it is an optimization measured on the dogfood, not a

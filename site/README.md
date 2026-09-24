@@ -73,7 +73,8 @@ body. The apex record's `name` is the empty string, not `@`.
 ./deploy.sh
 ```
 
-Everything but `*.html` goes up with `max-age=604800` and `--delete`, the HTML files with
-`max-age=0`, then the distribution is invalidated, so a deploy is visible within seconds.
+Everything but `*.html` goes up with `max-age=604800`, the HTML files with `max-age=0`,
+both with `--delete`, then the distribution is invalidated, so a deploy is visible within
+seconds.
 [`.github/workflows/site.yml`](../.github/workflows/site.yml) runs the same script on
 every push to `master` that touches `site/`, with credentials from the OIDC deploy role.

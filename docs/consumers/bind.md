@@ -39,7 +39,11 @@ steps:
   file that only restates the statement (a page repeating the sentence, a comment, a
   heading) carries nothing: `files` lists the files a criterion test inspects, and stays
   empty when no such file exists, so the row reads `unimplemented` and generation opens
-  instead of `failing`. A constant, an object literal, or a table that describes the
+  instead of `failing`. A test is never an implementing file: a path that is this
+  binding's own test artifact, or any row's recorded test artifact, is dropped from
+  `files` and named in the reply (`droppedFiles`), since 22 of 389 recorded rows across
+  three runs listed their own tests as implementation and so read `failing` where they
+  were `unimplemented`. A constant, an object literal, or a table that describes the
   artifact (a list of endpoint paths, a runtime name, a framework name) is a description
   in another syntax, not the artifact; a file holding only that carries nothing, and a
   test that reads it inspects prose. Codex once generated an `apiContract.js` object

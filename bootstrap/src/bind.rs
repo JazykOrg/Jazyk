@@ -498,6 +498,32 @@ pub fn record(
     }
     files.sort();
     files.dedup();
+    // A test is never an implementing file: this binding's own test artifacts and every
+    // row's recorded ones are dropped and named in the reply
+    // (docs/consumers/bind.md#the-bind-goal).
+    let test_artifacts: std::collections::BTreeSet<String> = {
+        let ledger = crate::gen::Ledger::load(&store.out);
+        let mut a: std::collections::BTreeSet<String> = ledger
+            .requirements
+            .values()
+            .flat_map(|row| {
+                std::iter::once(row.test.artifact.clone())
+                    .chain(row.tests.values().map(|t| t.test.artifact.clone()))
+            })
+            .filter(|p| !p.is_empty())
+            .collect();
+        a.extend(crit_tests.values().map(|t| t.test.artifact.clone()));
+        if let Some(p) = test["artifact"].as_str() {
+            a.insert(p.to_string());
+        }
+        a
+    };
+    let dropped: Vec<String> = files
+        .iter()
+        .filter(|f| test_artifacts.contains(f.as_str()))
+        .cloned()
+        .collect();
+    files.retain(|f| !test_artifacts.contains(f.as_str()));
     for f in &files {
         if !gs.deliverable.join(f).vis_file() {
             return Err(format!("implementing file `{}` does not exist under the deliverable; an unimplemented requirement records an empty files list", f));
@@ -564,6 +590,12 @@ pub fn record(
             },
         },
     });
+    if !dropped.is_empty() {
+        reply["droppedFiles"] = json!(dropped);
+        reply["droppedFilesNote"] = json!(
+            "test artifacts are never implementing files; list the product files a criterion test inspects, or none"
+        );
+    }
     if !contradicted.is_empty() {
         reply["contradicted"] = json!(contradicted);
         reply["contradictedNote"] = json!(
@@ -934,6 +966,43 @@ mod tests {
         assert_eq!(v["status"], "unimplemented");
         // Bound: no longer bind work.
         assert!(pending(&s, &gs).is_empty());
+    }
+
+    // A test is never an implementing file: 22 of 389 recorded rows listed their own
+    // test as implementation and read failing where they were unimplemented
+    // (docs/consumers/bind.md#the-bind-goal).
+    #[test]
+    fn a_test_artifact_listed_as_implementation_is_dropped() {
+        let s = tmp_store();
+        let gs = GenSettings {
+            configured: true,
+            deliverable: s.out.join("product"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
+        let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
+        crate::vfs::write(
+            gs.deliverable.join("tests/shop.sh"),
+            format!("# {}\nexit 1\n", name),
+        )
+        .unwrap();
+        let test = json!({"kind": "programmatic", "artifact": "tests/shop.sh", "name": name, "run": "sh tests/shop.sh"});
+        let v = record(
+            &s,
+            "req:shop-1",
+            &["tests/shop.sh".into()],
+            &test,
+            &json!([]),
+            "fail",
+            Some("the only file is the test itself"),
+            &gs,
+        )
+        .unwrap();
+        assert_eq!(v["status"], "unimplemented", "{}", v);
+        assert_eq!(v["droppedFiles"], json!(["tests/shop.sh"]), "{}", v);
+        let ledger = crate::gen::Ledger::load(&s.out);
+        assert!(ledger.requirements["req:shop-1"].files.is_empty());
     }
 
     #[test]

@@ -17,7 +17,7 @@ Cover the shape of the requirement.
 
 Concrete, from the documents. Values come from the statement, the quote, or a section the requirement's document holds. A value the documents do not give is not yours to pick: file `report_diagnostic` rule `invented-choice` with a prompt naming the requirement and the options, mark the requirement `open-question`, and write no criterion that needs the value.
 
-Never restate. A criterion whose normalized text equals the statement is refused (`criterion-restates`). "The Shop sends a confirmation email when an Order is submitted" is the requirement; "A Customer submitting an Order for one in-stock Product receives one confirmation email" is a criterion.
+Never restate. A criterion whose normalized text equals the statement, or the statement of any other requirement, is refused (`criterion-restates`): another requirement's sentence is that requirement, not evidence for this one. "The Shop sends a confirmation email when an Order is submitted" is the requirement; "A Customer submitting an Order for one in-stock Product receives one confirmation email" is a criterion.
 
 Verdicts. `complete`: the criteria cover the requirement's shape, derived or stated. `stated-only`: the documents' own criteria cover it and you added none. `open-question`: a value nobody stated keeps a criterion from being written, and the question stands as a prompt.
 

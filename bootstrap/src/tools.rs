@@ -1713,6 +1713,32 @@ impl ToolSession {
                 ));
             }
         }
+        // Another requirement's sentence is that requirement, not evidence for this
+        // one (docs/compiler/model/criterion.md#what-a-good-criterion-is).
+        let norm = crate::store::normalize_statement(&statement);
+        let other = self
+            .snapshot
+            .graph
+            .requirements
+            .iter()
+            .filter(|(id, _)| id.as_str() != rid)
+            .map(|(id, r)| (id.clone(), r.statement.clone()))
+            .chain(self.staged.iter().filter_map(|o| match o {
+                Op::CreateRequirement { id, requirement } if id != &rid => {
+                    Some((id.clone(), requirement.statement.clone()))
+                }
+                _ => None,
+            }))
+            .find(|(_, st)| crate::store::normalize_statement(st) == norm);
+        if let Some((oid, ost)) = other {
+            return Err(ToolError::new(
+                "criterion-restates",
+                format!(
+                    "the criterion restates {} (\"{}\"), another requirement: it is that requirement, not evidence for {}; state one concrete situation of {} and its observable outcome",
+                    oid, ost, rid, rid
+                ),
+            ));
+        }
         // The id follows the requirement's document, so a requirement's criteria read
         // as one family whatever section each quotes (criterion.md#identity).
         let req_doc = self

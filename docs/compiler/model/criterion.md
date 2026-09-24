@@ -61,7 +61,10 @@ reworded sentence refreshes it in place ([mutations](../graph.md#mutations)).
   number the session picked.
 - Covers what the requirement leaves implicit: the boundary of every bound, the negative
   case of every conditional, the measure of every quality.
-- Never restates the requirement (`criterion-restates`), never names a function, a table,
+- Never restates the requirement or any other requirement of the graph
+  (`criterion-restates`): a criterion that reads as another requirement's statement is that
+  requirement, not evidence for this one. A local model once gave `req:catalog-3` a
+  negative that was `req:catalog-4` word for word. It never names a function, a table,
   or a file: the deliverable's shape is generation's business.
 - One per requirement is the norm, the shape of the statement adding the rest (a
   bound's edge, a conditional's negative, a quality's measure); one is the floor

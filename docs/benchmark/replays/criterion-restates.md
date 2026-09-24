@@ -1,7 +1,9 @@
 # A criterion that restates its requirement
 
 A criterion whose normalized text equals the statement tests nothing the statement does
-not already say. The refusal says what a criterion is instead.
+not already say, and one that equals another requirement's statement is that other
+requirement (a local model gave `req:catalog-3` a negative that was `req:catalog-4` word
+for word). The refusal says what a criterion is instead.
 
 ```yaml
 name: criterion-restates
@@ -13,7 +15,8 @@ given:
     docs/shop.md: |
       # Shop
 
-      The Shop sends a confirmation email when an Order is submitted.
+      The Shop sends a confirmation email when an Order is submitted. When the Stock of a
+      Product reaches zero, the Shop hides the Product.
   graph:
     entities:
       ent:shop:
@@ -27,6 +30,11 @@ given:
         entities: [ent:shop]
         source: {section: docs/shop.md#/shop, quote: "The Shop sends a confirmation email when an Order is submitted."}
         facets: [{facet: behavior, reasoning: the shop acts on an event}]
+      req:shop-2:
+        statement: When the Stock of a Product reaches zero, the Shop hides the Product.
+        entities: [ent:shop]
+        source: {section: docs/shop.md#/shop, quote: "When the Stock of a Product reaches zero, the Shop hides the Product."}
+        facets: [{facet: behavior, reasoning: the shop acts on an event}]
     coverage:
       docs/shop.md#/shop: covered
 steps:
@@ -39,6 +47,13 @@ steps:
       statement: The Shop sends a confirmation email when an Order is submitted.
       provenance: {derived: {from: [req:shop-1], reasoning: the stated behavior}}
     expect: {rule: criterion-restates, contains: 'concrete condition'}
+  - call: upsert_criterion
+    args:
+      requirement: req:shop-1
+      kind: negative
+      statement: When the Stock of a Product reaches zero, the Shop hides the Product.
+      provenance: {derived: {from: [req:shop-1], reasoning: another rule copied in}}
+    expect: {rule: criterion-restates, contains: 'req:shop-2'}
   - call: upsert_criterion
     args:
       requirement: req:shop-1

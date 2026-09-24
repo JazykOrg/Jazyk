@@ -247,8 +247,9 @@ There is no write tool for relationships, state machines, or default views. They
   section) or `provenance: {derived: {from: [the requirement id], reasoning}}` (a
   criterion the documents do not state, ratified toward prose). `kind` is `positive`,
   `negative`, `boundary`, or `quality` with `measure`. Refused: a `requirement` that
-  does not resolve (`unknown-requirement`), a statement equal to the requirement's
-  after normalization (`criterion-restates`), a quote that does not locate.
+  does not resolve (`unknown-requirement`), a statement equal after normalization to
+  the requirement's or to any other requirement's (`criterion-restates`, naming the
+  requirement it restates), a quote that does not locate.
 - `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?})`:
   a wording or kind repair; the id and the owner stay.
 - `delete_criterion({id, reason})`: a criterion the documents no longer support.

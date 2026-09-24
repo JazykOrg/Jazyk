@@ -199,9 +199,13 @@ export default function GraphSidebar() {
   // Under the Model lens a row opens its page; under the Developer map it focuses
   // the map (docs/frontends/gui.md#model).
   const onMap = loc.pathname.startsWith('/dev/map')
+  // The list follows the `list` param, or the page: a requirement page keeps the
+  // requirements list open.
   const list: ListKind = (LISTS as readonly string[]).includes(sp.get('list') ?? '')
     ? (sp.get('list') as ListKind)
-    : 'entities'
+    : loc.pathname.startsWith('/model/requirements')
+      ? 'requirements'
+      : 'entities'
   const q = (sp.get('q') ?? '').toLowerCase()
   const node = sp.get('node')
   const view = sp.get('view')
@@ -226,10 +230,19 @@ export default function GraphSidebar() {
 
   // Open in the inspector and focus on the map, one click. An entity row is a step
   // of the walk: its card opens and the explorer's position moves with it.
+  // Off the map the row opens a page; the list and the filter travel with it, so
+  // the sidebar stays on the list the row came from.
+  const keep = () => {
+    const k = new URLSearchParams()
+    if (sp.get('list')) k.set('list', sp.get('list')!)
+    if (sp.get('q')) k.set('q', sp.get('q')!)
+    const s = k.toString()
+    return s ? `?${s}` : ''
+  }
   const openAndFocus = (id: string) => {
     if (!onMap) {
-      if (id.startsWith('ent:')) return navigate(`/model/entities/${encodeURIComponent(id)}`)
-      if (id.startsWith('req:')) return navigate(`/model/requirements/${encodeURIComponent(id)}`)
+      if (id.startsWith('ent:')) return navigate(`/model/entities/${encodeURIComponent(id)}${keep()}`)
+      if (id.startsWith('req:')) return navigate(`/model/requirements/${encodeURIComponent(id)}${keep()}`)
     }
     const next = new URLSearchParams(sp)
     selectNodeParams(next, id)
@@ -239,7 +252,7 @@ export default function GraphSidebar() {
 
   // A view row overlays the view and opens it in the inspector.
   const overlayView = (id: string) => {
-    if (!onMap) return navigate(`/model/diagrams/${encodeURIComponent(id)}`)
+    if (!onMap) return navigate(`/model/diagrams/${encodeURIComponent(id)}${keep()}`)
     const next = new URLSearchParams(sp)
     next.set('node', id)
     next.set('view', id)

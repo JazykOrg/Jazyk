@@ -349,8 +349,9 @@ clear or keep change records; they are not graph mutations
   `{verdict: duplicate | contradiction | consistent, carried_by?}`;
   [`review-entity`](./goals/review-entity.md) `{definition: current | refreshed,
   lookalikes: [{id, verdict: merged | separate, reason}], diagnostics: [{id, verdict:
-  stands | resolved | refiled}]}` (omit `lookalikes` and `diagnostics` when the hints
-  list none; an empty list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
+  stands | resolved | refiled}], lint: [{rule, verdict: clean | filed}]}` (omit
+  `lookalikes` and `diagnostics` when the hints list none, and `lint` when the project
+  declares no lint rules; an empty list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
   `declared` or `not-structural`; [`dedupe-candidates`](./goals/dedupe-candidates.md)
   `merged` or `separate`; [`curate-view`](./goals/curate-view.md) `[{id, verdict: added | excluded}]`, one per
   matched node; [`conform-instance`](./goals/conform-instance.md)

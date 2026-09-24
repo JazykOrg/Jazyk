@@ -39,6 +39,7 @@ fn session_for(proj: &Project, out: &Path, target: &str) -> ToolSession {
         crate::limits::CONTEXT_BUDGET,
     );
     session.gen = crate::gen::GenSettings::resolve(proj);
+    session.lint = proj.linting.clone();
     session.caller.source = "gui".into();
     session.caller.target = target.to_string();
     session

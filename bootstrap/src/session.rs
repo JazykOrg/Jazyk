@@ -1014,6 +1014,8 @@ impl ProjectBlock {
             .iter()
             .map(|r| format!("warning: {}", r))
             .chain(self.lint.errors.iter().map(|r| format!("error: {}", r)))
+            .enumerate()
+            .map(|(i, r)| format!("[{}] {}", i + 1, r))
             .collect();
         if !rules.is_empty() {
             s.push_str(&format!("- lint: {}\n", rules.join("; ")));
@@ -1487,12 +1489,12 @@ mod tests {
             .render();
         assert!(
             with.contains(
-                "- lint: warning: An em dash appears in prose.; error: A TODO marker appears in prose.\n"
+                "- lint: [1] warning: An em dash appears in prose.; [2] error: A TODO marker appears in prose.\n"
             ),
             "{}",
             with
         );
-        assert!(preview_with(&s, &[], &lint).contains("- lint: warning: An em dash"));
+        assert!(preview_with(&s, &[], &lint).contains("- lint: [1] warning: An em dash"));
     }
 
     #[test]

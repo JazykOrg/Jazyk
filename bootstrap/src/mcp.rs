@@ -765,6 +765,7 @@ impl McpServer {
         session.loaded = loaded;
         session.skills = skills;
         session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.lint = self.project.linting.clone();
         session.caller = self.caller(&kinds.join("+"), &batch.id);
         let goal_rows: Vec<Value> = goals
             .iter()
@@ -2222,6 +2223,7 @@ impl McpServer {
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = crate::gen::GenSettings::resolve(&self.project);
+                session.lint = self.project.linting.clone();
                 session.caller =
                     self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
                 match session.dispatch(&name, &args) {
@@ -2300,6 +2302,7 @@ impl McpServer {
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.lint = self.project.linting.clone();
         session.caller = self.caller("chat", target);
         session
     }
@@ -2452,6 +2455,7 @@ impl McpServer {
         let mut session =
             ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
         session.gen = crate::gen::GenSettings::resolve(&self.project);
+        session.lint = self.project.linting.clone();
         session.caller = self.caller("chat", &target);
         if let Err(e) = session.dispatch("update_diagnostic", args) {
             return e.to_value();

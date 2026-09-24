@@ -1354,6 +1354,7 @@ pub fn case_session_batch(
         crate::limits::CONTEXT_BUDGET,
     );
     s.gen = gs.clone();
+    s.lint = lint.clone();
     s.loaded = loaded;
     s.skills = skills;
     s.caller = crate::feedback::Caller {

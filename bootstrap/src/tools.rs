@@ -507,7 +507,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}]} (one entry per lookalike and per diagnostic the goal's hints list; omit the lists when the hints list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike and per diagnostic the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -1367,6 +1367,9 @@ pub struct ToolSession {
     // True only while finish_implicit drives `done`: the implicit path commits around
     // an unmarked dirty section instead of bouncing (docs/compiler/sessions.md#budgets).
     implicit_done: bool,
+    // The project's lint rules, numbered as the project block renders them: a review
+    // names each one in its evidence (docs/compiler/goals/review-entity.md#gate).
+    pub lint: crate::project::Linting,
 }
 
 impl ToolSession {
@@ -1413,6 +1416,7 @@ impl ToolSession {
             taken_ids: Default::default(),
             last_condensed: Default::default(),
             implicit_done: false,
+            lint: Default::default(),
         }
     }
 
@@ -2093,6 +2097,60 @@ impl ToolSession {
         count
     }
 
+    fn lint_evidence(&self, goal: &str, target: &str, evidence: &Value) -> Result<(), ToolError> {
+        let rules = self.lint.warnings.len() + self.lint.errors.len();
+        if rules == 0 {
+            return Ok(());
+        }
+        let entries: Vec<&Value> = evidence["lint"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+        let target = self.snapshot.resolve_id(target).to_string();
+        let mut subjects: BTreeSet<String> = self
+            .snapshot
+            .graph
+            .requirements
+            .iter()
+            .filter(|(_, r)| r.entities.iter().any(|e| self.snapshot.resolve_id(e) == target))
+            .map(|(id, _)| id.clone())
+            .collect();
+        subjects.insert(target.clone());
+        let on_entity = |subs: &[String]| subs.iter().any(|s| subjects.contains(self.snapshot.resolve_id(s)));
+        let filed = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
+                if diagnostic.rule == "lint" && on_entity(&diagnostic.subjects)))
+            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && d.rule == "lint" && on_entity(&d.subjects));
+        for n in 1..=rules {
+            let Some(e) = entries.iter().find(|e| e["rule"].as_u64() == Some(n as u64) || e["rule"].as_str() == Some(n.to_string().as_str())) else {
+                return Err(ToolError::new(
+                    "lint-unchecked",
+                    format!(
+                        "{} has no lint entry for rule [{}] on the ## Project lint line; read every quote on {} against it and add {{rule: {}, verdict: clean | filed}} to evidence.lint",
+                        goal, n, target, n
+                    ),
+                ));
+            };
+            match e["verdict"].as_str() {
+                Some("clean") => {}
+                Some("filed") => {
+                    if !filed {
+                        return Err(ToolError::new(
+                            "lint-unbacked",
+                            format!(
+                                "{} claims rule [{}] filed, but no lint diagnostic is staged or open on {} or its statements; report_diagnostic rule lint naming the requirement whose quote violates it, or verdict clean",
+                                goal, n, target
+                            ),
+                        ));
+                    }
+                }
+                other => {
+                    return Err(ToolError::new(
+                        "bad-verdict",
+                        format!("lint verdict `{}` for rule [{}]: clean or filed", other.unwrap_or("?"), n),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn mark_goal_done(&mut self, args: &Value) -> Result<Value, ToolError> {
         let goal = Self::str_arg(args, "goal")?;
         let Some(gs) = self.scope.goal(&goal).cloned() else {
@@ -2179,6 +2237,11 @@ impl ToolSession {
                     })?;
                 }
             }
+        }
+        // One lint entry per declared rule, filed backed by a lint finding on the
+        // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
+        if gs.kind == "review-entity" {
+            self.lint_evidence(&goal, &gs.target, &evidence)?;
         }
         // derive-criteria: one entry per requirement, complete backed by a criterion,
         // open-question backed by an invented-choice prompt
@@ -8447,6 +8510,59 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.message.contains("bare array"), "{}", err.message);
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#gate: with lint rules declared, a
+    // review names each rule by number, and filed needs a lint finding on the entity.
+    #[test]
+    fn review_names_every_lint_rule_and_backs_filed() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:gadget".into(), plain("Gadget"));
+        s.graph.requirements.insert(
+            "req:gadget-1".into(),
+            Requirement {
+                statement: "The Gadget shall report its battery level.".into(),
+                entities: vec!["ent:gadget".into()],
+                ..Default::default()
+            },
+        );
+        let goals = vec![Goal {
+            id: "g:review-entity:ent:gadget".into(),
+            kind: "review-entity".into(),
+            mandatory: true,
+            target: "ent:gadget".into(),
+            ..Default::default()
+        }];
+        let mark = |t: &mut ToolSession, lint: Value| {
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:review-entity:ent:gadget", "justification": "Reviewed.",
+                        "evidence": {"definition": "current", "lint": lint}}),
+            )
+        };
+        // No rules declared: nothing to name.
+        let mut bare = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        assert!(bare
+            .dispatch("mark_goal_done", &json!({"goal": "g:review-entity:ent:gadget", "justification": "Reviewed.", "evidence": {"definition": "current"}}))
+            .is_ok());
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        t.lint = crate::project::Linting {
+            warnings: vec!["An em dash appears in prose.".into()],
+            errors: vec!["A TODO marker appears in prose.".into()],
+        };
+        let err = mark(&mut t, json!([{"rule": 1, "verdict": "clean"}])).unwrap_err();
+        assert_eq!(err.rule, "lint-unchecked", "{}", err.message);
+        assert!(err.message.contains("rule [2]"), "{}", err.message);
+        let err = mark(&mut t, json!([{"rule": 1, "verdict": "filed"}, {"rule": 2, "verdict": "clean"}])).unwrap_err();
+        assert_eq!(err.rule, "lint-unbacked", "{}", err.message);
+        t.dispatch(
+            "report_diagnostic",
+            &json!({"rule": "lint", "severity": "warning", "subjects": ["req:gadget-1"],
+                    "message": "The quote carries an em dash."}),
+        )
+        .unwrap();
+        let v = mark(&mut t, json!([{"rule": 1, "verdict": "filed"}, {"rule": "2", "verdict": "clean"}])).unwrap();
+        assert_eq!(v["marked"], "g:review-entity:ent:gadget", "{}", v);
     }
 
     // Mirrors docs/compiler/goals/review-entity.md#gate: a word-match verdict is

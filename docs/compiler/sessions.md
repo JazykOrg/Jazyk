@@ -54,8 +54,9 @@ prompt, so it can be shown before it is spent. The parts, in order:
    diagnostic counts (the judgment findings on the graph; the deterministic checks'
    findings arrive with the build's tail, and the line says so), the board counts (goals in this session, goals elsewhere, goals
    blocked on a human), and the project's lint rules with their severities when it
-   declares any ([linting](./project-settings.md#linting)), so a `lint` diagnostic
-   names a rule the model has read.
+   declares any, numbered ([linting](./project-settings.md#linting)), so a `lint`
+   diagnostic names a rule the model has read and a review's evidence names each rule
+   by its number ([the gate](./goals/review-entity.md#gate)).
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
    the kind's contract paragraph (its payload file under `goals/prompts/`), the change in
    one line, the gate in one line, and the hints. The contract paragraph renders once
@@ -99,7 +100,7 @@ shortened here; the real ones are the payload files):
 - generation 413, manual mode
 - diagnostics: 1 error (contradiction diag:contradiction-3), 4 warnings
 - board: 2 goals in this session; 19 elsewhere; 3 blocked on human answers (2 ratification proposals among them)
-- lint: warning: An em dash appears in prose. Use commas, periods, parentheses, or colons instead.
+- lint: [1] warning: An em dash appears in prose. Use commas, periods, parentheses, or colons instead.
 
 ## Goals
 - [g:rejudge-pair:req:orders-6~req:payment-9] mandatory

@@ -91,6 +91,8 @@ evidence:
   lookalikes:
     - {id: ent:backend-system, verdict: merged}
     - {id: ent:reorder-point, verdict: separate, reason: "a threshold on Order; statements are about it directly"}
+  lint:
+    - {rule: 1, verdict: clean}
 ```
 
 The harness validates the claim over the store plus what the session has staged:
@@ -112,6 +114,13 @@ The harness validates the claim over the store plus what the session has staged:
   `not_about` at commit, so the hint never offers it again while the statement stands
   ([fields](../model/entity.md#fields)). A session once judged three word matches in
   free text and expected the same hints back on the next build.
+- When the project declares lint rules, every rule on the `## Project` block's `lint`
+  line has an entry under `lint`: `{rule: <its number>, verdict: clean | filed}`.
+  `filed` requires a `lint` diagnostic staged in this session, or open, on the entity or
+  one of its statements; `clean` says every quote on the entity was read against the
+  rule. A missing entry is refused as `lint-unchecked`. A local model once reviewed an
+  entity whose quote carried the planted em dash, read the quote, and marked the goal
+  done without checking the rule, since nothing it had to claim named it.
 - The justification is present.
 
 `done` runs the same gate over every goal in the batch and the per-mutation gates on
@@ -169,8 +178,8 @@ Computed by the harness and rendered under the goal block:
   level view of the entity when it has children and of the level it sits in, so a
   review reads the drawing without guessing view ids
   ([level views](../model/view.md#level-views)).
-- The project's lint rules with their severities, on the `## Project` block's `lint`
-  line ([the prompt](../sessions.md#the-prompt),
+- The project's lint rules, numbered, with their severities, on the `## Project`
+  block's `lint` line; the evidence takes one entry per number ([the prompt](../sessions.md#the-prompt),
   [linting](../project-settings.md#linting)).
 - The requirement count against `requirements-per-entity` when past the soft limit,
   as information only: splitting is [`abstract-entity`](./abstract-entity.md) work,
@@ -225,7 +234,7 @@ E.g.:
   Change: 2 requirements changed in g413 (req:orders-6 revised, req:orders-9 created).
   Gate: definition current; every listed lookalike judged; findings filed or resolved.
   Hints: lookalikes: ent:order-item (related, separate by default); unreferenced:
-  req:payment-3 "Orders on hold are not charged"; 1 open diagnostic; lint: warnings 1;
+  req:payment-3 "Orders on hold are not charged"; 1 open diagnostic;
   skill judgment
 
 ## Loaded (11.4k of 24k chars)

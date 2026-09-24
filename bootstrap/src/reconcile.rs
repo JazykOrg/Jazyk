@@ -3269,6 +3269,33 @@ mod tests {
         assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
     }
 
+    // A decompiled draft nobody has edited since the machine wrote it is unratified;
+    // any edit clears it (docs/consumers/decompile.md#ratification).
+    #[test]
+    fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
+        let dir = journal_dir();
+        let mut s = Store::default();
+        s.out = dir.clone();
+        let drafted = "# Cart\nThe Cart holds items.\n";
+        seed_doc(&mut s, "cart.md", drafted);
+        seed_doc(&mut s, "shop.md", "# Shop\nThe Shop sells.\n");
+        crate::vfs::create_dir_all(dir.join("decompile")).unwrap();
+        crate::vfs::write(
+            dir.join("decompile/drafts.yaml"),
+            format!("cart.md: {}\n", hash_hex(drafted)),
+        )
+        .unwrap();
+        let found = checks(&s, &Project::default());
+        let hits = rules_for(&found, "unratified");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["cart.md"]);
+        // One edit is a ratification.
+        seed_doc(&mut s, "cart.md", "# Cart\nThe Cart holds items a Customer picked.\n");
+        let after = checks(&s, &Project::default());
+        assert!(rules_for(&after, "unratified").is_empty());
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn coverage_checks_flag_an_unprocessed_and_a_suspicious_section() {
         let mut s = Store::default();

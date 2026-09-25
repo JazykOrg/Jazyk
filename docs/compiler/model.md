@@ -84,7 +84,9 @@ provenance: {decree: {author, at, note}}
   stale anchor: the [dirty set](./reconciler.md#dirty-set) picks it up, and a quote left
   dead draws `stale-provenance`.
 - `derived`: synthesized from upstream nodes by a session or by the harness. `from` lists
-  the upstream ids, `reasoning` says why. A derived fact is invented until ratified: a
+  the upstream ids, `reasoning` says why. A section is not a node: a fact a section
+  states enters as a `quote` of its sentence, and `from` naming a section reference is
+  refused with that repair. A derived fact is invented until ratified: a
   [ratification proposal](./model/diagnostic.md#ratification-proposals) offers the
   sentence the documents should gain, the owner accepts it, and the fact flips to `quote`.
 - `decree`: authored by a human directly on the graph (an inspector edit, a chat tool, a

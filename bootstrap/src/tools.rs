@@ -3114,6 +3114,17 @@ impl ToolSession {
         let mut from: Vec<String> = Vec::new();
         for raw in Self::str_list(d, "from") {
             let Some(id) = self.node_known(&raw) else {
+                // A section reference is no node: the fact it states is quoted.
+                // Mirrors docs/compiler/model.md#provenance.
+                if raw.contains('#') {
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!(
+                            "provenance.derived.from names `{}`, a section, and from names graph nodes (ent:, req:, view: ids); a fact the section states enters as mention {{section, quote}} with a body sentence, and a heading is no body sentence",
+                            raw
+                        ),
+                    ));
+                }
                 return Err(ToolError::new(
                     "unknown-id",
                     format!(
@@ -9928,6 +9939,22 @@ mod tests {
         t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
         assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+    }
+
+    // A section is no node: derived.from naming one is refused with the quote repair.
+    // Mirrors docs/compiler/model.md#provenance.
+    #[test]
+    fn derived_from_a_section_is_refused_toward_a_mention() {
+        let mut t = session();
+        let err = t
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Warehouse", "definition": "The system.",
+                        "provenance": {"derived": {"from": ["shop.md#/shop"], "reasoning": "the page"}}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unknown-id");
+        assert!(err.message.contains("a section") && err.message.contains("mention"), "{}", err.message);
     }
 
     // Past the high-water mark, load and expand refuse naming candidates; reads

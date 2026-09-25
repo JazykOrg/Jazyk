@@ -1994,6 +1994,13 @@ impl ToolSession {
         // it alone, and the caps variant's target faces its requirement count against
         // the soft value. Mirrors docs/compiler/goals/abstract-entity.md#the-fan-out-gate
         // and #gate.
+        if gs.kind == "split-view" {
+            if let Some(v) =
+                crate::goals::split_view_goal_gate(&self.snapshot, &self.staged, &gs.target)
+            {
+                return Err(ToolError::new(&v.rule, v.message));
+            }
+        }
         if gs.kind == "abstract-entity" {
             if let Some(v) =
                 crate::goals::fan_out_goal_gate(&self.snapshot, &self.staged, &gs.target)

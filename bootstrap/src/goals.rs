@@ -4798,6 +4798,62 @@ fn fan_out_level_violation(proj: &Projection, level: &str) -> Option<Violation> 
 // own level whether or not the changeset touched it, so a goal marked done without
 // work still faces its count. Mirrors
 // docs/compiler/goals/abstract-entity.md#the-fan-out-gate.
+// The split-view claim: the target view, with this session's staged view updates
+// applied, is within the soft value of every limit it crossed (or its bump). A split
+// that leaves the view over the soft value commits at done but resolves nothing.
+// Mirrors docs/compiler/goals/split-view.md#gate.
+pub fn split_view_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Violation> {
+    let id = store.resolve_id(target).to_string();
+    let mut v = store.graph.views.get(&id)?.clone();
+    for op in staged {
+        match op {
+            Op::DeleteView { id: d, .. } if store.resolve_id(d) == id => return None,
+            Op::UpdateView {
+                id: u,
+                members,
+                add_members,
+                remove_members,
+                query,
+                collapse,
+                exclude,
+                ..
+            } if store.resolve_id(u) == id => {
+                if let Some(ms) = members {
+                    v.members = ms.clone();
+                }
+                for x in add_members {
+                    if !v.members.contains(x) {
+                        v.members.push(x.clone());
+                    }
+                }
+                v.members.retain(|x| !remove_members.contains(x));
+                if let Some(q) = query {
+                    v.query = Some(q.clone());
+                }
+                if let Some(c) = collapse {
+                    v.collapse = c.clone();
+                }
+                for x in exclude {
+                    v.members.retain(|y| y != &x.id);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut after = store.clone();
+    after.graph.views.insert(id.clone(), v);
+    let c = crate::derive::threshold_crossings(&after)
+        .into_iter()
+        .find(|c| c.subject == id)?;
+    Some(Violation::new(
+        "over-limit",
+        format!(
+            "{} still has {} {} after the staged work, over the soft value {}; bring the view itself under it (for a flow view, keep one member per phase, the phase's first step, beside the overview), or fail the goal with the reason",
+            id, c.count, c.limit, c.soft
+        ),
+    ))
+}
+
 pub fn fan_out_goal_gate(store: &Store, staged: &[Op], target: &str) -> Option<Violation> {
     if let Some(v) = fan_out_gates(store, staged).into_iter().next() {
         return Some(v);

@@ -106,7 +106,10 @@ recomputes the view's counts over the staged state and checks:
 - The crossed count is within the limit's soft value, or the view's bump. A split that
   only de-escalates (from over hard to over soft) commits its work at `done` but does
   not resolve the goal: the goal stays open, optional, and the session continues or
-  fails it with the reason.
+  fails it with the reason. The claim is refused as `over-limit`, naming the count and
+  the soft value. A split that created both phases and the overview but kept all
+  twelve steps in the parent, collapsing two requirements (which hides nothing in a
+  flow view), once passed with the parent still drawing ten participants.
 - No member lost: every node the view listed before the session is still in its
   `members`, or hidden under a member the view collapses (structural kinds), or a member
   of a sub-view staged in this session, or listed in the view's `excluded` with a note

@@ -2335,6 +2335,46 @@ mod tests {
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 
+    // The split-view claim holds only when the parent view itself is under the soft
+    // value after the staged work. Mirrors docs/compiler/goals/split-view.md#gate.
+    #[test]
+    fn a_split_view_claim_needs_the_parent_under_its_limit() {
+        let cases = parse_cases();
+        let case = cases.iter().find(|c| c.name == "split-view").unwrap();
+        let tmp = own_dir("split-gate");
+        let (store, goal) = seed_derived(case, &tmp).unwrap();
+        let v = crate::goals::split_view_goal_gate(&store, &[], &goal.target).expect("over before");
+        assert_eq!(v.rule, "over-limit", "{}", v.message);
+        let members = store.graph.views[&goal.target].members.clone();
+        // Collapsing requirements hides nothing in a flow view.
+        let collapse = crate::store::Op::UpdateView {
+            id: goal.target.clone(),
+            title: None,
+            members: None,
+            add_members: Vec::new(),
+            remove_members: Vec::new(),
+            query: None,
+            collapse: Some(vec![members[0].clone(), members[6].clone()]),
+            exclude: Vec::new(),
+            reasoning: None,
+        };
+        assert!(crate::goals::split_view_goal_gate(&store, &[collapse], &goal.target).is_some());
+        // One member per phase brings the parent under.
+        let coarse = crate::store::Op::UpdateView {
+            id: goal.target.clone(),
+            title: None,
+            members: Some(vec![members[0].clone(), members[6].clone()]),
+            add_members: Vec::new(),
+            remove_members: Vec::new(),
+            query: None,
+            collapse: None,
+            exclude: Vec::new(),
+            reasoning: None,
+        };
+        assert!(crate::goals::split_view_goal_gate(&store, &[coarse], &goal.target).is_none());
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();

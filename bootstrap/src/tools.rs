@@ -3957,6 +3957,75 @@ impl ToolSession {
     // backslash-escapes markdown inside JSON (\` for `); the source never carries
     // the backslashes, so the unescaped form is tried as a fallback and stored.
     // Mirrors docs/compiler/graph.md#validation-gates.
+    // A requirement quotes one sentence: past a leading list number, at most one of its
+    // sentences runs to four words (a fact line "Age 58." stands). A code block or a
+    // diagram quotes its own line. Mirrors docs/compiler/graph.md#validation-gates.
+    fn one_sentence(&self, doc: &str, sec: &str, quote: &str) -> Result<(), ToolError> {
+        let kind = self
+            .snapshot
+            .docs
+            .get(doc)
+            .and_then(|r| r.sections.get(sec))
+            .map(|s| s.kind.clone())
+            .unwrap_or_default();
+        if kind == "code-block" || kind == "diagram" {
+            return Ok(());
+        }
+        let body = quote.trim_start();
+        let digits = body.chars().take_while(|c| c.is_ascii_digit()).count();
+        let body = if digits > 0 && body[digits..].starts_with(". ") { &body[digits + 2..] } else { body };
+        let chars: Vec<char> = body.chars().collect();
+        let mut sentences: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            cur.push(c);
+            if matches!(c, '.' | '!' | '?') {
+                let mut j = i + 1;
+                while j < chars.len() && matches!(chars[j], '.' | '!' | '?') {
+                    cur.push(chars[j]);
+                    j += 1;
+                }
+                let mut k = j;
+                while k < chars.len() && chars[k].is_whitespace() {
+                    k += 1;
+                }
+                let boundary = j < chars.len()
+                    && chars[j].is_whitespace()
+                    && k < chars.len()
+                    && (chars[k].is_uppercase()
+                        || chars[k].is_ascii_digit()
+                        || matches!(chars[k], '"' | '\'' | '(' | '[' | '`' | '«'));
+                if boundary {
+                    sentences.push(std::mem::take(&mut cur));
+                    i = k;
+                    continue;
+                }
+                i = j;
+                continue;
+            }
+            i += 1;
+        }
+        sentences.push(cur);
+        let full: Vec<String> = sentences
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).count() >= 4)
+            .collect();
+        if full.len() > 1 {
+            return Err(ToolError::new(
+                "quote-multi-sentence",
+                format!(
+                    "the quote spans {} sentences ({}); a requirement quotes one sentence: record one requirement per sentence, each quoting its own",
+                    full.len(),
+                    full.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", ")
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn check_quote(&self, doc: &str, sec: &str, quote: &str) -> Result<String, ToolError> {
         let q = quote.trim();
         if q.is_empty() {
@@ -5479,6 +5548,7 @@ impl ToolSession {
                     }
                 }
                 let quote = self.check_quote(&doc, &sec, &quote)?;
+                self.one_sentence(&doc, &sec, &quote)?;
                 let raw_entities = Self::str_list(args, "entities");
                 if raw_entities.is_empty() {
                     return Err(ToolError::new(
@@ -5804,6 +5874,7 @@ impl ToolSession {
                         let q = self
                             .check_quote(&doc, &sec, &q)
                             .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
+                        self.one_sentence(&doc, &sec, &q)?;
                         Some(SourceRef { doc, section: sec, quote: q.trim().to_string() })
                     }
                     (None, None) => None,
@@ -9939,6 +10010,29 @@ mod tests {
         t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
         assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+    }
+
+    // A requirement quotes one sentence; a fact line of short fragments and a numbered
+    // item stand. Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn a_requirement_quote_spanning_two_sentences_is_refused() {
+        let mut s = Store::default();
+        let text = "# Warehouse\n\n## Frontend\n\nThe frontend is a web application built using React. It communicates with the\nbackend over a REST API.\n\n## People\n\nDot Feeney. Age 58. Occupation: ferry office manager.\n\n1. The employee submits the claim to their manager.\n";
+        s.docs.insert(
+            "w.md".into(),
+            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+        );
+        s.graph.entities.insert("ent:frontend".into(), plain("Frontend"));
+        let mut t = ToolSession::new(s, reconcile_scope("w.md", &["/warehouse/frontend", "/warehouse/people"], &[]), 64, 24_000);
+        let req = |q: &str, sec: &str| json!({"statement": "The Frontend is a React web application.", "entities": ["ent:frontend"],
+            "section": format!("w.md#{}", sec), "quote": q, "facets": [{"facet": "constraint", "reasoning": "its form"}]});
+        let err = t
+            .dispatch("upsert_requirement", &req("The frontend is a web application built using React. It communicates with the backend over a REST API.", "/warehouse/frontend"))
+            .unwrap_err();
+        assert_eq!(err.rule, "quote-multi-sentence", "{}", err.message);
+        assert!(t.dispatch("upsert_requirement", &req("The frontend is a web application built using React.", "/warehouse/frontend")).is_ok());
+        assert!(t.dispatch("upsert_requirement", &req("Dot Feeney. Age 58. Occupation: ferry office manager.", "/warehouse/people")).is_ok());
+        assert!(t.dispatch("upsert_requirement", &req("1. The employee submits the claim to their manager.", "/warehouse/people")).is_ok());
     }
 
     // A section is no node: derived.from naming one is refused with the quote repair.

@@ -255,6 +255,14 @@ The gates:
   heading is its title, not body text: a quote that is the heading is refused with a
   message saying so, since a Codex session read `### Chapter 1: Arrival` in the loaded
   section and quoted it.
+- A requirement's `quote` is one sentence: a leading list number set aside, at most one
+  of its sentences runs to four words or more (so a fact line such as `Dot Feeney. Age
+  58. Occupation: ferry office manager.` stands). A quote spanning two sentences is
+  refused as `quote-multi-sentence`, naming them: one requirement per sentence, each
+  quoting its own. A code block or diagram quotes its own line and is exempt. A local
+  model merged "built using React" and "communicates over a REST API" into one statement
+  quoting both sentences, and 6 of 3310 quotes across the collected runs spanned two
+  sentences, each a merge or a statement quoting its neighbour's sentence.
 - In a [`reconcile-section`](./goals/reconcile-section.md) session, a mention or
   requirement source must cite the section being reconciled or its document. A quote
   from a document the prose merely links to is rejected (`wrong-document`): the fact is

@@ -150,9 +150,14 @@ a mutating reply previews the goals the mutation will open
   the existing statement is the same fact reworded: it also updates in place, and the
   reply carries `matched` with the statement it landed on. Subsumption is tight: the
   longer statement adds at most two content words to the shorter and adds no negation
-  (`not`, `never`, `no`, `unless`, `except`, `otherwise`), so "An Order is paid within
+  (`not`, `never`, `no`, `unless`, `except`, `otherwise`, `cannot`), so "An Order is paid within
   21 days of placement" and "When an Order is not paid within 21 days of placement,
-  Orderly cancels it", two facts from one sentence, stay two requirements. A stale
+  Orderly cancels it", two facts from one sentence, stay two requirements. The words
+  compare with the obligation modals (`shall`, `must`, `will`) set aside and a plural
+  or verb ending (`-s`, `-ies`) reduced, so "the system empties the Cart" is "the system
+  shall empty the Cart" restated, not a second requirement. An added `cannot`, `can`,
+  `may`, `should`, `might`, or `could` blocks the match like a negation: a permission
+  or a recommendation is not the obligation. A stale
   anchor in the same section whose statement subsumes or is subsumed by the new
   statement resolves the same way, so re-recording a reworded statement lands on the
   anchor's id; there the dead quote is the signal, so any subsumption counts. `edges` are `[{a, b, type?, cardinality?}]`,

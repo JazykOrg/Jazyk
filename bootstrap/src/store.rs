@@ -637,12 +637,27 @@ pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
 // placement" inside "When an Order is not paid within 21 days of placement, Orderly
 // cancels it"), so a rewording may add at most two tokens and no negation.
 // Mirrors docs/compiler/tools.md#write-tools.
+// The obligation modals are set aside and an `-s` or `-ies` ending reduced, so "empties"
+// restates "shall empty"; `can`, `should`, and `may` change what is required and count.
 pub(crate) fn statement_rewords(a: &str, b: &str) -> bool {
-    const NEGATIONS: [&str; 6] = ["not", "never", "no", "unless", "except", "otherwise"];
+    const NEGATIONS: [&str; 12] = [
+        "not", "never", "no", "unless", "except", "otherwise", "cannot",
+        // A permission or a recommendation is not the obligation.
+        "can", "may", "should", "might", "could",
+    ];
     let toks = |s: &str| -> std::collections::BTreeSet<String> {
         normalize_statement(s)
             .split(' ')
-            .map(String::from)
+            .filter(|w| !["shall", "must", "will"].contains(w))
+            .map(|w| {
+                if w.len() > 4 && w.ends_with("ies") {
+                    format!("{}y", &w[..w.len() - 3])
+                } else if w.len() > 3 && w.ends_with('s') && !w.ends_with("ss") {
+                    w[..w.len() - 1].to_string()
+                } else {
+                    w.to_string()
+                }
+            })
             .collect()
     };
     let (ta, tb) = (toks(a), toks(b));
@@ -6433,6 +6448,17 @@ mod tests {
         assert!(statement_rewords(
             "The Admin CLI creates a user.",
             "The Admin CLI creates a user using createUser."
+        ));
+        // An obligation modal and a verb ending restate the same fact; a local model
+        // minted "the system empties the Cart" beside "shall empty" off one quote.
+        assert!(statement_rewords(
+            "When the customer checks out, the system shall empty the Cart.",
+            "When the customer checks out, the system empties the Cart."
+        ));
+        // A permission is not the obligation.
+        assert!(!statement_rewords(
+            "The Customer must cancel the Order.",
+            "The Customer can cancel the Order."
         ));
     }
 

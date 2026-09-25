@@ -236,6 +236,11 @@ session spend its budget on it:
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
   act on the answer already given, or finish with `done`.
+- A repeat whose answer differs from the previous one is no repeat: the state moved
+  between them (a file rewritten, a refusal repaired), so it carries no `repeat` field
+  and the count starts again. A `record_binding` that was refused for a missing test
+  name, re-sent after the test file was fixed, once landed marked "unchanged". A
+  `load` is the exception: it repeats by target, below.
 
 Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to

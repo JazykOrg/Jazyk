@@ -1339,6 +1339,8 @@ pub struct ToolSession {
     // The repeated-call guard, keyed per open batch: the same call with the same
     // arguments has the same answer (docs/compiler/sessions.md#repeated-calls).
     repeats: std::collections::BTreeMap<String, u32>,
+    // The last answer per repeat key: a repeat whose answer changed is no repeat.
+    last_answers: std::collections::BTreeMap<String, String>,
     refusals: u32,
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
@@ -1402,6 +1404,7 @@ impl ToolSession {
             caller: Default::default(),
             outcomes: Default::default(),
             repeats: Default::default(),
+            last_answers: Default::default(),
             refusals: 0,
             feedback_count: 0,
             review_staged_note: None,
@@ -2365,7 +2368,7 @@ impl ToolSession {
             match self.settle_one(entry) {
                 Ok(mut r) => {
                     let seen = {
-                        let c = self.repeats.entry(key).or_insert(0);
+                        let c = self.repeats.entry(key.clone()).or_insert(0);
                         *c += 1;
                         *c
                     };
@@ -4229,7 +4232,7 @@ impl ToolSession {
                 format!("{}|{}", name, args)
             };
             let seen = {
-                let c = self.repeats.entry(key).or_insert(0);
+                let c = self.repeats.entry(key.clone()).or_insert(0);
                 *c += 1;
                 *c
             };
@@ -4249,8 +4252,22 @@ impl ToolSession {
                     ),
                 ));
             }
+            // A repeat is marked only when its answer matches the previous one; a
+            // changed answer means the state moved, and the count starts again.
+            let result = self.dispatch_gated(name, args);
+            let answer = match &result {
+                Ok(v) => v.to_string(),
+                Err(e) => format!("{}: {}", e.rule, e.message),
+            };
+            // A load of a loaded target is a repeat by target, whatever it answers.
+            let same = name == "load" || self.last_answers.get(&key) == Some(&answer);
+            self.last_answers.insert(key.clone(), answer);
             if seen == 2 {
-                let mut v = self.dispatch_gated(name, args)?;
+                if !same {
+                    self.repeats.insert(key, 1);
+                    return result;
+                }
+                let mut v = result?;
                 if v.is_object() {
                     v["repeat"] = json!(
                         "you already made this exact call; the answer is unchanged. Act on it."
@@ -4258,6 +4275,7 @@ impl ToolSession {
                 }
                 return Ok(v);
             }
+            return result;
         }
         self.dispatch_gated(name, args)
     }
@@ -9897,6 +9915,12 @@ mod tests {
             let err = t.dispatch("done", &json!({"summary": "x"})).unwrap_err();
             assert_ne!(err.rule, "repeated-call");
         }
+        // A repeat whose answer changed is no repeat: the state moved between them.
+        let args = json!({"query": "wishlist"});
+        t.dispatch("search", &args).unwrap();
+        t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
+        assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
+        assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
     }
 
     // Past the high-water mark, load and expand refuse naming candidates; reads

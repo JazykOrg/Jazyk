@@ -4995,6 +4995,40 @@ impl ToolSession {
                         })
                         .map(|(id, _)| id.clone())
                 });
+                // A new entity enters with a sentence that names it: a word of its name
+                // or an alias in the quote. Mirrors docs/compiler/graph.md#validation-gates.
+                if existing.is_none() {
+                    if let Some(m) = &mention_ref {
+                        let words = |s: &str| -> BTreeSet<String> {
+                            s.to_lowercase()
+                                .split(|c: char| !c.is_alphanumeric())
+                                .filter(|w| w.len() >= 3 && !["the", "and", "for", "with", "system"].contains(w))
+                                .map(|w| {
+                                    if w.len() > 4 && w.ends_with("ies") {
+                                        format!("{}y", &w[..w.len() - 3])
+                                    } else if w.len() > 3 && w.ends_with('s') && !w.ends_with("ss") {
+                                        w[..w.len() - 1].to_string()
+                                    } else {
+                                        w.to_string()
+                                    }
+                                })
+                                .collect()
+                        };
+                        let mut named = words(&name_arg);
+                        for a in Self::str_list(args, "aliases") {
+                            named.extend(words(&a));
+                        }
+                        if !named.is_empty() && named.is_disjoint(&words(&m.quote)) {
+                            return Err(ToolError::new(
+                                "mention-unnamed",
+                                format!(
+                                    "the quote never names `{}`; an entity enters with a sentence that names it (a word of its name or an alias). An entity the documents never name enters with provenance {{derived: {{from, reasoning}}}}, or not at all: \"the system\" is a placeholder, never a new entity",
+                                    name_arg
+                                ),
+                            ));
+                        }
+                    }
+                }
                 // A parentless twin: the same name in the same scope with no parent is
                 // almost always the concept whose whole this section states, so placing
                 // it is update_entity with parent; a second one under the parent needs a
@@ -7353,7 +7387,7 @@ mod tests {
 
     fn session() -> ToolSession {
         let mut s = Store::default();
-        let text = "# Shop\nintro text\n\n## Cart\nThe Shopping Cart holds items a Customer intends to buy.\n";
+        let text = "# Shop\nintro text\n\n## Cart\nThe Shopping Cart holds items a Customer intends to buy.\nA Gadget and a Line sit beside a Sprocket, the Departments, their Employee Handbook, and their Employee Badge.\n";
         s.docs.insert(
             "shop.md".into(),
             DocRecord {
@@ -7438,7 +7472,7 @@ mod tests {
                     "name": "Gadget", "definition": "A gadget.", "aliases": [],
                     "scope": "", "stereotype": "device", "parent": "",
                     "attributes": [],
-                    "mention": {"section": "/shop/cart", "quote": "holds items"},
+                    "mention": {"section": "/shop/cart", "quote": "A Gadget and a Line sit beside"},
                     "provenance": {"derived": {"from": [], "reasoning": ""}},
                     "note": ""
                 }),
@@ -7522,7 +7556,7 @@ mod tests {
                     "aliases": [""],
                     "attributes": [{}, {"name": "teeth", "type": "int",
                                         "provenance": {"section": "", "quote": ""}}],
-                    "mention": {"section": "/shop/cart", "quote": "intends to buy"}
+                    "mention": {"section": "/shop/cart", "quote": "beside a Sprocket"}
                 }),
             )
             .unwrap();
@@ -7590,7 +7624,7 @@ mod tests {
         t.dispatch(
             "upsert_entity",
             &json!({"name": "Gadget", "definition": "A gadget.",
-                    "mention": {"section": "/shop/cart", "quote": "holds items"}}),
+                    "mention": {"section": "/shop/cart", "quote": "A Gadget and a Line sit beside"}}),
         )
         .unwrap();
         let v = t
@@ -7757,7 +7791,7 @@ mod tests {
         // A staged create under an entity binds it.
         t.dispatch(
             "upsert_entity",
-            &json!({"name": "Line", "parent": "ent:order", "mention": {"section": "/shop/cart", "quote": "holds items"}}),
+            &json!({"name": "Line", "parent": "ent:order", "mention": {"section": "/shop/cart", "quote": "A Gadget and a Line sit beside"}}),
         )
         .unwrap();
         let err = t
@@ -9430,7 +9464,7 @@ mod tests {
         let quote: String = t.snapshot.docs["shop.md"].sections["/shop/cart"]
             .raw
             .lines()
-            .find(|l| l.contains('.'))
+            .find(|l| l.contains("Departments"))
             .unwrap()
             .trim()
             .to_string();
@@ -10076,6 +10110,27 @@ mod tests {
         assert_eq!(v["bookkeeping"]["ratification-pending"], 2, "{}", v);
         let v = t.dispatch("diagnostics", &json!({"rule": "ratification-pending"})).unwrap();
         assert_eq!(v["count"], 2, "{}", v);
+    }
+
+    // A new entity enters with a sentence that names it; an alias counts.
+    // Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn a_new_entity_whose_quote_never_names_it_is_refused() {
+        let mut t = session();
+        let q = "The Shopping Cart holds items a Customer intends to buy.";
+        let err = t
+            .dispatch("upsert_entity", &json!({"name": "Warehouse", "definition": "d", "stereotype": "system",
+                "mention": {"section": "/shop/cart", "quote": q}}))
+            .unwrap_err();
+        assert_eq!(err.rule, "mention-unnamed", "{}", err.message);
+        assert!(t
+            .dispatch("upsert_entity", &json!({"name": "Basket", "definition": "d", "aliases": ["Shopping Cart"],
+                "mention": {"section": "/shop/cart", "quote": q}}))
+            .is_ok());
+        assert!(t
+            .dispatch("upsert_entity", &json!({"name": "Items", "definition": "d",
+                "mention": {"section": "/shop/cart", "quote": q}}))
+            .is_ok());
     }
 
     // A section is no node: derived.from naming one is refused with the quote repair.

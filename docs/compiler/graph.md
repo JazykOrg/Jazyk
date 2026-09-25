@@ -255,6 +255,13 @@ The gates:
   heading is its title, not body text: a quote that is the heading is refused with a
   message saying so, since a Codex session read `### Chapter 1: Arrival` in the loaded
   section and quoted it.
+- An entity created with a `mention` enters with a sentence that names it: the quote
+  carries a word of its name or of an alias (case, a plural ending, words under three
+  letters, and `system` aside). A quote that never names it is refused as
+  `mention-unnamed`; an entity the documents never name enters with `derived`
+  provenance, or not at all. A local model minted a Shop «system» twice from "the system
+  shall empty the Cart" on a page headed Shop, and 1 of 810 first mentions across the
+  collected runs would have been refused, itself a concept the sentence never named.
 - A requirement's `quote` is one sentence: a leading list number set aside, at most one
   of its sentences runs to four words or more (so a fact line such as `Dot Feeney. Age
   58. Occupation: ferry office manager.` stands). A quote spanning two sentences is

@@ -209,6 +209,8 @@ definitions:
         $ref: '#/definitions/relationshipExists'
       facetCount:
         $ref: '#/definitions/facetCount'
+      transitionSubject:
+        $ref: '#/definitions/transitionSubject'
       edgeDeclared:
         $ref: '#/definitions/edgeDeclared'
       edgeAbsent:
@@ -390,6 +392,23 @@ definitions:
         enum: [behavior, constraint, failure-mode, quality]
       statementPattern:
         description: Regular expression tested against the requirement's statement
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
+  transitionSubject:
+    description: >-
+      The number of requirements whose transition names the entity as its subject is
+      within bounds; min is 1 when omitted
+    type: object
+    required: [entity]
+    additionalProperties: false
+    properties:
+      entity:
+        description: The subject entity, by id or exact name
         type: string
       min:
         type: integer

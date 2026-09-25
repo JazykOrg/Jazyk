@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 26] = [
+const CASE_FILES: [&str; 27] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -38,6 +38,7 @@ const CASE_FILES: [&str; 26] = [
     include_str!("../../docs/benchmark/cases/declare-edges.md"),
     include_str!("../../docs/benchmark/cases/steps.md"),
     include_str!("../../docs/benchmark/cases/narrative-behavior.md"),
+    include_str!("../../docs/benchmark/cases/machine-subject.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
@@ -1087,6 +1088,39 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                         .unwrap_or_default()
                 ),
             )
+        }
+        // Requirements whose transition's subject is the entity; `min` defaults to 1.
+        // Mirrors docs/benchmark/cases.md#checks.
+        "transitionSubject" => {
+            let ent = arg["entity"].as_str().unwrap_or_default();
+            let Some(ent_id) = find_entity(store, ent) else {
+                return Some(format!("entity {} not found", ent));
+            };
+            let subjects: Vec<String> = store
+                .graph
+                .requirements
+                .values()
+                .filter_map(|r| r.transition.as_ref())
+                .map(|t| store.resolve_id(&t.subject).to_string())
+                .collect();
+            let n = subjects.iter().filter(|s| **s == ent_id).count();
+            let mut bounds = arg.clone();
+            if bounds["min"].is_null() {
+                bounds["min"] = serde_json::json!(1);
+            }
+            within(n, &bounds, &format!("transitions on {}", ent_id)).map(|why| {
+                let others: std::collections::BTreeSet<&String> =
+                    subjects.iter().filter(|s| **s != ent_id).collect();
+                if others.is_empty() {
+                    why
+                } else {
+                    format!(
+                        "{}; other subjects: {}",
+                        why,
+                        others.into_iter().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                }
+            })
         }
         "coverageSet" => {
             let full = arg["section"].as_str().unwrap_or_default();
@@ -2453,12 +2487,44 @@ mod tests {
         assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "(bad"})).is_some());
     }
 
+    // transitionSubject counts the transitions whose subject is the entity, at
+    // least one by default. Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn transition_subject_reads_the_subject_entity() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:ines".into(), ent("Ines Marlow", None));
+        s.graph.entities.insert("ent:stance".into(), ent("Ines's stance toward Theo", None));
+        let step = |subject: &str, from: &str, to: &str| crate::model::Requirement {
+            statement: format!("The stance moves from {} to {}.", from, to),
+            transition: Some(Transition {
+                subject: subject.into(),
+                from: from.into(),
+                to: to.into(),
+                trigger: None,
+                guard: None,
+            }),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:a-1".into(), step("ent:stance", "stranger", "acquaintance"));
+        s.graph.requirements.insert("req:a-2".into(), step("ent:stance", "acquaintance", "rival"));
+        let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
+        // Hung on a stance entity: the character carries none.
+        let why = ok(serde_json::json!({"entity": "Ines Marlow"}));
+        assert!(why.as_deref().is_some_and(|w| w.contains("ent:stance")), "{:?}", why);
+        assert_eq!(ok(serde_json::json!({"entity": "ent:stance", "min": 2, "max": 2})), None);
+        assert!(ok(serde_json::json!({"entity": "Nobody"})).is_some());
+        s.graph.requirements.insert("req:a-3".into(), step("ent:ines", "rival", "ally"));
+        let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"entity": "Ines Marlow"})), None);
+        assert!(ok(serde_json::json!({"entity": "Ines Marlow", "min": 2})).is_some());
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-six files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-seven files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 32);
+        assert_eq!(cases.len(), 33);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2623,7 +2689,7 @@ mod tests {
     #[test]
     fn narrative_fixtures_locate_and_grade_work() {
         let cases = parse_cases();
-        for name in ["narrative-behavior"] {
+        for name in ["narrative-behavior", "machine-subject"] {
             let case = cases.iter().find(|c| c.name == name).unwrap();
             let tmp = own_dir(name);
             let s = sandbox(case, &tmp);

@@ -116,6 +116,9 @@ Graph checks:
   carrying the facet, of those whose statement matches the pattern when one is given, is
   within bounds. `min: 1` on a scene's pattern says the scene carries `behavior`;
   `max: 0` says a statement does not carry the facet.
+- `transitionSubject {entity, min?, max?}`: the number of requirements whose
+  `transition` names the entity as its `subject` is within bounds, `min` 1 when omitted.
+  The failure names the subjects the transitions carry instead.
 - `edgeDeclared {requirement, a, b, type?}`: the requirement's `edges` carry an edge
   from `a` to `b` (direction counts), optionally of the type.
 - `edgeAbsent {requirement, a, b}`: the requirement's `edges` carry no edge between
@@ -239,6 +242,8 @@ Extraction tier:
   negative only on a conditional.
 - [narrative-behavior](./cases/narrative-behavior.md): a narrated scene carries
   `behavior`, a standing character fact `constraint`.
+- [machine-subject](./cases/machine-subject.md): a character's stance changes are
+  transitions on the character, never on a minted stance entity.
 
 Review tier:
 

@@ -423,9 +423,10 @@ per criterion: 1253 tokens (131 criteria)
 ```
 
 `--costs --json` prints one JSON object with the same content: `first`, `last`,
-`sessions`, `measured`, `unmeasured`, `tokens`, `by_kind` and `by_document` (each
-`{goals, tokens, unmeasured}` by name), `requirements`, `criteria`, `per_requirement`,
-`per_criterion` (the last two `null` when nothing was measured). Exit `0`.
+`sessions`, `measured`, `unmeasured`, `tokens`, `by_kind` and `by_document` (each a
+list of `{name, goals, tokens, unmeasured}`, heaviest first), `requirements`,
+`criteria`, `per_requirement`, `per_criterion`. A figure no session measured is `null`
+(and `-` in the text), never `0`. Exit `0`.
 
 ### jazyk preview
 

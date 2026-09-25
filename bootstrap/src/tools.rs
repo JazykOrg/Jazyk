@@ -4833,12 +4833,36 @@ impl ToolSession {
                 // The subjects of the listed findings join the loaded set as stubs.
                 let subjects: Vec<String> = list
                     .iter()
+                    .filter(|d| rule.is_some() || d["owner"] != "harness")
                     .flat_map(|d| d["subjects"].as_array().cloned().unwrap_or_default())
                     .filter_map(|s| s.as_str().map(String::from))
                     .take(8)
                     .collect();
                 for s in subjects {
                     self.loaded.load_stub(&self.snapshot, &s);
+                }
+                // Unfiltered, the build's bookkeeping is counted per rule, not listed:
+                // one proposal per derived criterion buried the judgment findings.
+                // Mirrors docs/compiler/tools.md#read-tools.
+                if rule.is_none() {
+                    let mut bookkeeping: std::collections::BTreeMap<String, usize> = Default::default();
+                    let list: Vec<Value> = list
+                        .into_iter()
+                        .filter(|d| {
+                            if d["owner"] == "harness" {
+                                *bookkeeping.entry(d["rule"].as_str().unwrap_or("").to_string()).or_insert(0) += 1;
+                                false
+                            } else {
+                                true
+                            }
+                        })
+                        .collect();
+                    let mut v = json!({"diagnostics": list, "count": list.len()});
+                    if !bookkeeping.is_empty() {
+                        v["bookkeeping"] = json!(bookkeeping);
+                        v["bookkeepingNote"] = json!("the build's own records, never a session's to resolve; pass rule to list them");
+                    }
+                    return Ok(v);
                 }
                 Ok(json!({"diagnostics": list, "count": list.len()}))
             }
@@ -10033,6 +10057,25 @@ mod tests {
         assert!(t.dispatch("upsert_requirement", &req("The frontend is a web application built using React.", "/warehouse/frontend")).is_ok());
         assert!(t.dispatch("upsert_requirement", &req("Dot Feeney. Age 58. Occupation: ferry office manager.", "/warehouse/people")).is_ok());
         assert!(t.dispatch("upsert_requirement", &req("1. The employee submits the claim to their manager.", "/warehouse/people")).is_ok());
+    }
+
+    // Unfiltered, the build's bookkeeping is counted per rule; rule lists it.
+    // Mirrors docs/compiler/tools.md#read-tools.
+    #[test]
+    fn diagnostics_count_bookkeeping_unless_its_rule_is_asked() {
+        let mut t = session();
+        for (id, rule) in [("diag:ratification-pending-1", "ratification-pending"), ("diag:ratification-pending-2", "ratification-pending"), ("diag:ambiguity-1", "ambiguity")] {
+            t.snapshot.graph.diagnostics.insert(id.into(), Diagnostic {
+                rule: rule.into(), severity: "info".into(), lifecycle: "open".into(),
+                subjects: vec!["ent:customer".into()], message: "m".into(), reasoning: None,
+                triage: None, prompt: None, answer: None, created: None, updated: None,
+            });
+        }
+        let v = t.dispatch("diagnostics", &json!({})).unwrap();
+        assert_eq!(v["count"], 1, "{}", v);
+        assert_eq!(v["bookkeeping"]["ratification-pending"], 2, "{}", v);
+        let v = t.dispatch("diagnostics", &json!({"rule": "ratification-pending"})).unwrap();
+        assert_eq!(v["count"], 2, "{}", v);
     }
 
     // A section is no node: derived.from naming one is refused with the quote repair.

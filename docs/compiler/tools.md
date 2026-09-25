@@ -83,7 +83,11 @@ loaded set as a stub.
   message, whether it carries an unanswered prompt, and `owner: harness` on the
   build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
   `criterion-missing`, `unstable-*`), which no session resolves
-  ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)). This is the read surface for
+  ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)). Without a `rule`, those
+  bookkeeping entries are counted per rule under `bookkeeping` rather than listed, and
+  `rule` lists them: a novel compile's listing carried 222 `ratification-pending`
+  entries, one per derived criterion, and Codex read it as a truncated wall that hid its
+  three judgment findings. This is the read surface for
   document health; without it an agent can only learn diagnostic state by reading the
   out directory off disk.
 

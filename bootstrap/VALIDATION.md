@@ -948,6 +948,32 @@ The loop continued onto the org corpus and onto generation:
   `criteria-observation` case grades it (qwen3.8:27b 1.00 on both codecs, a client sending an HTTP request and a user seeing the listed products; Codex's recorded erp criterion fails it; Codex itself now scores it 1.00, observing the listing as a user and asking an `invented-choice` question for the technology-only statement). The same review cases exposed two serving defects, both fixed: a pretty-printed case list Codex's approval guard could not see a named case in, and `report_feedback` refused as `no-build` after a case closed. review-lint went from 0.50 to 1.00 on qwen3.8:27b once the review evidence named each project lint rule, and Codex scores it 1.00. A deterministic signal for a verified row whose
   files hold no executable code is still open.
 
+- example-novel under Codex on the new doctrine (2026-09-24, 21 invocations across usage
+  pauses, generation 99): converged at 100 percent coverage with every planted trap
+  holding (one Ines with `Nessa` an alias and mentions in six documents, Theo's 34 versus
+  36 filed as an error, the two `acquaintance` transitions kept with
+  `nondeterministic-transition`, the research note's rule extracted, no file or
+  directory entity, the ledgers and the Marlows apart, the notebook scene an instance of
+  Scene with its four values). 261 statements against 294 on the old doctrine: the
+  change targeted lists, and the novel's prose states a fact per clause. Where it departs
+  from the answer key: the stance machines sit on minted stance entities under each lead
+  rather than on the leads, Ines hangs under a derived Cast grouping with four
+  aggregation edges from the Marlow family, and nothing ties the Lantern Room or Marlow
+  House to Port Alder. 74 default views for 52 entities: a document's flow derives once
+  per level it reaches (the root, Cast, Settings), the same members lifted to three
+  zooms, which the level-view design intends and which is an owner question.
+- The full benchmark on qwen3.8:27b (2026-09-24, both codecs) scored 124/127 native and
+  120/127 text; reading each miss's session found defects in the harness, not the model,
+  for most of them: a case batch listing a code block beside its holding section, a
+  same-sentence reword minted as a second requirement over `shall`, a test row without
+  its requirement dropped in silence, a repeat guard calling a changed answer unchanged, a
+  split-view claim accepted with the view still over its limit, a multi-sentence quote
+  merging two facts, a new entity quoting a sentence that never names it, a mid-turn codec
+  downgrade leaving native calls in the history, and a reasoning plan cut by the
+  completion cap on every round. Each landed with a unit test or replay that fails without
+  it; the targeted rerun on the fixed binary scored edges, converge, split-view, and
+  gen-basic 1.00 on both codecs.
+
 Left standing: the pair volume on a one-entity corpus (best six per requirement, by
 design, 32 verdicts for 17 requirements on sort); a curated use-case view over one
 actorless behavior (erp's "Manage the ACME warehouse" draws one bubble and nothing

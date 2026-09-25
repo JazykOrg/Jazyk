@@ -1471,7 +1471,15 @@ pub fn mark(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             else {
-                continue;
+                let named = [&t["name"], &t["artifact"], &t["label"]]
+                    .iter()
+                    .find_map(|v| v.as_str().filter(|s| !s.trim().is_empty()))
+                    .unwrap_or("?")
+                    .to_string();
+                return Err(format!(
+                    "test row `{}` names no requirement; every row carries the id of the requirement it tests ({{requirement, kind, label, artifact, name, run, cwd}})",
+                    named
+                ));
             };
             let rid = store.resolve_id(rid).to_string();
             let Some(r) = store.graph.requirements.get(&rid) else {
@@ -2964,6 +2972,11 @@ mod tests {
             "name": name, "run": format!("cargo test {}", name)}]});
         let err = mark(&s, "ent:cart", None, &gone, &gs).unwrap_err();
         assert!(err.contains("no such file"), "{}", err);
+        // A row without its requirement is refused by name, never dropped in silence.
+        let unnamed = json!({"files": ["cart.rs"], "tests": [{
+            "kind": "programmatic", "artifact": "tests/cart.rs", "name": "req_shop_1", "run": "cargo test req_shop_1"}]});
+        let err = mark(&s, "ent:cart", None, &unnamed, &gs).unwrap_err();
+        assert!(err.contains("`req_shop_1` names no requirement"), "{}", err);
         let no_criteria = json!({"files": ["cart.rs"], "tests": [{
             "requirement": "req:shop-1", "kind": "llm", "artifact": "criteria/req-shop-1.md", "name": name}]});
         let err = mark(&s, "ent:cart", None, &no_criteria, &gs).unwrap_err();

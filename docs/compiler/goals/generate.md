@@ -86,7 +86,10 @@ ledger, not the model's word:
   naming the requirements that have none. A `factHash` that moved
   mid-session is recorded but leaves the entity pending: the goal derives again with
   the new facts.
-- `record_generation` applies the shape gates, all before any side effect: a
+- `record_generation` applies the shape gates, all before any side effect: a row
+  with no `requirement` is rejected naming its artifact or test name (a local model
+  once recorded three tests without it, read `tests: 0` in the reply, and spent the
+  rest of its rounds binding each requirement by hand); a
   programmatic row with an empty `artifact` or `run` is rejected naming the row; a
   row whose artifact does not exist, or a programmatic row whose artifact does not
   contain the declared test name (its last path segment: `tests::req_x`, the name a

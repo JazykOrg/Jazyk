@@ -204,3 +204,26 @@ little; a batch should hold ten of them); scopes gated like names (a scope the
 documents never name as a bounded context is refused, and a case variant of an
 existing scope folds into it; the run minted `Benchmark` beside `benchmark` and
 `Jazyk` beside `public`); the `pairs-per-entity` limit from the pair volume entry.
+
+## Evidence audit (2026-09-25)
+
+Every model-executed kind's contract was read against its gate: each duty the hints make
+concrete is now a verdict the evidence names, checked against the staged work
+([goal tools](./compiler/tools.md#goal-tools)). Left open:
+
+- `conform-instance` documents that an `update_requirement` on a requirement not
+  naming the instance is refused; the code does not refuse it, since a `review-entity`
+  goal on the type in the same batch legitimately updates the type's statements. The
+  gate needs the owning goal of each staged op before it can hold.
+- `curate-view` asks for the same decision on the twin view (the use-case and sequence
+  views sharing a title); nothing checks it, because a default twin derives its members
+  and the rule for when a curated twin must mirror is not stated.
+- `done` re-runs each resolution's gate but not its evidence checks, so work staged
+  after a mark (an `update_view` that re-adds a node claimed excluded) is not re-read
+  against the verdicts.
+- Advisory, judgment only: `derive-criteria`'s observer rule (a criterion uses the
+  product, never inspects a contract or a specification: a lexical refusal would hit a
+  sales contract or a slide deck's page), `review-entity`'s same-document duplicate
+  delete (the pair's own `rejudge-pair` goal carries it), `reconcile-section`'s
+  extraction duties (attributes, transitions, the page subject), and the placement and
+  split judgments of `curate-view`, `split-view`, and `abstract-entity`.

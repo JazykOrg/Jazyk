@@ -108,20 +108,26 @@ evidence: {verdict: duplicate, carried_by: diag:duplicate-requirement-4}
 evidence: {verdict: contradiction, carried_by: diag:contradiction-3}
 ```
 
-The harness validates the claim over the store plus what the session has staged:
+The harness validates the claim over the store plus what the session has staged, and
+refuses a false one naming the rule:
 
-- `verdict` is one of `duplicate`, `contradiction`, `consistent`. A claim without one is
-  rejected naming the gate.
+- `verdict` is one of `duplicate`, `contradiction`, `consistent`, handed as
+  `{verdict}` or bare. A claim without one is `bad-evidence`.
 - `duplicate`: a `delete_requirement` on one side is staged in this session, or an open
-  `duplicate-requirement` diagnostic naming both ids is staged or recorded.
+  `duplicate-requirement` diagnostic naming both ids is staged or recorded
+  (`duplicate-unbacked`).
 - `contradiction`: an open `contradiction` diagnostic naming both ids is staged or
-  recorded.
-- `consistent`: neither side is deleted in this session, and an open `contradiction` or
-  `duplicate-requirement` diagnostic on the pair, if one exists, is resolved in this
-  session. A consistent verdict on a sticky pair is a claim that the old finding
-  lapsed, and the diagnostic must say so.
+  recorded, or the one `carried_by` names is open and names one side, the same
+  threshold conflict across several pairs being one finding
+  (`contradiction-unbacked`).
+- `consistent`: an open `contradiction` or `duplicate-requirement` diagnostic on the
+  pair, if one exists, is resolved in this session (`pair-diagnostic-open`). A
+  consistent verdict on a sticky pair is a claim that the old finding lapsed, and the
+  diagnostic must say so. A pair whose one side this session deletes, settling a
+  same-document duplicate on another pair, has nothing left to judge and passes as
+  `consistent`.
 - A pair with a subject marked `(deleted)`: the diagnostic naming it is resolved in this
-  session, refiled or not.
+  session, refiled or not (`dead-subject`).
 - The justification is present. Brevity is the contract's demand and the journal
   records it beside the goal ([journal](../graph.md#journal)).
 

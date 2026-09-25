@@ -1315,17 +1315,30 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
                 // target stays full: the goal cannot be worked without its subject.
                 if !primary && loaded.used() > loaded.high_water {
                     loaded.unload(target);
-                    loaded.load_stub(store, target);
+                    stub_or_defer(&mut loaded, store, target);
                 } else if let Some(t) = text {
                     // What stays loaded in full is read in the prompt, not only listed.
                     loaded.initial_pack.push(t);
                 }
-            } else {
+            } else if primary {
                 loaded.load_stub(store, target);
+            } else {
+                stub_or_defer(&mut loaded, store, target);
             }
         }
     }
     (loaded, skills)
+}
+
+// A supporting item enters as a stub while the stub fits the budget; past it the item
+// is named on the status's Not loaded line instead. Mirrors
+// docs/compiler/context.md#the-loaded-set.
+fn stub_or_defer(loaded: &mut LoadedSet, store: &Store, target: &str) {
+    loaded.load_stub(store, target);
+    if loaded.used() > loaded.budget {
+        loaded.unload(target);
+        loaded.deferred.push(target.to_string());
+    }
 }
 
 // A pack line's loadable target: a node, a document, a section, or `scope:<scope>`,
@@ -1508,6 +1521,41 @@ mod tests {
             loaded.used(),
             loaded.high_water
         );
+    }
+
+    // A criteria batch listing more requirements than the budget holds opens within
+    // it: past the budget an item is named on the Not loaded line, never stubbed.
+    // Mirrors docs/compiler/context.md#the-loaded-set.
+    #[test]
+    fn initial_loaded_defers_what_the_budget_cannot_hold() {
+        let mut s = fixture();
+        let long = "Ines Marlow keeps the lantern lit for the harbor crew until dawn on the night of the storm, and the whole quay sees it from the water. ".repeat(3);
+        let mut ids = Vec::new();
+        for i in 0..160 {
+            let id = format!("req:big-{}", i);
+            s.graph.requirements.insert(id.clone(), crate::model::Requirement {
+                statement: format!("{} ({})", long, i),
+                entities: vec!["ent:order".into()],
+                ..Default::default()
+            });
+            ids.push(id);
+        }
+        let g = Goal {
+            id: "g:derive-criteria:ent:order".into(),
+            kind: "derive-criteria".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "ent:order".into(),
+            unit: "entity".into(),
+            change: serde_json::json!({"none": ids, "revised": []}),
+            cause: None,
+            state: GoalState::Open,
+            hints: vec![],
+        };
+        let (loaded, _) = initial_loaded(&s, std::slice::from_ref(&g));
+        assert!(loaded.used() <= loaded.budget, "{} > {}", loaded.used(), loaded.budget);
+        assert!(!loaded.deferred.is_empty());
+        assert!(loaded.render_condensed(0).contains("Not loaded (over the budget"), "{}", loaded.render_condensed(0));
     }
 
     // A pack line naming `scope:<scope>` resolves and loads the scope's top level as

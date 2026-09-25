@@ -117,7 +117,11 @@ The policy is deterministic and budget-driven. Loading `A` brings:
 
 The initially loaded set obeys the same ceiling as every later `load`: a goal's own
 target loads full, and a supporting item that would land the set past the high-water
-mark enters as a stub ([batching](./reconciler.md#batching)).
+mark enters as a stub ([batching](./reconciler.md#batching)). A supporting item whose
+stub would land the set past the budget itself is not loaded: the status names it on one
+`Not loaded` line, loadable by id when the work reaches it. A novel's criteria batch
+listed forty requirements and their sections, and the stubs past the mark opened the
+set at 26.3k of its 24k.
 
 The walk is breadth-first per axis in a fixed order (`parents`, `mentions`,
 `requirements`, `related`, `members`), each frontier in document order (document link

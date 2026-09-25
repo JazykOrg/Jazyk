@@ -82,6 +82,9 @@ pub struct LoadedSet {
     // session prompt carries under the status block, so the set is read, not only
     // listed. Mirrors docs/compiler/sessions.md#the-prompt.
     pub initial_pack: Vec<String>,
+    // Supporting items the opening set left out for budget, named on the status so the
+    // model loads them by id. Mirrors docs/compiler/context.md#the-loaded-set.
+    pub deferred: Vec<String>,
     // The stored section bodies before this session's sync, read lazily from disk for
     // the dirty-section diff. None until first asked; Some(empty) when unavailable.
     prev_docs: Option<BTreeMap<String, BTreeMap<String, String>>>,
@@ -109,6 +112,7 @@ impl LoadedSet {
             last_referenced: BTreeMap::new(),
             round: 0,
             initial_pack: Vec::new(),
+            deferred: Vec::new(),
             prev_docs: None,
         }
     }
@@ -1177,6 +1181,7 @@ impl LoadedSet {
                 .collect();
             s.push_str(&format!("- {}   {}{}\n", i.target, i.summary, handles));
         }
+        self.push_deferred(&mut s);
         if !skill_line.is_empty() {
             s.push_str(skill_line);
             s.push('\n');
@@ -1209,7 +1214,18 @@ impl LoadedSet {
         for i in &self.items {
             s.push_str(&format!("- {}   {}\n", i.target, i.summary));
         }
+        self.push_deferred(&mut s);
         s
+    }
+
+    fn push_deferred(&self, s: &mut String) {
+        let left: Vec<&String> = self.deferred.iter().filter(|d| !self.contains(d)).collect();
+        if !left.is_empty() {
+            s.push_str(&format!(
+                "Not loaded (over the budget; load by id when the work reaches it): {}\n",
+                left.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
     }
 }
 

@@ -103,7 +103,9 @@ members ([batching](../reconciler.md#batching)); an
 Under the limit, nothing dropped, sub-views linked. At `mark_goal_done` the harness
 recomputes the view's counts over the staged state and checks:
 
-- The crossed count is within the limit's soft value, or the view's bump. A split that
+- Every crossed count is within its limit's soft value, or the view's bump: the change
+  line lists each limit the view crosses, and a view over both its member and its
+  edge limit resolves only when both fit. A split that
   only de-escalates (from over hard to over soft) commits its work at `done` but does
   not resolve the goal: the goal stays open, optional, and the session continues or
   fails it with the reason. The claim is refused as `over-limit`, naming the count and

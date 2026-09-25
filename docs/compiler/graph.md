@@ -254,7 +254,10 @@ The gates:
   locates in the source, so provenance stays verbatim to the document. A section's
   heading is its title, not body text: a quote that is the heading is refused with a
   message saying so, since a Codex session read `### Chapter 1: Arrival` in the loaded
-  section and quoted it.
+  section and quoted it. On an entity's mention the message adds that an entity no body
+  sentence names is not minted from its heading: a local model spent six of its
+  twenty-four rounds trying to mint a Warehouse system from the page heading by other
+  routes, each refused, and ran out one requirement short.
 - An entity created with a `mention` enters with a sentence that names it: the quote
   carries a word of its name or of an alias (case, a plural ending, words under three
   letters, and `system` aside). A quote that never names it is refused as

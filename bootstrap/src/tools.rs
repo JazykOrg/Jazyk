@@ -4942,7 +4942,16 @@ impl ToolSession {
                             ));
                         }
                     }
-                    let quote = self.check_quote(&doc, &sec, quote)?;
+                    let quote = self.check_quote(&doc, &sec, quote).map_err(|e| {
+                        // An entity named only by a heading enters from nothing: say so,
+                        // so the model stops looking for another way to mint it.
+                        // Mirrors docs/compiler/graph.md#validation-gates.
+                        if e.message.contains("headings are not quotable") {
+                            ToolError::new(&e.rule, format!("{}. An entity no body sentence names is not minted from its heading: reference the entities the body names, and leave \"the system\" unreferenced when no «system» exists", e.message))
+                        } else {
+                            e
+                        }
+                    })?;
                     Some(SourceRef {
                         doc,
                         section: sec,
@@ -10131,6 +10140,18 @@ mod tests {
             .dispatch("upsert_entity", &json!({"name": "Items", "definition": "d",
                 "mention": {"section": "/shop/cart", "quote": q}}))
             .is_ok());
+    }
+
+    // An entity quoting a heading hears it is not minted from one.
+    // Mirrors docs/compiler/graph.md#validation-gates.
+    #[test]
+    fn an_entity_quoting_a_heading_hears_it_is_not_minted_from_one() {
+        let mut t = session();
+        let err = t
+            .dispatch("upsert_entity", &json!({"name": "Shop", "definition": "d", "stereotype": "system",
+                "mention": {"section": "/shop", "quote": "Shop"}}))
+            .unwrap_err();
+        assert!(err.message.contains("not minted from its heading"), "{}", err.message);
     }
 
     // A section is no node: derived.from naming one is refused with the quote repair.

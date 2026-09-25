@@ -112,6 +112,10 @@ Graph checks:
   only those referencing the entity, is within bounds.
 - `relationshipExists {a, b, type?}`: a derived relationship between the two entities,
   optionally carrying the type.
+- `facetCount {facet, statementPattern?, min?, max?}`: the number of requirements
+  carrying the facet, of those whose statement matches the pattern when one is given, is
+  within bounds. `min: 1` on a scene's pattern says the scene carries `behavior`;
+  `max: 0` says a statement does not carry the facet.
 - `edgeDeclared {requirement, a, b, type?}`: the requirement's `edges` carry an edge
   from `a` to `b` (direction counts), optionally of the type.
 - `edgeAbsent {requirement, a, b}`: the requirement's `edges` carry no edge between
@@ -233,6 +237,8 @@ Extraction tier:
   subject is one statement with attributes.
 - [criteria-density](./cases/criteria-density.md): one criterion on a plain fact, the
   negative only on a conditional.
+- [narrative-behavior](./cases/narrative-behavior.md): a narrated scene carries
+  `behavior`, a standing character fact `constraint`.
 
 Review tier:
 

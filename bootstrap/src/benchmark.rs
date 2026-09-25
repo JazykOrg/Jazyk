@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 25] = [
+const CASE_FILES: [&str; 26] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -37,6 +37,7 @@ const CASE_FILES: [&str; 25] = [
     include_str!("../../docs/benchmark/cases/curate-view.md"),
     include_str!("../../docs/benchmark/cases/declare-edges.md"),
     include_str!("../../docs/benchmark/cases/steps.md"),
+    include_str!("../../docs/benchmark/cases/narrative-behavior.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
@@ -1055,6 +1056,37 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                         llm::truncate(&d.message, 60)
                     )
                 })
+        }
+        // Requirements carrying the facet, optionally only those whose statement
+        // matches. Mirrors docs/benchmark/cases.md#checks.
+        "facetCount" => {
+            let facet = arg["facet"].as_str().unwrap_or_default();
+            let rx = match arg["statementPattern"].as_str() {
+                Some(p) => match compile(p) {
+                    Ok(r) => Some(r),
+                    Err(e) => return Some(e),
+                },
+                None => None,
+            };
+            let n = store
+                .graph
+                .requirements
+                .values()
+                .filter(|r| rx.as_ref().map(|re| re.is_match(&r.statement)).unwrap_or(true))
+                .filter(|r| r.facets.iter().any(|f| f.facet == facet))
+                .count();
+            within(
+                n,
+                arg,
+                &format!(
+                    "`{}` requirements{}",
+                    facet,
+                    arg["statementPattern"]
+                        .as_str()
+                        .map(|p| format!(" matching `{}`", p))
+                        .unwrap_or_default()
+                ),
+            )
         }
         "coverageSet" => {
             let full = arg["section"].as_str().unwrap_or_default();
@@ -2394,12 +2426,39 @@ mod tests {
         assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim", "entity": "Dedupe"}), &s, 0).is_some());
     }
 
+    // facetCount counts the requirements carrying a facet, optionally only those
+    // whose statement matches. Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn facet_count_reads_the_facets_of_matching_statements() {
+        let mut s = Store::default();
+        let req = |statement: &str, facets: &[&str]| crate::model::Requirement {
+            statement: statement.into(),
+            facets: facets
+                .iter()
+                .map(|f| Facet { facet: f.to_string(), reasoning: "judged".into(), measure: None })
+                .collect(),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:p-1".into(), req("Dot tells Ines who Theo works for.", &["behavior"]));
+        s.graph.requirements.insert("req:p-2".into(), req("Ines asks Dot for the harbor ledger.", &["constraint"]));
+        s.graph.requirements.insert("req:p-3".into(), req("Ines Marlow is 31.", &["constraint"]));
+        let ok = |a: Value| eval_check("facetCount", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"facet": "behavior", "min": 1, "max": 1})), None);
+        assert_eq!(ok(serde_json::json!({"facet": "constraint", "min": 2})), None);
+        assert_eq!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "tells", "min": 1})), None);
+        // A scene labeled constraint fails the scene's behavior check and its max 0.
+        assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "ledger", "min": 1})).is_some());
+        assert!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "ledger|tells", "max": 0})).is_some());
+        assert_eq!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "tells", "max": 0})), None);
+        assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "(bad"})).is_some());
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-two files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-six files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 31);
+        assert_eq!(cases.len(), 32);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2447,7 +2506,7 @@ mod tests {
                     "entityAbsent" | "entityNameCount" | "groupingOf" => {
                         arg["namePattern"].as_str()
                     }
-                    "requirementExists" => arg["statementPattern"].as_str(),
+                    "requirementExists" | "facetCount" => arg["statementPattern"].as_str(),
                     "viewExists" => arg["titlePattern"].as_str(),
                     _ => None,
                 };
@@ -2555,6 +2614,46 @@ mod tests {
                 _ => {}
             }
             crate::vfs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    // The narrative and containment fixtures: every seeded quote locates, every
+    // graded section exists, and the untouched fixture passes no check but the
+    // absences. Mirrors docs/benchmark/cases.md#case-format.
+    #[test]
+    fn narrative_fixtures_locate_and_grade_work() {
+        let cases = parse_cases();
+        for name in ["narrative-behavior"] {
+            let case = cases.iter().find(|c| c.name == name).unwrap();
+            let tmp = own_dir(name);
+            let s = sandbox(case, &tmp);
+            for (id, e) in &s.graph.entities {
+                for m in &e.mentions {
+                    assert!(s.quote_locates(&m.doc, &m.section, &m.quote), "{}: {}", name, id);
+                }
+            }
+            for (full, _) in &case.coverage {
+                let (doc, section) = split_section_ref(full).unwrap();
+                assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, full);
+            }
+            assert!(!case_dirty_sections(&s, case).is_empty(), "{}", name);
+            for (kind, arg) in &case.checks {
+                if kind == "coverageSet" {
+                    let (doc, section) = split_section_ref(arg["section"].as_str().unwrap()).unwrap();
+                    assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, section);
+                }
+                let absence = kind == "entityAbsent"
+                    || kind == "entityNameCount"
+                    || arg["max"].as_u64() == Some(0);
+                assert_eq!(
+                    eval_check(kind, arg, &s, 0).is_none(),
+                    absence,
+                    "{}: {} {}",
+                    name,
+                    kind,
+                    arg
+                );
+            }
         }
     }
 

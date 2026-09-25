@@ -207,6 +207,8 @@ definitions:
         $ref: '#/definitions/criteriaMatching'
       relationshipExists:
         $ref: '#/definitions/relationshipExists'
+      facetCount:
+        $ref: '#/definitions/facetCount'
       edgeDeclared:
         $ref: '#/definitions/edgeDeclared'
       edgeAbsent:
@@ -375,6 +377,26 @@ definitions:
       type:
         description: The relationship type the derived edge must carry
         type: string
+  facetCount:
+    description: >-
+      The number of requirements carrying the facet, of those whose statement matches
+      the pattern when one is given, is within bounds
+    type: object
+    required: [facet]
+    additionalProperties: false
+    properties:
+      facet:
+        type: string
+        enum: [behavior, constraint, failure-mode, quality]
+      statementPattern:
+        description: Regular expression tested against the requirement's statement
+        type: string
+      min:
+        type: integer
+        minimum: 0
+      max:
+        type: integer
+        minimum: 0
   mutationCount:
     description: The number of mutations staged by the session is within bounds
     type: object

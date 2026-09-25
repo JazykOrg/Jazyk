@@ -278,10 +278,10 @@ definitions:
         minimum: 0
   requirementExists:
     description: >-
-      A requirement exists whose statement matches the pattern and which references
-      the entity
+      A requirement exists whose statement matches the pattern, referencing the entity
+      when one is named
     type: object
-    required: [statementPattern, entity]
+    required: [statementPattern]
     additionalProperties: false
     properties:
       statementPattern:

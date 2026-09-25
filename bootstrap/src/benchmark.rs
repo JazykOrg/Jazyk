@@ -587,10 +587,15 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
         }
         "requirementExists" => {
             let pat = arg["statementPattern"].as_str().unwrap_or_default();
-            let ent = arg["entity"].as_str().unwrap_or_default();
             let re = match compile(pat) {
                 Ok(re) => re,
                 Err(e) => return Some(e),
+            };
+            // The entity is optional: without one, any requirement whose statement
+            // matches counts (docs/benchmark/cases.md#checks).
+            let Some(ent) = arg["entity"].as_str() else {
+                let found = store.graph.requirements.values().any(|r| re.is_match(&r.statement));
+                return (!found).then(|| format!("no requirement matching `{}`", pat));
             };
             let Some(ent_id) = find_entity(store, ent) else {
                 return Some(format!("entity {} not found", ent));
@@ -2373,6 +2378,20 @@ mod tests {
         };
         assert!(crate::goals::split_view_goal_gate(&store, &[coarse], &goal.target).is_none());
         crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // requirementExists without an entity matches on the statement alone.
+    // Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn requirement_exists_takes_an_optional_entity() {
+        let mut s = Store::default();
+        s.graph.requirements.insert("req:d-1".into(), crate::model::Requirement {
+            statement: "The dedupe utility trims whitespace from the current line.".into(),
+            ..Default::default()
+        });
+        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim"}), &s, 0).is_none());
+        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "sort"}), &s, 0).is_some());
+        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim", "entity": "Dedupe"}), &s, 0).is_some());
     }
 
     #[test]

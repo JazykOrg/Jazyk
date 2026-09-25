@@ -95,8 +95,8 @@ Graph checks:
   was minted.
 - `nodeExists {id}`: an entity, requirement, or view with this id exists, not
   tombstoned or redirected.
-- `requirementExists {statementPattern, entity}`: a requirement whose `statement`
-  matches the pattern references the entity.
+- `requirementExists {statementPattern, entity?}`: a requirement whose `statement`
+  matches the pattern exists, referencing the entity when one is named.
 - `criteriaMatching {pattern, requirement?, min?, max?}`: the number of criteria whose
   own statement matches the pattern (of one requirement, when named) is within bounds.
   `max: 0` over a pattern names a kind of criterion that must not appear.

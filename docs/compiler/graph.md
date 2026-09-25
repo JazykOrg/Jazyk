@@ -70,7 +70,9 @@ Each document file under `docs/` holds:
   survives a re-derivation that would otherwise drop it. See
   [parked and failed](./reconciler.md#parked-and-failed).
 - `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
-  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`).
+  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
+  of every build, by goal kind and by document, is read from the [journal](#journal)
+  instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
 - `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
 - `diagnostics`: open diagnostic counts by severity, suppressed excluded.
 - `alignment`: pending [alignment proposals](./alignment.md#what-applies-and-what-is-proposed),

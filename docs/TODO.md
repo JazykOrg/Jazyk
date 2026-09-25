@@ -75,10 +75,9 @@ This scratch space is a live document to outline the work for this documentation
   GenAI semantic-convention attributes on session spans, OTLP endpoint from config.
   The attribute set is pinned in one module; the journal stays the source of truth
   and OTel is an export ([trace events](./compiler/sessions.md#trace-events)).
-- Cost views beyond this build's totals in `status.yaml` `costs`
-  ([storage layout](./compiler/graph.md#storage-layout)), which the
-  [board sidebar](./frontends/gui.md#board) and `jazyk status` already show by kind and
-  by class: per document, and across builds.
+- The journal's cost report in the GUI: the [board sidebar](./frontends/gui.md#board)
+  shows this build's `costs` by kind and by class; the per document and across builds
+  view is on the CLI only ([`jazyk status --costs`](./frontends/cli.md#jazyk-status)).
 - The natural-key experiment: measure the locked entity key
   ([the natural key under containment](./compiler/concepts/identity.md#the-natural-key-under-containment))
   on the corpora. How often an upsert without `parent` hits several candidates, how

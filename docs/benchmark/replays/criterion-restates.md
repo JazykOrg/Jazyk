@@ -64,11 +64,18 @@ steps:
       statement: A Customer submitting an Order for one in-stock Product receives one confirmation email.
       provenance: {derived: {from: [req:shop-1], reasoning: one concrete submission and its observable outcome}}
     expect: {ok: true}
+  - call: upsert_criterion
+    args:
+      requirement: req:shop-2
+      kind: positive
+      statement: A Product whose Stock drops from one to zero no longer shows in the Shop.
+      provenance: {derived: {from: [req:shop-2], reasoning: one concrete stock-out and its observable outcome}}
+    expect: {ok: true}
   - call: mark_goal_done
     args:
       goal: g:derive-criteria:ent:shop
-      justification: The one behavior statement carries one concrete criterion.
-      evidence: {requirements: [{id: req:shop-1, criteria: [crit:shop-1], verdict: complete}]}
+      justification: Each behavior statement carries one concrete criterion.
+      evidence: {requirements: [{id: req:shop-1, criteria: [crit:shop-1], verdict: complete}, {id: req:shop-2, criteria: [crit:shop-2], verdict: complete}]}
   - call: done
     args: {summary: one concrete criterion}
 assert:

@@ -34,20 +34,22 @@ runs first by construction.
 ## Gate
 
 `mark_goal_done({goal, justification, evidence})` carries one entry per requirement the
-`change` listed: `{id, criteria: [crit ids], verdict: complete | stated-only | open-question}`.
+`change` listed: `{id, criteria: [crit ids], verdict: complete | stated-only | open-question}`,
+under `requirements` (`bad-evidence` for another shape). A listed requirement without an
+entry is refused (`criteria-unjudged`), naming it.
 
-- `complete`: at least one criterion is staged or recorded on the requirement, and no
-  staged criterion has the same normalized text as the requirement's statement
-  (`criterion-restates` otherwise).
+- `complete`: at least one criterion is staged or recorded on the requirement
+  (`criterion-missing` otherwise), and no staged criterion has the same normalized text
+  as the requirement's statement (`criterion-restates` otherwise).
 - `stated-only`: the documents' own criteria cover the requirement and the session
-  added none; at least one criterion exists.
+  added none; at least one criterion exists (`criterion-missing` otherwise).
 - `open-question`: the requirement's evidence depends on a value the documents do not
   give, or give twice, and an open diagnostic with a prompt names the requirement: an
   `invented-choice` staged here for a value nobody stated
   ([invented choices](../../consumers/gen.md#invented-choices)), or a standing
   `contradiction`, `decision`, or `ambiguity` whose prompt already carries the
   question (the 21 versus 30 day deadline is that case; filing a second question
-  would be a twin). The requirement keeps
+  would be a twin; `unbacked-question` otherwise). The requirement keeps
   no criterion until the answer; `bind` stays blocked on it.
 - Every derived criterion staged carries `from` naming the requirement, `reasoning`, and
   a ratification proposal sentence toward the requirement's section

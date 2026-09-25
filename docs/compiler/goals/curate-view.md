@@ -75,19 +75,24 @@ when they are in the same burst.
 ## Gate
 
 Membership decided. At `mark_goal_done`, `evidence` carries one verdict per matched
-node, `added` or `excluded`, and the harness checks over the staged state:
+node, `[{id, verdict: added | excluded}]`, and the harness checks over the staged state,
+refusing a false claim with the rule named:
 
-- `added`: the node is in the view's `members`. A query match is there already; the
-  verdict confirms it and the justification says why it belongs. A flow requirement is
+- A matched node without a verdict is named in the rejection (`member-unjudged`).
+- `added`: the node is in the view's `members` (`added-unbacked` otherwise). A query
+  match is there already; the verdict confirms it and the justification says why it
+  belongs. A flow requirement is
   added with `update_view` `add_members` at its position, or with `members` (the whole
   ordered list) when the placement reorders the flow. A `failure-mode` member follows
   the step whose failure it handles, so the activity emitter draws the branch there.
 - `excluded`: the view's `excluded` lists the node with a non-empty note (`update_view`
-  `exclude`). A placeholder note (`none`, `n/a`) counts as absent. The note names the
-  sentence or the rule: "constraint, not flow", "example, not flow", "belongs to
+  `exclude`; `excluded-unbacked` otherwise). A placeholder note (`none`, `n/a`) counts
+  as absent. The note names the sentence or the rule: "constraint, not flow", "example, not flow", "belongs to
   view:usecase/customer-returns". A node that belongs to another flow is added there in
-  the same session, and the note says which.
-- A matched node in neither list is named in the rejection.
+  the same session, and the note says which: a note naming a flow view that does not
+  list the node, once the staged work applies, is refused
+  (`exclusion-points-nowhere`), since an exclusion pointing at a flow that never shows
+  the step drops it from every flow.
 
 What the gate does not check is placement quality: whether the step sits where the
 documents put it. The justification names the sentence that orders it (a "then", a

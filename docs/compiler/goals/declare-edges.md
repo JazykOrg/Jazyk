@@ -57,16 +57,17 @@ lands in the session that just settled the neighborhood's reviews
 ## Gate
 
 Edges declared, or a justification saying the statement is not structural. At
-`mark_goal_done`, `evidence` is `declared` or `not-structural`, and the harness checks:
+`mark_goal_done`, `evidence` is `declared` or `not-structural` (bare or as `{verdict}`;
+anything else is `bad-evidence`), and the harness checks:
 
 - `declared`: a staged `update_requirement` on the target carries `edges` with at least
-  one edge. Every edge has a `type`: an untyped edge is refused under this goal, because
-  judging the type is the goal. `a` and `b` are distinct and among the requirement's
+  one edge (`edges-unbacked` otherwise). Every edge has a `type`: an untyped edge is
+  refused under this goal, because judging the type is the goal. `a` and `b` are distinct and among the requirement's
   `entities`; `cardinality`, when given, is one of `1`, `0..1`, `1..*`, `*`
   ([validation gates](../graph.md#validation-gates)). The call passes neither `section`
   nor `quote`: those re-anchor the provenance to another sentence.
-- `not-structural`: nothing is staged on the target, and the justification names the
-  sentence and why it relates no pair. The justification is recorded in the journal
+- `not-structural`: no edges are staged on the target (`edges-staged` otherwise), and
+  the justification names the sentence and why it relates no pair. The justification is recorded in the journal
   with the resolution ([journal](../graph.md#journal)) and is what stops the goal from
   deriving again.
 

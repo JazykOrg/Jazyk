@@ -88,16 +88,21 @@ evidence:
     - {to: ent:eu-warehouse, verdict: nonconformant, carried_by: diag:nonconformant-instance-2}
 ```
 
-The harness validates the claim over the store plus what the session has staged:
+The harness validates the claim over the store plus what the session has staged, and
+refuses a false one naming the rule:
 
-- Every attribute the type and its generalizations declare has a verdict; every link on
-  the instance (an `association`, `aggregation`, or `composition` edge from the
-  instance on the example's requirement) has a verdict. A verdict is `conforms`,
+- Every attribute the type and its generalizations declare has a verdict, matched by
+  name without regard to case (the hint lists the inherited ones); every link on the
+  instance (its outgoing edges other than the `instantiation` edge, as the `links`
+  hint lists them) has a verdict (`conformance-unjudged`). A verdict is `conforms`,
   `missing`, or `nonconformant`.
 - `nonconformant` is backed by an open `nonconformant-instance` diagnostic naming the
-  instance and the type, staged or recorded, or by a repair staged in this session
-  (`update_entity` on the instance, `update_requirement` on the example's
-  requirement).
+  instance or the type (one finding on the type covers a pattern every sibling
+  shares), staged or recorded, or by a repair staged in this session (`update_entity`
+  on the instance, `update_requirement` on a requirement naming the instance)
+  (`nonconformant-unbacked`).
+- An open `nonconformant-instance` diagnostic on the instance is resolved in this
+  session or backed by at least one `nonconformant` verdict (`nonconformant-open`).
 - `missing` is accepted: examples are partial by nature. Whether a missing value
   violates a mandatory whole-part is the model's call, filed as `nonconformant` when it
   does.

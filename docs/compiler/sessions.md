@@ -116,7 +116,8 @@ shortened here; the real ones are the payload files):
   refresh the definition when it drifted, judge every listed lookalike, file or resolve
   diagnostics. When everything is coherent, mark the goal done with no mutation.
   Change: entity-changed (g413 via requirements: req:orders-6).
-  Gate: definition current; lookalikes judged; diagnostics filed or resolved.
+  Gate: definition claimed; one backed verdict per listed lookalike, unreferenced
+  statement, open diagnostic, and composition part.
   Hints: load ent:order; skill judgment.
 
 ## Loaded (9.8k of 24k chars)

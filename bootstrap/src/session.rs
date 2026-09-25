@@ -1035,10 +1035,12 @@ pub fn gate_line(kind: &str) -> &'static str {
         "rejudge-pair" => {
             "a verdict for the pair in evidence; for an acting verdict, the mutation or diagnostic that carried it"
         }
-        "review-entity" => "definition current; lookalikes judged; diagnostics filed or resolved",
+        "review-entity" => {
+            "definition claimed; one backed verdict per listed lookalike, unreferenced statement, open diagnostic, and composition part"
+        }
         "retrace" => "nothing on the target points at a dead or missing node",
         "conform-instance" => {
-            "values and links conform or nonconformant-instance filed; one verdict per attribute and link in evidence"
+            "values and links conform or nonconformant-instance filed; one verdict per declared attribute (inherited included) and link in evidence"
         }
         "bind" => "a current ledger row recorded by record_binding",
         "generate" => "record_generation landed with a live factHash",
@@ -1049,7 +1051,7 @@ pub fn gate_line(kind: &str) -> &'static str {
             "typed edges declared, or the justification says the statement is not structural"
         }
         "dedupe-candidates" => "merged, or kept separate with the reasoning",
-        "curate-view" => "membership decided: every matched node added, or excluded with a note",
+        "curate-view" => "membership decided: one verdict per matched node in evidence, added, or excluded with a note",
         "split-view" => "the count is within the limit, no member lost, sub-views linked",
         "abstract-entity" => {
             "sub-entities carry parent and derived provenance, detail moved, docs proposals staged"

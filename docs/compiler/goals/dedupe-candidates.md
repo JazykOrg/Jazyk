@@ -99,15 +99,17 @@ previews the `review-entity` it opens on the survivor
 ## Gate
 
 Merged, or kept with reasoning. At `mark_goal_done`, `evidence` is `merged` or
-`separate`, and the harness checks:
+`separate` (bare or as `{verdict}`; anything else is `bad-evidence`), and the harness
+checks:
 
 - `merged`: a staged `merge_entities` names the pair, `keep` and `absorb` in either
-  order, with a `reason`. The store rewires every reference, unions aliases, mentions,
-  and attributes, and leaves a redirect from the absorbed id
-  ([mutations](../graph.md#mutations)). A merge that would make the survivor its own
+  order, with a `reason` (`merge-unbacked` otherwise). The store rewires every
+  reference, unions aliases, mentions, and attributes, and leaves a redirect from the
+  absorbed id ([mutations](../graph.md#mutations)). A merge that would make the survivor its own
   ancestor is rejected at staging.
-- `separate`: no merge is staged on the pair, and the justification names what keeps
-  them apart: a part, a role, an instance, a threshold, two parents, two contexts. A
+- `separate`: no merge is staged on the pair (`merge-staged` otherwise), and the
+  justification names what keeps them apart: a part, a role, an instance, a threshold,
+  two parents, two contexts. A
   `duplicate-entity` diagnostic on both ids is staged when the doubt is real, never as a
   substitute for the reason. `update_entity` with `add_aliases` may record one entity's
   wording on the other without a merge, when the wording belongs there.

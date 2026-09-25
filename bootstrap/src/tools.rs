@@ -507,7 +507,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike and per diagnostic the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]}; derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work, and a false one is rejected with the gate named.",
+            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.",
             parameters: obj(
                 json!({"goal": {"type": "string"}, "justification": {"type": "string"}, "evidence": {}}),
                 &["goal", "justification"],
@@ -1091,6 +1091,9 @@ pub struct GoalScope {
     // otherwise; the mutation budget grows by it, one move per grouped statement.
     // Mirrors docs/compiler/sessions.md#budgets.
     pub split_count: usize,
+    // The goal's change payload: the evidence gates read what it lists (a
+    // curate-view goal's matched nodes, a derive-criteria goal's requirements).
+    pub change: Value,
 }
 
 impl GoalScope {
@@ -1155,6 +1158,7 @@ impl GoalScope {
             stale_anchors: list("staleAnchors"),
             proposals,
             split_count,
+            change: g.change.clone(),
         }
     }
 }
@@ -2107,6 +2111,690 @@ impl ToolSession {
         count
     }
 
+    // An evidence entry's id: its first token, so "ent:backend (Backend)" names
+    // ent:backend, resolved through merges.
+    fn evidence_id(e: &Value, key: &str) -> String {
+        let raw = match &e[key] {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        };
+        raw.split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_matches(|c: char| matches!(c, ',' | ';' | '"' | '\''))
+            .to_string()
+    }
+
+    // What arrived where evidence was expected, for a refusal that says so.
+    fn evidence_shape(evidence: &Value) -> String {
+        match evidence {
+            Value::Null => "no evidence".to_string(),
+            Value::String(s) => format!("the string `{}`", crate::llm::truncate(s, 60)),
+            Value::Array(_) => "a bare array".to_string(),
+            Value::Object(m) => format!(
+                "an object with keys {}",
+                m.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
+            other => other.to_string(),
+        }
+    }
+
+    // A verdict handed bare ("declared") or as {verdict: "declared"}.
+    fn evidence_verdict(evidence: &Value) -> Option<String> {
+        evidence
+            .as_str()
+            .or_else(|| evidence["verdict"].as_str())
+            .map(|s| s.trim().to_string())
+    }
+
+    // Whether a reason says something: a placeholder counts as absent.
+    fn reason_given(e: &Value) -> bool {
+        let r = e["reason"].as_str().unwrap_or("").trim().to_lowercase();
+        !r.is_empty() && !matches!(r.as_str(), "none" | "n/a" | "na" | "-" | "null" | "tbd")
+    }
+
+    fn staged_resolves(&self, did: &str) -> bool {
+        self.staged
+            .iter()
+            .any(|o| matches!(o, Op::ResolveDiagnostic { id, .. } if id == did))
+    }
+
+    // The open diagnostics, recorded and staged, that no staged resolve closes.
+    fn open_diagnostics(&self) -> Vec<(String, Diagnostic)> {
+        self.snapshot
+            .graph
+            .diagnostics
+            .iter()
+            .chain(self.staged_diags.iter())
+            .filter(|(id, d)| d.lifecycle == "open" && !self.staged_resolves(id))
+            .map(|(id, d)| (id.clone(), d.clone()))
+            .collect()
+    }
+
+    fn staged_merge_of(&self, a: &str, b: &str) -> bool {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        let (a, b) = (r(a), r(b));
+        self.staged.iter().any(|o| match o {
+            Op::MergeEntities { keep, absorb, .. } => {
+                let (k, x) = (r(keep), r(absorb));
+                (k == a && x == b) || (k == b && x == a)
+            }
+            _ => false,
+        })
+    }
+
+    // Whether the part sits under the whole once the staged work applies.
+    fn under_after(&self, part: &str, whole: &str) -> bool {
+        let whole = self.snapshot.resolve_id(whole).to_string();
+        let mut cur = part.to_string();
+        for _ in 0..64 {
+            match self.parent_of(&cur) {
+                Some(p) => {
+                    if self.snapshot.resolve_id(&p) == whole {
+                        return true;
+                    }
+                    cur = p;
+                }
+                None => return false,
+            }
+        }
+        false
+    }
+
+    // A view as the staged work leaves it: the stored or staged-created view with
+    // every staged update replayed in order; None when deleted or unknown.
+    fn view_after(&self, id: &str) -> Option<View> {
+        let mut v = self.snapshot.graph.views.get(id).cloned().or_else(|| {
+            self.staged.iter().find_map(|o| match o {
+                Op::CreateView { id: c, view } if c == id => Some(view.clone()),
+                _ => None,
+            })
+        })?;
+        for o in &self.staged {
+            match o {
+                Op::DeleteView { id: d, .. } if d == id => return None,
+                Op::UpdateView {
+                    id: u,
+                    members,
+                    add_members,
+                    remove_members,
+                    exclude,
+                    ..
+                } if u == id => {
+                    if let Some(ms) = members {
+                        v.members = ms.clone();
+                    }
+                    for m in add_members {
+                        if !v.members.contains(m) {
+                            v.members.push(m.clone());
+                        }
+                    }
+                    v.members.retain(|m| !remove_members.contains(m));
+                    for x in exclude {
+                        v.members.retain(|m| m != &x.id);
+                        v.excluded.retain(|y| y.id != x.id);
+                        v.excluded.push(x.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(v)
+    }
+
+    // The review's evidence beyond lint: the definition claim agrees with the staged
+    // work, and every lookalike, open diagnostic, unparented part, and unreferenced
+    // statement the hints list carries a verdict the staged work backs. Mirrors
+    // docs/compiler/goals/review-entity.md#gate.
+    fn review_evidence(&self, goal: &str, target: &str, evidence: &Value) -> Result<(), ToolError> {
+        let target = self.snapshot.resolve_id(target).to_string();
+        let shape = "{definition: current | refreshed, lookalikes: [...], unreferenced: [...], diagnostics: [...], parts: [...], lint: [...]}";
+        let refreshed_here = self.staged.iter().any(|o| {
+            matches!(o, Op::UpdateEntity { id, definition: Some(_), .. } if self.snapshot.resolve_id(id) == target)
+        });
+        match evidence["definition"].as_str().map(str::trim) {
+            Some("current") if refreshed_here => {
+                return Err(ToolError::new(
+                    "definition-unbacked",
+                    format!("{} claims the definition current, but this session stages a new definition on {}; claim refreshed", goal, target),
+                ));
+            }
+            Some("refreshed") if !refreshed_here => {
+                return Err(ToolError::new(
+                    "definition-unbacked",
+                    format!("{} claims the definition refreshed, but no update_entity with definition on {} is staged; stage it, or claim current", goal, target),
+                ));
+            }
+            Some("current") | Some("refreshed") => {}
+            _ => {
+                return Err(ToolError::new(
+                    "bad-evidence",
+                    format!("{} carries evidence {} with definition current or refreshed; received {}", goal, shape, Self::evidence_shape(evidence)),
+                ));
+            }
+        }
+        let find = |key: &str, field: &str, id: &str| -> Option<Value> {
+            evidence[key].as_array().and_then(|a| {
+                a.iter()
+                    .find(|e| {
+                        let eid = Self::evidence_id(e, field);
+                        eid == id || self.snapshot.resolve_id(&eid) == id
+                    })
+                    .cloned()
+            })
+        };
+        // Lookalikes: one verdict per listed candidate.
+        let (similar, related) = crate::goals::lookalikes(&self.snapshot, &target);
+        for (lid, name) in similar.iter().chain(related.iter()) {
+            let Some(e) = find("lookalikes", "id", lid) else {
+                return Err(ToolError::new(
+                    "lookalike-unjudged",
+                    format!("{} has no lookalikes entry for {} ({}); judge it and add {{id: {}, verdict: merged | separate, reason}}", goal, lid, name, lid),
+                ));
+            };
+            match e["verdict"].as_str() {
+                Some("merged") => {
+                    if !self.staged_merge_of(&target, lid) {
+                        return Err(ToolError::new(
+                            "merge-unbacked",
+                            format!("{} claims {} merged, but no merge_entities naming {} and {} is staged; merge them, or verdict separate with the reason", goal, lid, target, lid),
+                        ));
+                    }
+                }
+                Some("separate") => {
+                    let filed = self.open_diagnostics().iter().any(|(_, d)| {
+                        d.rule == "duplicate-entity"
+                            && d.subjects.iter().any(|s| self.snapshot.resolve_id(s) == target)
+                            && d.subjects.iter().any(|s| self.snapshot.resolve_id(s) == lid.as_str())
+                    });
+                    if !Self::reason_given(&e) && !filed {
+                        return Err(ToolError::new(
+                            "reason-required",
+                            format!("{} keeps {} separate without a reason; say what keeps it apart (a part, a role, a threshold, an instance), or file duplicate-entity naming both when the merge is not certain", goal, lid),
+                        ));
+                    }
+                }
+                other => {
+                    return Err(ToolError::new(
+                        "bad-verdict",
+                        format!("lookalike verdict `{}` for {}: merged or separate", other.unwrap_or("?"), lid),
+                    ));
+                }
+            }
+        }
+        // Open diagnostics on the entity and its statements, as committed when the
+        // batch was claimed.
+        let alive = |s: &str| {
+            let r = self.snapshot.resolve_id(s);
+            self.snapshot.graph.entities.contains_key(r) || self.snapshot.graph.requirements.contains_key(r)
+        };
+        for did in crate::goals::review_diagnostics(&self.snapshot, &target) {
+            let Some(e) = find("diagnostics", "id", &did) else {
+                return Err(ToolError::new(
+                    "diagnostic-unjudged",
+                    format!("{} has no diagnostics entry for {}, open on {} or its statements; judge it and add {{id: {}, verdict: stands | resolved | refiled}}", goal, did, target, did),
+                ));
+            };
+            let d = &self.snapshot.graph.diagnostics[&did];
+            let resolved = self.staged_resolves(&did);
+            match e["verdict"].as_str() {
+                Some("stands") => {
+                    if resolved {
+                        return Err(ToolError::new(
+                            "diagnostic-unbacked",
+                            format!("{} claims {} stands, but this session resolves it; verdict resolved or refiled", goal, did),
+                        ));
+                    }
+                    if let Some(dead) = d.subjects.iter().find(|s| !alive(s)) {
+                        return Err(ToolError::new(
+                            "diagnostic-unbacked",
+                            format!("{} names {}, which is deleted, so it cannot stand as filed; resolve_diagnostic it and, when the finding stands, report it again against the surviving statements (verdict refiled)", did, dead),
+                        ));
+                    }
+                }
+                Some("resolved") => {
+                    if !resolved {
+                        return Err(ToolError::new(
+                            "diagnostic-unbacked",
+                            format!("{} claims {} resolved, but no resolve_diagnostic on it is staged; resolve it with the reason, or verdict stands", goal, did),
+                        ));
+                    }
+                }
+                Some("refiled") => {
+                    let refiled = self.staged.iter().any(|o| {
+                        matches!(o, Op::ReportDiagnostic { diagnostic, .. } if diagnostic.rule == d.rule)
+                    });
+                    if !resolved || !refiled {
+                        return Err(ToolError::new(
+                            "diagnostic-unbacked",
+                            format!("{} claims {} refiled, which takes resolve_diagnostic on it and a new report_diagnostic rule {} against the surviving statements, both staged", goal, did, d.rule),
+                        ));
+                    }
+                }
+                other => {
+                    return Err(ToolError::new(
+                        "bad-verdict",
+                        format!("diagnostic verdict `{}` for {}: stands, resolved, or refiled", other.unwrap_or("?"), did),
+                    ));
+                }
+            }
+        }
+        // Stated compositions whose part sits outside its whole.
+        for (whole, part, line) in crate::goals::unparented_parts(&self.snapshot, &target) {
+            let Some(e) = find("parts", "id", &part) else {
+                return Err(ToolError::new(
+                    "part-unjudged",
+                    format!("{} has no parts entry for {}: the composition {} leaves it outside its stated whole; set parent on it with update_entity and add {{id: {}, verdict: parented}}, fix a reversed edge (verdict edge-fixed), or keep a generic rule-carrier parentless (verdict kept, with the reason)", goal, part, line, part),
+                ));
+            };
+            match e["verdict"].as_str() {
+                Some("parented") => {
+                    if !self.under_after(&part, &whole) {
+                        return Err(ToolError::new(
+                            "part-unbacked",
+                            format!("{} claims {} parented, but after this session's staged work its parent is not {} or under it; update_entity {} with parent {}", goal, part, whole, part, whole),
+                        ));
+                    }
+                }
+                Some("edge-fixed") => {
+                    let fixed = self.staged.iter().any(|o| match o {
+                        Op::UpdateRequirement { id, edges: Some(es), .. } => {
+                            self.snapshot.graph.requirements.get(id).is_some_and(|r| {
+                                r.edges.iter().any(|x| x.rel_type.as_deref() == Some("composition") && x.a == whole && x.b == part)
+                            }) && !es.iter().any(|x| x.rel_type.as_deref() == Some("composition") && x.a == whole && x.b == part)
+                        }
+                        _ => false,
+                    });
+                    if !fixed {
+                        return Err(ToolError::new(
+                            "part-unbacked",
+                            format!("{} claims the composition {} fixed, but no staged update_requirement replaces that edge; pass the requirement's corrected edges, or set parent (verdict parented)", goal, line),
+                        ));
+                    }
+                }
+                Some("kept") => {
+                    if !Self::reason_given(&e) {
+                        return Err(ToolError::new(
+                            "reason-required",
+                            format!("{} keeps {} outside {} without a reason; say why the part is a generic rule-carrier (aggregation, several wholes), or set parent", goal, part, whole),
+                        ));
+                    }
+                }
+                other => {
+                    return Err(ToolError::new(
+                        "bad-verdict",
+                        format!("part verdict `{}` for {}: parented, edge-fixed, or kept", other.unwrap_or("?"), part),
+                    ));
+                }
+            }
+        }
+        // Unreferenced statements: one verdict per listed statement, referenced
+        // backed by the staged update that adds the entity.
+        let listed = crate::goals::unreferenced_statements(&self.snapshot, &target);
+        for (rid, _) in &listed {
+            if find("unreferenced", "id", rid).is_none() {
+                return Err(ToolError::new(
+                    "unreferenced-unjudged",
+                    format!("{} has no unreferenced entry for {}, which names {} without referencing it; add {{id: {}, verdict: referenced | word-match, reason}}", goal, rid, target, rid),
+                ));
+            }
+        }
+        for e in evidence["unreferenced"].as_array().into_iter().flatten() {
+            let rid = Self::evidence_id(e, "id");
+            match e["verdict"].as_str() {
+                Some("referenced") => {
+                    if !self.requirement_names_entity(&rid, &target) {
+                        return Err(ToolError::new(
+                            "unreferenced-unbacked",
+                            format!(
+                                "{} claims {} referenced, but {} does not name {} after this session's staged work; update_requirement with id and the full entities list, or verdict word-match",
+                                goal, rid, rid, target
+                            ),
+                        ));
+                    }
+                }
+                Some("word-match") => {}
+                other => {
+                    return Err(ToolError::new(
+                        "bad-verdict",
+                        format!("unreferenced verdict `{}` for {}: referenced or word-match", other.unwrap_or("?"), rid),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // The evidence of the kinds whose single verdict or per-node verdicts the page's
+    // gate reads: each verdict named, each backed by the staged work. Mirrors the
+    // `## Gate` of rejudge-pair, declare-edges, dedupe-candidates, curate-view,
+    // conform-instance, and derive-criteria under docs/compiler/goals/.
+    fn kind_evidence(&self, gs: &GoalScope, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
+        match gs.kind.as_str() {
+            "rejudge-pair" => {
+                let Some((a, b)) = crate::goals::pair_members(&gs.target) else {
+                    return Ok(());
+                };
+                let (a, b) = (r(a), r(b));
+                let names_both = |d: &Diagnostic| {
+                    d.subjects.iter().any(|s| r(s) == a) && d.subjects.iter().any(|s| r(s) == b)
+                };
+                let open = self.open_diagnostics();
+                let pair_open = |rule: &str| open.iter().any(|(_, d)| d.rule == rule && names_both(d));
+                let deleted = |x: &str| {
+                    self.staged.iter().any(|o| matches!(o, Op::DeleteRequirement { id, .. } if r(id) == x))
+                };
+                // A finding naming a deleted side cannot stand as filed.
+                let alive = |x: &str| {
+                    let x = r(x);
+                    self.snapshot.graph.requirements.contains_key(&x) || self.snapshot.graph.entities.contains_key(&x)
+                };
+                if let Some((id, _)) = open.iter().find(|(_, d)| {
+                    (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                        && names_both(d)
+                        && d.subjects.iter().any(|s| !alive(s))
+                }) {
+                    return Err(ToolError::new(
+                        "dead-subject",
+                        format!("{} names a deleted side of {}, so it cannot stand as filed; resolve_diagnostic it and, when the conflict still holds between surviving requirements, report a new one naming them", id, gs.target),
+                    ));
+                }
+                match Self::evidence_verdict(evidence).as_deref() {
+                    Some("duplicate") => {
+                        if !deleted(&a) && !deleted(&b) && !pair_open("duplicate-requirement") {
+                            return Err(ToolError::new(
+                                "duplicate-unbacked",
+                                format!("{} claims duplicate, but neither side is deleted in this session and no open duplicate-requirement names both; delete_requirement the worse-sourced side (one document), or report_diagnostic duplicate-requirement (two documents)", goal),
+                            ));
+                        }
+                    }
+                    Some("contradiction") => {
+                        let carried = Self::evidence_id(evidence, "carried_by");
+                        let named = open.iter().any(|(id, d)| {
+                            *id == carried && d.rule == "contradiction" && d.subjects.iter().any(|s| r(s) == a || r(s) == b)
+                        });
+                        if !named && !pair_open("contradiction") {
+                            return Err(ToolError::new(
+                                "contradiction-unbacked",
+                                format!("{} claims contradiction, but no open contradiction names both {} and {}; report_diagnostic rule contradiction on the pair, or name the standing one in carried_by", goal, a, b),
+                            ));
+                        }
+                    }
+                    Some("consistent") => {
+                        if let Some((id, d)) = open.iter().find(|(_, d)| {
+                            (d.rule == "contradiction" || d.rule == "duplicate-requirement") && names_both(d)
+                        }) {
+                            return Err(ToolError::new(
+                                "pair-diagnostic-open",
+                                format!("{} claims consistent, but {} ({}) still stands on the pair; resolve_diagnostic it when its condition lapsed, or claim the verdict it carries", goal, id, d.rule),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-evidence",
+                            format!("{} carries evidence {{verdict: duplicate | contradiction | consistent, carried_by?}}; received {}", goal, other.map(|v| format!("verdict `{}`", v)).unwrap_or_else(|| Self::evidence_shape(evidence))),
+                        ));
+                    }
+                }
+            }
+            "declare-edges" => {
+                let target = r(&gs.target);
+                let staged_edges = self.staged.iter().any(|o| {
+                    matches!(o, Op::UpdateRequirement { id, edges: Some(es), .. } if r(id) == target && !es.is_empty())
+                });
+                match Self::evidence_verdict(evidence).as_deref() {
+                    Some("declared") => {
+                        if !staged_edges {
+                            return Err(ToolError::new(
+                                "edges-unbacked",
+                                format!("{} claims declared, but no update_requirement with edges on {} is staged; declare the typed edges, or claim not-structural with the sentence and why it relates no pair", goal, target),
+                            ));
+                        }
+                    }
+                    Some("not-structural") => {
+                        if staged_edges {
+                            return Err(ToolError::new(
+                                "edges-staged",
+                                format!("{} claims not-structural, but this session stages edges on {}; claim declared", goal, target),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-evidence",
+                            format!("{} carries evidence \"declared\" or \"not-structural\"; received {}", goal, other.map(|v| format!("`{}`", v)).unwrap_or_else(|| Self::evidence_shape(evidence))),
+                        ));
+                    }
+                }
+            }
+            "dedupe-candidates" => {
+                let Some((a, b)) = crate::goals::pair_members(&gs.target) else {
+                    return Ok(());
+                };
+                let merged = self.staged_merge_of(a, b);
+                match Self::evidence_verdict(evidence).as_deref() {
+                    Some("merged") => {
+                        if !merged {
+                            return Err(ToolError::new(
+                                "merge-unbacked",
+                                format!("{} claims merged, but no merge_entities naming {} and {} is staged; merge them with the reason, or claim separate", goal, a, b),
+                            ));
+                        }
+                    }
+                    Some("separate") => {
+                        if merged {
+                            return Err(ToolError::new(
+                                "merge-staged",
+                                format!("{} claims separate, but this session merges {} and {}; claim merged", goal, a, b),
+                            ));
+                        }
+                    }
+                    other => {
+                        return Err(ToolError::new(
+                            "bad-evidence",
+                            format!("{} carries evidence \"merged\" or \"separate\"; received {}", goal, other.map(|v| format!("`{}`", v)).unwrap_or_else(|| Self::evidence_shape(evidence))),
+                        ));
+                    }
+                }
+            }
+            "curate-view" => {
+                let matched: Vec<(String, String)> = gs.change["matched"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| Some((m["id"].as_str()?.to_string(), m["why"].as_str().unwrap_or("").to_string())))
+                    .collect();
+                if matched.is_empty() {
+                    return Ok(());
+                }
+                let entries: Vec<Value> = match evidence {
+                    Value::Array(a) => a.clone(),
+                    Value::Object(m) => m.values().find_map(|v| v.as_array().cloned()).unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                let Some(view) = self.view_after(&gs.target) else {
+                    return Ok(());
+                };
+                const PLACEHOLDERS: [&str; 5] = ["none", "n/a", "na", "-", "null"];
+                for (id, why) in &matched {
+                    let Some(e) = entries.iter().find(|e| r(&Self::evidence_id(e, "id")) == r(id)) else {
+                        return Err(ToolError::new(
+                            "member-unjudged",
+                            format!("{} has no verdict for {} ({}); add it with update_view add_members or exclude it with a note, then list {{id: {}, verdict: added | excluded}} in evidence, one entry per matched node; received {}", goal, id, why, id, Self::evidence_shape(evidence)),
+                        ));
+                    };
+                    let excluded = view.excluded.iter().find(|x| r(&x.id) == r(id));
+                    match e["verdict"].as_str() {
+                        Some("added") => {
+                            let listed = view.members.iter().any(|m| r(m) == r(id));
+                            if !(listed || (why == "query-match" && view.query.is_some() && excluded.is_none())) {
+                                return Err(ToolError::new(
+                                    "added-unbacked",
+                                    format!("{} claims {} added, but it is not a member of {} after this session's staged work; update_view add_members (at its position in a flow)", goal, id, gs.target),
+                                ));
+                            }
+                        }
+                        Some("excluded") => {
+                            let Some(x) = excluded.filter(|x| {
+                                let n = x.note.trim().to_lowercase();
+                                !n.is_empty() && !PLACEHOLDERS.contains(&n.as_str())
+                            }) else {
+                                return Err(ToolError::new(
+                                    "excluded-unbacked",
+                                    format!("{} claims {} excluded, but {} does not exclude it with a note; update_view exclude [{{id: {}, note}}], the note naming the sentence or the rule", goal, id, gs.target, id),
+                                ));
+                            };
+                            // A note sending the member to another flow names a view
+                            // that lists it (curate-view.md#gate).
+                            for other in Self::view_ids_in(&x.note) {
+                                if other == gs.target {
+                                    continue;
+                                }
+                                let Some(ov) = self.view_after(&other) else {
+                                    continue;
+                                };
+                                if crate::derive::FLOW_KINDS.contains(&ov.kind.as_str())
+                                    && !ov.members.iter().any(|m| r(m) == r(id))
+                                {
+                                    return Err(ToolError::new(
+                                        "exclusion-points-nowhere",
+                                        format!("the note excluding {} from {} names {}, which does not list it; add it there with update_view add_members first, or name the view that holds it", id, gs.target, other),
+                                    ));
+                                }
+                            }
+                        }
+                        other => {
+                            return Err(ToolError::new(
+                                "bad-verdict",
+                                format!("curate verdict `{}` for {}: added or excluded", other.unwrap_or("?"), id),
+                            ));
+                        }
+                    }
+                }
+            }
+            "conform-instance" => {
+                let inst = r(&gs.target);
+                let Some(ty) = crate::derive::instance_types(&self.snapshot).get(&inst).cloned() else {
+                    return Ok(());
+                };
+                let attrs = crate::goals::declared_attributes(&self.snapshot, &ty);
+                let links = crate::goals::instance_links(&self.snapshot, &inst);
+                let open = self.open_diagnostics();
+                let filed = open.iter().any(|(_, d)| {
+                    d.rule == "nonconformant-instance" && d.subjects.iter().any(|s| r(s) == inst || r(s) == ty)
+                });
+                let repaired = self.staged.iter().any(|o| match o {
+                    Op::UpdateEntity { id, .. } => r(id) == inst,
+                    Op::UpdateRequirement { id, .. } => self
+                        .snapshot
+                        .graph
+                        .requirements
+                        .get(id)
+                        .is_some_and(|q| q.entities.iter().any(|e| r(e) == inst)),
+                    _ => false,
+                });
+                let shape = "{attributes: [{name, verdict: conforms | missing | nonconformant}], links: [{to, verdict, carried_by?}]}";
+                let mut nonconformant = false;
+                let mut check = |e: &Value, what: String| -> Result<(), ToolError> {
+                    match e["verdict"].as_str() {
+                        Some("conforms") | Some("missing") => Ok(()),
+                        Some("nonconformant") => {
+                            nonconformant = true;
+                            if filed || repaired {
+                                Ok(())
+                            } else {
+                                Err(ToolError::new(
+                                    "nonconformant-unbacked",
+                                    format!("{} claims {} nonconformant, but no nonconformant-instance diagnostic naming {} or {} is staged or open and no repair of the instance is staged; report_diagnostic rule nonconformant-instance, or conform the instance when the example sentence supports it", goal, what, inst, ty),
+                                ))
+                            }
+                        }
+                        other => Err(ToolError::new(
+                            "bad-verdict",
+                            format!("conformance verdict `{}` for {}: conforms, missing, or nonconformant", other.unwrap_or("?"), what),
+                        )),
+                    }
+                };
+                for name in &attrs {
+                    let e = evidence["attributes"].as_array().and_then(|a| {
+                        a.iter().find(|e| e["name"].as_str().is_some_and(|n| n.trim().to_lowercase() == *name)).cloned()
+                    });
+                    let Some(e) = e else {
+                        return Err(ToolError::new(
+                            "conformance-unjudged",
+                            format!("{} has no attributes entry for `{}`, which {} declares; compare the instance's value and add {{name: {}, verdict: conforms | missing | nonconformant}} to evidence {}", goal, name, ty, name, shape),
+                        ));
+                    };
+                    check(&e, format!("attribute `{}`", name))?;
+                }
+                for (to, ty_) in &links {
+                    let e = evidence["links"].as_array().and_then(|a| {
+                        a.iter().find(|e| r(&Self::evidence_id(e, "to")) == r(to)).cloned()
+                    });
+                    let Some(e) = e else {
+                        return Err(ToolError::new(
+                            "conformance-unjudged",
+                            format!("{} has no links entry for {} ({}); compare it with the relationships of {} and add {{to: {}, verdict: conforms | missing | nonconformant}} to evidence {}", goal, to, ty_, ty, to, shape),
+                        ));
+                    };
+                    check(&e, format!("the link to {}", to))?;
+                }
+                // A standing finding on the instance is backed by a verdict or resolved.
+                if !nonconformant {
+                    if let Some((id, _)) = self.snapshot.graph.diagnostics.iter().find(|(id, d)| {
+                        d.lifecycle == "open"
+                            && d.rule == "nonconformant-instance"
+                            && d.subjects.iter().any(|s| r(s) == inst)
+                            && !self.staged_resolves(id)
+                    }) {
+                        return Err(ToolError::new(
+                            "nonconformant-open",
+                            format!("{} stands open on {}, yet no verdict is nonconformant; resolve_diagnostic it when its condition lapsed, or claim the value or link it names nonconformant", id, inst),
+                        ));
+                    }
+                }
+            }
+            "derive-criteria" => {
+                let Some(list) = evidence["requirements"].as_array() else {
+                    return Ok(());
+                };
+                for key in ["none", "revised"] {
+                    for rid in gs.change[key].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+                        if !list.iter().any(|e| Self::evidence_id(e, "id") == rid) {
+                            return Err(ToolError::new(
+                                "criteria-unjudged",
+                                format!("{} has no entry for {}, a requirement the goal lists; write its criteria and add {{id: {}, criteria: [ids], verdict: complete | stated-only | open-question}}", goal, rid, rid),
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    // The view ids a note names (`view:usecase/returns`).
+    fn view_ids_in(note: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = note;
+        while let Some(pos) = rest.find("view:") {
+            let tail = &rest[pos..];
+            let end = tail
+                .find(|c: char| !(c.is_alphanumeric() || matches!(c, ':' | '/' | '-' | '_' | '.')))
+                .unwrap_or(tail.len());
+            let id = tail[..end].trim_end_matches('.').to_string();
+            if id.len() > "view:".len() && !out.contains(&id) {
+                out.push(id);
+            }
+            rest = &tail[end.max(5)..];
+        }
+        out
+    }
+
     fn lint_evidence(&self, goal: &str, target: &str, evidence: &Value) -> Result<(), ToolError> {
         let rules = self.lint.warnings.len() + self.lint.errors.len();
         if rules == 0 {
@@ -2194,37 +2882,23 @@ impl ToolSession {
         // The review's unreferenced verdicts: referenced is backed by the staged
         // update, word-match is remembered on the entity so the hint never returns.
         // Mirrors docs/compiler/goals/review-entity.md#gate.
+        // Every check reads before anything stages, so a refused claim leaves the
+        // changeset as it was.
+        if gs.kind == "review-entity" {
+            self.review_evidence(&goal, &gs.target, &evidence)?;
+            // One lint entry per declared rule, filed backed by a lint finding on the
+            // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
+            self.lint_evidence(&goal, &gs.target, &evidence)?;
+        }
+        self.kind_evidence(&gs, &goal, &evidence)?;
         if gs.kind == "review-entity" {
             if let Some(list) = evidence["unreferenced"].as_array() {
                 let target = self.snapshot.resolve_id(&gs.target).to_string();
-                let mut word_matches: Vec<String> = Vec::new();
-                for e in list {
-                    let rid = e["id"].as_str().unwrap_or("").to_string();
-                    match e["verdict"].as_str() {
-                        Some("referenced") => {
-                            if !self.requirement_names_entity(&rid, &target) {
-                                return Err(ToolError::new(
-                                    "unreferenced-unbacked",
-                                    format!(
-                                        "{} claims {} referenced, but {} does not name {} after this session's staged work; update_requirement with id and the full entities list, or verdict word-match",
-                                        goal, rid, rid, target
-                                    ),
-                                ));
-                            }
-                        }
-                        Some("word-match") => word_matches.push(rid),
-                        other => {
-                            return Err(ToolError::new(
-                                "bad-verdict",
-                                format!(
-                                    "unreferenced verdict `{}` for {}: referenced or word-match",
-                                    other.unwrap_or("?"),
-                                    rid
-                                ),
-                            ));
-                        }
-                    }
-                }
+                let word_matches: Vec<String> = list
+                    .iter()
+                    .filter(|e| e["verdict"].as_str() == Some("word-match"))
+                    .map(|e| Self::evidence_id(e, "id"))
+                    .collect();
                 if !word_matches.is_empty() {
                     self.review_staged_note = Some(format!(
                         "the word-match verdicts stage one update on {} (its not_about list); done counts it as applied",
@@ -2247,11 +2921,6 @@ impl ToolSession {
                     })?;
                 }
             }
-        }
-        // One lint entry per declared rule, filed backed by a lint finding on the
-        // entity or its statements. Mirrors docs/compiler/goals/review-entity.md#gate.
-        if gs.kind == "review-entity" {
-            self.lint_evidence(&goal, &gs.target, &evidence)?;
         }
         // derive-criteria: one entry per requirement, complete backed by a criterion,
         // open-question backed by an invented-choice prompt
@@ -8783,6 +9452,363 @@ mod tests {
             "{:?}",
             t.staged.len()
         );
+    }
+
+    fn open_diag(rule: &str, subjects: &[&str]) -> Diagnostic {
+        Diagnostic {
+            rule: rule.into(),
+            severity: "warning".into(),
+            subjects: subjects.iter().map(|s| s.to_string()).collect(),
+            message: "x".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    fn one_goal(kind: &str, target: &str, change: Value) -> Vec<Goal> {
+        vec![Goal {
+            id: format!("g:{}:{}", kind, target),
+            kind: kind.into(),
+            mandatory: true,
+            target: target.into(),
+            change,
+            ..Default::default()
+        }]
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#gate: every lookalike, open
+    // diagnostic, and unparented part the hints list carries a verdict, each backed by
+    // the staged work, and the definition claim agrees with it.
+    #[test]
+    fn review_holds_a_verdict_per_listed_lookalike_diagnostic_and_part() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        s.graph.entities.insert("ent:cart-page".into(), plain("Cart Page"));
+        s.graph.entities.insert("ent:item".into(), plain("Item"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The Cart contains Items.".into(),
+                entities: vec!["ent:cart".into(), "ent:item".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:cart".into(),
+                    b: "ent:item".into(),
+                    rel_type: Some("composition".into()),
+                    cardinality: None,
+                }],
+                ..Default::default()
+            },
+        );
+        s.graph.diagnostics.insert("diag:ambiguity-1".into(), open_diag("ambiguity", &["req:a"]));
+        let goals = one_goal("review-entity", "ent:cart", Value::Null);
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mark = |t: &mut ToolSession, evidence: Value| {
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:review-entity:ent:cart", "justification": "Reviewed.", "evidence": evidence}),
+            )
+        };
+        let rule = |r: Result<Value, ToolError>| r.map(|v| v.to_string()).unwrap_err().rule;
+        assert_eq!(rule(mark(&mut t, json!({}))), "bad-evidence");
+        assert_eq!(rule(mark(&mut t, json!({"definition": "current"}))), "lookalike-unjudged");
+        let separate = json!([{"id": "ent:cart-page", "verdict": "separate", "reason": "a page showing the Cart, not the Cart"}]);
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "merged"}]}))),
+            "merge-unbacked"
+        );
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "separate", "reason": "n/a"}]}))),
+            "reason-required"
+        );
+        assert_eq!(rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate}))), "diagnostic-unjudged");
+        let stands = json!([{"id": "diag:ambiguity-1", "verdict": "stands"}]);
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": [{"id": "diag:ambiguity-1", "verdict": "resolved"}]}))),
+            "diagnostic-unbacked"
+        );
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands}))),
+            "part-unjudged"
+        );
+        let parented = json!([{"id": "ent:item", "verdict": "parented"}]);
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": parented}))),
+            "part-unbacked"
+        );
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": [{"id": "ent:item", "verdict": "kept"}]}))),
+            "reason-required"
+        );
+        t.dispatch("update_entity", &json!({"id": "ent:item", "parent": "ent:cart"})).unwrap();
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "refreshed", "lookalikes": separate, "diagnostics": stands, "parts": parented}))),
+            "definition-unbacked"
+        );
+        let v = mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": parented})).unwrap();
+        assert_eq!(v["marked"], "g:review-entity:ent:cart", "{}", v);
+    }
+
+    // Mirrors docs/compiler/goals/review-entity.md#gate: a statement the hints list as
+    // naming the entity without referencing it takes an unreferenced verdict.
+    #[test]
+    fn review_judges_every_listed_unreferenced_statement() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:customer".into(), plain("Customer"));
+        s.graph.entities.insert("ent:order".into(), plain("Order"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "An Order names the Customer who placed it.".into(),
+                entities: vec!["ent:order".into()],
+                ..Default::default()
+            },
+        );
+        let goals = one_goal("review-entity", "ent:customer", Value::Null);
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:review-entity:ent:customer", "justification": "Reviewed.", "evidence": {"definition": "current"}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "unreferenced-unjudged", "{}", err.message);
+        assert!(t.staged.is_empty());
+    }
+
+    // Mirrors docs/compiler/goals/rejudge-pair.md#gate: the verdict is named, and
+    // the staged work or a standing finding carries it.
+    #[test]
+    fn rejudge_pair_verdict_is_backed_by_the_staged_work() {
+        let mut t = pair_session();
+        let mark = |t: &mut ToolSession, goal: &str, evidence: Value| {
+            t.dispatch("mark_goal_done", &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}))
+        };
+        let ab = "g:rejudge-pair:req:a~req:b";
+        assert_eq!(mark(&mut t, ab, Value::Null).unwrap_err().rule, "bad-evidence");
+        assert_eq!(mark(&mut t, ab, json!({"verdict": "duplicate"})).unwrap_err().rule, "duplicate-unbacked");
+        assert_eq!(mark(&mut t, ab, json!({"verdict": "contradiction"})).unwrap_err().rule, "contradiction-unbacked");
+        assert!(mark(&mut t, ab, json!({"verdict": "consistent"})).is_ok());
+        t.snapshot
+            .graph
+            .diagnostics
+            .insert("diag:contradiction-1".into(), open_diag("contradiction", &["req:a", "req:c"]));
+        let ac = "g:rejudge-pair:req:a~req:c";
+        assert_eq!(mark(&mut t, ac, json!({"verdict": "consistent"})).unwrap_err().rule, "pair-diagnostic-open");
+        assert!(mark(&mut t, ac, json!({"verdict": "contradiction", "carried_by": "diag:contradiction-1"})).is_ok());
+        t.snapshot.graph.diagnostics.insert(
+            "diag:duplicate-requirement-2".into(),
+            open_diag("duplicate-requirement", &["req:b", "req:c", "req:gone"]),
+        );
+        let bc = "g:rejudge-pair:req:b~req:c";
+        assert_eq!(mark(&mut t, bc, json!({"verdict": "duplicate"})).unwrap_err().rule, "dead-subject");
+        t.dispatch("resolve_diagnostic", &json!({"id": "diag:duplicate-requirement-2", "reason": "req:gone is deleted"})).unwrap();
+        assert!(mark(&mut t, bc, json!("consistent")).is_ok());
+    }
+
+    // Mirrors docs/compiler/goals/declare-edges.md#gate and dedupe-candidates.md#gate:
+    // the single verdict names what the staged work did.
+    #[test]
+    fn declare_edges_and_dedupe_verdicts_match_the_staged_work() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        s.graph.entities.insert("ent:item".into(), plain("Item"));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The Cart holds Items.".into(),
+                entities: vec!["ent:cart".into(), "ent:item".into()],
+                ..Default::default()
+            },
+        );
+        let goals = one_goal("declare-edges", "req:a", Value::Null);
+        let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mark = |t: &mut ToolSession, goal: &str, evidence: Value| {
+            t.dispatch("mark_goal_done", &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}))
+        };
+        let g = "g:declare-edges:req:a";
+        assert_eq!(mark(&mut t, g, Value::Null).unwrap_err().rule, "bad-evidence");
+        assert_eq!(mark(&mut t, g, json!("declared")).unwrap_err().rule, "edges-unbacked");
+        t.dispatch(
+            "update_requirement",
+            &json!({"id": "req:a", "edges": [{"a": "ent:cart", "b": "ent:item", "type": "aggregation"}]}),
+        )
+        .unwrap();
+        assert_eq!(mark(&mut t, g, json!("not-structural")).unwrap_err().rule, "edges-staged");
+        assert!(mark(&mut t, g, json!({"verdict": "declared"})).is_ok());
+
+        let goals = one_goal("dedupe-candidates", "ent:cart~ent:item", Value::Null);
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let g = "g:dedupe-candidates:ent:cart~ent:item";
+        assert_eq!(mark(&mut t, g, json!("merged")).unwrap_err().rule, "merge-unbacked");
+        t.dispatch(
+            "merge_entities",
+            &json!({"keep": "ent:cart", "absorb": "ent:item", "reason": "one concept named twice"}),
+        )
+        .unwrap();
+        assert_eq!(mark(&mut t, g, json!("separate")).unwrap_err().rule, "merge-staged");
+        assert!(mark(&mut t, g, json!("merged")).is_ok());
+    }
+
+    // Mirrors docs/compiler/goals/curate-view.md#gate: every matched node is added or
+    // excluded with a note, and a note naming another flow names one that lists it.
+    #[test]
+    fn curate_view_decides_every_matched_node() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        for id in ["req:a", "req:b"] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: format!("The Cart acts ({}).", id),
+                    entities: vec!["ent:cart".into()],
+                    ..Default::default()
+                },
+            );
+        }
+        for (id, title, members) in [
+            ("view:use-case/checkout", "Checkout", vec!["req:a".to_string()]),
+            ("view:use-case/returns", "Returns", Vec::new()),
+        ] {
+            s.graph.views.insert(
+                id.into(),
+                View {
+                    kind: "use-case".into(),
+                    title: title.into(),
+                    members,
+                    ..Default::default()
+                },
+            );
+        }
+        let goals = one_goal(
+            "curate-view",
+            "view:use-case/checkout",
+            json!({"matched": [{"id": "req:b", "why": "unplaced behavior"}]}),
+        );
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mark = |t: &mut ToolSession, evidence: Value| {
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:curate-view:view:use-case/checkout", "justification": "Decided.", "evidence": evidence}),
+            )
+        };
+        assert_eq!(mark(&mut t, Value::Null).unwrap_err().rule, "member-unjudged");
+        assert_eq!(mark(&mut t, json!([{"id": "req:b", "verdict": "added"}])).unwrap_err().rule, "added-unbacked");
+        let excluded = json!([{"id": "req:b", "verdict": "excluded"}]);
+        assert_eq!(mark(&mut t, excluded.clone()).unwrap_err().rule, "excluded-unbacked");
+        t.dispatch(
+            "update_view",
+            &json!({"id": "view:use-case/checkout", "exclude": [{"id": "req:b", "note": "belongs to view:use-case/returns."}]}),
+        )
+        .unwrap();
+        assert_eq!(mark(&mut t, excluded.clone()).unwrap_err().rule, "exclusion-points-nowhere");
+        t.dispatch("update_view", &json!({"id": "view:use-case/returns", "add_members": ["req:b"]})).unwrap();
+        assert!(mark(&mut t, excluded).is_ok());
+    }
+
+    // Mirrors docs/compiler/goals/conform-instance.md#gate: one verdict per declared
+    // attribute and per link, nonconformant backed, a standing finding answered.
+    #[test]
+    fn conform_instance_holds_a_verdict_per_attribute_and_link() {
+        let mut s = Store::default();
+        let decree = Provenance::Decree { author: "t".into(), at: "t".into(), note: None };
+        let mut customer = plain("Customer");
+        customer.attributes.push(Attribute { name: "tier".into(), r#type: Some("string".into()), value: None, provenance: decree });
+        s.graph.entities.insert("ent:customer".into(), customer);
+        s.graph.entities.insert("ent:ana".into(), plain("Ana"));
+        s.graph.entities.insert("ent:cart".into(), plain("Cart"));
+        let contribution = |b: &str, ty: &str| Contribution {
+            a: "ent:ana".into(),
+            b: b.into(),
+            r#type: ty.into(),
+            cardinality: None,
+            requirements: Vec::new(),
+        };
+        s.graph.relationships.insert(
+            "rel:1".into(),
+            Relationship {
+                members: vec!["ent:ana".into(), "ent:customer".into()],
+                contributions: vec![contribution("ent:customer", "instantiation")],
+            },
+        );
+        s.graph.relationships.insert(
+            "rel:2".into(),
+            Relationship {
+                members: vec!["ent:ana".into(), "ent:cart".into()],
+                contributions: vec![contribution("ent:cart", "association")],
+            },
+        );
+        let goals = one_goal("conform-instance", "ent:ana", Value::Null);
+        let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mark = |t: &mut ToolSession, evidence: Value| {
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:conform-instance:ent:ana", "justification": "Compared.", "evidence": evidence}),
+            )
+        };
+        assert_eq!(mark(&mut t, Value::Null).unwrap_err().rule, "conformance-unjudged");
+        let attrs = json!([{"name": "Tier", "verdict": "missing"}]);
+        let err = mark(&mut t, json!({"attributes": attrs})).unwrap_err();
+        assert_eq!(err.rule, "conformance-unjudged");
+        assert!(err.message.contains("ent:cart"), "{}", err.message);
+        let bad_link = json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "nonconformant"}]});
+        assert_eq!(mark(&mut t, bad_link.clone()).unwrap_err().rule, "nonconformant-unbacked");
+        t.dispatch(
+            "report_diagnostic",
+            &json!({"rule": "nonconformant-instance", "severity": "warning", "subjects": ["ent:ana", "ent:customer"],
+                    "message": "Ana links a Cart; Customer has no Cart relationship."}),
+        )
+        .unwrap();
+        assert!(mark(&mut t, bad_link).is_ok());
+
+        s.graph
+            .diagnostics
+            .insert("diag:nonconformant-instance-1".into(), open_diag("nonconformant-instance", &["ent:ana", "ent:customer"]));
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let conforms = json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "conforms"}]});
+        assert_eq!(mark(&mut t, conforms).unwrap_err().rule, "nonconformant-open");
+    }
+
+    // Mirrors docs/compiler/goals/derive-criteria.md#gate: one entry per requirement
+    // the goal lists.
+    #[test]
+    fn derive_criteria_judges_every_listed_requirement() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), plain("Sort"));
+        for id in ["req:a", "req:b"] {
+            s.graph.requirements.insert(
+                id.into(),
+                Requirement {
+                    statement: format!("The utility sorts ({}).", id),
+                    entities: vec!["ent:sort".into()],
+                    ..Default::default()
+                },
+            );
+            s.graph.criteria.insert(
+                format!("crit:{}-1", id),
+                crate::model::Criterion {
+                    requirement: id.into(),
+                    statement: format!("Three lines come out ordered ({}).", id),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        let goals = one_goal("derive-criteria", "ent:sort", json!({"none": ["req:a", "req:b"], "revised": []}));
+        let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let err = t
+            .dispatch(
+                "mark_goal_done",
+                &json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.",
+                        "evidence": {"requirements": [{"id": "req:a", "criteria": ["crit:req:a-1"], "verdict": "stated-only"}]}}),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "criteria-unjudged", "{}", err.message);
+        assert!(err.message.contains("req:b"), "{}", err.message);
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of

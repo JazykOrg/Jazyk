@@ -357,16 +357,25 @@ clear or keep change records; they are not graph mutations
   that ask for it, one shape per kind: [`rejudge-pair`](./goals/rejudge-pair.md)
   `{verdict: duplicate | contradiction | consistent, carried_by?}`;
   [`review-entity`](./goals/review-entity.md) `{definition: current | refreshed,
-  lookalikes: [{id, verdict: merged | separate, reason}], diagnostics: [{id, verdict:
-  stands | resolved | refiled}], lint: [{rule, verdict: clean | filed}]}` (omit
-  `lookalikes` and `diagnostics` when the hints list none, and `lint` when the project
-  declares no lint rules; an empty list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
+  lookalikes: [{id, verdict: merged | separate, reason}], unreferenced: [{id, verdict:
+  referenced | word-match, reason}], diagnostics: [{id, verdict: stands | resolved |
+  refiled}], parts: [{id, verdict: parented | edge-fixed | kept, reason}], lint:
+  [{rule, verdict: clean | filed}]}` (one entry per item the hints list; omit a list
+  the hints leave empty, and `lint` when the project declares no lint rules; an empty
+  list is a placeholder, as everywhere); [`declare-edges`](./goals/declare-edges.md)
   `declared` or `not-structural`; [`dedupe-candidates`](./goals/dedupe-candidates.md)
-  `merged` or `separate`; [`curate-view`](./goals/curate-view.md) `[{id, verdict: added | excluded}]`, one per
-  matched node; [`conform-instance`](./goals/conform-instance.md)
-  `{attributes: [{name, verdict}], links: [{to, verdict, carried_by?}]}`; the other kinds read the staged work alone. The tool's
-  description carries the same list, so the shape is never guessed. A goal outside
-  the batch is rejected.
+  `merged` or `separate`; [`curate-view`](./goals/curate-view.md) `[{id, verdict:
+  added | excluded}]`, one per matched node; [`conform-instance`](./goals/conform-instance.md)
+  `{attributes: [{name, verdict}], links: [{to, verdict, carried_by?}]}`, one per
+  declared attribute and per link; [`derive-criteria`](./goals/derive-criteria.md)
+  `{requirements: [{id, criteria: [ids], verdict: complete | stated-only |
+  open-question}]}`, one per listed requirement; the other kinds read the staged work
+  alone. Each entry the page's gate requires is checked against the staged work, and a
+  missing or unbacked one is refused with the rule the page names (`*-unjudged` for a
+  listed item without a verdict, `*-unbacked` for a verdict the staged work does not
+  carry), since a model checks exactly what the evidence names. The tool's description
+  carries the same list, so the shape is never guessed. A goal outside the batch is
+  rejected.
 - `settle_pairs({verdicts: [{goal, verdict, justification, severity?, message?,
   reasoning?, prompt?}]})`: one claim for several `rejudge-pair` goals, served in the
   [`rejudge-pair`](./goals/rejudge-pair.md#tools) slice only. Each entry is one

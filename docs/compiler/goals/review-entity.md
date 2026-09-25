@@ -83,7 +83,9 @@ clears the lookalike record.
 ## Gate
 
 `mark_goal_done({goal, justification, evidence})` carries `evidence` with the state of
-the definition and one verdict per lookalike the goal listed:
+the definition and one verdict per item the hints list: each lookalike, each open
+diagnostic, each part a stated composition leaves outside its whole, each unreferenced
+statement, and each project lint rule. A list the hints leave empty is omitted:
 
 ```yaml
 evidence:
@@ -91,29 +93,52 @@ evidence:
   lookalikes:
     - {id: ent:backend-system, verdict: merged}
     - {id: ent:reorder-point, verdict: separate, reason: "a threshold on Order; statements are about it directly"}
+  diagnostics:
+    - {id: diag:ambiguity-3, verdict: stands}
+  parts:
+    - {id: ent:order-line, verdict: parented}
+  unreferenced:
+    - {id: req:returns-4, verdict: word-match, reason: "names the Order as the place of the refund"}
   lint:
     - {rule: 1, verdict: clean}
 ```
 
-The harness validates the claim over the store plus what the session has staged:
+The harness validates the claim over the store plus what the session has staged, and
+refuses a false one naming the rule:
 
-- `definition` is `current` or `refreshed`. `refreshed` requires an `update_entity`
-  with `definition` on the target staged in this session; `current` requires none. The
-  harness cannot judge whether a definition fits; it checks that the claim is made and
-  agrees with the staged mutations.
-- Every lookalike the goal listed has a verdict. `merged` requires a `merge_entities`
-  staged in this session whose `keep` or `absorb` is the candidate; `separate` requires
-  a `reason`, or an open `duplicate-entity` diagnostic naming both when the merge is
-  not certain.
-- Every open diagnostic naming a `(deleted)` subject among the entity's statements is
-  resolved in this session, refiled or not.
-- Every unreferenced statement the hints listed has an entry under `unreferenced`:
-  `{id, verdict: referenced | word-match, reason?}`. `referenced` requires the
-  requirement to name the entity after this session's staged `update_requirement`
-  (`unreferenced-unbacked` otherwise); `word-match` is written to the entity's
-  `not_about` at commit, so the hint never offers it again while the statement stands
-  ([fields](../model/entity.md#fields)). A session once judged three word matches in
-  free text and expected the same hints back on the next build.
+- `definition` is `current` or `refreshed` (`bad-evidence` when absent). `refreshed`
+  requires an `update_entity` with `definition` on the target staged in this session;
+  `current` requires none (`definition-unbacked` otherwise). The harness cannot judge
+  whether a definition fits; it checks that the claim is made and agrees with the
+  staged mutations.
+- Every lookalike the hints listed has a verdict (`lookalike-unjudged`). `merged`
+  requires a `merge_entities` staged in this session naming the target and the
+  candidate (`merge-unbacked`); `separate` requires a `reason`, or an open
+  `duplicate-entity` diagnostic naming both when the merge is not certain
+  (`reason-required`; a placeholder such as `n/a` counts as absent).
+- Every open diagnostic the hints listed on the entity or its statements has an entry
+  under `diagnostics` (`diagnostic-unjudged`): `stands`, `resolved` (a
+  `resolve_diagnostic` on it staged in this session), or `refiled` (that resolve plus
+  a new `report_diagnostic` of the same rule). A claim the staged work does not back is
+  `diagnostic-unbacked`, and so is `stands` on a diagnostic naming a `(deleted)`
+  subject: it cannot stand as filed, so it is resolved, refiled or not.
+- Every part the composition hint listed has an entry under `parts`
+  (`part-unjudged`): `{id: <the part>, verdict: parented | edge-fixed | kept,
+  reason?}`. `parented` requires the part's `parent` to be the stated whole, or under
+  it, once the staged work applies; `edge-fixed` requires a staged `update_requirement`
+  whose `edges` drop the listed composition (a reversed edge corrected)
+  (`part-unbacked` otherwise); `kept` requires a `reason`, the generic rule-carrier
+  the [judgment skill](../skills/judgment.md) keeps parentless (`reason-required`). A
+  local model reviewing an entity checked exactly what the evidence named and left the
+  prompt's other duties undone, so each duty the hints make concrete is a verdict the
+  evidence names.
+- Every unreferenced statement the hints listed has an entry under `unreferenced`
+  (`unreferenced-unjudged`): `{id, verdict: referenced | word-match, reason?}`.
+  `referenced` requires the requirement to name the entity after this session's staged
+  `update_requirement` (`unreferenced-unbacked` otherwise); `word-match` is written to
+  the entity's `not_about` at commit, so the hint never offers it again while the
+  statement stands ([fields](../model/entity.md#fields)). A session once judged three
+  word matches in free text and expected the same hints back on the next build.
 - When the project declares lint rules, every rule on the `## Project` block's `lint`
   line has an entry under `lint`: `{rule: <its number>, verdict: clean | filed}`.
   `filed` requires a `lint` diagnostic staged in this session, or open, on the entity or
@@ -232,7 +257,8 @@ E.g.:
 - [g:review-entity:ent:order] mandatory
   [contract paragraph]
   Change: 2 requirements changed in g413 (req:orders-6 revised, req:orders-9 created).
-  Gate: definition current; every listed lookalike judged; findings filed or resolved.
+  Gate: definition claimed; one backed verdict per listed lookalike, unreferenced
+  statement, open diagnostic, and composition part.
   Hints: lookalikes: ent:order-item (related, separate by default); unreferenced:
   req:payment-3 "Orders on hold are not charged"; 1 open diagnostic;
   skill judgment

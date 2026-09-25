@@ -1735,6 +1735,53 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
     out
 }
 
+// The composition edges on an entity's statements whose part has no parent, or a
+// parent outside the stated whole: (whole, part, hint line), one per edge. The
+// review hint lists them and the review gate holds one `parts` verdict per part.
+// Mirrors docs/compiler/goals/review-entity.md#hints and #gate.
+pub fn unparented_parts(store: &Store, id: &str) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    for r in store.requirements_referencing(id) {
+        let Some(q) = store.graph.requirements.get(&r) else {
+            continue;
+        };
+        for edge in &q.edges {
+            if edge.rel_type.as_deref() != Some("composition") {
+                continue;
+            }
+            let Some(part) = store.graph.entities.get(&edge.b) else {
+                continue;
+            };
+            // A parent under the stated whole satisfies the composition
+            // transitively (a scene under a chapter under the manuscript).
+            let line = match &part.parent {
+                None => format!("{} -> {} (whole -> part)", edge.a, edge.b),
+                Some(p) if p != &edge.a && !store.is_ancestor(&edge.a, &edge.b) => {
+                    format!("{} -> {} (whole -> part; parent now {}, not under the whole)", edge.a, edge.b, p)
+                }
+                _ => continue,
+            };
+            if !out.iter().any(|(_, _, l)| l == &line) {
+                out.push((edge.a.clone(), edge.b.clone(), line));
+            }
+        }
+    }
+    out
+}
+
+// The open diagnostics a review lists on an entity and its statements, harness-owned
+// rules aside: the review gate holds one `diagnostics` verdict per id.
+// Mirrors docs/compiler/goals/review-entity.md#gate.
+pub fn review_diagnostics(store: &Store, id: &str) -> Vec<String> {
+    let reqs = store.requirements_referencing(id);
+    let mut subjects: Vec<&str> = reqs.iter().map(String::as_str).collect();
+    subjects.push(id);
+    open_diags_naming(store, &subjects)
+        .into_iter()
+        .map(|(did, _)| did.clone())
+        .collect()
+}
+
 impl GoalKind for ReviewEntity {
     fn kind(&self) -> &'static str {
         "review-entity"
@@ -1837,33 +1884,10 @@ impl GoalKind for ReviewEntity {
             // A stated composition whose part has no parent, or a parent disagreeing
             // with the stated whole: the review's contract says to set parent on the
             // part, so name each such edge (both the missing and the mismatch case).
-            let mut parentless: Vec<String> = Vec::new();
-            for r in &reqs {
-                let Some(q) = store.graph.requirements.get(r) else {
-                    continue;
-                };
-                for edge in &q.edges {
-                    if edge.rel_type.as_deref() != Some("composition") {
-                        continue;
-                    }
-                    let Some(part) = store.graph.entities.get(&edge.b) else {
-                        continue;
-                    };
-                    // A parent under the stated whole satisfies the composition
-                    // transitively (a scene under a chapter under the manuscript).
-                    // Mirrors docs/compiler/goals/review-entity.md#hints.
-                    let line = match &part.parent {
-                        None => format!("{} -> {} (whole -> part)", edge.a, edge.b),
-                        Some(p) if p != &edge.a && !store.is_ancestor(&edge.a, &edge.b) => {
-                            format!("{} -> {} (whole -> part; parent now {}, not under the whole)", edge.a, edge.b, p)
-                        }
-                        _ => continue,
-                    };
-                    if !parentless.contains(&line) {
-                        parentless.push(line);
-                    }
-                }
-            }
+            let parentless: Vec<String> = unparented_parts(store, &id)
+                .into_iter()
+                .map(|(_, _, line)| line)
+                .collect();
             if !parentless.is_empty() {
                 hints.push(format!(
                     "composition edges whose part has no parent or a parent outside the stated whole (the edge reads whole -> part; set parent on the part with update_entity, or fix a reversed edge on the requirement, unless the part is a generic rule-carrier such as Department beside the named departments, which the judgment skill keeps parentless): {}",
@@ -2268,6 +2292,19 @@ pub fn declared_attributes(store: &Store, ty: &str) -> BTreeSet<String> {
     out
 }
 
+// The links an instance carries: its outgoing contributions other than the
+// instantiation edge, (to, type), as the links hint lists them and the gate holds
+// one verdict per `to`. Mirrors docs/compiler/goals/conform-instance.md#gate.
+pub fn instance_links(store: &Store, id: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for c in store.graph.relationships.values().flat_map(|r| r.contributions.iter()) {
+        if c.a == id && c.r#type != INSTANTIATION && !out.iter().any(|(b, t)| b == &c.b && t == &c.r#type) {
+            out.push((c.b.clone(), c.r#type.clone()));
+        }
+    }
+    out
+}
+
 impl GoalKind for ConformInstance {
     fn kind(&self) -> &'static str {
         "conform-instance"
@@ -2312,12 +2349,28 @@ impl GoalKind for ConformInstance {
                         .collect()
                 })
                 .unwrap_or_default();
+            // Attributes a generalization of the type declares take a verdict too.
+            let own: BTreeSet<String> = store
+                .graph
+                .entities
+                .get(&ty)
+                .map(|t| t.attributes.iter().map(|a| a.name.to_lowercase()).collect())
+                .unwrap_or_default();
+            let inherited: Vec<String> = declared_attributes(store, &ty)
+                .into_iter()
+                .filter(|n| !own.contains(n))
+                .collect();
             hints.push(format!(
-                "type declares {}",
+                "type declares {}{}",
                 if declared.is_empty() {
                     "no attributes".to_string()
                 } else {
                     declared.join(", ")
+                },
+                if inherited.is_empty() {
+                    String::new()
+                } else {
+                    format!("; inherited {}", inherited.join(", "))
                 }
             ));
             let values: Vec<String> = inst
@@ -2328,13 +2381,9 @@ impl GoalKind for ConformInstance {
             if !values.is_empty() {
                 hints.push(format!("instance values {}", values.join(", ")));
             }
-            let links: Vec<String> = store
-                .graph
-                .relationships
-                .values()
-                .flat_map(|r| r.contributions.iter())
-                .filter(|c| c.a == id && c.r#type != INSTANTIATION)
-                .map(|c| format!("{} ({})", c.b, c.r#type))
+            let links: Vec<String> = instance_links(store, &id)
+                .into_iter()
+                .map(|(to, ty)| format!("{} ({})", to, ty))
                 .collect();
             if !links.is_empty() {
                 hints.push(format!("links {}", links.join(", ")));

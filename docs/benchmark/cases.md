@@ -7,10 +7,10 @@ and a fenced `yaml` block holding the case definition per
 [`case.schema.yaml`](./case.schema.yaml). A file may hold more than one `yaml` block;
 each block is one case.
 
-Cases exist for ten goal kinds: the four the landing graded first
-(`reconcile-section`, `review-entity`, `generate`, `verify`) and six added after it
-(`rejudge-pair`, `declare-edges`, `dedupe-candidates`, `curate-view`, `split-view`,
-`abstract-entity`). The kinds still without a case are listed under
+Cases exist for twelve goal kinds: the four the landing graded first
+(`reconcile-section`, `review-entity`, `generate`, `verify`) and eight added after it
+(`rejudge-pair`, `declare-edges`, `derive-criteria`, `dedupe-candidates`,
+`curate-view`, `split-view`, `abstract-entity`, `bind`). The kinds still without a case are listed under
 [deferred cases](./benchmark.md#deferred-cases).
 
 ## Case format
@@ -42,6 +42,8 @@ Cases exist for ten goal kinds: the four the landing graded first
     id.
   - [`derive-criteria`](../compiler/goals/derive-criteria.md): `target` is an entity
     id. The sandbox configures a deliverable so the goal derives.
+  - [`bind`](../compiler/goals/bind.md): `target` is a requirement id, unbound in the
+    fixture. The session binds it against the fixture's `deliverable`.
   - [`dedupe-candidates`](../compiler/goals/dedupe-candidates.md): `target` is an
     entity pair, `ent:a~ent:b`, the smaller id first.
   - [`curate-view`](../compiler/goals/curate-view.md) and
@@ -49,7 +51,7 @@ Cases exist for ten goal kinds: the four the landing graded first
   - [`abstract-entity`](../compiler/goals/abstract-entity.md): `target` is an entity
     id, or `scope:<scope>` for the fan-out on a scope's top level
     ([the scope root](../compiler/concepts/levels.md#the-scope-root)).
-  These six kinds derive their goal from the seeded fixture; see
+  These eight kinds derive their goal from the seeded fixture; see
   [derived goals](#derived-goals).
 - `given`: the fixture.
   - `docs`: map of document path → markdown text. These are the only source files the
@@ -66,10 +68,16 @@ Cases exist for ten goal kinds: the four the landing graded first
     - `views`: map of view id → `kind`, `title`, `members`, `query`, `collapse`,
       `excluded`, and `provenance` ([view fields](../compiler/model/view.md#fields)).
       A seeded view is curated: `default` is never set.
+    - `criteria`: map of criterion id → `requirement`, `statement`, `kind`, and a
+      `source` (a `section` reference and a `quote`) or a `provenance`
+      ([criterion fields](../compiler/model/criterion.md#fields)).
     - `coverage`: map of section reference → state.
-  - `deliverable` (optional, verification cases): map of deliverable-relative path →
-    content, the implementing files the judged row names. The harness builds the
-    ledger row and its criteria file from the target requirement.
+  - `deliverable` (optional): map of deliverable-relative path → content, written under
+    the sandbox's deliverable directory before the session runs. In a verification
+    case these are the implementing files the judged row names, and the harness builds
+    the ledger row and its criteria file from the target requirement. In a `bind` case
+    they are the deliverable as the session finds it, tests included, and no ledger row
+    exists.
   - `lint` (optional): project [lint rules](../compiler/project-settings.md#docs)
     the session runs under, as `warnings` and `errors` lists.
 - `assert`: an array of checks. All must pass. Each check is deterministic and runs over
@@ -167,7 +175,16 @@ View checks:
 Workflow checks (generation and verification cases): `generationRecorded`,
 `rowPerRequirement`, `testsPass`, `testFalsifiable {requirement, replace}`,
 `verdictIs {requirement, verdict}`. See [gen-basic](./cases/gen-basic.md) and
-[verify-judge](./cases/verify-judge.md).
+[verify-judge](./cases/verify-judge.md). Two more grade a binding over the ledger row,
+never the verdict the session claimed:
+
+- `statusIn {requirement, statuses}`: the row's
+  [derived status](../consumers/gen.md#status-is-derived-never-stored) is one of the
+  listed (`verified`, `unimplemented`, `partial`, `failing`, `unverified`).
+- `testsFail {requirement}`: the row records at least one programmatic test, and every
+  one exits non-zero when the harness reruns it as recorded. A test that passes against
+  a deliverable that carries nothing reads a description. See
+  [bind-descriptor](./cases/bind-descriptor.md).
 
 ## Execution
 
@@ -188,12 +205,13 @@ Workflow checks (generation and verification cases): `generationRecorded`,
 
 A `reconcile-section`, `review-entity`, `generate`, or `verify` case builds its goal
 from the kind and the target alone: the fixture's nodes are written straight into the
-sandbox graph. The six other kinds carry a `change` the harness computes (a fan-out's
+sandbox graph. The other kinds carry a `change` the harness computes (a fan-out's
 coupling candidates, a pair's shared entity and tokens, a lookalike score, a query's
-new matches, a crossed limit), so their goal must be derived, never assembled:
+new matches, a crossed limit, an unbound requirement and its criteria count), so
+their goal must be derived, never assembled:
 
-- The fixture is seeded through one commit: every entity, requirement, and view of
-  `given.graph` lands as a `create` mutation in one changeset, parents before
+- The fixture is seeded through one commit: every entity, requirement, criterion, and
+  view of `given.graph` lands as a `create` mutation in one changeset, parents before
   children, under the same commit path a build uses
   ([mutations](../compiler/graph.md#mutations)). The commit writes the change records
   the fixture implies: `threshold-crossed` on a level or a view over a limit,
@@ -201,7 +219,8 @@ new matches, a crossed limit), so their goal must be derived, never assembled:
   every requirement, `query-match` on a seeded query view whose query picks up seeded
   entities; the lookalike score is computed at derivation. A fixture the commit
   refuses (an unknown parent, a quote that does not locate) fails the case as a
-  fixture error, never as a model failure.
+  fixture error, never as a model failure. The fixture's `deliverable` files are
+  written beside the commit, so a `bind` goal finds them.
 - The board derives over the seeded sandbox ([goal derivation](../compiler/reconciler.md#goal-derivation))
   and the case's goal is `g:<kind>:<target>` on it, `change` and hints intact. A
   fixture that derives no such goal is a fixture error.
@@ -281,6 +300,8 @@ Generation tier:
 
 - [gen-basic](./cases/gen-basic.md): product and manifest honesty, test
   falsifiability.
+- [bind-descriptor](./cases/bind-descriptor.md): a test that reads a descriptor object
+  is never bound as the evidence a requirement is met.
 
 Verification tier:
 

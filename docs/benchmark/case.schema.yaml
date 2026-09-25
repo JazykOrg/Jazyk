@@ -93,6 +93,8 @@ properties:
           - verify
           - rejudge-pair
           - declare-edges
+          - derive-criteria
+          - bind
           - dedupe-candidates
           - curate-view
           - split-view
@@ -101,7 +103,8 @@ properties:
         description: >-
           The goal's target. A document path for reconcile-section (the session holds
           every section of that document as one batch), an entity id for review-entity
-          and generate, a requirement id for verify and declare-edges, a requirement
+          and generate, a requirement id for verify, declare-edges, and bind, an
+          entity id for derive-criteria, a requirement
           pair `req:a~req:b` for rejudge-pair, an entity pair `ent:a~ent:b` for
           dedupe-candidates, a view id for curate-view and split-view, an entity id or
           `scope:<scope>` for abstract-entity
@@ -145,6 +148,14 @@ properties:
             type: object
             additionalProperties:
               type: object
+          criteria:
+            description: >-
+              Map of criterion id to criterion fields: requirement, statement, kind,
+              and a source (section reference and quote) or a provenance
+            type: object
+            additionalProperties:
+              type: object
+              required: [requirement, statement, kind]
           coverage:
             description: Map of section reference to a pre-set coverage state
             type: object
@@ -153,8 +164,9 @@ properties:
               enum: [covered, non-normative]
       deliverable:
         description: >-
-          Verification cases: map of deliverable-relative path to content, the
-          implementing files the judged row names
+          Map of deliverable-relative path to content, written under the sandbox's
+          deliverable directory. Verification cases: the implementing files the judged
+          row names. Bind cases: the deliverable as the session finds it
         type: object
         additionalProperties:
           type: string
@@ -251,6 +263,10 @@ definitions:
         $ref: '#/definitions/testFalsifiable'
       verdictIs:
         $ref: '#/definitions/verdictIs'
+      statusIn:
+        $ref: '#/definitions/statusIn'
+      testsFail:
+        $ref: '#/definitions/testsFail'
   entityExists:
     description: An entity with this exact name or alias exists in the resulting graph
     type: object
@@ -691,3 +707,28 @@ definitions:
       verdict:
         type: string
         enum: [pass, fail]
+  statusIn:
+    description: >-
+      The requirement's ledger row exists and its derived status is one of the listed
+    type: object
+    required: [requirement, statuses]
+    additionalProperties: false
+    properties:
+      requirement:
+        type: string
+      statuses:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          enum: [verified, unimplemented, partial, failing, unverified]
+  testsFail:
+    description: >-
+      The requirement's ledger row records a programmatic test, and every one it
+      records exits non-zero when rerun as recorded
+    type: object
+    required: [requirement]
+    additionalProperties: false
+    properties:
+      requirement:
+        type: string

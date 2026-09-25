@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 28] = [
+const CASE_FILES: [&str; 29] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -41,6 +41,7 @@ const CASE_FILES: [&str; 28] = [
     include_str!("../../docs/benchmark/cases/machine-subject.md"),
     include_str!("../../docs/benchmark/cases/stated-containment.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
+    include_str!("../../docs/benchmark/cases/bind-descriptor.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
 
@@ -69,6 +70,8 @@ pub struct Case {
     pub entities: BTreeMap<String, Value>,
     pub requirements: BTreeMap<String, Value>,
     pub views: BTreeMap<String, Value>,
+    // Criteria seeded on the fixture's requirements, for the ledger-tier kinds.
+    pub criteria: BTreeMap<String, Value>,
     pub coverage: BTreeMap<String, String>,
     pub lint: Linting,
     pub checks: Vec<(String, Value)>,
@@ -199,6 +202,7 @@ pub fn case_from_value(v: &Value) -> Case {
                 entities: obj(&v["given"]["graph"]["entities"]),
                 requirements: obj(&v["given"]["graph"]["requirements"]),
                 views: obj(&v["given"]["graph"]["views"]),
+                criteria: obj(&v["given"]["graph"]["criteria"]),
                 coverage: obj(&v["given"]["graph"]["coverage"])
                     .into_iter()
                     .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
@@ -337,6 +341,18 @@ fn requirement_of(r: &Value) -> Option<Requirement> {
     })
 }
 
+// A fixture criterion, in the criterion's own serialized shape: requirement,
+// statement, kind, and a `source` quote or a `provenance`.
+fn criterion_of(c: &Value) -> Result<Criterion, String> {
+    let mut fields = c.clone();
+    if let Some(m) = fields.as_object_mut() {
+        m.remove("source");
+    }
+    let mut crit: Criterion = serde_json::from_value(fields).map_err(|e| e.to_string())?;
+    crit.source = source_ref(&c["source"]);
+    Ok(crit)
+}
+
 // A fixture view, in the view's own serialized shape. A seeded view is curated.
 fn view_of(v: &Value) -> Result<View, String> {
     let mut view: View = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
@@ -394,6 +410,11 @@ pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
             s.graph.views.insert(id.clone(), view);
         }
     }
+    for (id, c) in &case.criteria {
+        if let Ok(crit) = criterion_of(c) {
+            s.graph.criteria.insert(id.clone(), crit);
+        }
+    }
     crate::derive::recompute_relationships(&mut s);
     s
 }
@@ -438,6 +459,13 @@ fn fixture_ops(case: &Case) -> Result<Vec<crate::store::Op>, String> {
             requirement,
         });
     }
+    for (id, c) in &case.criteria {
+        let criterion = criterion_of(c).map_err(|e| format!("criterion {}: {}", id, e))?;
+        ops.push(Op::CreateCriterion {
+            id: id.clone(),
+            criterion,
+        });
+    }
     for (id, v) in &case.views {
         let view = view_of(v).map_err(|e| format!("view {}: {}", id, e))?;
         ops.push(Op::CreateView {
@@ -463,8 +491,9 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
             report.skipped.join("; ")
         ));
     }
-    // A deliverable is configured so the ledger-tier kinds derive
-    // (docs/benchmark/cases.md#case-format).
+    // A deliverable is configured so the ledger-tier kinds derive, holding the
+    // fixture's files (docs/benchmark/cases.md#case-format).
+    write_deliverable(case, &tmp.join("deliverable"))?;
     let proj = crate::project::Project {
         root: tmp.to_path_buf(),
         out: store.out.clone(),
@@ -495,6 +524,18 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
             ))
         }
     }
+}
+
+// The fixture's deliverable files, written under the sandbox's deliverable directory.
+fn write_deliverable(case: &Case, dir: &std::path::Path) -> Result<(), String> {
+    for (f, text) in &case.deliverable {
+        let p = dir.join(f);
+        if let Some(parent) = p.parent() {
+            crate::vfs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        crate::vfs::write(&p, text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // Check patterns are regular expressions per case.schema.yaml, matched
@@ -1159,12 +1200,14 @@ pub fn tier_key(t: &str) -> &'static str {
 // Generation and verification checks: deterministic code over the ledger, the files on
 // disk, and the exit codes of recorded commands. Mirrors
 // docs/benchmark/benchmark.md#deterministic-grading.
-pub const WORKFLOW_CHECKS: [&str; 5] = [
+pub const WORKFLOW_CHECKS: [&str; 7] = [
     "generationRecorded",
     "rowPerRequirement",
     "testsPass",
     "testFalsifiable",
     "verdictIs",
+    "statusIn",
+    "testsFail",
 ];
 
 pub fn eval_workflow_check(
@@ -1278,6 +1321,59 @@ pub fn eval_workflow_check(
                 Some(row) => Some(format!("verdict is `{}`, expected `{}`", row.verdict, want)),
             }
         }
+        // The row's derived status is one of the listed, whatever verdict the session
+        // claimed. Mirrors docs/benchmark/cases.md#checks.
+        "statusIn" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let want = str_list(&arg["statuses"]);
+            let Some(row) = ledger.requirements.get(store.resolve_id(rid)) else {
+                return Some(format!("no ledger row for {}", rid));
+            };
+            let (status, reason) = crate::verify::status_of(store, rid, row, gs);
+            (!want.contains(&status)).then(|| {
+                format!(
+                    "{} reads `{}` ({}), expected one of {}",
+                    rid,
+                    status,
+                    reason,
+                    want.join(", ")
+                )
+            })
+        }
+        // Every programmatic test the row records fails when rerun as recorded: a
+        // test that passes against a deliverable that carries nothing reads a
+        // description. Mirrors docs/benchmark/cases.md#checks.
+        "testsFail" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let Some(row) = ledger.requirements.get(store.resolve_id(rid)) else {
+                return Some(format!("no ledger row for {}", rid));
+            };
+            let mut tests: Vec<&crate::gen::TestRef> = row.tests.values().map(|t| &t.test).collect();
+            if tests.is_empty() {
+                tests.push(&row.test);
+            }
+            let tests: Vec<&crate::gen::TestRef> =
+                tests.into_iter().filter(|t| t.kind == "programmatic").collect();
+            if tests.is_empty() {
+                return Some(format!("{} records no programmatic test", rid));
+            }
+            for t in tests {
+                if t.run.trim().is_empty() {
+                    return Some(format!("test `{}` has no run command", t.name));
+                }
+                match crate::sys::run_shell(&t.run, &gs.deliverable.join(&t.cwd)) {
+                    Ok(out) if out.success => {
+                        return Some(format!(
+                            "test `{}` passes as recorded (`{}`); the case expects it to fail",
+                            t.name, t.run
+                        ))
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Some(format!("test `{}` did not run: {}", t.name, e)),
+                }
+            }
+            None
+        }
         other => Some(format!("unknown workflow check `{}`", other)),
     }
 }
@@ -1295,13 +1391,7 @@ pub fn seed_verification(
         .requirements
         .get(rid)
         .ok_or_else(|| format!("fixture has no requirement {}", rid))?;
-    for (f, text) in &case.deliverable {
-        let p = gs.deliverable.join(f);
-        if let Some(parent) = p.parent() {
-            crate::vfs::create_dir_all(parent).ok();
-        }
-        crate::vfs::write(&p, text).map_err(|e| e.to_string())?;
-    }
+    write_deliverable(case, &gs.deliverable)?;
     let files: Vec<String> = case.deliverable.keys().cloned().collect();
     let artifact = format!("criteria/req-{}.md", crate::gen::req_slug(rid));
     let criteria = format!(
@@ -2524,12 +2614,84 @@ mod tests {
         assert!(ok(serde_json::json!({"entity": "Ines Marlow", "min": 2})).is_some());
     }
 
+    // statusIn reads the row's derived status, never the claimed verdict alone;
+    // testsFail reruns each recorded programmatic test. Mirrors
+    // docs/benchmark/cases.md#checks.
+    #[test]
+    fn bind_checks_read_the_status_and_rerun_the_tests() {
+        let tmp = own_dir("bind-checks");
+        let mut s = Store {
+            out: tmp.join("out"),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:b-1".into(), Requirement {
+            statement: "The Backend lists the products.".into(),
+            entities: vec!["ent:backend".into()],
+            ..Default::default()
+        });
+        let gs = crate::gen::GenSettings {
+            configured: true,
+            deliverable: tmp.join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        crate::vfs::create_dir_all(gs.deliverable.join("test")).unwrap();
+        crate::vfs::write(gs.deliverable.join("test/b.sh"), "# req-b-1\nexit 0\n").unwrap();
+        let record = |run: &str, verdict: &str, files: Vec<String>| {
+            let test = crate::gen::TestRef {
+                kind: "programmatic".into(),
+                label: "descriptor".into(),
+                artifact: "test/b.sh".into(),
+                name: "req-b-1".into(),
+                run: run.into(),
+                cwd: ".".into(),
+            };
+            let mut ledger = crate::gen::Ledger::load(&s.out);
+            ledger.requirements.insert("req:b-1".into(), crate::gen::ReqRow {
+                tests: BTreeMap::new(),
+                entity: "ent:backend".into(),
+                sites: Vec::new(),
+                hashes: crate::gen::RowHashes {
+                    requirement: hash_hex("The Backend lists the products."),
+                    test: crate::gen::hash_file(&crate::gen::artifact_path(&s.out, &gs, &test)),
+                    files: crate::gen::hash_files(&gs, &files),
+                },
+                files,
+                test,
+                verdict: verdict.into(),
+                last_run: None,
+                exit_code: None,
+                evidence: None,
+            });
+            ledger.save(&s.out);
+        };
+        let check = |k: &str| eval_workflow_check(k, &serde_json::json!({"requirement": "req:b-1", "statuses": ["unimplemented", "failing"]}), &s, &gs, "req:b-1");
+        // No row yet: both fail.
+        assert!(check("statusIn").is_some());
+        assert!(check("testsFail").is_some());
+        // The descriptor test bound as verifying: it passes on rerun and reads verified.
+        record("sh test/b.sh", "pass", Vec::new());
+        let why = check("statusIn");
+        assert!(why.as_deref().is_some_and(|w| w.contains("verified")), "{:?}", why);
+        let why = check("testsFail");
+        assert!(why.as_deref().is_some_and(|w| w.contains("passes as recorded")), "{:?}", why);
+        // A claimed fail does not hide a test that passes on rerun.
+        record("sh test/b.sh", "fail", Vec::new());
+        assert_eq!(check("statusIn"), None);
+        assert!(check("testsFail").is_some());
+        // A test that drives what is not there fails, and the row reads unimplemented.
+        record("sh test/b.sh && false", "fail", Vec::new());
+        assert_eq!(check("statusIn"), None);
+        assert_eq!(check("testsFail"), None);
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-eight files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-nine files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 34);
+        assert_eq!(cases.len(), 35);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2601,7 +2763,7 @@ mod tests {
     fn derived_cases_seed_and_derive_their_goal() {
         let cases = parse_cases();
         let derived: Vec<&Case> = cases.iter().filter(|c| c.derives_goal()).collect();
-        assert_eq!(derived.len(), 12);
+        assert_eq!(derived.len(), 13);
         for case in derived {
             let tmp = own_dir(&case.name);
             let (store, goal) = seed_derived(case, &tmp)
@@ -2681,6 +2843,14 @@ mod tests {
                 }
                 "rejudge-pair-contradiction" | "rejudge-pair-duplicate" => {
                     assert!(goal.mandatory);
+                }
+                "bind-descriptor" => {
+                    // The seeded criterion is what the test binds to, and the
+                    // descriptor and its passing test sit in the deliverable.
+                    assert_eq!(goal.change["criteria"], 1, "{:?}", goal.change);
+                    assert_eq!(goal.change["reason"], "unbound");
+                    assert!(tmp.join("deliverable/src/backend.js").vexists());
+                    assert!(tmp.join("deliverable/test/backend.test.js").vexists());
                 }
                 _ => {}
             }

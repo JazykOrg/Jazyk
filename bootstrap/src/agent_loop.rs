@@ -158,6 +158,42 @@ fn announces_action(text: &str) -> bool {
 
 // An endpoint error about the reply's own JSON: the model's output was cut before a
 // tool call closed. Mirrors docs/frontends/acp.md#the-embedded-agent.
+// A mid-turn downgrade rewrites the native history into the text codec's form: each
+// call becomes its JSON action in the assistant's content and each result a RESULT:
+// message, so no native tool_calls go back through the endpoint's tool template.
+// Mirrors docs/frontends/acp.md#the-embedded-agent.
+fn history_to_text(history: &mut [Value]) {
+    for m in history.iter_mut().skip(1) {
+        if m["role"] == "tool" {
+            let content = m["content"].as_str().unwrap_or("").to_string();
+            *m = json!({"role": "user", "content": format!("RESULT: {}", content)});
+            continue;
+        }
+        if m["role"] != "assistant" {
+            continue;
+        }
+        let Some(calls) = m["tool_calls"].as_array().cloned() else {
+            continue;
+        };
+        let mut text = m["content"].as_str().unwrap_or("").to_string();
+        for c in calls {
+            let name = c["function"]["name"].as_str().unwrap_or("");
+            let args: Value = match &c["function"]["arguments"] {
+                Value::String(s) => serde_json::from_str(s).unwrap_or(json!({})),
+                other => other.clone(),
+            };
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&json!({"tool": name, "args": args}).to_string());
+        }
+        if let Some(obj) = m.as_object_mut() {
+            obj.remove("tool_calls");
+            obj.insert("content".into(), json!(text));
+        }
+    }
+}
+
 fn reply_unparsed(err: &str) -> bool {
     let e = err.to_lowercase();
     e.contains("can't find closing")
@@ -374,6 +410,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                 mode = 2;
                 codec = codec_for(mode);
                 a.history[0] = system(codec.as_ref(), a.tools);
+                history_to_text(a.history);
                 continue;
             }
             // The endpoint could not parse the reply itself (the output cap cut a
@@ -591,6 +628,25 @@ pub fn run_loop(a: LoopArgs) -> Stop {
 
 #[cfg(test)]
 mod tests {
+
+    // A mid-turn downgrade leaves no native tool_calls or tool-role messages behind.
+    // Mirrors docs/frontends/acp.md#the-embedded-agent.
+    #[test]
+    fn a_downgrade_rewrites_the_native_history_as_text() {
+        let mut h = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "u"}),
+            json!({"role": "assistant", "content": "Reading.", "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "read_section", "arguments": "{\"ref\":\"a.md#/a\"}"}}]}),
+            json!({"role": "tool", "tool_call_id": "c1", "content": "{\"title\":\"A\"}"}),
+        ];
+        history_to_text(&mut h);
+        assert!(h[2].get("tool_calls").is_none(), "{}", h[2]);
+        assert_eq!(h[2]["content"], "Reading.\n{\"tool\":\"read_section\",\"args\":{\"ref\":\"a.md#/a\"}}");
+        assert_eq!(h[3]["role"], "user");
+        assert_eq!(h[3]["content"], "RESULT: {\"title\":\"A\"}");
+    }
+
     use super::*;
 
     #[test]

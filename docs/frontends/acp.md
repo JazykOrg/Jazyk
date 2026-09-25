@@ -188,7 +188,11 @@ refused with a 400 about an unclosed object. The check reads the whole reply,
 not its first character: a sentence of prose followed by a truncated action object
 once read as an answer and ended the turn, and the batch parked. The agent probes on the first
 round: an endpoint that rejects the `tools` parameter, or a model that answers prose
-without calls, downgrades the run to `text`, sticky until it ends. The endpoint
+without calls, downgrades the run to `text`, sticky until it ends. A downgrade mid-turn
+(Ollama answering a tool call with a 500 about its XML) rewrites the turn's history into
+the text form too: each earlier call becomes its JSON action in the assistant's content
+and each result a `RESULT:` message, since native `tool_calls` left in the history went
+back through the same tool template and failed the same way, aborting the turn. The endpoint
 fallbacks ride along too: streaming when the endpoint demands it, dropped
 `temperature`, stripped reasoning fields ([LLM settings](../compiler/project-settings.md#llm)).
 A reasoning model's reasoning is appended back into the history unchanged, so later

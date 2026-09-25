@@ -307,7 +307,10 @@ They bound the endpoint and the process; session and build budgets are
   timeout times the retries, not an open-ended wait. It does not bound a response
   that keeps streaming; the two knobs below do.
 - `JAZYK_MAX_COMPLETION_TOKENS`: cap on one response's completion, sent as
-  `max_tokens` on every request (default 4096). This is the loop detector: a small
+  `max_tokens` on every request (default 4096). After a reply the cap cut in its
+  reasoning with no call made, the embedded agent's next request alone carries twice
+  the cap, since a local reasoning model planning a two-section extraction ran past
+  4096 tokens on every round of a session and never reached its first write. This is the loop detector: a small
   model stuck repeating itself hits the cap and the call fails as
   `runaway completion` instead of generating forever. The stream reader enforces the
   same cap on accumulated content, so a server that ignores the field is still

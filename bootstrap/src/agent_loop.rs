@@ -544,7 +544,13 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                         .collect();
                     last["content"] = json!(format!("(my reasoning, not yet acted on) {}", tail));
                 }
-                let nudge = if finish_reason.as_deref() == Some("length") {
+                let cut = finish_reason.as_deref() == Some("length");
+                if cut {
+                    // A plan the cap cut gets room once: the next request alone
+                    // carries twice the cap (docs/compiler/project-settings.md).
+                    llm::boost_next_completion();
+                }
+                let nudge = if cut {
                     "Your reasoning ran past the completion cap before any call or message. More thinking cannot fit: reply with the tool call alone, no further deliberation, or state your answer in one line."
                 } else {
                     "Your reply was empty. Reasoning is not shown to anyone and does not count as acting: make the tool call you were about to make, or state your answer as plain message text."

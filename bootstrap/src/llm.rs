@@ -166,7 +166,16 @@ pub fn set_max_completion_tokens(n: u64) {
     MAX_COMPLETION_OVERRIDE.store(n, Ordering::Relaxed);
 }
 
-fn max_completion_tokens() -> u64 {
+// Set by the agent loop after a reply the cap cut in its reasoning with no call made:
+// the next request alone carries twice the cap. Mirrors
+// docs/compiler/project-settings.md#environment-tuning.
+static BOOST_NEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn boost_next_completion() {
+    BOOST_NEXT.store(true, Ordering::Relaxed);
+}
+
+fn base_completion_tokens() -> u64 {
     let over = MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed);
     if over > 0 {
         return over.max(256);
@@ -176,6 +185,15 @@ fn max_completion_tokens() -> u64 {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(4096)
         .max(256)
+}
+
+fn max_completion_tokens() -> u64 {
+    let base = base_completion_tokens();
+    if BOOST_NEXT.load(Ordering::Relaxed) {
+        base * 2
+    } else {
+        base
+    }
 }
 
 // Wall clock for one whole LLM call. JAZYK_READ_TIMEOUT waits for the next byte; this
@@ -349,6 +367,14 @@ impl Llm {
         label: &str,
         step: &str,
     ) -> Result<(Value, u64), String> {
+        // A boosted cap serves this one call, retries included, whatever its outcome.
+        struct ClearBoost;
+        impl Drop for ClearBoost {
+            fn drop(&mut self) {
+                BOOST_NEXT.store(false, Ordering::Relaxed);
+            }
+        }
+        let _clear = ClearBoost;
         let max = max_retries();
         let mut last = String::new();
         let started = crate::sys::Instant::now();
@@ -885,6 +911,18 @@ pub fn truncate(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    // A boost doubles the cap until chat_messages' guard clears it.
+    // Mirrors docs/compiler/project-settings.md#environment-tuning.
+    #[test]
+    fn a_boost_doubles_one_call_and_clears() {
+        let base = base_completion_tokens();
+        boost_next_completion();
+        assert_eq!(max_completion_tokens(), base * 2);
+        BOOST_NEXT.store(false, Ordering::Relaxed);
+        assert_eq!(max_completion_tokens(), base);
+    }
+
     use super::*;
 
     fn sse(chunks: &[&str]) -> String {

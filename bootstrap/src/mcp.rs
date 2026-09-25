@@ -1194,14 +1194,7 @@ impl McpServer {
             None => WorkItem {
                 task: case.task_type.clone(),
                 target: case.target.clone(),
-                dirty_sections: match case.task_type.as_str() {
-                    "reconcile-doc" => store
-                        .docs
-                        .get(&case.target)
-                        .map(|r| r.sections.keys().cloned().collect())
-                        .unwrap_or_default(),
-                    _ => Vec::new(),
-                },
+                dirty_sections: crate::benchmark::case_dirty_sections(&store, case),
                 stale_anchors: Vec::new(),
                 proposals: Vec::new(),
             },

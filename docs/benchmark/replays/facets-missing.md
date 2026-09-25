@@ -48,8 +48,6 @@ steps:
       facets: [{facet: behavior, reasoning: the character acts on the page}]
     expect: {ok: true}
   - call: set_coverage
-    args: {section: docs/plot.md#/plot, state: non-normative, note: a front door over the chapter}
-  - call: set_coverage
     args: {section: docs/plot.md#/plot/chapter-1, state: covered, note: the arrival sentence is the chapter's one statement}
   - call: mark_goal_done
     args:

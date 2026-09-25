@@ -24,9 +24,13 @@ Cases exist for ten goal kinds: the four the landing graded first
   ratio compares against it. Defaults per tier when omitted.
 - `goal`: the goal to run. `kind` is a goal kind and `target` is the goal's target:
   - [`reconcile-section`](../compiler/goals/reconcile-section.md): `target` is a
-    document path. The session holds one batch: every section of that document, in
-    document order, as it would in a build
-    ([batching](../compiler/reconciler.md#batching)).
+    document path. The session holds one batch: every section of that document that
+    owes a coverage mark, in document order, as it would in a build
+    ([batching](../compiler/reconciler.md#batching)). A fenced block follows the
+    section holding it and a bare heading owes none
+    ([coverage](../compiler/compilation.md#coverage)), so neither is listed: a case
+    that listed the block beside its section asked for a mark `set_coverage` stores on
+    the holding section, and the gate refused the session four times for it.
   - [`review-entity`](../compiler/goals/review-entity.md): `target` is an entity id.
   - [`generate`](../compiler/goals/generate.md): `target` is an entity id; the session
     generates into a temp deliverable.

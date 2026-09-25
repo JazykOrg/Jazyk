@@ -47,8 +47,6 @@ steps:
       facets: [{facet: constraint, reasoning: an invariant of the report}]
     expect: {ok: true}
   - call: set_coverage
-    args: {section: docs/ledger.md#/ledger, state: non-normative, note: a front door over the payments section}
-  - call: set_coverage
     args: {section: docs/ledger.md#/ledger/payments, state: covered, note: the report sentence is the section's statement}
   - call: mark_goal_done
     args:

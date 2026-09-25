@@ -1304,6 +1304,26 @@ pub fn case_session(
     case_session_batch(snapshot, item, lint, gs, derived, &[])
 }
 
+// The sections a reconcile-doc case's batch owns: those that owe a coverage mark, as
+// a build derives them (a fenced block follows its holding section, a bare heading owes
+// none). Mirrors docs/benchmark/cases.md#case-format.
+pub fn case_dirty_sections(store: &Store, case: &Case) -> Vec<String> {
+    if case.task_type != "reconcile-doc" {
+        return Vec::new();
+    }
+    store
+        .docs
+        .get(&case.target)
+        .map(|r| {
+            r.sections
+                .iter()
+                .filter(|(_, s)| crate::goals::section_has_body(s))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // The same session over a batch: the derived goal plus the batch's other derived
 // goals, as a replay of a recorded batch holds them
 // (docs/benchmark/replays.md#replay-format).
@@ -1765,14 +1785,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
             } else {
                 sandbox(case, &tmp)
             };
-            let dirty: Vec<String> = match case.task_type.as_str() {
-                "reconcile-doc" => store
-                    .docs
-                    .get(&case.target)
-                    .map(|r| r.sections.keys().cloned().collect())
-                    .unwrap_or_default(),
-                _ => Vec::new(),
-            };
+            let dirty = case_dirty_sections(&store, case);
             let item = match &derived_goal {
                 Some(g) => WorkItem::from_goal(g),
                 None => WorkItem {
@@ -2304,6 +2317,21 @@ mod tests {
         assert!(cs.prompt.contains("which is already open"), "{}", cs.prompt);
         assert!(!cs.prompt.contains("First call `begin_goals`"), "{}", cs.prompt);
         assert!(!cs.tools.iter().any(|t| t.name == "begin_goals"));
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // A reconcile-doc case lists the sections a build would: the code block follows
+    // its holding section, so the batch never asks for a mark set_coverage stores on
+    // the holder. Mirrors docs/benchmark/cases.md#case-format.
+    #[test]
+    fn a_case_batch_lists_the_sections_that_owe_a_mark() {
+        let cases = parse_cases();
+        let case = cases.iter().find(|c| c.name == "steps").unwrap();
+        let tmp = own_dir("dirty-steps");
+        let store = sandbox(case, &tmp);
+        let dirty = case_dirty_sections(&store, case);
+        assert!(dirty.iter().any(|s| s == "/dedupe/steps"), "{:?}", dirty);
+        assert!(!dirty.iter().any(|s| s.contains("code-block")), "{:?}", dirty);
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 

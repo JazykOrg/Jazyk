@@ -176,14 +176,7 @@ pub fn run_case(case: &Case) -> ReplayReport {
     } else {
         benchmark::sandbox(case, &tmp)
     };
-    let dirty: Vec<String> = match case.task_type.as_str() {
-        "reconcile-doc" => store
-            .docs
-            .get(&case.target)
-            .map(|r| r.sections.keys().cloned().collect())
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
+    let dirty = benchmark::case_dirty_sections(&store, case);
     let item = match &derived {
         Some(g) => WorkItem::from_goal(g),
         None => WorkItem {

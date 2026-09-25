@@ -225,6 +225,13 @@ Flow views derive per level too, from the requirements lifted to it:
   `view:usecase/<node-slug>-<doc-slug>` and `view:sequence/<node-slug>-<doc-slug>`
   (the root form drops the node prefix: `view:usecase/<doc-slug>`).
 - A level whose members are leaves clusters as before: lifting to a leaf is identity.
+- A flow view whose participants, after lifting, are all
+  [groupings](../concepts/levels.md#groupings) derives none: a grouping is a box no
+  document states, so a picture of groupings messaging groupings (a novel's plot drawn
+  as Cast against Settings at the root) says nothing the documents do, while the
+  groupings' own levels draw the same flow among the entities the documents name. A
+  stated whole keeps its picture: the root's customer against the Shop is the context
+  view, and the Shop's level the view inside it.
 - State and object views stay per machine and per instantiated type.
 
 `package`, `composite`, `deployment`, `activity`, `communication`, `timing`, and

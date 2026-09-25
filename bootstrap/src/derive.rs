@@ -799,34 +799,45 @@ fn flow_view_rules(store: &Store, level: &Level, members: &[String]) -> Vec<Defa
     out
 }
 
+// Every level's flow views with the level each belongs to. A view whose participants
+// all lift to groupings is dropped: boxes no document states messaging each other.
+// Mirrors docs/compiler/model/view.md#level-views.
+fn level_flow_views(store: &Store, rank: &BTreeMap<String, usize>) -> Vec<(String, DefaultView)> {
+    let mut out = Vec::new();
+    for l in levels(store, rank).into_iter().filter(|l| level_holds(store, l)) {
+        let members = level_members_of(store, &l, rank);
+        for w in flow_view_rules(store, &l, &members) {
+            let drawn: BTreeSet<String> = flow_participants(store, &w.members)
+                .into_iter()
+                .map(|p| lift_into(store, &members, &p).unwrap_or(p))
+                .collect();
+            if !drawn.is_empty() && drawn.iter().all(|p| store.is_grouping(p)) {
+                continue;
+            }
+            out.push((l.target.clone(), w));
+        }
+    }
+    out
+}
+
 // The level a default flow view was derived for: the node id, or `scope:<scope>` for
 // the root form. None for a flow view no level's rule names (a curated flow).
 pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
     let rank = entity_document_rank(store);
-    levels(store, &rank)
+    level_flow_views(store, &rank)
         .into_iter()
-        .filter(|l| level_holds(store, l))
-        .find(|l| {
-            let members = level_members_of(store, l, &rank);
-            flow_view_rules(store, l, &members)
-                .iter()
-                .any(|w| w.id == view_id)
-        })
-        .map(|l| l.target)
+        .find(|(_, w)| w.id == view_id)
+        .map(|(t, _)| t)
 }
 
 // Every lifted flow view with the level it belongs to, computed once for a walk over
 // the whole project. Mirrors docs/consumers/docsgen.md#entity-cards.
 pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
     let rank = entity_document_rank(store);
-    let mut out = BTreeMap::new();
-    for l in levels(store, &rank).into_iter().filter(|l| level_holds(store, &l)) {
-        let members = level_members_of(store, &l, &rank);
-        for w in flow_view_rules(store, &l, &members) {
-            out.insert(w.id.clone(), l.target.clone());
-        }
-    }
-    out
+    level_flow_views(store, &rank)
+        .into_iter()
+        .map(|(t, w)| (w.id, t))
+        .collect()
 }
 
 // The entities a view draws, as the card model reads them.
@@ -907,8 +918,8 @@ fn default_view_rules(store: &Store) -> Vec<DefaultView> {
                 "level view of the scope root"
             },
         });
-        out.extend(flow_view_rules(store, &level, &members));
     }
+    out.extend(level_flow_views(store, &rank).into_iter().map(|(_, w)| w));
 
     // A state view per derived machine.
     for m in store.graph.state_machines.values() {
@@ -1382,6 +1393,44 @@ pub(crate) mod tests {
         assert!(!ids.iter().any(|i| i.ends_with("/inventory")), "{:?}", ids);
         assert_eq!(level_view_id(&s, "ent:users").as_deref(), Some("view:class/users"));
         assert_eq!(level_view_id(&s, "ent:inventory"), None);
+    }
+
+    // Mirrors docs/compiler/model/view.md#level-views: a flow drawn only among
+    // groupings derives no view, while the groupings' own levels keep theirs.
+    #[test]
+    fn a_flow_among_groupings_alone_derives_no_view() {
+        let mut s = Store::default();
+        let grouping = |name: &str, from: &[&str]| Entity {
+            name: name.into(),
+            provenance: Some(Provenance::Derived { from: from.iter().map(|x| x.to_string()).collect(), reasoning: "a level".into() }),
+            ..Default::default()
+        };
+        let stated = |name: &str, parent: &str| Entity {
+            name: name.into(),
+            parent: Some(parent.into()),
+            mentions: vec![src("plot.md", "/plot", name)],
+            ..Default::default()
+        };
+        s.graph.entities.insert("ent:cast".into(), grouping("Cast", &["ent:ines", "ent:theo"]));
+        s.graph.entities.insert("ent:settings".into(), grouping("Settings", &["ent:shop", "ent:quay"]));
+        s.graph.entities.insert("ent:ines".into(), stated("Ines", "ent:cast"));
+        s.graph.entities.insert("ent:theo".into(), stated("Theo", "ent:cast"));
+        s.graph.entities.insert("ent:shop".into(), stated("Shop", "ent:settings"));
+        s.graph.entities.insert("ent:quay".into(), stated("Quay", "ent:settings"));
+        for (i, (a, b)) in [("ent:ines", "ent:shop"), ("ent:theo", "ent:quay")].iter().enumerate() {
+            s.graph.requirements.insert(format!("req:plot-{}", i + 1), Requirement {
+                statement: format!("step {}", i),
+                entities: vec![a.to_string(), b.to_string()],
+                edges: vec![edge(a, b, "dependency", None)],
+                facets: vec![behavior()],
+                source: Some(src("plot.md", "/plot", "step")),
+                ..Default::default()
+            });
+        }
+        let ids: Vec<String> = default_view_rules(&s).into_iter().map(|v| v.id).collect();
+        assert!(!ids.contains(&"view:usecase/plot".to_string()), "{:?}", ids);
+        assert!(!ids.contains(&"view:sequence/plot".to_string()), "{:?}", ids);
+        assert!(ids.contains(&"view:usecase/cast-plot".to_string()), "{:?}", ids);
     }
 
     fn attr(name: &str, ty: Option<&str>, value: Option<&str>) -> Attribute {

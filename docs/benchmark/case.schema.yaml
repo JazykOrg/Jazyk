@@ -366,6 +366,7 @@ definitions:
   relationshipExists:
     description: >-
       A derived relationship exists between the two entities, optionally of this type
+      or of any one of the listed types
     type: object
     required: [a, b]
     additionalProperties: false
@@ -379,6 +380,12 @@ definitions:
       type:
         description: The relationship type the derived edge must carry
         type: string
+      types:
+        description: Relationship types of which the derived edge must carry one
+        type: array
+        minItems: 1
+        items:
+          type: string
   facetCount:
     description: >-
       The number of requirements carrying the facet, of those whose statement matches

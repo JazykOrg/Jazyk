@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 27] = [
+const CASE_FILES: [&str; 28] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -39,6 +39,7 @@ const CASE_FILES: [&str; 27] = [
     include_str!("../../docs/benchmark/cases/steps.md"),
     include_str!("../../docs/benchmark/cases/narrative-behavior.md"),
     include_str!("../../docs/benchmark/cases/machine-subject.md"),
+    include_str!("../../docs/benchmark/cases/stated-containment.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
@@ -719,7 +720,12 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             let Some(b_id) = find_entity(store, b) else {
                 return Some(format!("entity {} not found", b));
             };
-            let want_type = arg["type"].as_str();
+            // `type` names one accepted type, `types` any of several
+            // (docs/benchmark/cases.md#checks).
+            let mut want: Vec<String> = str_list(&arg["types"]);
+            if let Some(t) = arg["type"].as_str() {
+                want.push(t.to_string());
+            }
             let found = store.graph.relationships.values().any(|r| {
                 let members: Vec<String> = r
                     .members
@@ -728,14 +734,13 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     .collect();
                 members.contains(&a_id)
                     && members.contains(&b_id)
-                    && want_type
-                        .map(|t| r.contributions.iter().any(|c| c.r#type == t))
-                        .unwrap_or(true)
+                    && (want.is_empty()
+                        || r.contributions.iter().any(|c| want.contains(&c.r#type)))
             });
             (!found).then(|| {
                 format!(
                     "no {} relationship between {} and {}",
-                    want_type.unwrap_or("derived"),
+                    if want.is_empty() { "derived".to_string() } else { want.join(" or ") },
                     a_id,
                     b_id
                 )
@@ -2522,9 +2527,9 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-seven files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-eight files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 33);
+        assert_eq!(cases.len(), 34);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2689,7 +2694,7 @@ mod tests {
     #[test]
     fn narrative_fixtures_locate_and_grade_work() {
         let cases = parse_cases();
-        for name in ["narrative-behavior", "machine-subject"] {
+        for name in ["narrative-behavior", "machine-subject", "stated-containment"] {
             let case = cases.iter().find(|c| c.name == name).unwrap();
             let tmp = own_dir(name);
             let s = sandbox(case, &tmp);
@@ -2816,6 +2821,21 @@ mod tests {
         assert_eq!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:pricing"})), None);
         assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})).is_some());
         assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:nope", "a": "ent:cart", "b": "ent:orders"})).is_some());
+    }
+
+    // relationshipExists takes one `type` or any of several `types`.
+    // Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn relationship_exists_takes_any_of_several_types() {
+        let mut s = structure_store();
+        crate::derive::recompute_relationships(&mut s);
+        let ok = |a: Value| eval_check("relationshipExists", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart"})), None);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "composition"})), None);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["composition", "aggregation"]})), None);
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "aggregation"})).is_some());
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["aggregation", "dependency"]})).is_some());
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Pricing", "types": ["composition", "aggregation"]})).is_some());
     }
 
     #[test]

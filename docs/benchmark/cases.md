@@ -110,8 +110,9 @@ Graph checks:
   was added.
 - `requirementCount {entity?, min?, max?}`: the number of requirements, optionally
   only those referencing the entity, is within bounds.
-- `relationshipExists {a, b, type?}`: a derived relationship between the two entities,
-  optionally carrying the type.
+- `relationshipExists {a, b, type?, types?}`: a derived relationship between the two
+  entities, optionally carrying the type, or any one of the listed `types` (a
+  containment stated in passing passes as `composition` or `aggregation`).
 - `facetCount {facet, statementPattern?, min?, max?}`: the number of requirements
   carrying the facet, of those whose statement matches the pattern when one is given, is
   within bounds. `min: 1` on a scene's pattern says the scene carries `behavior`;
@@ -244,6 +245,8 @@ Extraction tier:
   `behavior`, a standing character fact `constraint`.
 - [machine-subject](./cases/machine-subject.md): a character's stance changes are
   transitions on the character, never on a minted stance entity.
+- [stated-containment](./cases/stated-containment.md): a place stated to stand in a
+  town is a part of the town, the `parent` following.
 
 Review tier:
 

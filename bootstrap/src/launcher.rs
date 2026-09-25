@@ -35,7 +35,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("init [--mcp AGENT] [--agent NAME] [--acp IDE]", "scaffold a project (jazyk.toml, docs/, deliverable/) here"),
         ("launch [gui|claude|codex|gemini|cursor|vscode|jetbrains|zed|compile]", "verify a tool's setup, then start it"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
-        ("status [--json]", "the store version, the last verdict, the board counts, what to do next"),
+        ("status [--json] [--costs]", "the store version, the last verdict, the board counts, what to do next"),
         ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
@@ -160,7 +160,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "launch" => (Some(1), &[]),
         "compile" => (None, &["--sessions"]),
         "check" | "watch" | "decompile" => (None, &[]),
-        "status" => (Some(0), &["--json"]),
+        "status" => (Some(0), &["--json", "--costs"]),
         "preview" | "explain" => (Some(1), &[]),
         "ripple" => (Some(1), &["--back"]),
         "context" => (Some(1), &["--depth", "--expand"]),
@@ -265,7 +265,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "status" => format!(
-            "usage: jazyk status [--json]\n\n\
+            "usage: jazyk status [--json] [--costs]\n\n\
              Summarize status.yaml and the board: the store version and generation, the\n\
              last verdict with its counts, the live board counts (derived from disk the\n\
              way compile derives them), coverage, open diagnostics by severity, the\n\
@@ -273,7 +273,10 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              the last build's cost, the unattached remainder, the unclaimed report, and\n\
              `next:` lines naming the command that moves the board. Reads only.\n\n\
              options:\n  \
-             --json   one JSON object with the same fields instead of text\n\
+             --json    one JSON object with the same fields instead of text\n  \
+             --costs   the journal's cost report instead: tokens by goal kind, by\n            \
+             document, per requirement and per criterion, across every build,\n            \
+             unmeasured sessions counted apart\n\
              {}",
             COMMON_OUT
         ),
@@ -593,6 +596,7 @@ pub fn run() {
             "--write" => opts.write = true,
             "--json" => opts.json = true,
             "--once" => opts.once = true,
+            "--costs" => opts.costs = true,
             "--force" => opts.force = true,
             "--list" => opts.list = true,
             "--audit" => opts.audit = true,

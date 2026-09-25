@@ -14,6 +14,7 @@ pub mod board;
 pub mod card;
 pub mod context;
 pub mod control;
+pub mod costs;
 pub mod decompile;
 pub mod derive;
 pub mod docsgen;

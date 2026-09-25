@@ -34,6 +34,8 @@ pub struct Options {
     pub dev: bool,
     pub mcp: Option<String>,
     pub json: bool,
+    // `jazyk status --costs`: the journal's cost report (docs/frontends/cli.md#jazyk-status).
+    pub costs: bool,
     pub once: bool,
     // ACP: the agent profile (--agent), and the flags of bridge-spawned MCP servings
     // (docs/frontends/mcp.md#mcp-into-acp-sessions).
@@ -82,6 +84,7 @@ impl Default for Options {
             dev: false,
             mcp: None,
             json: false,
+            costs: false,
             once: false,
             agent: None,
             acp_ide: None,
@@ -1410,6 +1413,15 @@ pub fn run_status(opts: &Options) -> i32 {
             cwd.display(),
             out.display()
         );
+    }
+    if opts.costs {
+        let report = crate::costs::report_at(&out);
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        } else {
+            print!("{}", crate::costs::render(&report));
+        }
+        return 0;
     }
     let store = Store::load(&out);
     // The board is derived from disk the same way compile derives it, so on a tree

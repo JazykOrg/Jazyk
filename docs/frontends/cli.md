@@ -309,7 +309,7 @@ refused retract with its reason, a failed answer session), `2` on a usage error.
 
 ### jazyk status
 
-`jazyk status [--json]` summarizes `status.yaml` (see
+`jazyk status [--json] [--costs]` summarizes `status.yaml` (see
 [storage layout](../compiler/graph.md#storage-layout)) and the board. It reads only and
 takes no arguments; outside a project (no `jazyk.toml` above the working directory) it
 says so on stderr and reads the ad hoc store at the working directory. The lines, in
@@ -373,6 +373,60 @@ next: 2 goal(s) wait on a human: `jazyk answer g:ratify:ent:funds` lists the opt
 `generation`, `verdict`, `board` with its counts including `ready` and `gated`,
 `coverage`, `diagnostics`, `medium`, `shape`, `cost`, `unattached`, `unclaimed`,
 `next`) for scripts. Exit `0`.
+
+`jazyk status --costs` prints the cost report instead of the status lines: what the
+whole journal spent, so a change to a contract or a skill can be judged on cost as well
+as on quality. It reads the [journal](../compiler/graph.md#journal) and the graph and
+nothing else: no board, no LLM call, no write. The journal spans every build since the
+store began (an [archive](../compiler/graph.md#store-version) starts it over), so the
+report covers every build, where `costs` in `status.yaml` covers the last one.
+
+- A `session` entry's `tokens` is its measured spend. The spend splits evenly across
+  the goals the entry resolved (the goals of its `batch` when it resolved none).
+- `cost`: the journal's generation range, the session entries (measured and
+  unmeasured), and the measured tokens.
+- `by kind`: per goal kind, the goals resolved, their tokens, tokens per measured goal,
+  and the goals whose session was unmeasured. Heaviest kind first.
+- `by document`: per document, the goals that target it, their tokens, and the
+  unmeasured goals. A goal's document is its target's:
+  - a section reference or a document path names it,
+  - a node's is the document its quote sits in: an entity without a quote of its own
+    takes its first mention's, a criterion without one takes its requirement's, a
+    merged node takes its survivor's,
+  - a pair's share splits evenly across its two sides, and the goal counts under each
+    side's document,
+  - a target with no document (a view, a scope, a derived node, a node since deleted)
+    lands under `(no document)`.
+- `per requirement` and `per criterion`: the measured tokens divided by the
+  requirements and the criteria in the graph now.
+
+A `session` entry without `tokens` (an external agent drove it, see the
+[journal](../compiler/graph.md#journal)) is unmeasured: it counts toward the sessions,
+the goals, and the `unmeasured` columns, never as zero tokens. The per goal, per
+requirement, and per criterion figures cover measured spend only, and a journal with no
+measured session says its spend is unknown instead of printing them.
+
+E.g.:
+
+```
+cost: g1..g43, 38 sessions (36 measured, 2 unmeasured), 164210 tokens
+by kind:               goals   tokens  per goal  unmeasured
+  reconcile-section       31    61204      2040           1
+  derive-criteria         16    45611      2851           0
+  review-entity           19    27830      1546           0
+by document:           goals   tokens  unmeasured
+  docs/orders.md          14    21870           0
+  docs/payment.md         11    18342           1
+  (no document)            3     1904           0
+per requirement: 1954 tokens (84 requirements)
+per criterion: 1253 tokens (131 criteria)
+```
+
+`--costs --json` prints one JSON object with the same content: `first`, `last`,
+`sessions`, `measured`, `unmeasured`, `tokens`, `by_kind` and `by_document` (each a
+list of `{name, goals, tokens, unmeasured}`, heaviest first), `requirements`,
+`criteria`, `per_requirement`, `per_criterion`. A figure no session measured is `null`
+(and `-` in the text), never `0`. Exit `0`.
 
 ### jazyk preview
 

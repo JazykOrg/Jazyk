@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 25] = [
+const CASE_FILES: [&str; 29] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -37,7 +37,11 @@ const CASE_FILES: [&str; 25] = [
     include_str!("../../docs/benchmark/cases/curate-view.md"),
     include_str!("../../docs/benchmark/cases/declare-edges.md"),
     include_str!("../../docs/benchmark/cases/steps.md"),
+    include_str!("../../docs/benchmark/cases/narrative-behavior.md"),
+    include_str!("../../docs/benchmark/cases/machine-subject.md"),
+    include_str!("../../docs/benchmark/cases/stated-containment.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
+    include_str!("../../docs/benchmark/cases/bind-descriptor.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
 
@@ -66,6 +70,8 @@ pub struct Case {
     pub entities: BTreeMap<String, Value>,
     pub requirements: BTreeMap<String, Value>,
     pub views: BTreeMap<String, Value>,
+    // Criteria seeded on the fixture's requirements, for the ledger-tier kinds.
+    pub criteria: BTreeMap<String, Value>,
     pub coverage: BTreeMap<String, String>,
     pub lint: Linting,
     pub checks: Vec<(String, Value)>,
@@ -196,6 +202,7 @@ pub fn case_from_value(v: &Value) -> Case {
                 entities: obj(&v["given"]["graph"]["entities"]),
                 requirements: obj(&v["given"]["graph"]["requirements"]),
                 views: obj(&v["given"]["graph"]["views"]),
+                criteria: obj(&v["given"]["graph"]["criteria"]),
                 coverage: obj(&v["given"]["graph"]["coverage"])
                     .into_iter()
                     .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
@@ -334,6 +341,18 @@ fn requirement_of(r: &Value) -> Option<Requirement> {
     })
 }
 
+// A fixture criterion, in the criterion's own serialized shape: requirement,
+// statement, kind, and a `source` quote or a `provenance`.
+fn criterion_of(c: &Value) -> Result<Criterion, String> {
+    let mut fields = c.clone();
+    if let Some(m) = fields.as_object_mut() {
+        m.remove("source");
+    }
+    let mut crit: Criterion = serde_json::from_value(fields).map_err(|e| e.to_string())?;
+    crit.source = source_ref(&c["source"]);
+    Ok(crit)
+}
+
 // A fixture view, in the view's own serialized shape. A seeded view is curated.
 fn view_of(v: &Value) -> Result<View, String> {
     let mut view: View = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
@@ -391,6 +410,11 @@ pub fn sandbox(case: &Case, tmp: &std::path::Path) -> Store {
             s.graph.views.insert(id.clone(), view);
         }
     }
+    for (id, c) in &case.criteria {
+        if let Ok(crit) = criterion_of(c) {
+            s.graph.criteria.insert(id.clone(), crit);
+        }
+    }
     crate::derive::recompute_relationships(&mut s);
     s
 }
@@ -435,6 +459,13 @@ fn fixture_ops(case: &Case) -> Result<Vec<crate::store::Op>, String> {
             requirement,
         });
     }
+    for (id, c) in &case.criteria {
+        let criterion = criterion_of(c).map_err(|e| format!("criterion {}: {}", id, e))?;
+        ops.push(Op::CreateCriterion {
+            id: id.clone(),
+            criterion,
+        });
+    }
     for (id, v) in &case.views {
         let view = view_of(v).map_err(|e| format!("view {}: {}", id, e))?;
         ops.push(Op::CreateView {
@@ -460,8 +491,9 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
             report.skipped.join("; ")
         ));
     }
-    // A deliverable is configured so the ledger-tier kinds derive
-    // (docs/benchmark/cases.md#case-format).
+    // A deliverable is configured so the ledger-tier kinds derive, holding the
+    // fixture's files (docs/benchmark/cases.md#case-format).
+    write_deliverable(case, &tmp.join("deliverable"))?;
     let proj = crate::project::Project {
         root: tmp.to_path_buf(),
         out: store.out.clone(),
@@ -492,6 +524,18 @@ pub fn seed_derived(case: &Case, tmp: &std::path::Path) -> Result<(Store, Goal),
             ))
         }
     }
+}
+
+// The fixture's deliverable files, written under the sandbox's deliverable directory.
+fn write_deliverable(case: &Case, dir: &std::path::Path) -> Result<(), String> {
+    for (f, text) in &case.deliverable {
+        let p = dir.join(f);
+        if let Some(parent) = p.parent() {
+            crate::vfs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        crate::vfs::write(&p, text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // Check patterns are regular expressions per case.schema.yaml, matched
@@ -717,7 +761,12 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             let Some(b_id) = find_entity(store, b) else {
                 return Some(format!("entity {} not found", b));
             };
-            let want_type = arg["type"].as_str();
+            // `type` names one accepted type, `types` any of several
+            // (docs/benchmark/cases.md#checks).
+            let mut want: Vec<String> = str_list(&arg["types"]);
+            if let Some(t) = arg["type"].as_str() {
+                want.push(t.to_string());
+            }
             let found = store.graph.relationships.values().any(|r| {
                 let members: Vec<String> = r
                     .members
@@ -726,14 +775,13 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     .collect();
                 members.contains(&a_id)
                     && members.contains(&b_id)
-                    && want_type
-                        .map(|t| r.contributions.iter().any(|c| c.r#type == t))
-                        .unwrap_or(true)
+                    && (want.is_empty()
+                        || r.contributions.iter().any(|c| want.contains(&c.r#type)))
             });
             (!found).then(|| {
                 format!(
                     "no {} relationship between {} and {}",
-                    want_type.unwrap_or("derived"),
+                    if want.is_empty() { "derived".to_string() } else { want.join(" or ") },
                     a_id,
                     b_id
                 )
@@ -1056,6 +1104,70 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     )
                 })
         }
+        // Requirements carrying the facet, optionally only those whose statement
+        // matches. Mirrors docs/benchmark/cases.md#checks.
+        "facetCount" => {
+            let facet = arg["facet"].as_str().unwrap_or_default();
+            let rx = match arg["statementPattern"].as_str() {
+                Some(p) => match compile(p) {
+                    Ok(r) => Some(r),
+                    Err(e) => return Some(e),
+                },
+                None => None,
+            };
+            let n = store
+                .graph
+                .requirements
+                .values()
+                .filter(|r| rx.as_ref().map(|re| re.is_match(&r.statement)).unwrap_or(true))
+                .filter(|r| r.facets.iter().any(|f| f.facet == facet))
+                .count();
+            within(
+                n,
+                arg,
+                &format!(
+                    "`{}` requirements{}",
+                    facet,
+                    arg["statementPattern"]
+                        .as_str()
+                        .map(|p| format!(" matching `{}`", p))
+                        .unwrap_or_default()
+                ),
+            )
+        }
+        // Requirements whose transition's subject is the entity; `min` defaults to 1.
+        // Mirrors docs/benchmark/cases.md#checks.
+        "transitionSubject" => {
+            let ent = arg["entity"].as_str().unwrap_or_default();
+            let Some(ent_id) = find_entity(store, ent) else {
+                return Some(format!("entity {} not found", ent));
+            };
+            let subjects: Vec<String> = store
+                .graph
+                .requirements
+                .values()
+                .filter_map(|r| r.transition.as_ref())
+                .map(|t| store.resolve_id(&t.subject).to_string())
+                .collect();
+            let n = subjects.iter().filter(|s| **s == ent_id).count();
+            let mut bounds = arg.clone();
+            if bounds["min"].is_null() {
+                bounds["min"] = serde_json::json!(1);
+            }
+            within(n, &bounds, &format!("transitions on {}", ent_id)).map(|why| {
+                let others: std::collections::BTreeSet<&String> =
+                    subjects.iter().filter(|s| **s != ent_id).collect();
+                if others.is_empty() {
+                    why
+                } else {
+                    format!(
+                        "{}; other subjects: {}",
+                        why,
+                        others.into_iter().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                }
+            })
+        }
         "coverageSet" => {
             let full = arg["section"].as_str().unwrap_or_default();
             let want = arg["state"].as_str().unwrap_or_default();
@@ -1088,12 +1200,14 @@ pub fn tier_key(t: &str) -> &'static str {
 // Generation and verification checks: deterministic code over the ledger, the files on
 // disk, and the exit codes of recorded commands. Mirrors
 // docs/benchmark/benchmark.md#deterministic-grading.
-pub const WORKFLOW_CHECKS: [&str; 5] = [
+pub const WORKFLOW_CHECKS: [&str; 7] = [
     "generationRecorded",
     "rowPerRequirement",
     "testsPass",
     "testFalsifiable",
     "verdictIs",
+    "statusIn",
+    "testsFail",
 ];
 
 pub fn eval_workflow_check(
@@ -1207,6 +1321,59 @@ pub fn eval_workflow_check(
                 Some(row) => Some(format!("verdict is `{}`, expected `{}`", row.verdict, want)),
             }
         }
+        // The row's derived status is one of the listed, whatever verdict the session
+        // claimed. Mirrors docs/benchmark/cases.md#checks.
+        "statusIn" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let want = str_list(&arg["statuses"]);
+            let Some(row) = ledger.requirements.get(store.resolve_id(rid)) else {
+                return Some(format!("no ledger row for {}", rid));
+            };
+            let (status, reason) = crate::verify::status_of(store, rid, row, gs);
+            (!want.contains(&status)).then(|| {
+                format!(
+                    "{} reads `{}` ({}), expected one of {}",
+                    rid,
+                    status,
+                    reason,
+                    want.join(", ")
+                )
+            })
+        }
+        // Every programmatic test the row records fails when rerun as recorded: a
+        // test that passes against a deliverable that carries nothing reads a
+        // description. Mirrors docs/benchmark/cases.md#checks.
+        "testsFail" => {
+            let rid = arg["requirement"].as_str().unwrap_or_default();
+            let Some(row) = ledger.requirements.get(store.resolve_id(rid)) else {
+                return Some(format!("no ledger row for {}", rid));
+            };
+            let mut tests: Vec<&crate::gen::TestRef> = row.tests.values().map(|t| &t.test).collect();
+            if tests.is_empty() {
+                tests.push(&row.test);
+            }
+            let tests: Vec<&crate::gen::TestRef> =
+                tests.into_iter().filter(|t| t.kind == "programmatic").collect();
+            if tests.is_empty() {
+                return Some(format!("{} records no programmatic test", rid));
+            }
+            for t in tests {
+                if t.run.trim().is_empty() {
+                    return Some(format!("test `{}` has no run command", t.name));
+                }
+                match crate::sys::run_shell(&t.run, &gs.deliverable.join(&t.cwd)) {
+                    Ok(out) if out.success => {
+                        return Some(format!(
+                            "test `{}` passes as recorded (`{}`); the case expects it to fail",
+                            t.name, t.run
+                        ))
+                    }
+                    Ok(_) => {}
+                    Err(e) => return Some(format!("test `{}` did not run: {}", t.name, e)),
+                }
+            }
+            None
+        }
         other => Some(format!("unknown workflow check `{}`", other)),
     }
 }
@@ -1224,13 +1391,7 @@ pub fn seed_verification(
         .requirements
         .get(rid)
         .ok_or_else(|| format!("fixture has no requirement {}", rid))?;
-    for (f, text) in &case.deliverable {
-        let p = gs.deliverable.join(f);
-        if let Some(parent) = p.parent() {
-            crate::vfs::create_dir_all(parent).ok();
-        }
-        crate::vfs::write(&p, text).map_err(|e| e.to_string())?;
-    }
+    write_deliverable(case, &gs.deliverable)?;
     let files: Vec<String> = case.deliverable.keys().cloned().collect();
     let artifact = format!("criteria/req-{}.md", crate::gen::req_slug(rid));
     let criteria = format!(
@@ -2394,12 +2555,143 @@ mod tests {
         assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim", "entity": "Dedupe"}), &s, 0).is_some());
     }
 
+    // facetCount counts the requirements carrying a facet, optionally only those
+    // whose statement matches. Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn facet_count_reads_the_facets_of_matching_statements() {
+        let mut s = Store::default();
+        let req = |statement: &str, facets: &[&str]| crate::model::Requirement {
+            statement: statement.into(),
+            facets: facets
+                .iter()
+                .map(|f| Facet { facet: f.to_string(), reasoning: "judged".into(), measure: None })
+                .collect(),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:p-1".into(), req("Dot tells Ines who Theo works for.", &["behavior"]));
+        s.graph.requirements.insert("req:p-2".into(), req("Ines asks Dot for the harbor ledger.", &["constraint"]));
+        s.graph.requirements.insert("req:p-3".into(), req("Ines Marlow is 31.", &["constraint"]));
+        let ok = |a: Value| eval_check("facetCount", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"facet": "behavior", "min": 1, "max": 1})), None);
+        assert_eq!(ok(serde_json::json!({"facet": "constraint", "min": 2})), None);
+        assert_eq!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "tells", "min": 1})), None);
+        // A scene labeled constraint fails the scene's behavior check and its max 0.
+        assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "ledger", "min": 1})).is_some());
+        assert!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "ledger|tells", "max": 0})).is_some());
+        assert_eq!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "tells", "max": 0})), None);
+        assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "(bad"})).is_some());
+    }
+
+    // transitionSubject counts the transitions whose subject is the entity, at
+    // least one by default. Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn transition_subject_reads_the_subject_entity() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:ines".into(), ent("Ines Marlow", None));
+        s.graph.entities.insert("ent:stance".into(), ent("Ines's stance toward Theo", None));
+        let step = |subject: &str, from: &str, to: &str| crate::model::Requirement {
+            statement: format!("The stance moves from {} to {}.", from, to),
+            transition: Some(Transition {
+                subject: subject.into(),
+                from: from.into(),
+                to: to.into(),
+                trigger: None,
+                guard: None,
+            }),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:a-1".into(), step("ent:stance", "stranger", "acquaintance"));
+        s.graph.requirements.insert("req:a-2".into(), step("ent:stance", "acquaintance", "rival"));
+        let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
+        // Hung on a stance entity: the character carries none.
+        let why = ok(serde_json::json!({"entity": "Ines Marlow"}));
+        assert!(why.as_deref().is_some_and(|w| w.contains("ent:stance")), "{:?}", why);
+        assert_eq!(ok(serde_json::json!({"entity": "ent:stance", "min": 2, "max": 2})), None);
+        assert!(ok(serde_json::json!({"entity": "Nobody"})).is_some());
+        s.graph.requirements.insert("req:a-3".into(), step("ent:ines", "rival", "ally"));
+        let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"entity": "Ines Marlow"})), None);
+        assert!(ok(serde_json::json!({"entity": "Ines Marlow", "min": 2})).is_some());
+    }
+
+    // statusIn reads the row's derived status, never the claimed verdict alone;
+    // testsFail reruns each recorded programmatic test. Mirrors
+    // docs/benchmark/cases.md#checks.
+    #[test]
+    fn bind_checks_read_the_status_and_rerun_the_tests() {
+        let tmp = own_dir("bind-checks");
+        let mut s = Store {
+            out: tmp.join("out"),
+            ..Default::default()
+        };
+        s.graph.requirements.insert("req:b-1".into(), Requirement {
+            statement: "The Backend lists the products.".into(),
+            entities: vec!["ent:backend".into()],
+            ..Default::default()
+        });
+        let gs = crate::gen::GenSettings {
+            configured: true,
+            deliverable: tmp.join("deliverable"),
+            worker: "agentic".into(),
+            code: Vec::new(),
+        };
+        crate::vfs::create_dir_all(gs.deliverable.join("test")).unwrap();
+        crate::vfs::write(gs.deliverable.join("test/b.sh"), "# req-b-1\nexit 0\n").unwrap();
+        let record = |run: &str, verdict: &str, files: Vec<String>| {
+            let test = crate::gen::TestRef {
+                kind: "programmatic".into(),
+                label: "descriptor".into(),
+                artifact: "test/b.sh".into(),
+                name: "req-b-1".into(),
+                run: run.into(),
+                cwd: ".".into(),
+            };
+            let mut ledger = crate::gen::Ledger::load(&s.out);
+            ledger.requirements.insert("req:b-1".into(), crate::gen::ReqRow {
+                tests: BTreeMap::new(),
+                entity: "ent:backend".into(),
+                sites: Vec::new(),
+                hashes: crate::gen::RowHashes {
+                    requirement: hash_hex("The Backend lists the products."),
+                    test: crate::gen::hash_file(&crate::gen::artifact_path(&s.out, &gs, &test)),
+                    files: crate::gen::hash_files(&gs, &files),
+                },
+                files,
+                test,
+                verdict: verdict.into(),
+                last_run: None,
+                exit_code: None,
+                evidence: None,
+            });
+            ledger.save(&s.out);
+        };
+        let check = |k: &str| eval_workflow_check(k, &serde_json::json!({"requirement": "req:b-1", "statuses": ["unimplemented", "failing"]}), &s, &gs, "req:b-1");
+        // No row yet: both fail.
+        assert!(check("statusIn").is_some());
+        assert!(check("testsFail").is_some());
+        // The descriptor test bound as verifying: it passes on rerun and reads verified.
+        record("sh test/b.sh", "pass", Vec::new());
+        let why = check("statusIn");
+        assert!(why.as_deref().is_some_and(|w| w.contains("verified")), "{:?}", why);
+        let why = check("testsFail");
+        assert!(why.as_deref().is_some_and(|w| w.contains("passes as recorded")), "{:?}", why);
+        // A claimed fail does not hide a test that passes on rerun.
+        record("sh test/b.sh", "fail", Vec::new());
+        assert_eq!(check("statusIn"), None);
+        assert!(check("testsFail").is_some());
+        // A test that drives what is not there fails, and the row reads unimplemented.
+        record("sh test/b.sh && false", "fail", Vec::new());
+        assert_eq!(check("statusIn"), None);
+        assert_eq!(check("testsFail"), None);
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-two files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Twenty-nine files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 31);
+        assert_eq!(cases.len(), 35);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2447,7 +2739,7 @@ mod tests {
                     "entityAbsent" | "entityNameCount" | "groupingOf" => {
                         arg["namePattern"].as_str()
                     }
-                    "requirementExists" => arg["statementPattern"].as_str(),
+                    "requirementExists" | "facetCount" => arg["statementPattern"].as_str(),
                     "viewExists" => arg["titlePattern"].as_str(),
                     _ => None,
                 };
@@ -2471,7 +2763,7 @@ mod tests {
     fn derived_cases_seed_and_derive_their_goal() {
         let cases = parse_cases();
         let derived: Vec<&Case> = cases.iter().filter(|c| c.derives_goal()).collect();
-        assert_eq!(derived.len(), 12);
+        assert_eq!(derived.len(), 13);
         for case in derived {
             let tmp = own_dir(&case.name);
             let (store, goal) = seed_derived(case, &tmp)
@@ -2552,9 +2844,57 @@ mod tests {
                 "rejudge-pair-contradiction" | "rejudge-pair-duplicate" => {
                     assert!(goal.mandatory);
                 }
+                "bind-descriptor" => {
+                    // The seeded criterion is what the test binds to, and the
+                    // descriptor and its passing test sit in the deliverable.
+                    assert_eq!(goal.change["criteria"], 1, "{:?}", goal.change);
+                    assert_eq!(goal.change["reason"], "unbound");
+                    assert!(tmp.join("deliverable/src/backend.js").vexists());
+                    assert!(tmp.join("deliverable/test/backend.test.js").vexists());
+                }
                 _ => {}
             }
             crate::vfs::remove_dir_all(&tmp).ok();
+        }
+    }
+
+    // The narrative and containment fixtures: every seeded quote locates, every
+    // graded section exists, and the untouched fixture passes no check but the
+    // absences. Mirrors docs/benchmark/cases.md#case-format.
+    #[test]
+    fn narrative_fixtures_locate_and_grade_work() {
+        let cases = parse_cases();
+        for name in ["narrative-behavior", "machine-subject", "stated-containment"] {
+            let case = cases.iter().find(|c| c.name == name).unwrap();
+            let tmp = own_dir(name);
+            let s = sandbox(case, &tmp);
+            for (id, e) in &s.graph.entities {
+                for m in &e.mentions {
+                    assert!(s.quote_locates(&m.doc, &m.section, &m.quote), "{}: {}", name, id);
+                }
+            }
+            for (full, _) in &case.coverage {
+                let (doc, section) = split_section_ref(full).unwrap();
+                assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, full);
+            }
+            assert!(!case_dirty_sections(&s, case).is_empty(), "{}", name);
+            for (kind, arg) in &case.checks {
+                if kind == "coverageSet" {
+                    let (doc, section) = split_section_ref(arg["section"].as_str().unwrap()).unwrap();
+                    assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, section);
+                }
+                let absence = kind == "entityAbsent"
+                    || kind == "entityNameCount"
+                    || arg["max"].as_u64() == Some(0);
+                assert_eq!(
+                    eval_check(kind, arg, &s, 0).is_none(),
+                    absence,
+                    "{}: {} {}",
+                    name,
+                    kind,
+                    arg
+                );
+            }
         }
     }
 
@@ -2651,6 +2991,21 @@ mod tests {
         assert_eq!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:pricing"})), None);
         assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})).is_some());
         assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:nope", "a": "ent:cart", "b": "ent:orders"})).is_some());
+    }
+
+    // relationshipExists takes one `type` or any of several `types`.
+    // Mirrors docs/benchmark/cases.md#checks.
+    #[test]
+    fn relationship_exists_takes_any_of_several_types() {
+        let mut s = structure_store();
+        crate::derive::recompute_relationships(&mut s);
+        let ok = |a: Value| eval_check("relationshipExists", &a, &s, 0);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart"})), None);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "composition"})), None);
+        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["composition", "aggregation"]})), None);
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "aggregation"})).is_some());
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["aggregation", "dependency"]})).is_some());
+        assert!(ok(serde_json::json!({"a": "Orders", "b": "Pricing", "types": ["composition", "aggregation"]})).is_some());
     }
 
     #[test]

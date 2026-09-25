@@ -18,11 +18,10 @@ six more, each against a planted ground truth: `rejudge-pair` and `dedupe-candid
 (verdict quality: a judgment gate checks that a verdict with reasoning exists, never
 that the verdict is true, so only a planted contradiction, duplicate, or lookalike can
 grade it), `declare-edges`, `curate-view`, `split-view`, and the fan-out variant of
-`abstract-entity`. Every other kind in the
-[goal catalog](../compiler/reconciler.md#goal-derivation) (`place-anchors`, `retrace`,
-`conform-instance`, `bind`, and the caps variant of `abstract-entity`) has no case,
-and no case grades transition facets, attributes, edge cardinality, or the
-`flow-unplaced` path of `curate-view`.
+`abstract-entity`. `derive-criteria` and `bind` have cases since. Every other kind in
+the [goal catalog](../compiler/reconciler.md#goal-derivation) (`place-anchors`,
+`retrace`, `conform-instance`, and the caps variant of `abstract-entity`) has no case,
+and no case grades edge cardinality or the `flow-unplaced` path of `curate-view`.
 
 The harness keeps compiling meanwhile: a case keys on a goal kind and a target, one
 session resolves that goal in a sandbox, and requirement checks match the `statement`

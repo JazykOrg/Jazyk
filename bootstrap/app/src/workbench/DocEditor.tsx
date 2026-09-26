@@ -480,7 +480,7 @@ export default function DocEditor() {
       {askWrite && folder?.mode === 'read' && (
         <div className="ide-conflict ide-askwrite">
           <span>
-            Saved in this tab. {folder.name} is read-only{folder.held > 0 ? `: ${folder.held} unwritten` : ''}.
+            Saved in this browser. {folder.name} is read-only{folder.held > 0 ? `: ${folder.held} unwritten` : ''}.
           </span>
           <button
             onClick={() => {
@@ -491,7 +491,7 @@ export default function DocEditor() {
           >
             write to disk
           </button>
-          <button onClick={() => setAskWrite(false)}>keep in tab</button>
+          <button onClick={() => setAskWrite(false)}>not now</button>
         </div>
       )}
       {conflict && (

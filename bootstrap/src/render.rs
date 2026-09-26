@@ -1835,8 +1835,25 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
 pub fn render_view(store: &Store, view_id: &str) -> Result<(String, String), RenderError> {
     let view = target(store, view_id).ok_or_else(|| RenderError(format!("no view {}", view_id)))?;
     let puml = emit(store, view_id, &view);
-    let svg = render_svg(&puml)?;
-    Ok((puml, svg))
+    match render_svg(&puml) {
+        Ok(svg) => Ok((puml, svg)),
+        Err(e) => match rendered_on_disk(&store.out, view_id, &puml) {
+            Some(svg) => Ok((puml, svg)),
+            None => Err(e),
+        },
+    }
+}
+
+// The rendering the commit wrote, when it is this exact picture: the `.puml` beside
+// it equals the emission. A tab cannot render, so this is how a seeded project's
+// diagrams show there (docs/frontends/wasm.md#diagrams).
+fn rendered_on_disk(out: &Path, view_id: &str, puml: &str) -> Option<String> {
+    let base = diagram_base(out, view_id)?;
+    let on_disk = crate::vfs::read_to_string(base.with_extension("puml")).ok()?;
+    if on_disk != puml {
+        return None;
+    }
+    crate::vfs::read_to_string(base.with_extension("svg")).ok()
 }
 
 // The .png of a rendered view, rasterized on first request and kept beside the .svg.
@@ -1859,6 +1876,24 @@ mod tests {
     use super::*;
     use crate::derive::recompute;
     use crate::derive::tests::showcase_store;
+
+    // Mirrors docs/frontends/wasm.md#diagrams: the rendering on disk stands in for a
+    // render only when the .puml beside it is this emission.
+    #[test]
+    fn the_rendering_on_disk_serves_only_when_its_puml_is_the_emission() {
+        let dir = std::env::temp_dir().join(format!("jazyk-ondisk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("diagrams/class")).unwrap();
+        std::fs::write(dir.join("diagrams/class/shop.puml"), "@startuml\nA\n@enduml\n").unwrap();
+        std::fs::write(dir.join("diagrams/class/shop.svg"), "<svg>seeded</svg>").unwrap();
+        assert_eq!(
+            rendered_on_disk(&dir, "view:class/shop", "@startuml\nA\n@enduml\n").as_deref(),
+            Some("<svg>seeded</svg>")
+        );
+        assert_eq!(rendered_on_disk(&dir, "view:class/shop", "@startuml\nB\n@enduml\n"), None);
+        assert_eq!(rendered_on_disk(&dir, "view:class/other", "@startuml\nA\n@enduml\n"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use crate::store::RecordBatch;
     use regex::Regex;
 

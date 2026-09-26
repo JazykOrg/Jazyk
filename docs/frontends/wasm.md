@@ -218,7 +218,10 @@ handling. Every view still emits its `.puml` on commit, and the `.svg` beside it
 whatever the project was seeded with.
 
 This is why the demo ships a project whose diagrams are already rendered: the
-`.svg` files travel in the seed.
+`.svg` files travel in the seed. A read of a view (`GET /api/views/{id}`) that cannot
+render serves the `.svg` on disk when the view's emission equals the `.puml` beside
+it, so the picture is exactly the view's. A view that changed since the seed, or one
+drawn at another level of detail, has no picture in a tab, and its page says why.
 
 ## The demo
 

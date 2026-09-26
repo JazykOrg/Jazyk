@@ -185,10 +185,17 @@ fn instructions_for(modes: &[String], write: bool, initialized: bool) -> String 
                  prose, optional new statement), add one with add_requirement, remove one with \
                  retract_requirement; each moves the document and the graph in one atomic commit. \
                  update_project_settings edits jazyk.toml keys. The project is already initialized: \
-                 there is no init_project tool and nothing to scaffold. The \
-                 compilation, binding, generation, and verification lifecycles are available for \
-                 explicit requests. ",
+                 there is no init_project tool and nothing to scaffold. ",
             );
+            // A tab serves the compilation lifecycle alone (docs/frontends/wasm.md#chat).
+            s.push_str(if cfg!(target_arch = "wasm32") {
+                "The compilation lifecycle is available for explicit requests. This serving runs in \
+                 a browser tab, which has no shell: binding, generation, and verification are not \
+                 served here. "
+            } else {
+                "The compilation, binding, generation, and verification lifecycles are available for \
+                 explicit requests. "
+            });
         }
     }
     if modes.iter().any(|m| m == "graph") && write {
@@ -424,9 +431,14 @@ impl McpServer {
                 "chat" => {
                     let mut t = toolset("mcp-read");
                     t.extend(LIFECYCLE);
-                    t.extend(crate::tools::GEN_TOOLS);
-                    t.extend(crate::tools::BIND_TOOLS);
-                    t.extend(crate::tools::VERIFY_TOOLS);
+                    // A tab has no shell, so binding, generation, and verification
+                    // are not served there (docs/frontends/wasm.md#chat).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        t.extend(crate::tools::GEN_TOOLS);
+                        t.extend(crate::tools::BIND_TOOLS);
+                        t.extend(crate::tools::VERIFY_TOOLS);
+                    }
                     t
                 }
                 // The decompile serving: read tools only from the catalog; its own

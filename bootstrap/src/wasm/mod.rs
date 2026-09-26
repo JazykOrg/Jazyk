@@ -1,6 +1,7 @@
 // The WebAssembly backend: the same compiler the native binary runs, answering the
 // same API, against an in-memory filesystem and the model in the page.
 // See docs/frontends/wasm.md.
+pub mod chat;
 pub mod fs_bridge;
 pub mod llm_bridge;
 pub mod runner;
@@ -11,6 +12,15 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     #[wasm_bindgen(js_name = emitTrace)]
     fn emit_trace(json: &str);
+    #[wasm_bindgen(js_name = emitEvent)]
+    fn emit_event_js(json: &str);
+}
+
+// One event to the page, in the native event stream's shape: `{type, ...}`.
+// See docs/frontends/wasm.md#chat.
+pub fn emit_event(kind: &str, mut body: serde_json::Value) {
+    body["type"] = serde_json::json!(kind);
+    emit_event_js(&body.to_string());
 }
 
 // The project the tab is serving. One per module instance, set by `boot`.
@@ -67,6 +77,8 @@ pub fn boot(root_path: &str) -> String {
     // object, and 1024 tokens holds any of them. At a few tokens per second on a
     // laptop GPU the cap is also what bounds a turn to a minute or two.
     crate::llm::set_max_completion_tokens(1024);
+    // Conversations belong to the project they were about.
+    chat::reset();
     let p = crate::project::Project::load(&root);
     serde_json::json!({
         "ok": true,

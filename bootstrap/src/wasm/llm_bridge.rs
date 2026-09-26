@@ -16,6 +16,21 @@ extern "C" {
     // comes back. Returns the response body, or a message naming why there is none.
     #[wasm_bindgen(js_name = chatSync, catch)]
     fn chat_sync(body: &str) -> Result<String, JsValue>;
+
+    // Whether the page cancelled the running chat turn, and the reset at its start.
+    // See docs/frontends/wasm.md#chat.
+    #[wasm_bindgen(js_name = cancelRequested)]
+    fn cancel_requested_js() -> bool;
+    #[wasm_bindgen(js_name = clearCancel)]
+    fn clear_cancel_js();
+}
+
+pub fn cancel_requested() -> bool {
+    cancel_requested_js()
+}
+
+pub fn clear_cancel() {
+    clear_cancel_js()
 }
 
 pub fn chat(body: &str) -> Result<String, String> {

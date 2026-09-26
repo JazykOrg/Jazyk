@@ -5,6 +5,7 @@
 // Layout of the shared control buffer:
 //   [0] Int32  state: 0 pending, 1 answered
 //   [1] Int32  byte length of the reply
+//   [2] Int32  cancel: 1 once the page cancels the running chat turn
 // The reply itself travels in a second buffer, grown by the page when needed.
 
 let control = null // Int32Array over a SharedArrayBuffer
@@ -18,6 +19,16 @@ export function installBridge(controlBuffer, replyBuffer) {
 
 export function bridgeReady() {
   return control !== null
+}
+
+// The page sets the cancel flag when a person cancels a chat turn; the worker is
+// inside that turn and could not hear a message. See docs/frontends/wasm.md#chat.
+export function cancelRequested() {
+  return control !== null && control.length > 2 && Atomics.load(control, 2) === 1
+}
+
+export function clearCancel() {
+  if (control !== null && control.length > 2) Atomics.store(control, 2, 0)
 }
 
 export function chatSync(body) {

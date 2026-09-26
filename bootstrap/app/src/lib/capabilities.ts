@@ -51,6 +51,12 @@ export function useCapabilities() {
   })
 }
 
+// A tab's syncs and chat run the page's model: until it is ready, the Sync sheet and
+// the chat pane show the model chooser (docs/frontends/wasm.md#model-sources).
+export function needsPageModel(caps: Capabilities | undefined): boolean {
+  return !!caps && caps.backend !== 'server' && caps.model !== 'in-page'
+}
+
 // The sentence an empty state gives when a capability is missing.
 export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' | 'docs-write'): string | null {
   if (!caps) return null

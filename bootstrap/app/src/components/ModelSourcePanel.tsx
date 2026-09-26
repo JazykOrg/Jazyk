@@ -48,7 +48,7 @@ export default function ModelSourcePanel() {
 
   return (
     <div className="msrc">
-      <p className="why">Syncs run a model. Choose where it comes from.</p>
+      <p className="why">Syncs and chat run a model. Choose where it comes from.</p>
       {option(
         'webllm',
         'Download a model',

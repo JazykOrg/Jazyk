@@ -5,3 +5,10 @@
 export function emitTrace(json) {
   self.postMessage({ kind: 'trace', event: json })
 }
+
+// The worker's event channel: the chat pane's events, in the shape the native event
+// stream carries (`chat.update`, `chat.sessions`, `store.generation`), posted the
+// moment a turn emits them. See docs/frontends/wasm.md#chat.
+export function emitEvent(json) {
+  self.postMessage({ kind: 'event', event: json })
+}

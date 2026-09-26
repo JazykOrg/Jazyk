@@ -288,6 +288,13 @@ export function pushTraceEvents(qc: QueryClient, events: unknown[]) {
   }
 }
 
+// The wasm backend's chat events (docs/frontends/wasm.md#chat): the worker posts
+// them in the event stream's shape, so they take the stream's own path.
+export function pushWireEvent(qc: QueryClient, event: Record<string, unknown>) {
+  if (typeof event.type !== 'string') return
+  dispatch(qc, event as WireEvent)
+}
+
 // Everything a commit can change, refetched. The server announces a commit over
 // the event stream; the wasm backend has no stream, so the demo calls this after
 // any write request returns (docs/frontends/wasm.md#the-trace).

@@ -381,8 +381,11 @@ nothing else: no board, no LLM call, no write. The journal spans every build sin
 store began (an [archive](../compiler/graph.md#store-version) starts it over), so the
 report covers every build, where `costs` in `status.yaml` covers the last one.
 
-- A `session` entry's `tokens` is its measured spend. The spend splits evenly across
-  the goals the entry resolved (the goals of its `batch` when it resolved none).
+- A `session` entry's `tokens` is its measured spend: the tokens the endpoint billed,
+  input and output of every round ([budgets](../compiler/sessions.md#budgets)), so the
+  per goal, per requirement, and per criterion figures are costs, not output alone. The
+  spend splits evenly across the goals the entry resolved (the goals of its `batch`
+  when it resolved none).
 - `cost`: the journal's generation range, the session entries (measured and
   unmeasured), and the measured tokens.
 - `by kind`: per goal kind, the goals resolved, their tokens, tokens per measured goal,

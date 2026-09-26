@@ -505,7 +505,8 @@ tokens: 9800
 
 The entry kinds:
 
-- `session`: a goal batch's changeset. Carries `batch`, `mutations`, `rounds`, `tokens`,
+- `session`: a goal batch's changeset. Carries `batch`, `mutations`, `rounds`, `tokens`
+  (the tokens the endpoint billed for the turn, input and output of every round),
   and the model's `reasoning` where a mutation gave one. The entry commits inside the
   serving, before the turn's cost is known, so `tokens` is stamped afterwards by the
   build that measured it, split across the `session` entries that turn wrote (a

@@ -1015,25 +1015,24 @@ impl Store {
         if tokens == 0 || to <= from {
             return;
         }
-        let gens: Vec<u64> = (from + 1..=to).collect();
-        let share = tokens / gens.len().max(1) as u64;
-        for (i, g) in gens.iter().enumerate() {
-            let p = out.join("journal").join(format!("g{}.yaml", g));
-            let Ok(text) = crate::vfs::read_to_string(&p) else {
-                continue;
-            };
-            let Ok(mut entry) = serde_norway::from_str::<JournalEntry>(&text) else {
-                continue;
-            };
-            if entry.kind != "session" || entry.tokens.is_some() {
-                continue;
-            }
-            // The remainder rides on the last entry, so the parts sum to the spend.
-            entry.tokens = Some(if i + 1 == gens.len() {
-                tokens - share * (gens.len() as u64 - 1)
-            } else {
-                share
-            });
+        // Only the session entries the turn wrote take a share, so the parts sum to
+        // the spend: a checks or settle entry between them bills nothing.
+        let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
+            .filter_map(|g| {
+                let p = out.join("journal").join(format!("g{}.yaml", g));
+                let text = crate::vfs::read_to_string(&p).ok()?;
+                let entry = serde_norway::from_str::<JournalEntry>(&text).ok()?;
+                (entry.kind == "session" && entry.tokens.is_none()).then_some((p, entry))
+            })
+            .collect();
+        let n = entries.len() as u64;
+        if n == 0 {
+            return;
+        }
+        let share = tokens / n;
+        for (i, (p, mut entry)) in entries.into_iter().enumerate() {
+            // The remainder rides on the last entry.
+            entry.tokens = Some(if i as u64 + 1 == n { tokens - share * (n - 1) } else { share });
             if let Ok(out_text) = serde_norway::to_string(&entry) {
                 crate::vfs::write(&p, out_text).ok();
             }
@@ -8002,6 +8001,13 @@ mod tests {
         // A second stamp over the same generations leaves the first one's numbers.
         Store::stamp_tokens(&out, 1, 3, 100);
         assert_eq!(read(2).tokens, Some(450));
+        // A checks entry after the session's own takes no share: the session entry
+        // carries the whole spend (a split once dropped half a criteria session's).
+        write(4, "session", None);
+        write(5, "checks", None);
+        Store::stamp_tokens(&out, 3, 5, 12051);
+        assert_eq!(read(4).tokens, Some(12051));
+        assert_eq!(read(5).tokens, None);
     }
 
     #[test]

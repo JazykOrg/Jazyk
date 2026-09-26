@@ -194,7 +194,9 @@ A browser project leaves the browser two ways, both offered in the top bar:
   folder, asks again if the folder is not empty, and writes every file of the tree
   into it. From then on the project is that folder in writing mode: the recent entry
   becomes the folder's, and the copy in browser storage is deleted once every file
-  landed. A write that fails leaves the browser copy in place.
+  landed. A write that fails stops the save and says why: the project stays in the
+  browser, and nothing kept there is deleted. Edits made while the files are written
+  follow them into the folder.
 - `Download`: the whole tree as one `.zip` named after the project, the same layout a
   folder would hold. It works in every browser.
 
@@ -227,7 +229,7 @@ disk refused. The change is not lost:
 - The top bar says it plainly: `Could not write to <folder>: N changes kept in this
   browser`, with `Retry`. Retry asks the browser for write access if it needs to,
   writes the kept changes in order, and stops at the first that fails again; the rest
-  stay kept.
+  stay kept. While it writes, the top bar says `Writing N changes to <folder>…`.
 - The recent row says how many changes the folder has kept.
 
 Read-only mode's held changes are the same kept changes. Reopening a folder that has

@@ -222,3 +222,15 @@
   border-radius: 4px;
   background: #fff;
 }
+
+/* A narrow screen stacks the preview under the text. */
+@media (max-width: 760px) {
+  .ide-split {
+    flex-direction: column;
+  }
+
+  .ide-split > .md-preview {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}

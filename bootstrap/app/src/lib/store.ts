@@ -2,6 +2,7 @@
 // and UI preferences. Server state lives in the query cache, never here.
 import { create } from 'zustand'
 import type { Job, TraceEvent } from './api'
+import type { FolderMode } from './recent'
 
 const TRACE_RING = 2000
 
@@ -99,6 +100,10 @@ interface AppStore {
   activityOpen: boolean
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
+  // The folder the browser backend has open, its mode, and how many paths its
+  // read-only mode holds (docs/frontends/wasm.md#a-folder-on-disk). Null for the
+  // demo and the server.
+  folder: { name: string; mode: FolderMode; held: number } | null
   turns: Record<string, TurnProgress>
   goalNotes: Record<string, GoalNote>
   noteGoal: (goal: string, event: string, text: string) => void
@@ -138,6 +143,7 @@ interface AppStore {
   setLastCommit: (generation: number) => void
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
+  setFolder: (f: { name: string; mode: FolderMode; held: number } | null) => void
 }
 
 export const useApp = create<AppStore>((set) => ({
@@ -154,6 +160,7 @@ export const useApp = create<AppStore>((set) => ({
   lastCommit: null,
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
+  folder: null,
   chatOpen: readPref('jazyk-chat') !== 'closed',
   chatFollow: false,
   chatSelected: null,
@@ -210,6 +217,7 @@ export const useApp = create<AppStore>((set) => ({
     set({ activityOpen: v })
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
+  setFolder: (folder) => set({ folder }),
   turns: {},
   goalNotes: {},
   noteGoal: (goal, event, text) =>

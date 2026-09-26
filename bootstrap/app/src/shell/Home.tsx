@@ -1,8 +1,10 @@
 // Home: the project picker (docs/frontends/gui.md#home). The backend decides which
 // entries exist; the served project is the first row.
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { useCapabilities } from '../lib/capabilities'
 import { folderPickerAvailable } from '../lib/folder'
+import { readOnlyPref, removeRecent, setReadOnlyPref, useRecent, type RecentEntry } from '../lib/recent'
 import { useProjects, type ProjectSummary } from '../lib/product'
 import { useProject } from '../lib/queries'
 import { useApp } from '../lib/store'
@@ -53,6 +55,28 @@ function ProjectRow({ p, dev }: { p: ProjectSummary; dev: boolean }) {
   )
 }
 
+// The browser's own recent list (docs/frontends/gui.md#home): a row reopens its
+// demo or folder, the cross forgets it.
+function RecentRow({ r }: { r: RecentEntry }) {
+  const kind = r.kind === 'demo' ? 'demo' : `folder · ${r.mode === 'write' ? 'writing' : 'read-only'}`
+  return (
+    <div className="proj recent">
+      <button
+        className="recent-open"
+        onClick={() => window.dispatchEvent(new CustomEvent('jazyk:open-recent', { detail: r.id }))}
+        title={r.kind === 'folder' ? 'reopen; the browser asks for access again' : 'reopen'}
+      >
+        <span className="name">{r.name}</span>
+        <span className="shape">{kind}</span>
+        <span className="state muted">{new Date(r.openedAt).toLocaleDateString()}</span>
+      </button>
+      <button className="recent-forget" onClick={() => removeRecent(r.id)} title="forget this entry" aria-label={`forget ${r.name}`}>
+        ×
+      </button>
+    </div>
+  )
+}
+
 export default function Home() {
   const caps = useCapabilities()
   const projects = useProjects()
@@ -61,6 +85,9 @@ export default function Home() {
   const kind = caps.data?.projects ?? 'list'
   const settings = useSettingsExists()
   const needsSetup = settings.data ? !settings.data.exists : false
+  const recent = useRecent()
+  const [readOnly, setReadOnly] = useState(readOnlyPref)
+  const picker = kind === 'folder-picker' || (kind === 'bundled' && folderPickerAvailable())
 
   return (
     <div className="ws-scroll">
@@ -79,12 +106,37 @@ export default function Home() {
               Open {proj.root.replace(/\/+$/, '').split('/').pop()} →
             </Link>
           )}
-          {(kind === 'folder-picker' || (kind === 'bundled' && folderPickerAvailable())) && (
-            <button onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder'))} title="a directory with a jazyk.toml; edits and builds write back into it">
-              Open folder…
-            </button>
+          {picker && (
+            <>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder', { detail: { mode: readOnly ? 'read' : 'write' } }))}
+                title={readOnly ? 'a directory with a jazyk.toml; changes stay in this tab until you write them' : 'a directory with a jazyk.toml; edits and builds write back into it'}
+              >
+                Open folder…
+              </button>
+              <label className="muted home-readonly" title="hold every change in this tab until you choose to write it">
+                <input
+                  type="checkbox"
+                  checked={readOnly}
+                  onChange={(e) => {
+                    setReadOnly(e.target.checked)
+                    setReadOnlyPref(e.target.checked)
+                  }}
+                />{' '}
+                read-only
+              </label>
+            </>
           )}
         </div>
+
+        {kind === 'bundled' && recent.length > 0 && (
+          <>
+            <h2>Recent</h2>
+            {recent.map((r) => (
+              <RecentRow key={r.id} r={r} />
+            ))}
+          </>
+        )}
 
         {kind === 'bundled' && (
           <>

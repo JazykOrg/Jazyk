@@ -979,3 +979,188 @@ a.trail-step:hover .trail-label {
 .model-page .diagram-page svg {
   max-height: none;
 }
+
+/* A folder open in the browser: its mode, and what read-only mode holds
+   (docs/frontends/wasm.md#a-folder-on-disk). */
+.ws-top .ws-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 2px 2px 8px;
+}
+
+.ws-top .ws-folder.held {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.ws-top .ws-folder button {
+  font-size: 11.5px;
+  padding: 2px 8px;
+}
+
+/* The recent list in the browser (docs/frontends/gui.md#home). */
+.home .proj.recent {
+  display: flex;
+  padding: 0;
+}
+
+.home .recent-open {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px 18px;
+  align-items: center;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.home .proj.recent:hover {
+  border-color: var(--accent);
+}
+
+.home .recent-forget {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.home .recent-forget:hover {
+  color: var(--ink);
+}
+
+.home .home-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* The navigator's menu button exists only on a narrow screen. */
+.ws-top .ws-navtoggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 18px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.ws-scrim {
+  display: none;
+}
+
+/* A narrow screen (a phone): the center takes the width. The navigator and the
+   inspector are drawers, the chat column hides, and the top bar and the status bar
+   scroll sideways (docs/frontends/gui.md#layout). The breakpoint matches
+   lib/narrow.ts. */
+@media (max-width: 760px) {
+  .ws {
+    height: 100dvh;
+  }
+
+  .ws-top {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ws-top .ws-navtoggle {
+    display: inline-block;
+  }
+
+  /* The bar scrolls instead of squeezing its items. */
+  .ws-top > * {
+    flex-shrink: 0;
+  }
+
+  .ws-top .ws-project {
+    max-width: 120px;
+  }
+
+  .ws-lenses {
+    margin-left: 2px;
+  }
+
+  .ws-lenses a,
+  .ws-top .ws-link {
+    padding: 5px 7px;
+  }
+
+  .ws-top .ws-palette {
+    min-width: 0;
+  }
+
+  .ws-body {
+    position: relative;
+  }
+
+  .ws-nav {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    width: min(85vw, 300px);
+    transform: translateX(-100%);
+    transition: transform 0.15s ease-out;
+    box-shadow: none;
+  }
+
+  .ws.nav-open .ws-nav {
+    transform: none;
+    box-shadow: 0 0 24px rgb(0 0 0 / 0.25);
+  }
+
+  .ws.nav-open .ws-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: rgb(0 0 0 / 0.2);
+  }
+
+  .wb-inspector {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 25;
+    width: min(90vw, 360px);
+    box-shadow: 0 0 24px rgb(0 0 0 / 0.25);
+  }
+
+  .ws-scroll {
+    padding: 14px 14px 40px;
+  }
+
+  .ws-status {
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .home {
+    padding: 28px 16px;
+  }
+}
+
+@media (max-width: 760px) and (prefers-reduced-motion: reduce) {
+  .ws-nav {
+    transition: none;
+  }
+}

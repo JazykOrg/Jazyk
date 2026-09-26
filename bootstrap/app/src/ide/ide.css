@@ -822,3 +822,16 @@
   flex: 1;
   max-width: 900px;
 }
+
+/* A narrow screen: the editor's toolbar wraps, and the preview stacks under the
+   text instead of beside it (docs/frontends/gui.md#layout). */
+@media (max-width: 760px) {
+  .ide-topbar {
+    flex-wrap: wrap;
+    padding: 6px 10px;
+  }
+
+  .ide-conflict {
+    flex-wrap: wrap;
+  }
+}

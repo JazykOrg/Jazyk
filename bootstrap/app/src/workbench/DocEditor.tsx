@@ -10,6 +10,7 @@ import { get, put } from '../lib/api'
 import { useCoverage, useDocBaseline, useDocs, useGraph, useMatrix, useProject } from '../lib/queries'
 import { useInlineBands, useReqMarks } from '../ide/overlays'
 import { useApp } from '../lib/store'
+import { useCapabilities } from '../lib/capabilities'
 import { delivHref, outHref, useInspector } from '../lib/nav'
 import { relTo } from '../lib/mdlinks'
 import CmHost, { docUri, type EditorHandle, type LinkTarget, type Marker } from '../ide/CmHost'
@@ -68,7 +69,28 @@ export default function DocEditor() {
   // The text the preview renders: what the editor holds, a beat behind the keystrokes.
   const [previewText, setPreviewText] = useState('')
   const previewTimer = useRef<number | null>(null)
+  // Autosave: in the browser, where a write lands without asking (the demo, and a
+  // folder in writing mode), the editor saves a beat after typing stops and when the
+  // document is left. A read-only folder saves on request and asks whether to write
+  // (docs/frontends/gui.md#editor).
+  const caps = useCapabilities()
+  const folder = useApp((a) => a.folder)
+  const autosave = !!caps.data && caps.data.backend !== 'server' && (!folder || folder.mode === 'write')
+  const autosaveRef = useRef(autosave)
+  autosaveRef.current = autosave
+  const saveTimer = useRef<number | null>(null)
+  const saveRef = useRef<() => Promise<void>>(async () => {})
+  const lastText = useRef<string | null>(null)
+  const [askWrite, setAskWrite] = useState(false)
   const onText = useCallback((text: string) => {
+    lastText.current = text
+    if (autosaveRef.current) {
+      if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+      saveTimer.current = window.setTimeout(() => {
+        saveTimer.current = null
+        void saveRef.current()
+      }, 800)
+    }
     if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
     previewTimer.current = window.setTimeout(() => {
       previewTimer.current = null
@@ -215,15 +237,18 @@ export default function DocEditor() {
   const save = useCallback(async () => {
     const target = loadedRef.current?.path
     const host = hostRef.current
-    if (!target || !host || savingRef.current || !dirtyRef.current) return
+    // Leaving the document can unmount the editor before its last save runs; the
+    // latest text is kept for that.
+    const text = host?.getText() ?? lastText.current
+    if (!target || text === null || savingRef.current || !dirtyRef.current) return
     savingRef.current = true
-    const text = host.getText()
     try {
       const r = await put<{ path: string; hash: string }>(contentPath(target), {
         text,
         baseHash: baseHashes.current.get(target),
       })
       afterWrite(target, text, r.hash)
+      if (!autosaveRef.current && useApp.getState().folder?.mode === 'read') setAskWrite(true)
     } catch (e) {
       if ((e as { conflict?: boolean }).conflict) setConflict(true)
       else setSaveErr((e as Error).message)
@@ -231,6 +256,22 @@ export default function DocEditor() {
       savingRef.current = false
     }
   }, [afterWrite])
+
+  saveRef.current = save
+
+  // Leaving a document (another one, or the Docs lens) saves what autosave had not
+  // reached yet.
+  useEffect(
+    () => () => {
+      if (saveTimer.current !== null) {
+        window.clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+      if (autosaveRef.current && dirtyRef.current) void saveRef.current()
+    },
+    [docPath],
+  )
+  useEffect(() => setAskWrite(false), [docPath])
 
   // Overwrite: adopt the current disk hash, then write my text over it.
   const overwrite = useCallback(async () => {
@@ -421,11 +462,34 @@ export default function DocEditor() {
           >
             diff
           </button>
-          <button onClick={() => void save()} disabled={!dirty || conflict}>
-            save
-          </button>
+          {autosave ? (
+            <span className="muted" title="changes save on their own a beat after typing stops">
+              {dirty ? 'saving…' : 'saved'}
+            </span>
+          ) : (
+            <button onClick={() => void save()} disabled={!dirty || conflict}>
+              save
+            </button>
+          )}
         </div>
       </div>
+      {askWrite && folder?.mode === 'read' && (
+        <div className="ide-conflict ide-askwrite">
+          <span>
+            Saved in this tab. {folder.name} is read-only{folder.held > 0 ? `: ${folder.held} unwritten` : ''}.
+          </span>
+          <button
+            onClick={() => {
+              setAskWrite(false)
+              window.dispatchEvent(new CustomEvent('jazyk:folder-mode', { detail: 'write' }))
+            }}
+            title="write everything this tab holds to the folder, and keep writing"
+          >
+            write to disk
+          </button>
+          <button onClick={() => setAskWrite(false)}>keep in tab</button>
+        </div>
+      )}
       {conflict && (
         <div className="ide-conflict">
           <span>the document changed on disk</span>

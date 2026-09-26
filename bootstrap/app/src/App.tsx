@@ -14,6 +14,8 @@ import { useInspector } from './lib/nav'
 import { ExploreHistory } from './lib/explore'
 import { useCapabilities } from './lib/capabilities'
 import { useProject } from './lib/queries'
+import { useProjectOpen } from './lib/open'
+import { useNarrow } from './lib/narrow'
 import DocEditor from './workbench/DocEditor'
 import DelivFile from './workbench/DelivFile'
 import OutFile from './workbench/OutFile'
@@ -112,14 +114,25 @@ export default function App() {
   const { node, openNode, closeNode } = useInspector()
   const [palette, setPalette] = useState(0)
   const home = loc.pathname === '/'
+  const open = useProjectOpen()
+  const narrow = useNarrow()
+  // On a narrow screen the navigator is a drawer, closed again by any navigation.
+  const [navOpen, setNavOpen] = useState(false)
+  useEffect(() => setNavOpen(false), [loc.pathname, loc.search])
+  // The panes need a project; until one is open every route but Home goes home.
+  const panes = !home && open === true
 
   return (
-    <div className="ws">
-      <TopBar openPalette={() => setPalette((n) => n + 1)} />
+    <div className={`ws${navOpen ? ' nav-open' : ''}`}>
+      <TopBar openPalette={() => setPalette((n) => n + 1)} open={open === true} toggleNav={() => setNavOpen((v) => !v)} />
       <div className="ws-body">
-        {!home && <Navigator />}
+        {panes && <Navigator />}
+        {panes && navOpen && <div className="ws-scrim" onClick={() => setNavOpen(false)} />}
         <div className="ws-centerrow">
           <main className="ws-center">
+            {!home && open === false ? (
+              <Navigate to="/" replace />
+            ) : !home && open === undefined ? null : (
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/docs" element={<DocsHome />} />
@@ -182,13 +195,15 @@ export default function App() {
               <Route path="/benchmarks" element={<Navigate to="/dev/benchmarks" replace />} />
               <Route path="*" element={<Scroll><p className="empty">no such page</p></Scroll>} />
             </Routes>
+            )}
           </main>
-          {!home && <Inspector node={node} openNode={openNode} close={closeNode} />}
+          {/* On a narrow screen the inspector is a drawer, there only for a selection. */}
+          {panes && (!narrow || node) && <Inspector node={node} openNode={openNode} close={closeNode} />}
         </div>
-        {!home && <ChatPane />}
+        {panes && !narrow && <ChatPane />}
       </div>
       <StatusBar />
-      <CommandPalette openSignal={palette} />
+      {open === true && <CommandPalette openSignal={palette} />}
       <CommitNote />
       <ConnectionGuard />
       <ExploreHistory />

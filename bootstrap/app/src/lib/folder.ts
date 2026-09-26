@@ -1,8 +1,10 @@
 // A folder on the computer as the project, through the File System Access API.
 // The page reads the folder once into the backend's in-memory tree, and mirrors
-// every write the backend makes back into the folder. Reads never touch the disk
-// again, so an edit made outside the tab is not seen until the folder is reopened.
+// every write the backend makes back into the folder, or holds it in read-only
+// mode until asked to write. Reads never touch the disk again, so an edit made
+// outside the tab is not seen until the folder is reopened.
 // See docs/frontends/wasm.md#a-folder-on-disk.
+import type { FolderMode } from './recent'
 
 // The names the native doc walk skips too, plus what no project needs read.
 const SKIP = new Set(['.git', 'node_modules', 'target', '.DS_Store'])
@@ -16,11 +18,26 @@ export function folderPickerAvailable(): boolean {
   return typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function'
 }
 
-export async function pickFolder(): Promise<DirHandle> {
+const access = (mode: FolderMode) => (mode === 'write' ? 'readwrite' : 'read')
+
+// Read-only asks the browser for read access only, so its prompt says so.
+export async function pickFolder(mode: FolderMode): Promise<DirHandle> {
   const pick = (window as unknown as {
-    showDirectoryPicker: (o: { mode: 'readwrite'; id?: string }) => Promise<DirHandle>
+    showDirectoryPicker: (o: { mode: 'read' | 'readwrite'; id?: string }) => Promise<DirHandle>
   }).showDirectoryPicker
-  return pick({ mode: 'readwrite', id: 'jazyk-project' })
+  return pick({ mode: access(mode), id: 'jazyk-project' })
+}
+
+// A grant does not outlive the tab: a remembered folder asks again, and switching
+// to writing asks for write access. Answers whether the browser granted it.
+export async function ensurePermission(handle: FileSystemDirectoryHandle, mode: FolderMode): Promise<boolean> {
+  const h = handle as unknown as {
+    queryPermission(o: { mode: string }): Promise<PermissionState>
+    requestPermission(o: { mode: string }): Promise<PermissionState>
+  }
+  const o = { mode: access(mode) }
+  if ((await h.queryPermission(o)) === 'granted') return true
+  return (await h.requestPermission(o)) === 'granted'
 }
 
 // Every file under the folder, keyed by its slash path, as bytes.
@@ -42,13 +59,59 @@ export async function readFolder(root: DirHandle): Promise<Record<string, Uint8A
   return out
 }
 
+type Held = { op: 'write'; bytes: Uint8Array } | { op: 'remove'; dir: boolean }
+
 // The mirror: applies the backend's mutations to the folder, one after another in
-// the order they arrived, so a write and the remove that follows it never race.
+// the order they arrived, so a write and the remove that follows it never race. In
+// read-only mode it holds them instead: the latest per path, in the order the paths
+// were last touched, which replays a remove and a later write under the same
+// directory in the order they happened.
 export class FolderMirror {
   private queue: Promise<void> = Promise.resolve()
   private failures = 0
+  private held = new Map<string, Held>()
+  // Called whenever the held count changes.
+  onChange?: () => void
 
-  constructor(private root: DirHandle, private prefix: string) {}
+  constructor(
+    readonly root: DirHandle,
+    private prefix: string,
+    private mode: FolderMode,
+  ) {}
+
+  get heldCount(): number {
+    return this.held.size
+  }
+
+  get currentMode(): FolderMode {
+    return this.mode
+  }
+
+  private hold(path: string, h: Held) {
+    if (!this.rel(path)) return
+    this.held.delete(path)
+    this.held.set(path, h)
+    this.onChange?.()
+  }
+
+  // Read-only from here on: new mutations are held.
+  readOnly() {
+    this.mode = 'read'
+  }
+
+  // Writing from here on: the held mutations land first, in order, then every new
+  // one is applied as it arrives. The caller has the write grant already.
+  async startWriting(): Promise<void> {
+    this.mode = 'write'
+    const held = [...this.held.entries()]
+    this.held.clear()
+    for (const [path, h] of held) {
+      if (h.op === 'write') this.apply(path, h.bytes)
+      else this.applyRemove(path, h.dir)
+    }
+    this.onChange?.()
+    await this.flush()
+  }
 
   // `path` is the backend's absolute path; only what lies under the project root
   // is the folder's business.
@@ -70,6 +133,16 @@ export class FolderMirror {
   }
 
   write(path: string, bytes: Uint8Array) {
+    if (this.mode === 'read') return this.hold(path, { op: 'write', bytes })
+    this.apply(path, bytes)
+  }
+
+  remove(path: string, dir: boolean) {
+    if (this.mode === 'read') return this.hold(path, { op: 'remove', dir })
+    this.applyRemove(path, dir)
+  }
+
+  private apply(path: string, bytes: Uint8Array) {
     const segs = this.rel(path)
     if (!segs || segs.length === 0) return
     const name = segs.pop()!
@@ -85,7 +158,7 @@ export class FolderMirror {
     })
   }
 
-  remove(path: string, dir: boolean) {
+  private applyRemove(path: string, dir: boolean) {
     const segs = this.rel(path)
     if (!segs || segs.length === 0) return
     const name = segs.pop()!

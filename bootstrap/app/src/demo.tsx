@@ -17,7 +17,8 @@ import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProjec
 import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
 import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents, refreshAfterWrite } from './lib/events'
-import { FolderMirror, pickFolder, readFolder } from './lib/folder'
+import { ensurePermission, FolderMirror, pickFolder, readFolder } from './lib/folder'
+import { folderHandle, readRecent, rememberFolder, setRecentMode, touchRecent, type FolderMode } from './lib/recent'
 import { DEMOS } from './shell/Home'
 import './tokens.css'
 import './app.css'
@@ -129,28 +130,105 @@ async function boot() {
     window.location.hash = '#/docs'
   }
 
+  // The folder open in this tab, if any: its mirror and its recent-list id.
+  let folder: { id: string; mirror: FolderMirror } | null = null
+  const publish = () => {
+    useApp.getState().setFolder(
+      folder ? { name: folder.mirror.root.name, mode: folder.mirror.currentMode, held: folder.mirror.heldCount } : null,
+    )
+  }
+  const fail = (what: string, err: unknown) => {
+    console.warn(`[jazyk ${what}]`, err)
+    window.alert(err instanceof Error ? err.message : String(err))
+  }
+
+  const openDemo = async (id: string) => {
+    const p = await fetchDemo(id)
+    folder = null
+    publish()
+    touchRecent({ id: `demo:${id}`, kind: 'demo', name: p.name })
+    await opened(p)
+  }
+
+  const openFolder = async (id: string, handle: FileSystemDirectoryHandle, mode: FolderMode) => {
+    const files = await readFolder(handle as Parameters<typeof readFolder>[0])
+    if (!('jazyk.toml' in files)) {
+      window.alert(`${handle.name} has no jazyk.toml at its top; pick a project directory.`)
+      return
+    }
+    const mirror = new FolderMirror(handle as ConstructorParameters<typeof FolderMirror>[0], '/project', mode)
+    mirror.onChange = publish
+    folder = { id, mirror }
+    publish()
+    touchRecent({ id, kind: 'folder', name: handle.name, mode })
+    await opened({ files, name: handle.name, mirror })
+  }
+
   window.addEventListener('jazyk:open-demo', (e) => {
-    const id = String((e as CustomEvent).detail ?? '')
-    fetchDemo(id)
-      .then(opened)
-      .catch((err) => {
-        console.warn('[jazyk demo]', err)
-        window.alert(err instanceof Error ? err.message : String(err))
-      })
+    openDemo(String((e as CustomEvent).detail ?? '')).catch((err) => fail('demo', err))
   })
-  window.addEventListener('jazyk:pick-folder', async () => {
+
+  // `detail.mode` is the read-only choice beside the button.
+  window.addEventListener('jazyk:pick-folder', async (e) => {
+    const mode: FolderMode = (e as CustomEvent).detail?.mode === 'write' ? 'write' : 'read'
+    let handle: FileSystemDirectoryHandle
     try {
-      const handle = await pickFolder()
-      const files = await readFolder(handle)
-      if (!('jazyk.toml' in files)) {
-        window.alert(`${handle.name} has no jazyk.toml at its top; pick a project directory.`)
+      handle = await pickFolder(mode)
+    } catch (err) {
+      // The picker was dismissed, or refused: nothing to do.
+      console.info('[jazyk folder]', err)
+      return
+    }
+    try {
+      await openFolder(await rememberFolder(handle), handle, mode)
+    } catch (err) {
+      fail('folder', err)
+    }
+  })
+
+  // A row of the recent list. The click is the gesture the permission prompt needs.
+  window.addEventListener('jazyk:open-recent', async (e) => {
+    const id = String((e as CustomEvent).detail ?? '')
+    const entry = readRecent().find((r) => r.id === id)
+    if (!entry) return
+    try {
+      if (entry.kind === 'demo') return await openDemo(id.slice('demo:'.length))
+      const handle = await folderHandle(id)
+      if (!handle) {
+        window.alert(`${entry.name} is no longer remembered by this browser; open it with Open folder.`)
         return
       }
-      await opened({ files, name: handle.name, mirror: new FolderMirror(handle, '/project') })
-    } catch (e) {
-      // The picker was dismissed, or refused: nothing to do.
-      console.info('[jazyk folder]', e)
+      const mode = entry.mode ?? 'read'
+      if (!(await ensurePermission(handle, mode))) return
+      await openFolder(id, handle, mode)
+    } catch (err) {
+      fail('folder', err)
     }
+  })
+
+  // The top bar's switch and the editor's prompt. Writing asks for write access,
+  // then lands everything held.
+  window.addEventListener('jazyk:folder-mode', async (e) => {
+    const mode: FolderMode = (e as CustomEvent).detail === 'write' ? 'write' : 'read'
+    if (!folder) return
+    const { id, mirror } = folder
+    try {
+      if (mode === 'write') {
+        if (!(await ensurePermission(mirror.root, 'write'))) return
+        await mirror.startWriting()
+      } else {
+        mirror.readOnly()
+      }
+      setRecentMode(id, mode)
+      publish()
+    } catch (err) {
+      fail('folder', err)
+    }
+  })
+
+  // Held changes live only in this tab: closing it asks first.
+  window.addEventListener('beforeunload', (e) => {
+    if (folder && folder.mirror.heldCount > 0) e.preventDefault()
   })
 
   root.render(

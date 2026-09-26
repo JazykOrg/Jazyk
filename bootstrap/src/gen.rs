@@ -889,6 +889,15 @@ pub fn decide_medium(
                 "decide retry"
             },
         )?;
+        // A rate limit relayed as a reply is the endpoint's answer, not a decision:
+        // say so instead of blaming an empty field (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
+        if crate::reconcile::rate_limited(&reply) {
+            return Err(format!(
+                "could not decide the deliverable's medium: the model call was rate limited ({})",
+                crate::llm::truncate(reply.trim(), 200)
+            ));
+        }
+        let excerpt = crate::llm::truncate(reply.trim(), 120).to_string();
         let raw = crate::llm::extract_json_object(&reply).unwrap_or(reply);
         let v: Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
@@ -903,7 +912,10 @@ pub fn decide_medium(
             .trim()
             .to_lowercase();
         if produced != "written" && produced != "built" {
-            last = format!("`produced` was `{}`, not `written` or `built`", produced);
+            last = format!(
+                "`produced` was `{}`, not `written` or `built` (the reply began: {})",
+                produced, excerpt
+            );
             continue;
         }
         let artifact = v["artifact"]

@@ -335,6 +335,7 @@ pub async fn graph(State(st): State<SharedState>) -> Response {
         "generation": store.status.generation,
         "entities": store.graph.entities,
         "requirements": store.graph.requirements,
+        "criteria": store.graph.criteria,
         "views": store.graph.views,
         "relationships": store.graph.relationships,
         "stateMachines": store.graph.state_machines,

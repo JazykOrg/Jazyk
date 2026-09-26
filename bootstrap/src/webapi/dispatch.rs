@@ -277,6 +277,7 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
                 "generation": store.status.generation,
                 "entities": store.graph.entities,
                 "requirements": store.graph.requirements,
+                "criteria": store.graph.criteria,
                 "views": store.graph.views,
                 "relationships": store.graph.relationships,
                 "stateMachines": store.graph.state_machines,

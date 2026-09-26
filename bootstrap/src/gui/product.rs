@@ -239,100 +239,32 @@ pub async fn inbox(State(st): State<SharedState>) -> Json<Value> {
 }
 
 // ---------------------------------------------------------------------------
-// The trace matrix as a file: csv or md (docs/frontends/gui.md#trace-matrix).
+// The trace matrix, as JSON or as a file: csv or md
+// (docs/frontends/gui.md#trace-matrix). The values live in crate::webapi::product.
 
 #[derive(Deserialize)]
 pub struct MatrixQ {
     format: Option<String>,
 }
 
-const COLUMNS: [&str; 8] = ["requirement", "entity", "status", "reason", "repair", "test", "lastRun", "evidence"];
-
-fn cell(v: &Value) -> String {
-    match v {
-        Value::Null => String::new(),
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
-}
-
-pub fn matrix_export(rows: &BTreeMap<String, Value>, format: &str) -> Option<(String, &'static str, &'static str)> {
-    let field = |row: &Value, col: &str| -> String {
-        match col {
-            "test" => cell(&row["test"]["label"]),
-            _ => cell(&row[col]),
-        }
-    };
-    match format {
-        "csv" => {
-            let mut out = COLUMNS.join(",");
-            out.push('\n');
-            for (rid, row) in rows {
-                let mut cells = vec![csv_escape(rid)];
-                cells.extend(COLUMNS[1..].iter().map(|c| csv_escape(&field(row, c))));
-                out.push_str(&cells.join(","));
-                out.push('\n');
-            }
-            Some((out, "text/csv; charset=utf-8", "trace-matrix.csv"))
-        }
-        "md" => {
-            let mut out = format!("| {} |\n|{}|\n", COLUMNS.join(" | "), COLUMNS.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
-            for (rid, row) in rows {
-                let mut cells = vec![rid.clone()];
-                cells.extend(COLUMNS[1..].iter().map(|c| field(row, c).replace('|', "\\|").replace('\n', " ")));
-                out.push_str(&format!("| {} |\n", cells.join(" | ")));
-            }
-            Some((out, "text/markdown; charset=utf-8", "trace-matrix.md"))
-        }
-        _ => None,
-    }
-}
-
-// The matrix rows the JSON endpoint serves, shared with the export.
-pub fn matrix_rows(store: &Store, gs: &crate::gen::GenSettings) -> (BTreeMap<String, Value>, BTreeMap<String, usize>) {
-    let statuses = crate::verify::status_map(store, gs);
-    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
-    let mut rows: BTreeMap<String, Value> = BTreeMap::new();
-    for (rid, v) in statuses {
-        let s = v["status"].as_str().unwrap_or("unknown").to_string();
-        *by_status.entry(s).or_default() += 1;
-        let entity = store
-            .graph
-            .requirements
-            .get(&rid)
-            .and_then(|r| r.entities.first().cloned())
-            .unwrap_or_default();
-        let mut row = v.clone();
-        row["entity"] = json!(entity);
-        row["test"] = json!({ "kind": v["kind"], "run": v["run"], "label": v["label"] });
-        rows.insert(rid, row);
-    }
-    (rows, by_status)
-}
-
 pub async fn verify_matrix(State(st): State<SharedState>, Query(q): Query<MatrixQ>) -> Response {
     let store = super::api::load_store(&st).await;
-    let (rows, counts) = matrix_rows(&store, &st.gs());
+    let gs = st.gs();
     match q.format.as_deref() {
-        None | Some("json") => Json(json!({ "rows": rows, "counts": counts })).into_response(),
-        Some(f) => match matrix_export(&rows, f) {
-            Some((body, ctype, name)) => (
-                [
-                    (header::CONTENT_TYPE, ctype.to_string()),
-                    (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", name)),
-                ],
-                body,
-            )
-                .into_response(),
-            None => err(StatusCode::BAD_REQUEST, format!("unknown format {}; csv, md, or json", f)),
-        },
+        None | Some("json") => Json(crate::webapi::product::matrix_value(&store, &gs)).into_response(),
+        Some(f) => {
+            let (rows, _) = crate::webapi::product::matrix_rows(&store, &gs);
+            match crate::webapi::product::matrix_export(&rows, f) {
+                Some((body, ctype, name)) => (
+                    [
+                        (header::CONTENT_TYPE, ctype.to_string()),
+                        (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", name)),
+                    ],
+                    body,
+                )
+                    .into_response(),
+                None => err(StatusCode::BAD_REQUEST, format!("unknown format {}; csv, md, or json", f)),
+            }
+        }
     }
 }

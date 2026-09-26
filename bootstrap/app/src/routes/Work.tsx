@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { post } from '../lib/api'
 import { useGenPending, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
+import { useCanRun } from '../lib/capabilities'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
 import './routes.css'
 
@@ -11,6 +12,7 @@ import './routes.css'
 // goal board (docs/frontends/gui.md#work).
 function Unclaimed({ busy }: { busy: boolean }) {
   const { data: w } = useWorkers()
+  const canDocument = useCanRun()('decompile')
   if (!w) return null
   const n = w.unclaimed ?? 0
   return (
@@ -20,13 +22,15 @@ function Unclaimed({ busy }: { busy: boolean }) {
         <span className={n > 0 ? 'v-stale' : 'muted'}>
           {n === 0 ? 'every deliverable file is bound to a requirement' : `${n} deliverable file${n === 1 ? '' : 's'} no binding names`}
         </span>
-        <button
-          disabled={busy || n === 0}
-          title="draft documents describing what the unclaimed files do; records a decompile release and runs like compile and generate"
-          onClick={() => post('/api/jobs', { kind: 'decompile' })}
-        >
-          decompile ▸
-        </button>
+        {canDocument && (
+          <button
+            disabled={busy || n === 0}
+            title="draft documents describing what the unclaimed files do; records a decompile release and runs like compile and generate"
+            onClick={() => post('/api/jobs', { kind: 'decompile' })}
+          >
+            decompile ▸
+          </button>
+        )}
       </p>
       {(w.decompileReleased ?? []).length > 0 && (
         <p className="muted mono" style={{ margin: '2px 0' }}>
@@ -43,6 +47,7 @@ export default function Work() {
   const trace = useApp((a) => a.trace)
   const genJob = Object.values(jobs).find((j) => j.state === 'running' && j.kind.kind === 'gen')
   const busy = Object.values(jobs).some((j) => j.state === 'running' || j.state === 'queued')
+  const canGen = useCanRun()('gen')
 
   if (pending.error)
     return (
@@ -69,13 +74,19 @@ export default function Work() {
     <div>
       <h1>Work</h1>
       <div className="actionrow">
-        <button
-          disabled={busy || rows.length === 0}
-          onClick={() => post('/api/jobs', { kind: 'gen', entities: rows.map((r) => r.entity) })}
-        >
-          generate all pending
-        </button>
-        <span className="muted">(leaf entities first)</span>
+        {canGen ? (
+          <>
+            <button
+              disabled={busy || rows.length === 0}
+              onClick={() => post('/api/jobs', { kind: 'gen', entities: rows.map((r) => r.entity) })}
+            >
+              generate all pending
+            </button>
+            <span className="muted">(leaf entities first)</span>
+          </>
+        ) : (
+          <span className="muted">Generation does not run here: this backend has no shell.</span>
+        )}
         <Link to="/product/trace">verification matrix</Link>
       </div>
 
@@ -89,12 +100,14 @@ export default function Work() {
             <NodeLink id={r.entity} />
             <span className={`chip ${r.reason === 'new' ? 'v-ok' : 'v-stale'}`}>{r.reason}</span>
             <Link to={`/dev/gen/${encodeURIComponent(r.entity)}`}>task package</Link>
-            <button
-              disabled={busy}
-              onClick={() => post('/api/jobs', { kind: 'gen', entities: [r.entity] })}
-            >
-              generate
-            </button>
+            {canGen && (
+              <button
+                disabled={busy}
+                onClick={() => post('/api/jobs', { kind: 'gen', entities: [r.entity] })}
+              >
+                generate
+              </button>
+            )}
           </p>
           {r.changed.length > 0 && (
             <p className="muted" style={{ margin: '2px 0' }}>

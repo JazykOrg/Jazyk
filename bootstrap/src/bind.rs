@@ -110,7 +110,7 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
                 walk(&p, root, needles, out, depth + 1);
                 continue;
             }
-            let Ok(meta) = p.metadata() else { continue };
+            let Ok(meta) = e.metadata() else { continue };
             if meta.len() > 200_000 {
                 continue;
             }

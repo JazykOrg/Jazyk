@@ -1,7 +1,11 @@
 // The verification matrix: every ledger row with its derived status, grouped by
-// entity, with the staleness cascade explained per row and run actions.
+// entity, with the staleness cascade explained per row and run actions. A backend
+// that runs no tests shows the rows without the actions
+// (docs/frontends/wasm.md#the-product).
 import { useState } from 'react'
-import { post, tokenParam, type VerifyRow } from '../lib/api'
+import { getText, post, tokenParam, type VerifyRow } from '../lib/api'
+import { backend } from '../lib/backend'
+import { useCanRun } from '../lib/capabilities'
 import { useStatus } from '../lib/queries'
 import { useWords } from '../lib/words'
 import { useMatrix } from '../lib/queries'
@@ -20,7 +24,23 @@ export default function VerifyMatrix() {
   const [kind, setKind] = useState<string | null>(null)
   const w = useWords()
   const { data: proj } = useStatus()
+  const canRun = useCanRun()
+  const canVerify = canRun('verify')
+  const canGen = canRun('gen')
   const exportHref = (fmt: string) => `/api/verify/matrix?format=${fmt}${tokenParam() ? `&${tokenParam()}` : ''}`
+  // The server answers the link itself; a backend in the tab has no URL to link to,
+  // so the page reads the export through it and saves the text as a file.
+  const saveExport = (fmt: string) => async (e: React.MouseEvent) => {
+    if (backend().kind === 'server') return
+    e.preventDefault()
+    const text = await getText(`/api/verify/matrix?format=${fmt}`)
+    const url = URL.createObjectURL(new Blob([text], { type: fmt === 'csv' ? 'text/csv' : 'text/markdown' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `trace-matrix.${fmt}`
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
 
   if (matrix.error)
     return (
@@ -69,17 +89,22 @@ export default function VerifyMatrix() {
         )}
       </div>
       <div className="actionrow">
-        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'verify', targets: [] })} title="run every test whose row asks for it">
-          {w.check} everything pending
-        </button>
-        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'audit' })} title="re-run every test, verified rows included">
-          Audit
-        </button>
+        {canVerify && (
+          <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'verify', targets: [] })} title="run every test whose row asks for it">
+            {w.check} everything pending
+          </button>
+        )}
+        {canRun('audit') && (
+          <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'audit' })} title="re-run every test, verified rows included">
+            Audit
+          </button>
+        )}
+        {!canVerify && <span className="muted">Tests do not run here: this backend has no shell.</span>}
         <span className="muted">export</span>
-        <a href={exportHref('csv')} download="trace-matrix.csv">
+        <a href={exportHref('csv')} download="trace-matrix.csv" onClick={saveExport('csv')}>
           csv
         </a>
-        <a href={exportHref('md')} download="trace-matrix.md">
+        <a href={exportHref('md')} download="trace-matrix.md" onClick={saveExport('md')}>
           markdown
         </a>
       </div>
@@ -126,7 +151,7 @@ export default function VerifyMatrix() {
                 <span className={`chip ${agg.replace('agg-', 'v-')}`}>
                   {list.length} rows
                 </span>
-                {ent.startsWith('ent:') && (
+                {canVerify && ent.startsWith('ent:') && (
                   <button
                     disabled={busy}
                     onClick={() => post('/api/jobs', { kind: 'verify', targets: [ent] })}
@@ -145,12 +170,14 @@ export default function VerifyMatrix() {
                       {r.test?.kind && <span className="muted">{r.test.kind}</span>}
                       {r.test?.run && <span className="mono muted oneline">{r.test.run}</span>}
                       {r.lastRun && <span className="muted">{r.lastRun}</span>}
-                      <button
-                        disabled={busy}
-                        onClick={() => post('/api/jobs', { kind: 'verify', targets: [id] })}
-                      >
-                        run
-                      </button>
+                      {canVerify && (
+                        <button
+                          disabled={busy}
+                          onClick={() => post('/api/jobs', { kind: 'verify', targets: [id] })}
+                        >
+                          run
+                        </button>
+                      )}
                     </p>
                     {r.evidence && (
                       <p className="muted oneline" style={{ margin: '2px 0 0' }} title={r.evidence}>
@@ -164,12 +191,14 @@ export default function VerifyMatrix() {
                         {r.entity && (
                           <>
                             ; regenerate <NodeLink id={r.entity} />{' '}
-                            <button
-                              disabled={busy}
-                              onClick={() => post('/api/jobs', { kind: 'gen', entities: [r.entity] })}
-                            >
-                              gen
-                            </button>
+                            {canGen && (
+                              <button
+                                disabled={busy}
+                                onClick={() => post('/api/jobs', { kind: 'gen', entities: [r.entity] })}
+                              >
+                                gen
+                              </button>
+                            )}
                           </>
                         )}
                       </p>

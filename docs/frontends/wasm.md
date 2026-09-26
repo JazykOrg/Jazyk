@@ -14,8 +14,12 @@ The [GUI](./gui.md) API is one implementation with two ways in.
 
 - `crate::webapi` holds the values: `status_value`, `board_value`, `preview_value`,
   `explain_value`, `ripple_value`, `views_value`, `view_value`, `tree_value`,
-  `card_value`, `page_value`. Each takes a [store](../compiler/graph.md) (or a
-  project and an out directory) and answers a JSON value. Nothing in it knows about a
+  `card_value`, `page_value`, and the [product](#the-product)'s
+  `deliverable_value`, `deliverable_file`, `deliverable_baseline`, `matrix_value`,
+  `matrix_export`, `gen_pending_value`, `gen_package_value`, `verify_pending_value`,
+  `docsgen_value`, `out_list`, and `out_file`. Each takes a
+  [store](../compiler/graph.md) (or a project and an out directory) and answers a
+  JSON value, or a refusal with its status and reason. Nothing in it knows about a
   transport.
 - `crate::gui` is the native transport: axum handlers, each a thin wrapper that loads
   the store off the async runtime and calls one of those functions.
@@ -243,6 +247,44 @@ So a build in a tab lands in the same `jazyk-out/` the native binary would write
 with the same shards and the same journal, and the two can be used on the same
 project in turn.
 
+## The product
+
+A project that carries its product carries it into the tab: the
+[deliverable](../consumers/gen.md#the-deliverable) folder, the
+[ledger](../consumers/gen.md#the-ledger) under `jazyk-out/gen/`, the criteria files,
+and the generated pages under `jazyk-out/docsgen/` are files in the tree like any
+other. Every read of the product is served from them, through the same
+`crate::webapi` functions the server answers with, so the [Product](./gui.md#product)
+lens shows in a tab what it shows on a machine:
+
+- `GET /api/deliverable`: the product files with the entities, requirements, and tests
+  the ledger binds to each, and the recorded medium and build (the Files tree, the
+  product form).
+- `GET /api/deliverable/file`: one file's text with its resolved
+  [sites](../consumers/gen.md#traceability), the code lenses of the product file
+  viewer. `GET /api/deliverable/baseline` answers the file as it stood before the
+  last generation, when the project carries that snapshot.
+- `GET /api/verify/matrix`: the trace matrix, every requirement with its
+  [derived status](../consumers/gen.md#status-is-derived-never-stored), and the Tests
+  page built from it. The status is derived from the ledger and the files in the
+  tree, the same way it is derived from the files on disk. `?format=csv` and
+  `?format=md` answer the export as text, and the page saves it as a file.
+- `GET /api/verify/pending`, `GET /api/gen/pending`, `GET /api/gen/package/{entity}`:
+  what verification and generation owe, and the package a generation session would
+  receive.
+- The [unclaimed report](../consumers/bind.md#the-unclaimed-report) (the Not
+  described page), through `GET /api/workers`.
+- `GET /api/docsgen/{slug}`, `GET /api/out/list`, and `GET /api/out/file`: the
+  generated pages and any other file under the out directory. The tab's envelope
+  carries JSON, so `/api/out/file` answers a text file's text and refuses a binary
+  file (a `.png`) with `501`.
+
+Every path is confined the way the server confines it: a path that leaves the
+deliverable or the out directory is `400`, a missing file is `404`.
+
+What the product needs a shell for does not run: see
+[what a tab does not do](#what-a-tab-does-not-do).
+
 ## Sessions
 
 Natively a session is an [ACP worker session](./acp.md#worker-sessions): jazyk
@@ -464,9 +506,9 @@ the cache. `jobs` lists `compile` once the model is ready. The model's code
 (WebLLM) is fetched with the model, not with the page.
 
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
-and its whole `jazyk-out` as last built (the shards, the journal, the coverage, the
-rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON per example
-under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
+its product folder when it has one, and its whole `jazyk-out` as last built (the
+shards, the journal, the coverage, the rendered diagrams, the ledger), packed by
+`app/scripts/pack-demo.mjs` into one JSON per example under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
 for replays, leases, worker registrations, sockets, dotfiles, and an archived out
 directory are left out: a stale worker registration would be reaped on the first
 read, and that removal would count as an edit. The fixtures are committed, since the
@@ -522,10 +564,11 @@ module. `npm run build` is unchanged and still builds only the workbench.
 the built `dist-demo/` served with the isolation headers. They drive the page the
 way a visitor does: every route but Home redirects until a project is open, each
 demo opens with only its own documents, the Model pages read by name with no ids,
-a requirement keeps the Requirements list, a diagram shows its picture, a demo
-autosaves, a read-only folder holds its writes until asked and a writing one
-autosaves (a folder in the browser's private file system stands in for a picked
-one), the recent list remembers and forgets, a new project and an edited demo
+a requirement keeps the Requirements list, a diagram shows its picture, the
+Product pages list a demo's product files and open one with its text, the trace
+matrix renders its rows, a demo autosaves, a read-only folder holds its writes
+until asked and a writing one autosaves (a folder in the browser's private file
+system stands in for a picked one), the recent list remembers and forgets, a new project and an edited demo
 reopen with their edits after a reload and the demo resets to its original, a
 folder whose writes fail keeps them and Retry lands them, a read-only folder's held
 changes survive a reload, a phone-width screen gives the editor
@@ -561,8 +604,13 @@ policy; nothing client-side is needed.
 
 ## What a tab does not do
 
-- No [generation](../consumers/gen.md) or verification runs: both shell out to the
-  deliverable's build and test commands, and `crate::sys::run_shell` has no shell.
+- No [generation](../consumers/gen.md), [binding](../consumers/bind.md),
+  verification, or [decompilation](../consumers/decompile.md) runs: each shells out to the deliverable's build and test commands, or
+  runs a session with command tools, and `crate::sys::run_shell` has no shell. The
+  jobs answer `501`, and the pages hide the actions that would start them (build,
+  check, audit, document), as they hide any action a missing
+  [capability](./gui.md#backends-and-capabilities) asks for. The product the project
+  carries still reads: see [the product](#the-product).
 - No [LSP](./lsp.md), no [ACP](./acp.md), no external [executors](./acp.md#agents):
   all three need a process or a socket. [Chat](#chat) runs the loop in the worker
   instead of an agent.

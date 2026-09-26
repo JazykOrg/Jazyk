@@ -951,7 +951,8 @@ fn collect_files(root: &std::path::Path, v: &mut Vec<(PathBuf, bool)>, is_criter
             {
                 collect_files(&path, v, is_criteria);
             }
-        } else if std::fs::metadata(&path)
+        } else if e
+            .metadata()
             .map(|m| m.len() <= 512 * 1024)
             .unwrap_or(false)
         {

@@ -3,6 +3,7 @@ import { useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { get, post } from '../lib/api'
 import { useApp } from '../lib/store'
+import { useCanRun } from '../lib/capabilities'
 import NodeLink, { linkifyIds } from '../components/NodeLink'
 import './routes.css'
 
@@ -32,6 +33,7 @@ export default function GenTask() {
   const id = decodeURIComponent(raw ?? '')
   const jobs = useApp((a) => a.jobs)
   const busy = Object.values(jobs).some((j) => j.state === 'running' || j.state === 'queued')
+  const canGen = useCanRun()('gen')
   const q = useQuery({
     queryKey: ['pending', 'package', id],
     queryFn: () => get<TaskPackage>(`/api/gen/package/${encodeURIComponent(id)}`),
@@ -54,9 +56,11 @@ export default function GenTask() {
         {t.name} <NodeLink id={id} />
       </h1>
       <div className="actionrow">
-        <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'gen', entities: [id] })}>
-          run generation
-        </button>
+        {canGen && (
+          <button disabled={busy} onClick={() => post('/api/jobs', { kind: 'gen', entities: [id] })}>
+            run generation
+          </button>
+        )}
         <span className="muted mono">deliverable {t.deliverable}</span>
         <span className="muted mono">fact {t.factHash}</span>
       </div>

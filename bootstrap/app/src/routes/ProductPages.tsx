@@ -5,6 +5,7 @@ import { Link } from 'react-router'
 import { post } from '../lib/api'
 import { useDeliverable, useMatrix, useOutList, useProject, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
+import { useCanRun } from '../lib/capabilities'
 import { useWords } from '../lib/words'
 import { verifyClass } from '../components/Chip'
 import { outHref } from '../lib/nav'
@@ -128,6 +129,7 @@ export function NotDescribed() {
   const busy = Object.values(jobs).some((j) => j.state === 'running' || j.state === 'queued')
   const files = (deliv.data?.files ?? []).filter((f) => f.owners.entities.length + f.owners.requirements.length === 0)
   const n = workers.data?.unclaimed ?? files.length
+  const canDocument = useCanRun()('decompile')
   return (
     <div className="ws-scroll narrow">
       <div className="page-head">
@@ -140,7 +142,7 @@ export function NotDescribed() {
           Every product file carries at least one requirement from the documents.
         </div>
       )}
-      {n > 0 && (
+      {n > 0 && canDocument && (
         <div className="card">
           <p className="row" style={{ margin: '2px 0' }}>
             <b>{w.document}</b>

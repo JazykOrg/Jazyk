@@ -4,10 +4,17 @@
 // See docs/frontends/wasm.md#one-api-two-transports.
 pub mod board;
 pub mod card;
+pub mod deliverable;
 pub mod docs;
+pub mod outfiles;
+pub mod product;
 pub mod status;
 pub mod views;
 pub mod workers;
+
+// A read the value functions refuse: the HTTP status and the reason, which each
+// transport answers in its own envelope.
+pub type Refusal = (u16, String);
 
 #[cfg(target_arch = "wasm32")]
 pub mod dispatch;

@@ -727,8 +727,9 @@ The center is a page per selection:
     the editor at the quote; or, when no document states it, `Inferred` or `Your
     edit` with the reasoning and the proposal's Accept and Retract.
   - Acceptance criteria: each criterion's statement, its kind in words, its measure,
-    and where the criterion comes from (the quote, or `Inferred`). A criterion split
-    into given, when, and then shows the three as one sentence each.
+    and where the criterion comes from (the quote, or `Inferred`). The statement
+    carries the condition; a criterion split into given, when, and then shows the
+    split on hover, not as a second sentence.
   - Details, only when present: the relations it states in words ("Backend uses
     Database"), the state change it declares ("Order: placed → paid, on payment"),
     and its code sites (`exact`, `moved`, `lost`).

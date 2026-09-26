@@ -183,6 +183,27 @@ for: the harness holds (gates bounce bad calls, junk never lands), but the judgm
 the sessions produce is poor, and a turn takes a minute or more. The demo shows the
 machinery, not the quality.
 
+### Model sources
+
+The page's model comes from one of three sources, chosen in the Sync sheet and in
+Settings. The choice, and an endpoint's URL, model name, and key, are kept in this
+browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk server;
+an endpoint's key goes only to that endpoint.
+
+- Downloaded (the default): an instruct model from Hugging Face run on WebGPU by WebLLM,
+  loaded on request and cached by the browser (above).
+- Built into the browser: Chrome's on-device model through the Prompt API
+  (`LanguageModel`). Offered only where the browser has it; the browser may download it
+  on first use. Its context window is small, so a large session may not fit and fails
+  with the model's own error.
+- Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
+  a provider), with a model name and an optional key. The page calls it directly, so
+  the endpoint must allow this page's origin (CORS). Ready at once, nothing to load.
+
+Switching sources drops the loaded model; a session in flight finishes on the old one.
+A source that cannot run in this browser is shown with the reason instead of being
+offered.
+
 ## The trace
 
 The native server streams [trace events](../compiler/sessions.md#trace-events) over
@@ -237,8 +258,9 @@ folder flips the descriptor to `backend: wasm`, `persistence: browser`.
 
 The model loads only when asked, because every read works without one and only a
 build needs it, and a first visit would otherwise download gigabytes to read a
-document. Where the browser has WebGPU the descriptor says `model: loadable`, and
-the Sync sheet offers `Load the model` with its download size; the load shows its
+document. The descriptor says `model: loadable` while the chosen
+[source](#model-sources) still has to load, and the Sync sheet offers `Load the model`
+with its download size; the load shows its
 progress there, and the weights cache in the browser, so a later visit loads from
 the cache. `jobs` lists `compile` once the model is ready. The model's code
 (WebLLM) is fetched with the model, not with the page.

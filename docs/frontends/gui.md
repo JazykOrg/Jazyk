@@ -565,6 +565,12 @@ The first screen is the project picker:
   examples: the shop, the sort utility, the ERP, the slide deck, the novel, the
   organization), `Recent` (the server's list from `GET /api/projects`: each with its
   path, its shape, its sync state in product words, and its waiting count).
+- In the browser, Home reads top to bottom: `Recent`, then `Local project` (a folder on
+  this computer with a `jazyk.toml` at its top, the `Open folder` button and the
+  `read-only` choice under it), then the demos. A browser without the File System
+  Access API (Firefox, Safari) shows `Local project` with the reason instead of the
+  button: opening a folder needs Chrome, Edge, or another Chromium browser, and the
+  demos work everywhere.
 - In the browser the `Recent` list is the browser's own, kept in its local storage
   under `jazyk.recent`: every demo and folder opened in this browser, newest first,
   each with its name, its kind, and a folder's mode. A folder's directory handle

@@ -444,7 +444,8 @@ Budgets are registry constants built into the binary, not settings
   bursts before it stops compile batches. Exhaustion parks every open goal
   ([convergence](./compilation.md#convergence)). Five consecutive failed sessions
   that spent no tokens stop the build early the same way: an endpoint answering only
-  errors parks the rest instead of grinding the cap
+  errors parks the rest instead of grinding the cap, and a rate limit stops it at the
+  first such failure; a session that spent nothing never counts as its goals' attempt
   ([escalation](./reconciler.md#escalation)). `jazyk compile --sessions N` replaces
   the cap with N for one run ([compile](../frontends/cli.md#jazyk-compile)).
 

@@ -689,7 +689,12 @@ human is `blocked` and counted; a build that exhausts its cap parks what is open
 files `incomplete-build`. A dead endpoint trips a breaker before the cap: five
 consecutive failed sessions that spent no tokens park what is open the same way, the
 last error named in the reason, because an endpoint answering only errors (a rate
-limit, an outage) must not grind the session cap into hundreds of futile attempts.
+limit, an outage) must not grind the session cap into hundreds of futile attempts. A
+failure naming a rate limit (HTTP 429, a rate, usage, or quota limit) trips the breaker
+at once, since a quota does not reset between sessions. A session that failed without
+spending a token never counts as its goals' attempt: the model never saw them, so their
+one retry stays theirs. A novel build under an exhausted quota had parked goals on
+attempts no model made, 302 in its last minutes.
 
 ## Parked and failed
 

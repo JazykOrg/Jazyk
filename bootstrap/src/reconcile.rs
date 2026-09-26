@@ -2258,13 +2258,13 @@ pub fn compile_with(
         // Count consecutive failures that spent nothing: an endpoint answering
         // only errors, not sessions worth retrying. Any success or any spend
         // resets the streak. Mirrors docs/compiler/reconciler.md#escalation.
-        if report.tokens == 0 && report.failed.is_some() {
-            dead_endpoint += 1;
+        let endpoint_down;
+        (dead_endpoint, endpoint_down) =
+            breaker_step(dead_endpoint, report.tokens, report.failed.as_deref());
+        if endpoint_down {
             if let Some(e) = report.failed.as_ref() {
                 endpoint_error = e.clone();
             }
-        } else {
-            dead_endpoint = 0;
         }
         if let Some(e) = report.failed {
             trace.event(TraceEvent::SessionFailed {
@@ -2353,6 +2353,11 @@ pub fn compile_with(
                     justification: None,
                     reason: Some(reason),
                 });
+                continue;
+            }
+            // A session that spent nothing never saw its goals: their retry stays
+            // theirs (docs/compiler/reconciler.md#escalation).
+            if endpoint_down {
                 continue;
             }
             let n = attempts.entry(id.clone()).or_insert(0);
@@ -3066,8 +3071,53 @@ pub fn render_ripple(tree: &RippleTree) -> String {
     out
 }
 
+// One session's step of the dead-endpoint breaker: a failure that spent nothing is the
+// endpoint's, not the goals', and advances the streak (a rate limit to the breaker at
+// once, since a quota does not reset between sessions); anything else resets it.
+// Returns the new streak and whether the endpoint was down.
+// Mirrors docs/compiler/reconciler.md#escalation.
+pub(crate) fn breaker_step(streak: usize, tokens: u64, failed: Option<&str>) -> (usize, bool) {
+    match failed {
+        Some(e) if tokens == 0 => {
+            if rate_limited(e) {
+                (crate::limits::ENDPOINT_BREAKER, true)
+            } else {
+                (streak + 1, true)
+            }
+        }
+        _ => (0, false),
+    }
+}
+
+// An error naming a rate or quota limit: HTTP 429, "rate limit", "usage limit", "quota".
+// Mirrors docs/compiler/reconciler.md#escalation.
+pub(crate) fn rate_limited(error: &str) -> bool {
+    let e = error.to_lowercase();
+    e.contains("http 429")
+        || e.contains(" 429 ")
+        || e.contains("rate limit")
+        || e.contains("rate_limit")
+        || e.contains("usage limit")
+        || e.contains("quota")
+}
+
 #[cfg(test)]
 mod tests {
+
+    // A rate limit trips the breaker at once; any endpoint failure spends no goal's
+    // attempt; a session that spent tokens resets the streak.
+    // Mirrors docs/compiler/reconciler.md#escalation.
+    #[test]
+    fn a_rate_limit_trips_the_breaker_and_spends_no_attempt() {
+        let b = crate::limits::ENDPOINT_BREAKER;
+        assert_eq!(breaker_step(0, 0, Some("http error: HTTP 429 :: {\"error\":\"Rate limit exceeded\"}")), (b, true));
+        assert_eq!(breaker_step(0, 0, Some("You've hit your usage limit.")), (b, true));
+        assert_eq!(breaker_step(2, 0, Some("transport: connection refused")), (3, true));
+        assert_eq!(breaker_step(3, 1200, Some("the session left the batch open")), (0, false));
+        assert_eq!(breaker_step(3, 0, None), (0, false));
+        assert!(!rate_limited("the batch failed its gate"));
+    }
+
     use super::*;
     use crate::model::{hash_hex, DocRecord, Requirement, SourceRef};
     use crate::project::Project;

@@ -27,8 +27,10 @@ for f in "$DEMOS"/*.json; do
     warn "$id" "the current compiler derives $open open goal(s) for it."
   fi
   if [ -f "$dir/jazyk-out/gen/ledger.yaml" ]; then
-    rows=$(cd "$dir" && "$JAZYK" test --list 2>/dev/null | grep -c 'req:' || true)
-    passing=$(cd "$dir" && "$JAZYK" test --list 2>/dev/null | grep 'req:' | grep -c ' verified' || true)
+    # One ledger row per requirement; `test --list` names the rows that do not pass.
+    rows=$(grep -c '^  req:' "$dir/jazyk-out/gen/ledger.yaml" || true)
+    behind=$(cd "$dir" && "$JAZYK" test --list 2>/dev/null | grep -c '^req:' || true)
+    passing=$((rows - behind))
     if [ "$rows" -gt 0 ] && [ "$passing" -lt "$rows" ]; then
       warn "$id" "$passing of $rows tests pass."
     fi

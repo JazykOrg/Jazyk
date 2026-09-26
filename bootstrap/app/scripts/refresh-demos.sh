@@ -55,15 +55,25 @@ for id in $ORDER; do
   verdict=$(sed -n 's/^verdict: //p' <<< "$("$JAZYK" status 2>/dev/null)")
   tests="-"
   if [ -f jazyk-out/gen/ledger.yaml ]; then
-    list=$("$JAZYK" test --list 2>/dev/null | grep 'req:')
-    tests="$(grep -c ' verified' <<< "$list") of $(grep -c 'req:' <<< "$list")"
+    # The ledger holds one row per requirement; `test --list` names the rows that
+    # do not pass.
+    rows=$(grep -c '^  req:' jazyk-out/gen/ledger.yaml)
+    behind=$("$JAZYK" test --list 2>/dev/null | grep -c '^req:')
+    tests="$((rows - behind)) of $rows"
   fi
   cost=$(sed -n 's/^cost: //p' <<< "$("$JAZYK" status 2>/dev/null)")
   summary+=("$id|$verdict|$tests|$cost")
 done
 
+# Pack only what was rebuilt: another example's out directory may hold work in
+# progress that its committed fixture should not take.
 cd "$ROOT"
-sh bootstrap/app/scripts/pack-demos.sh
+packs=()
+for id in $ORDER; do
+  [ -n "$ONLY" ] && [ "$ONLY" != "$id" ] && continue
+  packs+=("$id=${EXAMPLES[$id]}")
+done
+node bootstrap/app/scripts/pack-demo.mjs bootstrap/app/public/demos $packs
 
 echo
 printf '%-7s %-45s %-12s %s\n' demo verdict tests 'last build cost'

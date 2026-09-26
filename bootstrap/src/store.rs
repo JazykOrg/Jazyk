@@ -236,9 +236,10 @@ pub enum Op {
 
 // Rules the deterministic checks own: reconciled (reported, updated, resolved) against
 // each build's findings. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
-pub const CHECK_RULES: [&str; 33] = [
+pub const CHECK_RULES: [&str; 34] = [
     "criterion-missing",
     "criterion-restates",
+    "criteria-conflict",
     "failing-binding",
     "pinned-fact-drift",
     "unsupported-format",

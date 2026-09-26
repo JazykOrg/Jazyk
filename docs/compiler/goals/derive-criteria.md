@@ -17,10 +17,13 @@ when the project configures a `[gen]` deliverable
   were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
 
 The `change` carries two id lists, `none` (no criterion yet) and `revised` (a derived
-criterion gone stale); the `cause` is the newest record among them. Each goal is a batch wall of its own
-([batching](../reconciler.md#batching)), and the changeset's mutation budget grows by
-three per listed requirement ([budgets](../sessions.md#budgets)): a batch that packed
-twelve entities' goals against one budget once failed three of them unstaged. A project without a deliverable derives none:
+criterion gone stale); the `cause` is the newest record among them. Up to four goals
+share a batch ([batching](../reconciler.md#batching)), within the context budget, and
+the changeset's mutation budget grows by three per listed requirement
+([budgets](../sessions.md#budgets)). A batch that packed twelve entities' goals
+against one budget once failed three of them unstaged; one goal per batch then cost a
+session per entity, seventeen sessions for seven entities on one build, most of them
+spent on the same fixed opening. A project without a deliverable derives none:
 stated criteria still enter through extraction, and the `criterion-missing` check
 reports the gaps as information ([checks](../compilation.md#checks)).
 

@@ -13,9 +13,9 @@ if (!dest || pairs.length === 0) {
 }
 
 // Everything under the project except what a tab has no use for: the traces of the
-// builds that produced it, the session transcripts, the leases of a running
-// server, and an archived out directory.
-const SKIP = new Set(['trace', 'sessions', 'leases', 'node_modules', '.git', 'jazyk-out.bak'])
+// builds that produced it, the session transcripts, the snapshots kept for replays,
+// the leases of a running server, and an archived out directory.
+const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'node_modules', '.git', 'jazyk-out.bak'])
 
 function walk(dir, files) {
   for (const name of readdirSync(dir)) {

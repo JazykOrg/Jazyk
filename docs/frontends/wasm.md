@@ -268,8 +268,8 @@ the cache. `jobs` lists `compile` once the model is ready. The model's code
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
 and its whole `jazyk-out` as last built (the shards, the journal, the coverage, the
 rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON per example
-under `app/public/demos/`. Traces, session transcripts, leases, sockets, dotfiles,
-and an archived out directory are left out. The fixtures are committed, since the
+under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
+for replays, leases, sockets, dotfiles, and an archived out directory are left out. The fixtures are committed, since the
 examples' out directories are not, and `npm run pack-demos` repacks all of them
 after an example is rebuilt. The page fetches a fixture when its demo is picked
 rather than carrying them all.

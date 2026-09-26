@@ -47,6 +47,55 @@ test('the product pages render for every demo', async ({ page }) => {
   expect(errs).toEqual([])
 })
 
+// The product a demo carries reads in the tab (docs/frontends/wasm.md#the-product).
+test('the product files list and a file opens with its text', async ({ page }) => {
+  await openDemo(page, 'The sort utility')
+  await page.goto('/#/product/files')
+  const nav = page.locator('.ws-nav')
+  await expect(nav.getByRole('link', { name: 'main.js', exact: true })).toBeVisible()
+  await expect(nav.getByRole('link', { name: 'main.test.js', exact: true })).toBeVisible()
+  await nav.getByRole('link', { name: 'main.js', exact: true }).click()
+  await page.waitForURL(/#\/product\/files\/main\.js$/)
+  await expect(page.locator('.ide-topbar')).toContainText('main.js')
+  await expect(page.locator('.deliv-editor').first()).toContainText('readStdinLines')
+
+  // A file the ledger binds shows its sites as lenses; a fixture without a ledger
+  // binds none.
+  const deliv = await api<{ files: { path: string; owners: { requirements: string[] } }[] }>(page, 'GET', '/api/deliverable')
+  const bound = deliv.files.find((f) => f.owners.requirements.length > 0)
+  if (bound) {
+    const file = await api<{ sites: unknown[] }>(page, 'GET', `/api/deliverable/file?path=${encodeURIComponent(bound.path)}`)
+    await page.goto(`/#/product/files/${bound.path}`)
+    if (file.sites.length > 0) await expect(page.locator('.jz-lens').first()).toBeVisible()
+  }
+})
+
+test('the trace matrix renders a row per requirement and exports from the tab', async ({ page }) => {
+  await openDemo(page, 'The sort utility')
+  const matrix = await api<{ rows: Record<string, unknown> }>(page, 'GET', '/api/verify/matrix')
+  const n = Object.keys(matrix.rows).length
+  expect(n).toBeGreaterThan(0)
+  await page.goto('/#/product/trace')
+  const center = page.locator('.ws-center')
+  await expect(center.locator('.card > div .chip')).toHaveCount(n)
+  // Tests do not run in a tab, so the matrix offers no run action.
+  await expect(center.getByRole('button', { name: /^run$/ })).toHaveCount(0)
+  const download = page.waitForEvent('download')
+  await center.getByRole('link', { name: 'csv' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toBe('trace-matrix.csv')
+  const text = await (await import('node:fs/promises')).readFile(await file.path(), 'utf8')
+  expect(text.split('\n')[0]).toBe('requirement,entity,status,reason,repair,test,lastRun,evidence')
+  expect(text.trim().split('\n')).toHaveLength(n + 1)
+})
+
+test('the generated pages list and one opens rendered', async ({ page }) => {
+  await openDemo(page, 'The sort utility')
+  await page.goto('/#/product/generated')
+  await page.locator('.ws-nav').getByRole('link', { name: 'index.md', exact: true }).click()
+  await expect(page.locator('.ws-center h1').first()).toHaveText('Index')
+})
+
 test('an entity page reads by name, states its relations once, and explains a connection', async ({ page }) => {
   await openDemo(page, 'The ERP')
   await page.goto('/#/model/entities/ent%3Abackend')

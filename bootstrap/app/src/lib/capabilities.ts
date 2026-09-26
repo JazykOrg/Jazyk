@@ -57,6 +57,13 @@ export function needsPageModel(caps: Capabilities | undefined): boolean {
   return !!caps && caps.backend !== 'server' && caps.model !== 'in-page'
 }
 
+// Whether the backend runs a job kind: a page hides the action that would start it
+// otherwise (docs/frontends/wasm.md#what-a-tab-does-not-do). Unknown yet reads as yes.
+export function useCanRun(): (need: JobKind) => boolean {
+  const caps = useCapabilities()
+  return (need) => !caps.data || caps.data.jobs.includes(need)
+}
+
 // The sentence an empty state gives when a capability is missing.
 export function whyNot(caps: Capabilities | undefined, need: JobKind | 'agent' | 'docs-write'): string | null {
   if (!caps) return null

@@ -12,8 +12,18 @@ import { selectNodeParams } from '../lib/nav'
 import { pressable } from '../lib/a11y'
 import { verifyClass } from '../components/Chip'
 import { reverseIndex } from '../components/Cards'
+import { useApp } from '../lib/store'
+import { kindWord } from '../lib/present'
 
 const LISTS = ['entities', 'requirements', 'views', 'diagnostics', 'coverage'] as const
+// The tabs in the product's words (docs/frontends/gui.md#vocabulary).
+const LIST_LABEL: Record<string, string> = {
+  entities: 'Entities',
+  requirements: 'Requirements',
+  views: 'Diagrams',
+  diagnostics: 'Problems',
+  coverage: 'Read',
+}
 type ListKind = (typeof LISTS)[number]
 const WINDOW = 200
 
@@ -72,6 +82,7 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
   const proposals = useMemo(() => proposalIndex(graph), [graph])
   const chain = useMemo(() => (view ? levelChain(tree, view) : null), [tree, view])
   const levelNode = chain ? chain.crumbs[chain.crumbs.length - 1].target : null
+  const dev = useApp((a) => a.dev)
 
   // The scope roots open on first render; the ancestors of the inspected node and
   // of the overlaid level open as they change, so the current position is in view.
@@ -104,8 +115,10 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
     setSp(next)
   }
 
+  // The level view ids under each node are a Developer detail: the entity page lists
+  // its diagrams by title.
   const viewChips = (levelView: string | null, views: string[], depth: number) =>
-    levelView ? (
+    levelView && dev ? (
       <div className="wb-tree-views" style={{ paddingLeft: 26 + depth * 14 }}>
         {[levelView, ...views].map((id) => (
           <a
@@ -138,23 +151,21 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
           >
             {n.children.length === 0 ? '·' : open ? '▾' : '▸'}
           </button>
-          <a className="wb-tree-name" {...pressable(() => openAndFocus(n.id))} title={n.id}>
+          <a className="wb-tree-name" {...pressable(() => openAndFocus(n.id))} title={dev ? n.id : kindWord(n.stereotype)}>
             {n.name}
-            {n.stereotype ? <span className="muted"> «{n.stereotype}»</span> : null}
           </a>
           {n.grouping && (
-            <span className="chip sev-none" title="a grouping: derived provenance, no document states it">
-              grouping
+            <span className="chip sev-none" title="no document names this; jazyk grouped it from the documents">
+              inferred
             </span>
           )}
           {proposal && (
-            <a className="wb-tree-proposal" title="the ratification proposal" {...pressable(() => openDiagnostic(proposal))}>
-              ratify
+            <a className="wb-tree-proposal" title="the proposal to add it to the documents" {...pressable(() => openDiagnostic(proposal))}>
+              review
             </a>
           )}
-          <span className="sub">
-            {n.count > 0 ? `${n.count} children · ` : ''}
-            {(revIdx.get(n.id) ?? []).length} req
+          <span className="sub" title={`${(revIdx.get(n.id) ?? []).length} requirements`}>
+            {(revIdx.get(n.id) ?? []).length || ''}
           </span>
         </div>
         {viewChips(n.levelView, n.views, depth)}
@@ -173,13 +184,12 @@ function ContainmentTree({ tree, graph, q, node, view, revIdx, openAndFocus, ove
             {open ? '▾' : '▸'}
           </button>
           <a
-            className="wb-tree-name mono"
-            title={r.levelView ? `overlay ${r.levelView}` : 'the scope root'}
+            className="wb-tree-name"
+            title={r.levelView ? `the top-level diagram${dev ? `: ${r.levelView}` : ''}` : r.target}
             {...pressable(() => r.levelView && overlayView(r.levelView))}
           >
-            {r.target}
+            {r.target === 'scope:public' ? 'Everything' : r.target.replace(/^scope:/, '')}
           </a>
-          <span className="sub">{r.count} at the root</span>
         </div>
         {viewChips(r.levelView, r.views, 0)}
         {open && r.children.map((c) => rows(c, 1))}
@@ -207,6 +217,7 @@ export default function GraphSidebar() {
       ? 'requirements'
       : 'entities'
   const q = (sp.get('q') ?? '').toLowerCase()
+  const devMode = useApp((a) => a.dev)
   const node = sp.get('node')
   const view = sp.get('view')
 
@@ -294,7 +305,7 @@ export default function GraphSidebar() {
               setParam('list', t)
             }}
           >
-            {t}
+            {LIST_LABEL[t] ?? t}
           </a>
         ))}
       </div>
@@ -333,7 +344,8 @@ export default function GraphSidebar() {
               {...pressable(() => openAndFocus(id))}
             >
               <span className={`mono ${verifyClass(rows[id]?.status)}`}>●</span>{' '}
-              <span className="mono">{id}</span> <span className="sub">{r.statement}</span>
+              {devMode && <span className="mono">{id} </span>}
+              <span className={devMode ? 'sub' : ''}>{r.statement}</span>
             </a>
           ),
         )}
@@ -386,8 +398,9 @@ export default function GraphSidebar() {
               title={d.message}
               {...pressable(() => openAndFocus(id))}
             >
-              <span className={`mono sev-${d.severity}`}>{d.severity}</span>{' '}
-              <span className="mono">{d.rule}</span> <span className="sub">{d.message}</span>
+              <span className={`mono sev-${d.severity}`}>●</span>{' '}
+              {devMode && <span className="mono">{d.rule} </span>}
+              <span className={devMode ? 'sub' : ''}>{d.message}</span>
             </a>
           ),
         )}

@@ -1164,3 +1164,380 @@ a.trail-step:hover .trail-label {
     transition: none;
   }
 }
+
+/* Node pages and the inspector under the presentation rules
+   (docs/frontends/gui.md#presentation). */
+.node-view {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.wb-inspector .node-view {
+  font-size: 13px;
+}
+
+.node-head {
+  margin-bottom: 10px;
+}
+
+.node-kicker {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.page-head .node-kicker {
+  flex-basis: 100%;
+}
+
+.node-kicker a {
+  color: var(--muted);
+}
+
+.node-title {
+  margin: 0 0 6px;
+  line-height: 1.25;
+}
+
+.node-title.statement {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.wb-inspector .node-title.statement {
+  font-size: 14.5px;
+}
+
+.node-definition {
+  font-size: 15px;
+}
+
+.wb-inspector .node-definition {
+  font-size: 13px;
+}
+
+.node-inferred {
+  border-left: 3px solid var(--info);
+  padding: 4px 10px;
+  margin: 8px 0;
+  background: color-mix(in srgb, var(--info) 6%, transparent);
+}
+
+.node-inferred p {
+  margin: 2px 0;
+}
+
+.attr-table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.attr-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 2px 16px 2px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.attr-table td {
+  padding: 2px 16px 2px 0;
+}
+
+.status-line {
+  margin: 4px 0 18px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.part {
+  margin: 0 0 22px;
+}
+
+.part > h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.part-note {
+  margin: -4px 0 8px;
+}
+
+.req-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.req-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-1px);
+}
+
+.status-word {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.status-word .status-dot {
+  transform: none;
+}
+
+.name-link {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.name-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.dev-id {
+  font-size: 11px;
+}
+
+.source-quote {
+  margin: 0 0 10px;
+}
+
+.source-ref {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.source-quote blockquote {
+  margin: 2px 0 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--line);
+  color: var(--ink);
+}
+
+.show-more {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.dev-details {
+  margin-top: 26px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12.5px;
+}
+
+.dev-details > summary {
+  color: var(--warn);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.problem {
+  border-left: 3px solid currentColor;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+}
+
+.problem > * {
+  color: var(--ink);
+}
+
+.problem-line,
+.problem-q {
+  margin: 2px 0;
+}
+
+.problem-q {
+  font-style: italic;
+}
+
+.problem-actions {
+  margin: 4px 0 0;
+}
+
+.problem-actions button {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.diagram-list,
+.member-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.diagram-link {
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.diagram-link:hover {
+  color: var(--accent);
+}
+
+.step-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.step-list li {
+  margin: 3px 0;
+}
+
+.inside-picture {
+  overflow-x: auto;
+}
+
+.criterion {
+  margin: 0 0 12px;
+}
+
+.criterion-line,
+.criterion-gwt,
+.criterion-origin {
+  margin: 2px 0;
+}
+
+.criterion .source-quote {
+  margin: 2px 0 0 0;
+  font-size: 13px;
+}
+
+.edge-sentence {
+  margin: 3px 0;
+}
+
+.relation-group {
+  margin-bottom: 12px;
+}
+
+/* The connections picture. */
+.connections svg {
+  display: block;
+  max-width: 640px;
+}
+
+.cn-edge {
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.cn-rel {
+  font-size: 11px;
+  fill: var(--muted);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.cn-box {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 1.2;
+}
+
+.cn-me {
+  fill: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.cn-name {
+  font-size: 12.5px;
+  fill: var(--ink);
+}
+
+.cn-name.me {
+  font-weight: 600;
+}
+
+.cn-n {
+  cursor: pointer;
+  outline: none;
+}
+
+.cn-n:hover .cn-box,
+.cn-n:focus-visible .cn-box {
+  stroke: var(--accent);
+}
+
+.cn-n.on .cn-box {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.cn-n.on .cn-edge {
+  stroke: var(--accent);
+}
+
+.cn-n.on .cn-rel {
+  fill: var(--accent);
+}
+
+.cn-hint {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+}
+
+.cn-why {
+  margin-top: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.cn-why p {
+  margin: 4px 0;
+}
+
+.cn-why-head {
+  font-weight: 600;
+}
+
+.node-view .node-title {
+  font-family: inherit;
+}
+
+.wb-inspector .node-view h3.node-title {
+  font-size: 16px;
+}
+
+.node-view code,
+.req-row code,
+.source-quote code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  padding: 0 3px;
+  border-radius: 3px;
+}

@@ -61,18 +61,19 @@ export default function Outline() {
             to={docHref(docPath, ref)}
             className={`outline-row${current === ref ? ' active' : ''}`}
             style={{ paddingLeft: 12 + depth * 10 }}
-            title={`${coverageWord(state, dev)}${cov?.note ? `: ${cov.note}` : ''}`}
+            title={[
+              `${coverageWord(state, dev)}${cov?.note ? `: ${cov.note}` : ''}`,
+              reqs.length > 0 ? `${reqs.length} requirement${reqs.length === 1 ? '' : 's'}` : '',
+              ents > 0 ? `mentions ${ents} entit${ents === 1 ? 'y' : 'ies'}` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           >
             <span className={`outline-dot ${state === 'covered' ? 'read' : state === 'non-normative' ? 'info' : 'unread'}`} />
             <span className="outline-title">{s.title || ref}</span>
             {reqs.length > 0 && (
-              <span className={`outline-chip ${agg}`} title={`${reqs.length} requirement${reqs.length === 1 ? '' : 's'}`}>
-                {reqs.length}r
-              </span>
-            )}
-            {ents > 0 && (
-              <span className="outline-chip" title={`${ents} entit${ents === 1 ? 'y' : 'ies'} mentioned`}>
-                {ents}e
+              <span className={`outline-chip ${agg}`} title={`${reqs.length} requirement${reqs.length === 1 ? '' : 's'} in this section`}>
+                {reqs.length}
               </span>
             )}
           </Link>

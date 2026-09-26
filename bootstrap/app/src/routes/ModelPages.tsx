@@ -4,6 +4,7 @@
 import { Link, useParams } from 'react-router'
 import { useGraph, useStatus, useView, useViews } from '../lib/queries'
 import { useWords } from '../lib/words'
+import { useApp } from '../lib/store'
 import DiagramSvg from '../components/DiagramSvg'
 import { NodeDetail } from '../workbench/Inspector'
 import '../shell/shell.css'
@@ -68,48 +69,30 @@ export function EntityPage() {
   const ent = graph.data?.entities[eid]
   return (
     <div className="ws-scroll">
-      {!ent && graph.data && <p className="empty">no entity {eid}</p>}
+      {!ent && graph.data && <p className="empty">No such entity.</p>}
       {ent && (
-        <>
-          <div className="page-head">
-            <h1>{ent.name}</h1>
-            {ent.stereotype && <span className="chip sev-none">«{ent.stereotype}»</span>}
-            <span className="mono muted">{eid}</span>
-          </div>
-          <div className="model-page">
-            <LevelDiagram id={eid} />
-            <NodeDetail id={eid} />
-          </div>
-        </>
+        <div className="model-page">
+          <NodeDetail id={eid} page />
+        </div>
       )}
     </div>
   )
 }
 
-function LevelDiagram({ id }: { id: string }) {
-  const graph = useGraph()
-  const slug = id.replace(/^ent:/, '')
-  const views = useViews()
-  const own = (views.data?.views ?? []).find((v) => v.id === `view:class/${slug}` || v.id === `view:component/${slug}`)
-  const view = useView(own?.id ?? '')
-  if (!own || !graph.data) return null
-  const svg = view.data?.svg
-  if (!svg) return null
-  return (
-    <div className="card">
-      <p className="row" style={{ margin: 0 }}>
-        <b>{own.title}</b>
-        <Link to={`/model/diagrams/${encodeURIComponent(own.id)}`} className="muted">
-          open the diagram →
-        </Link>
-      </p>
-      <DiagramSvg svg={svg} />
-    </div>
-  )
+// Diagram kinds as a reader names them.
+const KIND_TITLE: Record<string, string> = {
+  class: 'Structure',
+  component: 'Components',
+  sequence: 'Flows',
+  'use-case': 'Use cases',
+  usecase: 'Use cases',
+  state: 'States',
+  object: 'Instances',
 }
 
 export function DiagramGallery() {
   const w = useWords()
+  const dev = useApp((a) => a.dev)
   const views = useViews()
   const list = views.data?.views ?? []
   const byKind = new Map<string, typeof list>()
@@ -129,14 +112,15 @@ export function DiagramGallery() {
       )}
       {[...byKind.entries()].map(([k, vs]) => (
         <div key={k}>
-          <h2>{k}</h2>
+          <h2>{KIND_TITLE[k] ?? k}</h2>
           {vs.map((v) => (
             <p key={v.id} className="row" style={{ margin: '2px 0' }}>
               <Link to={`/model/diagrams/${encodeURIComponent(v.id)}`}>{v.title}</Link>
               <span className="muted">
-                {v.members} members · {v.edges} edges{v.default ? ' · default' : ''}
+                {v.members} {v.members === 1 ? 'item' : 'items'}
+                {dev ? ` · ${v.edges} edges${v.default ? ' · default' : ''}` : ''}
               </span>
-              {v.limits.some((l) => l.over) && <span className="chip sev-warning">over limit</span>}
+              {v.limits.some((l) => l.over) && <span className="chip sev-warning" title="more boxes than a diagram should carry; a sync can split it">crowded</span>}
             </p>
           ))}
         </div>
@@ -156,13 +140,15 @@ export function DiagramPage() {
       {v && (
         <>
           <div className="page-head">
+            <p className="node-kicker">{KIND_TITLE[v.kind] ?? v.kind}</p>
             <h1>{v.title}</h1>
-            <span className="chip sev-none">{v.kind}</span>
-            {v.default && <span className="chip sev-info">default</span>}
-            <span className="mono muted">{vid}</span>
           </div>
           <div className="model-page wide">
-            {v.svg ? <DiagramSvg svg={v.svg} className="view-svg diagram-page" /> : <p className="muted">{v.renderError ?? 'no rendering for this diagram yet'}</p>}
+            {v.svg ? (
+              <DiagramSvg svg={v.svg} className="view-svg diagram-page" />
+            ) : (
+              <p className="muted">No picture of this diagram is available yet. The list below is what it shows.</p>
+            )}
             <NodeDetail id={vid} />
           </div>
         </>
@@ -178,17 +164,11 @@ export function RequirementPage() {
   const r = graph.data?.requirements[rid]
   return (
     <div className="ws-scroll">
-      {!r && graph.data && <p className="empty">no requirement {rid}</p>}
+      {!r && graph.data && <p className="empty">No such requirement.</p>}
       {r && (
-        <>
-          <div className="page-head">
-            <h1 style={{ fontSize: 18 }}>{r.statement}</h1>
-            <span className="mono muted">{rid}</span>
-          </div>
-          <div className="model-page">
-            <NodeDetail id={rid} />
-          </div>
-        </>
+        <div className="model-page">
+          <NodeDetail id={rid} page />
+        </div>
       )}
     </div>
   )

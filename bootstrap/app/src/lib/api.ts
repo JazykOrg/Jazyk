@@ -519,10 +519,30 @@ export interface Diagnostic {
   updated?: string
 }
 
+// The observable evidence one requirement is met (docs/compiler/model/criterion.md).
+export interface Criterion {
+  requirement: string
+  statement: string
+  given?: string
+  when?: string
+  then?: string
+  // positive | negative | boundary | quality
+  kind?: string
+  measure?: string
+  entities?: string[]
+  source?: SourceRef
+  provenance?: Provenance
+  stale?: boolean
+  confidence?: number
+  reasoning?: string
+}
+
 export interface Graph {
   generation: number
   entities: Record<string, Entity>
   requirements: Record<string, Requirement>
+  // Absent from a server that predates criteria in the graph read.
+  criteria?: Record<string, Criterion>
   views: Record<string, View>
   relationships: Record<string, Relationship>
   stateMachines: Record<string, StateMachine>

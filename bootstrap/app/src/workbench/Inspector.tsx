@@ -12,77 +12,16 @@ import { delivHref } from '../lib/nav'
 import { linkifyIds, useResolveId } from '../components/NodeLink'
 import NodeLink from '../components/NodeLink'
 import DiagramSvg from '../components/DiagramSvg'
-import ExploreCard from '../components/ExploreCard'
-import Neighborhood from '../components/Neighborhood'
-import { EntityTrail, RequirementTrail } from '../components/Trail'
 import SectionLink from '../components/SectionLink'
 import { VerifyChip } from '../components/Chip'
-import {
-  DiagnosticCard,
-  EntityCard,
-  ProvenanceLine,
-  RelationshipCard,
-  RequirementCard,
-  aggClass,
-  reverseIndex,
-} from '../components/Cards'
+import { DiagnosticCard, ProvenanceLine, RelationshipCard } from '../components/Cards'
+import { CriterionView, EntityView, RelationView, RequirementView } from '../components/NodeViews'
+import { NameLink, Part, ProblemItem, StatusDot } from '../components/Present'
+import { useNodeName } from '../lib/present'
+import { useApp } from '../lib/store'
 import { entryLabel } from '../lib/api'
 import type { FileResp } from './DelivFile'
 import { useEffect, useMemo, useState } from 'react'
-
-function VerifyLine({ id, row }: { id: string; row?: VerifyRow }) {
-  return (
-    <p style={{ margin: '2px 0' }}>
-      <NodeLink id={id} /> <VerifyChip status={row?.status ?? 'unverified'} />
-      {row?.test?.kind && <span className="chip sev-none">{row.test.kind}</span>}
-      {row?.reason && <span className="muted"> · {row.reason}</span>}
-    </p>
-  )
-}
-
-// The deliverable files bound to this node, each linking to the file with the
-// requirement's site revealed: the click-through from prose to implementation.
-function ImplementedIn({ id }: { id: string }) {
-  const links = useDocDelivLinks()
-  const files = [...(links.reqToFiles.get(id) ?? [])]
-  if (files.length === 0) return null
-  return (
-    <>
-      <h2>implemented in</h2>
-      {files.map((p) => (
-        <p key={p} style={{ margin: '2px 0' }}>
-          <Link className="mono" to={delivHref(p, id)}>
-            {p}
-          </Link>
-        </p>
-      ))}
-    </>
-  )
-}
-
-function EntityFiles({ id }: { id: string }) {
-  const links = useDocDelivLinks()
-  const graph = useGraph()
-  const revIdx = useMemo(
-    () => (graph.data ? reverseIndex(graph.data) : new Map<string, string[]>()),
-    [graph.data],
-  )
-  const files = new Set<string>()
-  for (const rid of revIdx.get(id) ?? []) for (const p of links.reqToFiles.get(rid) ?? []) files.add(p)
-  if (files.size === 0) return null
-  return (
-    <>
-      <h2>implemented in</h2>
-      {[...files].map((p) => (
-        <p key={p} style={{ margin: '2px 0' }}>
-          <Link className="mono" to={delivHref(p)}>
-            {p}
-          </Link>
-        </p>
-      ))}
-    </>
-  )
-}
 
 // The journal entries that touched this node: from a fact, to the entry that
 // landed it, to the goals that entry resolved and opened.
@@ -301,83 +240,100 @@ function GoalDetail({ id }: { id: string }) {
   )
 }
 
-// A view: kind, title, members in order, exclusions with notes, the query, the
-// collapse set, provenance, limits state, the overlay action, and its diagram.
+// A diagram: its members by name, a flow's steps in order; the query, the
+// collapse set, the exclusions, the limits, and the arrows are Developer details
+// (docs/frontends/gui.md#model).
 function ViewDetailPane({ id }: { id: string }) {
   const view = useView(id)
-  if (view.isLoading) return <p className="muted">resolving the view…</p>
+  const dev = useApp((a) => a.dev)
+  if (view.isLoading) return <p className="muted">loading the diagram…</p>
   if (view.error) return <p className="error-inline">{view.error.message}</p>
   const v = view.data
   if (!v) return null
+  const entities = v.members.filter((m) => m.node === 'entity' && !m.hidden)
+  const steps = v.members.filter((m) => m.node === 'requirement')
   return (
-    <>
-      <div className="card">
-        <h3>
-          {v.title} <span className="chip sev-info">{v.kind}</span>
-          {v.default && <span className="chip sev-none" title="recomputed on every commit; any edit makes it curated">default</span>}
-        </h3>
-        {v.default && (
-          <p className="muted" style={{ margin: '2px 0' }}>
-            editing this view clears its default mark; the recompute leaves it alone from
-            that commit on
+    <div className="node-view">
+      {entities.length > 0 && (
+        <Part title="What it shows">
+          <div className="member-list">
+            {entities.map((m) => (
+              <NameLink key={m.id} id={m.id} />
+            ))}
+          </div>
+        </Part>
+      )}
+      {steps.length > 0 && (
+        <Part title="Steps">
+          <ol className="step-list">
+            {steps.map((m) => (
+              <li key={m.id}>
+                <NameLink id={m.id} />
+              </li>
+            ))}
+          </ol>
+        </Part>
+      )}
+      {dev && (
+        <details className="dev-details">
+          <summary>Developer details</summary>
+          <p className="mono">
+            {id} {v.kind}
+            {v.default && ' default'}
           </p>
-        )}
-        <p style={{ margin: '4px 0' }}>
-          <Link to={`/dev/map?view=${encodeURIComponent(id)}`}>overlay on the map →</Link>
-        </p>
-        {v.provenance && <ProvenanceLine p={v.provenance} />}
-        {(v.limits ?? []).map((l) => (
-          <p key={l.limit} className={`mono ${l.overHard ? 'v-bad' : l.over ? 'v-stale' : 'muted'}`} style={{ margin: '1px 0' }}>
-            {l.limit}: {l.count} / {l.soft} soft, {l.hard} hard
+          {v.default && (
+            <p className="muted" style={{ margin: '2px 0' }}>
+              editing this view clears its default mark; the recompute leaves it alone from that commit on
+            </p>
+          )}
+          <p style={{ margin: '4px 0' }}>
+            <Link to={`/dev/map?view=${encodeURIComponent(id)}`}>overlay on the map →</Link>
           </p>
-        ))}
-      </div>
-      <h2>members</h2>
-      {v.members.map((m) => (
-        <p key={m.id} style={{ margin: '2px 0' }}>
-          <NodeLink id={m.id} />
-          {m.node === 'entity' && m.stereotype && <span className="chip sev-info">«{m.stereotype}»</span>}
-          {m.hidden && <span className="chip sev-none" title="hidden by the collapse set">collapsed away</span>}
-          {m.node === 'requirement' && <span className="muted"> {m.statement}</span>}
-        </p>
-      ))}
-      {(v.children ?? []).length > 0 && (
-        <>
-          <h2>levels below</h2>
-          {v.children.map((c) => (
-            <p key={c.member} style={{ margin: '2px 0' }}>
-              <NodeLink id={c.member} />{' '}
-              <Link className="mono" to={`/dev/map?view=${encodeURIComponent(c.view)}&node=${encodeURIComponent(c.view)}`} title="overlay the level below">
-                {c.view} ↓
-              </Link>
+          {v.provenance && <ProvenanceLine p={v.provenance} />}
+          {(v.limits ?? []).map((l) => (
+            <p key={l.limit} className={`mono ${l.overHard ? 'v-bad' : l.over ? 'v-stale' : 'muted'}`} style={{ margin: '1px 0' }}>
+              {l.limit}: {l.count} / {l.soft} soft, {l.hard} hard
             </p>
           ))}
-        </>
-      )}
-      {(v.excluded ?? []).length > 0 && (
-        <>
-          <h2>excluded</h2>
-          {v.excluded.map((x) => (
-            <p key={x.id} style={{ margin: '2px 0' }}>
-              <NodeLink id={x.id} /> <span className="muted">{x.note}</span>
-            </p>
-          ))}
-        </>
-      )}
-      {v.query && (
-        <>
-          <h2>query</h2>
-          <pre className="pack">{JSON.stringify(v.query, null, 2)}</pre>
-        </>
-      )}
-      {(v.arrows ?? []).length > 0 && (
-        <>
-          <h2>arrows</h2>
-          {v.arrows.map((a, i) => (
+          {v.members.some((m) => m.hidden) && (
+            <>
+              <h2>collapsed away</h2>
+              {v.members.filter((m) => m.hidden).map((m) => (
+                <p key={m.id} style={{ margin: '2px 0' }}>
+                  <NodeLink id={m.id} />
+                </p>
+              ))}
+            </>
+          )}
+          {(v.children ?? []).length > 0 && (
+            <>
+              <h2>levels below</h2>
+              {v.children.map((c) => (
+                <p key={c.member} style={{ margin: '2px 0' }}>
+                  <NodeLink id={c.member} />{' '}
+                  <Link className="mono" to={`/dev/map?view=${encodeURIComponent(c.view)}&node=${encodeURIComponent(c.view)}`}>
+                    {c.view} ↓
+                  </Link>
+                </p>
+              ))}
+            </>
+          )}
+          {(v.excluded ?? []).length > 0 && (
+            <>
+              <h2>excluded</h2>
+              {v.excluded.map((x) => (
+                <p key={x.id} style={{ margin: '2px 0' }}>
+                  <NodeLink id={x.id} /> <span className="muted">{x.note}</span>
+                </p>
+              ))}
+            </>
+          )}
+          {v.query && <pre className="pack">{JSON.stringify(v.query, null, 2)}</pre>}
+          {(v.arrows ?? []).map((a, i) => (
             <details key={i} style={{ margin: '2px 0' }}>
               <summary className="mono">
                 <NodeLink id={a.a} /> →{a.type}→ <NodeLink id={a.b} />
-                {a.lifted && <span className="chip sev-none" title="lifted from hidden descendants">lifted: {a.count}</span>}
+                {a.lifted && <span className="chip sev-none">lifted: {a.count}</span>}
               </summary>
               {a.concrete.map((c, j) => (
                 <p key={j} className="mono" style={{ margin: '1px 0 1px 12px' }}>
@@ -391,28 +347,20 @@ function ViewDetailPane({ id }: { id: string }) {
               ))}
             </details>
           ))}
-        </>
-      )}
-      {v.svg && (
-        <details>
-          <summary>diagram</summary>
-          <DiagramSvg svg={v.svg} />
+          {v.renderError && <p className="muted">renderer: {v.renderError}</p>}
         </details>
       )}
-      {v.renderError && <p className="muted">renderer: {v.renderError}</p>}
-    </>
+    </div>
   )
 }
 
-export function NodeDetail({ id }: { id: string }) {
+export function NodeDetail({ id, page }: { id: string; page?: boolean }) {
   const graph = useGraph()
   const matrix = useMatrix()
   const isEntity = id.startsWith('ent:')
-  const pack = useContextPack(isEntity ? id : '')
-  const revIdx = useMemo(
-    () => (graph.data ? reverseIndex(graph.data) : new Map<string, string[]>()),
-    [graph.data],
-  )
+  const dev = useApp((a) => a.dev)
+  // The loaded context is a Developer detail; nothing fetches it otherwise.
+  const pack = useContextPack(isEntity && dev ? id : '')
   if (graph.error) return <p className="error-inline">{graph.error.message}</p>
   if (!graph.data) return <p className="muted">loading…</p>
   const g = graph.data
@@ -474,108 +422,71 @@ export function NodeDetail({ id }: { id: string }) {
 
   const entity = g.entities[id]
   if (entity) {
-    const reqIds = revIdx.get(id) ?? []
     const rels = Object.entries(g.relationships).filter(([, r]) => r.members.includes(id))
     const views = Object.entries(g.views ?? {}).filter(([, v]) => (v.members ?? []).includes(id))
-    const children = Object.entries(g.entities).filter(([, e]) => e.parent === id)
-    const myMachine = Object.entries(g.stateMachines ?? {}).find(([, m]) => m.subject === id)
-    const diags = Object.entries(g.diagnostics).filter(
-      ([, d]) => (d.subjects ?? []).includes(id) && d.triage !== 'suppressed',
-    )
     return (
-      <>
-        {/* The trail first, then the walk's card, then the long read. */}
-        <EntityTrail id={id} graph={g} rows={rows} reqIds={reqIds} />
-        <ExploreCard id={id} />
-        <Neighborhood id={id} graph={g} />
-        <div id="xp-detail" />
-        <EntityCard id={id} e={entity} reqIds={reqIds} rows={rows} editable />
-        {children.length > 0 && (
+      <EntityView
+        id={id}
+        graph={g}
+        rows={rows}
+        page={page}
+        devExtra={
           <>
-            <h2>children</h2>
-            {children.map(([cid]) => (
-              <p key={cid} style={{ margin: '2px 0' }}>
-                <NodeLink id={cid} />
-              </p>
-            ))}
+            {views.length > 0 && (
+              <>
+                <h2>views it is drawn in</h2>
+                {views.map(([vid, v]) => (
+                  <p key={vid} style={{ margin: '2px 0' }}>
+                    <NodeLink id={vid} /> <Link to={`/dev/map?view=${encodeURIComponent(vid)}`}>overlay</Link>
+                    {v.default && <span className="chip sev-none">default</span>}
+                  </p>
+                ))}
+              </>
+            )}
+            {rels.length > 0 && (
+              <>
+                <h2>relationships</h2>
+                {rels.map(([rid, r]) => (
+                  <RelationshipCard key={rid} id={rid} r={r} />
+                ))}
+              </>
+            )}
+            {pack.data && (
+              <>
+                <h2>loaded</h2>
+                <pre className="pack">{pack.data.pack}</pre>
+              </>
+            )}
+            <JournalHits id={id} />
+            <RipplePane target={id} />
           </>
-        )}
-        {views.length > 0 && (
-          <>
-            <h2>views</h2>
-            {views.map(([vid, v]) => (
-              <p key={vid} style={{ margin: '2px 0' }}>
-                <NodeLink id={vid} /> <Link to={`/dev/map?view=${encodeURIComponent(vid)}`}>overlay</Link>
-                {v.default && <span className="chip sev-none">default</span>}
-              </p>
-            ))}
-          </>
-        )}
-        {myMachine && (
-          <>
-            <h2>state machine</h2>
-            <p style={{ margin: '2px 0' }}>
-              <NodeLink id={myMachine[0]} />{' '}
-              <span className="muted mono">{myMachine[1].states.join(' · ')}</span>
-            </p>
-          </>
-        )}
-        <EntityFiles id={id} />
-        <h2>verification</h2>
-        {reqIds.length === 0 && <p className="muted">no requirements reference this entity</p>}
-        {reqIds.length > 0 && (
-          <div className={`card ${aggClass(reqIds, rows)}`}>
-            {reqIds.map((rid) => (
-              <VerifyLine key={rid} id={rid} row={rows[rid]} />
-            ))}
-          </div>
-        )}
-        {rels.length > 0 && (
-          <>
-            <h2>relationships</h2>
-            {rels.map(([rid, r]) => (
-              <RelationshipCard key={rid} id={rid} r={r} />
-            ))}
-          </>
-        )}
-        {diags.length > 0 && (
-          <>
-            <h2>diagnostics</h2>
-            {diags.map(([did, d]) => (
-              <DiagnosticCard key={did} id={did} d={d} />
-            ))}
-          </>
-        )}
-        {pack.data && (
-          <>
-            <h2>loaded</h2>
-            <pre className="pack">{pack.data.pack}</pre>
-          </>
-        )}
-        <JournalHits id={id} />
-        <RipplePane target={id} />
-      </>
+        }
+      />
     )
   }
 
   const req = g.requirements[id]
   if (req) {
-    const row = rows[id]
     return (
-      <>
-        <RequirementTrail id={id} graph={g} row={row} />
-        <RequirementCard id={id} r={req} row={row} editable />
-        <ImplementedIn id={id} />
-        <h2>verification</h2>
-        <VerifyLine id={id} row={row} />
-        <JournalHits id={id} />
-        <RipplePane target={id} />
-      </>
+      <RequirementView
+        id={id}
+        graph={g}
+        row={rows[id]}
+        page={page}
+        devExtra={
+          <>
+            <JournalHits id={id} />
+            <RipplePane target={id} />
+          </>
+        }
+      />
     )
   }
 
+  if (g.criteria?.[id]) return <CriterionView id={id} graph={g} />
+
   const rel = g.relationships[id]
-  if (rel) return <RelationshipCard id={id} r={rel} />
+  if (rel) return <RelationView id={id} r={rel} />
 
   const diag = g.diagnostics[id]
   if (diag) {
@@ -583,8 +494,8 @@ export function NodeDetail({ id }: { id: string }) {
     // card's triage actions can clear the suppression.
     return (
       <>
-        {diag.triage === 'suppressed' && <p className="muted">this diagnostic is suppressed; it counts nowhere</p>}
-        <DiagnosticCard id={id} d={diag} />
+        {diag.triage === 'suppressed' && <p className="muted">This problem is hidden; it counts nowhere.</p>}
+        {dev ? <DiagnosticCard id={id} d={diag} /> : <ProblemItem id={id} d={diag} />}
       </>
     )
   }
@@ -670,17 +581,22 @@ function DocTies({ path }: { path: string }) {
   const reqs = Object.entries(graph.data?.requirements ?? {}).filter(
     ([, r]) => r.source?.doc === path,
   )
+  const matrix = useMatrix()
+  const rows = matrix.data?.rows ?? {}
   return (
     <>
-      <h2>requirements here</h2>
-      {reqs.length === 0 && <p className="muted">none extracted yet</p>}
-      {reqs.slice(0, 40).map(([rid]) => (
-        <p key={rid} style={{ margin: '2px 0' }}>
-          <NodeLink id={rid} />
-        </p>
-      ))}
-      <h2>implemented in</h2>
-      {files.length === 0 && <p className="muted">no deliverable files bound</p>}
+      <h2>Requirements in this document</h2>
+      {reqs.length === 0 && <p className="muted">None found yet. A sync reads them out of the text.</p>}
+      <div className="req-list">
+        {reqs.slice(0, 60).map(([rid]) => (
+          <div key={rid} className="req-row">
+            <StatusDot status={rows[rid]?.status} />
+            <NameLink id={rid} />
+          </div>
+        ))}
+      </div>
+      <h2>Built in</h2>
+      {files.length === 0 && <p className="muted">Not built yet.</p>}
       {files.map((p) => (
         <p key={p} style={{ margin: '2px 0' }}>
           <Link className="mono" to={delivHref(p)}>
@@ -689,6 +605,32 @@ function DocTies({ path }: { path: string }) {
         </p>
       ))}
     </>
+  )
+}
+
+// The pane's title: what kind of thing is open, its id only in Developer mode.
+function InspectorTitle({ node, fallback }: { node: string | null; fallback: string }) {
+  const dev = useApp((a) => a.dev)
+  const name = useNodeName()
+  if (!node) return <span>{fallback.split('/').pop()}</span>
+  const kind = node.startsWith('ent:')
+    ? 'Entity'
+    : node.startsWith('req:')
+      ? 'Requirement'
+      : node.startsWith('crit:')
+        ? 'Acceptance criterion'
+        : node.startsWith('view:')
+          ? 'Diagram'
+          : node.startsWith('diag:')
+            ? 'Problem'
+            : node.startsWith('rel:')
+              ? name(node)
+              : node
+  return (
+    <span>
+      {kind}
+      {dev && <span className="mono muted"> {node}</span>}
+    </span>
   )
 }
 
@@ -740,7 +682,7 @@ export default function Inspector({
   return (
     <aside className="wb-inspector">
       <div className="wb-inspector-head">
-        <span className="mono">{node ? resolved : docPath || delivPath}</span>
+        <InspectorTitle node={node ? resolved : null} fallback={docPath || delivPath} />
         {node ? (
           <button onClick={close} title="close (Escape)" aria-label="close the inspector">
             ✕

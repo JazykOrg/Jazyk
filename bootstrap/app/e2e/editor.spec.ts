@@ -101,3 +101,39 @@ test('the recent list remembers a demo, reopens it, and forgets it', async ({ pa
   await page.locator('.proj.recent', { hasText: 'The shop' }).locator('.recent-forget').click()
   await expect(page.locator('.proj.recent')).toHaveCount(0)
 })
+
+test('Home reads Recent, then Local project, then the demos', async ({ page }) => {
+  await openDemo(page, 'The shop')
+  await page.goto('/#/')
+  await expect(page.locator('.home h2')).toHaveText(['Recent', 'Local project', 'Demos'])
+  await expect(page.locator('.home').getByRole('button', { name: 'Open folder…' })).toBeVisible()
+})
+
+test('a browser without the folder API says so instead of offering the button', async ({ page }) => {
+  await page.addInitScript(() => {
+    delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker
+  })
+  await page.goto('/#/')
+  await expect(page.locator('.home-nofolder')).toContainText('cannot open a folder')
+  await expect(page.locator('.home').getByRole('button', { name: 'Open folder…' })).toHaveCount(0)
+})
+
+test('an endpoint model source is ready at once and is remembered in this browser only', async ({ page }) => {
+  await openDemo(page, 'The sort utility')
+  await page.goto('/#/settings')
+  await expect(page.locator('.msrc-privacy')).toContainText('Nothing is saved on a jazyk server')
+  await page.locator('.msrc-option', { hasText: 'Your endpoint' }).click()
+  const chooser = page.locator('.msrc')
+  await chooser.getByLabel('Base URL', { exact: true }).fill('http://localhost:4999/v1')
+  await chooser.getByLabel('Model', { exact: true }).fill('test-model')
+  await chooser.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('.msrc-status')).toContainText('Ready: test-model')
+  expect(await api<{ model: string }>(page, 'GET', '/api/capabilities')).toMatchObject({ model: 'in-page' })
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('jazyk.modelSource') ?? '{}'))
+  expect(stored).toMatchObject({ kind: 'endpoint', baseUrl: 'http://localhost:4999/v1', model: 'test-model' })
+  // A reload keeps the choice; the demo reopens from the recent list.
+  await page.reload()
+  await page.locator('.proj.recent .recent-open').first().click()
+  await page.waitForURL(/#\/docs/)
+  expect(await api<{ model: string }>(page, 'GET', '/api/capabilities')).toMatchObject({ model: 'in-page' })
+})

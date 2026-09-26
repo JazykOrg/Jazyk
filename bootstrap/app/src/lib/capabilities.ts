@@ -18,7 +18,7 @@ export interface Capabilities {
   agent: 'embedded' | 'external' | 'none'
   model: 'configured' | 'in-page' | 'loadable' | 'needs-key' | 'none'
   rendering: 'server' | 'none'
-  persistence: 'disk' | 'memory' | 'browser'
+  persistence: 'disk' | 'folder' | 'browser' | 'memory'
   dev?: boolean
 }
 

@@ -7,7 +7,7 @@
 
 import type { Backend, BackendReply } from './backend'
 import type { Capabilities } from './capabilities'
-import type { FolderMirror } from './folder'
+import type { FsSink } from './browser-store'
 
 // The shared control block the worker blocks on: [0] state, [1] reply length,
 // [2] the chat cancel flag (docs/frontends/wasm.md#chat).
@@ -25,13 +25,20 @@ export interface ModelHost {
   loadable?(): boolean
 }
 
+// Where the open project's changes go (docs/frontends/gui.md#backends-and-capabilities).
+export type Persistence = 'folder' | 'browser' | 'memory'
+
 export interface WasmProject {
   // The project, one entry per file: text for the bundled demo, bytes for a folder
-  // read off disk.
+  // read off disk or a project read from browser storage.
   files: Record<string, string | Uint8Array>
   name: string
-  // When set, every mutation the backend makes is mirrored into this folder.
-  mirror?: FolderMirror
+  // A bundled demo, or a project of the person's own.
+  demo: boolean
+  // Where every mutation the backend makes is applied: the folder's mirror, or the
+  // project's browser storage.
+  sink: FsSink | null
+  persistence: Persistence
 }
 
 export interface WasmBackendOptions {
@@ -44,6 +51,9 @@ export interface WasmBackendOptions {
   // Called after every write request returns: the app refetches, since there is no
   // event stream to say what moved.
   onWrite?: () => void
+  // Where changes would go before any project is open: browser storage, or the tab
+  // alone when the browser has none.
+  persistence?: () => Persistence
 }
 
 export function crossOriginIsolated_(): boolean {
@@ -52,6 +62,12 @@ export function crossOriginIsolated_(): boolean {
 
 export interface WasmBackend extends Backend {
   open(project: WasmProject): Promise<void>
+  // The open project moves: a stored project saved to a folder.
+  moveTo(place: { sink: FsSink | null; persistence: Persistence; demo: boolean; name: string }): void
+  // Nothing is open anymore: the stored project was deleted.
+  close(): void
+  // Every file of the tree, by its path under the project root.
+  dump(): Promise<Record<string, Uint8Array>>
   capabilities(): Capabilities
 }
 
@@ -67,6 +83,10 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   let nextId = 1
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   let project: WasmProject | null = null
+  // Where the worker's mutations go right now. It follows `project` only once the
+  // worker has seeded the new tree: mutations the old project's last request posted
+  // arrive before the seed's reply and still belong to the old one.
+  let sink: FsSink | null = null
 
   // The buffers exist only when the page is cross-origin isolated. Without them the
   // backend still serves every read; only a build needs the model.
@@ -102,8 +122,8 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   worker.onmessage = (e: MessageEvent) => {
     const msg = e.data
     if (msg?.kind === 'fs') {
-      if (msg.op === 'write') project?.mirror?.write(msg.path, msg.bytes)
-      else if (msg.op === 'remove') project?.mirror?.remove(msg.path, !!msg.dir)
+      if (msg.op === 'write') sink?.write(msg.path, msg.bytes)
+      else if (msg.op === 'remove') sink?.remove(msg.path, !!msg.dir)
       return
     }
     if (msg?.kind === 'log') {
@@ -152,9 +172,9 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   }
 
   // What this page can do, read fresh on every ask: the model finishes loading
-  // behind the app, and opening a folder changes the persistence.
+  // behind the app, and the project open decides the persistence.
   const capabilities = (): Capabilities => ({
-    backend: project?.mirror ? 'wasm' : 'demo',
+    backend: !project || project.demo ? 'demo' : 'wasm',
     projects: 'bundled',
     docs: 'write',
     events: 'pushed',
@@ -165,7 +185,7 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     agent: 'embedded',
     model: opts.model.available() ? 'in-page' : opts.model.loadable?.() ? 'loadable' : 'none',
     rendering: 'none',
-    persistence: project?.mirror ? 'browser' : 'memory',
+    persistence: project?.persistence ?? opts.persistence?.() ?? 'memory',
   })
 
   const request = async (method: string, path: string, body?: unknown): Promise<BackendReply> => {
@@ -197,8 +217,20 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     request,
     capabilities,
     async open(p: WasmProject) {
-      project = p
-      await send({ kind: 'seed', files: p.files, model: opts.model.name(), mirror: !!p.mirror })
+      project = { ...p, files: {} }
+      await send({ kind: 'seed', files: p.files, model: opts.model.name() })
+      sink = p.sink
+    },
+    moveTo(place) {
+      if (project) project = { ...project, ...place }
+      sink = place.sink
+    },
+    close() {
+      project = null
+      sink = null
+    },
+    dump() {
+      return send<Record<string, Uint8Array>>({ kind: 'dump' })
     },
   }
 }

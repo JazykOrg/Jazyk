@@ -136,7 +136,11 @@ export default function DocEditor() {
   )
 
   const lsp = useMemo(() => new LspClient(), [])
+  // Only a backend that serves `/lsp` gets a connection; without one the editor
+  // derives its decorations from the graph (docs/frontends/gui.md#editor).
+  const hasLsp = caps.data?.lsp === true
   useEffect(() => {
+    if (!hasLsp) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // Read the token per dial: a replacement token entered after a server
     // restart must reach the re-dial, not the URL captured at mount.
@@ -145,7 +149,7 @@ export default function DocEditor() {
       return `${proto}://${location.host}/lsp${qs ? `?${qs}` : ''}`
     })
     return () => lsp.dispose()
-  }, [lsp])
+  }, [lsp, hasLsp])
 
   const hostRef = useRef<EditorHandle>(null)
   const [loaded, setLoaded] = useState<DocContent | null>(null)

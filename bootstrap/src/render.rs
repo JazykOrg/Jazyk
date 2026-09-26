@@ -3008,11 +3008,10 @@ mod tests {
         let root = root_view(&s);
         let (puml, svg) = render_view(&s, &root).unwrap();
         assert!(puml.starts_with("@startuml\n"));
-        // Every top-level member is drawn by its element group, except the actor: the
-        // in-process crate draws no actor in a component diagram (a renderer gap the
-        // official binary does not share, so the emitter keeps declaring it). Every
-        // element links to its card; the anchors are the three the crate drew (the
-        // shop, Ana, Ana's cart), the customer's link having nothing to anchor to.
+        // Every top-level member is drawn by its element group, the actor included: the
+        // emitter declares it as an actor, and the in-process conversion draws it as a
+        // component with the actor stereotype (docs/compiler/diagrams.md#the-renderer).
+        // Every element links to its card, four anchors.
         let members = &s.graph.views[&root].members;
         assert!(members.contains(&"ent:shop".to_string()), "{:?}", members);
         assert!(
@@ -3025,7 +3024,7 @@ mod tests {
             "{}",
             puml
         );
-        for m in members.iter().filter(|m| **m != "ent:customer") {
+        for m in members.iter() {
             let group = format!("data-qualified-name=\"{}\"", alias_of(m));
             assert!(svg.contains(&group), "{} missing from\n{}", m, svg);
         }
@@ -3037,8 +3036,9 @@ mod tests {
             "{}",
             svg
         );
-        assert_eq!(svg.matches("<a ").count(), 3, "{}", svg);
-        assert!(!svg.contains("entities/customer.md"), "{}", svg);
+        assert_eq!(svg.matches("<a ").count(), 4, "{}", svg);
+        assert!(svg.contains("entities/customer.md"), "{}", svg);
+        assert!(svg.contains(">Customer</text>"), "{}", svg);
         assert!(render_view(&s, "view:class/nope").is_err());
         assert!(render_svg("@startuml\nthis is not plantuml at all ((\n@enduml\n").is_err());
         // A defect inside the crate (it measures edge labels byte by byte, so a

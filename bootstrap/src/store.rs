@@ -3213,9 +3213,14 @@ impl Store {
                         let mut refreshed_statement: Option<String> = None;
                         let mut refreshed_source: Option<SourceRef> = None;
                         if r.statement != requirement.statement {
+                            // Case and punctuation refresh in place; only a change in
+                            // substance reopens the requirement's pairs
+                            // (docs/compiler/graph.md#change-records).
+                            if normalize_statement(&r.statement) != normalize_statement(&requirement.statement) {
+                                dirt.revised(&existing, m, "fields");
+                            }
                             r.statement = requirement.statement.clone();
                             refreshed_statement = Some(requirement.statement.clone());
-                            dirt.revised(&existing, m, "fields");
                         }
                         if let Some(incoming) = requirement.source.as_ref() {
                             let old_quote = r.source.as_ref().map(|s| s.quote.clone());
@@ -3377,7 +3382,7 @@ impl Store {
                     let edges_before = r.edges.clone();
                     let statement_before = r.statement.clone();
                     if let Some(e) = &statement {
-                        if r.statement != *e {
+                        if normalize_statement(&r.statement) != normalize_statement(e) {
                             dirt.revised(&rid, m, "fields");
                         }
                         r.statement = e.clone();

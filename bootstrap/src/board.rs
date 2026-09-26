@@ -1056,7 +1056,6 @@ impl Board {
                     g.kind.as_str(),
                     "place-anchors"
                         | "reconcile-section"
-                        | "derive-criteria"
                         | "bind"
                         | "generate"
                         | "verify"
@@ -1091,6 +1090,10 @@ impl Board {
             let mut label = String::new();
             let mut size = 0usize;
             let mut sections = 0usize;
+            let mut criteria = 0usize;
+            // The requirements the batch already loads: a pair pays only for the sides
+            // the batch does not hold yet (docs/compiler/reconciler.md#batching).
+            let mut charged: BTreeSet<String> = BTreeSet::new();
             let flush = |current: &mut Vec<String>,
                          skills: &mut Vec<&str>,
                          label: &mut String,
@@ -1117,6 +1120,8 @@ impl Board {
                     flush(&mut current, &mut skills, &mut label, &mut batches);
                     size = 0;
                     sections = 0;
+                    criteria = 0;
+                    charged.clear();
                 }
                 // Parked goals first, pairs before entity reviews, sections in
                 // document order, deepest abstraction first.
@@ -1133,8 +1138,25 @@ impl Board {
                 });
                 for id in ids {
                     let g = self.goal(&id).unwrap();
-                    let cost = estimate(store, g);
+                    let sides: Vec<String> = match (g.kind.as_str(), g.target.split_once('~')) {
+                        ("rejudge-pair", Some((a, b))) => vec![a.to_string(), b.to_string()],
+                        _ => Vec::new(),
+                    };
+                    let mut cost = if sides.is_empty() {
+                        estimate(store, g)
+                    } else {
+                        let side = |id: &str| {
+                            store
+                                .graph
+                                .requirements
+                                .get(store.resolve_id(id))
+                                .map(|r| 260 + r.statement.len() + 90 * r.entities.len())
+                                .unwrap_or(400)
+                        };
+                        700 + sides.iter().filter(|x| !charged.contains(*x)).map(|x| side(x)).sum::<usize>()
+                    };
                     let is_section = g.kind == "reconcile-section";
+                    let is_criteria = g.kind == "derive-criteria";
                     let max_sections =
                         (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
                     let mut with_goal = skills.clone();
@@ -1145,11 +1167,16 @@ impl Board {
                     }
                     let over = !current.is_empty()
                         && (size + cost > budget_with(&with_goal)
-                            || (is_section && sections >= max_sections));
+                            || (is_section && sections >= max_sections)
+                            || (is_criteria && criteria >= limits::CRITERIA_GOALS_PER_BATCH));
                     if over {
                         flush(&mut current, &mut skills, &mut label, &mut batches);
                         size = 0;
                         sections = 0;
+                        criteria = 0;
+                        charged.clear();
+                        // A fresh batch holds none of the pair's sides yet.
+                        cost = estimate(store, g);
                         with_goal = goals::skills_for(&g.kind, store, &g.target);
                     }
                     if current.is_empty() {
@@ -1161,11 +1188,17 @@ impl Board {
                     if is_section {
                         sections += 1;
                     }
+                    if is_criteria {
+                        criteria += 1;
+                    }
+                    charged.extend(sides);
                 }
                 if wall {
                     flush(&mut current, &mut skills, &mut label, &mut batches);
                     size = 0;
                     sections = 0;
+                    criteria = 0;
+                    charged.clear();
                 }
             }
             flush(&mut current, &mut skills, &mut label, &mut batches);
@@ -2624,6 +2657,78 @@ pub(crate) mod tests {
         assert_eq!(localities.len(), 2, "{:?}", localities);
         assert_eq!(b.batches.len(), 1, "{:?}", b.batches);
         assert_eq!(b.batches[0].goals.len(), 2);
+    }
+
+    // Criteria goals share batches, at most CRITERIA_GOALS_PER_BATCH to one, instead
+    // of one session per entity. Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn criteria_goals_pack_up_to_the_cap() {
+        let mut s = Store::default();
+        for i in 0..6 {
+            let eid = format!("ent:e{}", i);
+            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.requirements.insert(
+                format!("req:r-{}", i),
+                Requirement {
+                    statement: format!("The E{} answers within {} seconds.", i, i + 1),
+                    entities: vec![eid],
+                    ..Default::default()
+                },
+            );
+        }
+        let proj = Project {
+            out: s.out.clone(),
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
+        let b = Board::derive(&s, &proj, &control_auto());
+        let criteria: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "derive-criteria").collect();
+        assert_eq!(criteria.len(), 6, "{:?}", b.goals.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let per_batch: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        assert_eq!(per_batch.iter().sum::<usize>(), 6, "{:?}", b.batches);
+        assert!(per_batch.iter().all(|n| *n <= limits::CRITERIA_GOALS_PER_BATCH), "{:?}", per_batch);
+        assert!(per_batch.iter().any(|n| *n > 1), "criteria goals never shared a batch: {:?}", per_batch);
+    }
+
+    // A pair batch charges each requirement once: one long statement paired with six
+    // others loads once, so its six pairs ride one session where charging both sides
+    // per pair would cut them in two. Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn a_shared_side_is_charged_once_per_pair_batch() {
+        let mut s = Store::default();
+        let pad = " It holds under the nightly settlement rules for gold keys and silver locks.".repeat(6);
+        s.graph.entities.insert("ent:x".into(), Entity { name: "X".into(), ..Default::default() });
+        let req = |statement: String| Requirement {
+            statement,
+            entities: vec!["ent:x".into()],
+            ..Default::default()
+        };
+        // Each pair shares two words no other statement carries, so no filter drops it.
+        let words = [("amber", "basil"), ("cedar", "dahlia"), ("elder", "fennel"), ("ginger", "hazel"), ("iris", "juniper"), ("kelp", "lotus")];
+        let hub: Vec<String> = words.iter().map(|(a, b)| format!("{} {}", a, b)).collect();
+        s.graph.requirements.insert("req:t-0".into(), req(format!("The ledger weighs {}.{}", hub.join(", "), pad)));
+        for (i, (a, b)) in words.iter().enumerate() {
+            s.graph.requirements.insert(format!("req:t-{}", i + 1), req(format!("The ledger weighs {} {} apart.{}", a, b, pad)));
+        }
+        s.status.generation = 5;
+        record(&mut s, 5, store::CHANGE_REQ_REVISED, "req:t-0", "fields", json!({}));
+        let b = derive(&s);
+        let pairs: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "rejudge-pair").collect();
+        assert_eq!(pairs.len(), 6, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let with_pairs: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:rejudge-pair:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        // Per pair both sides would be about 2.9k each, six pairs about 17k, past the
+        // budget the judgment skill leaves; charged once, they fit one batch.
+        assert_eq!(with_pairs, vec![6], "{:?}", with_pairs);
     }
 
     // A read-only derivation never commits: Board::compute on a store whose documents

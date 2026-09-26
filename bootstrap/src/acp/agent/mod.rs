@@ -238,10 +238,11 @@ pub fn run() -> i32 {
                                 total_tokens += tokens;
                                 // `used`/`size` describe the context window, which an
                                 // OpenAI-compatible endpoint does not report; the meta
-                                // carries what it does: completion tokens spent.
+                                // carries what it does: the tokens the round billed,
+                                // input and output (docs/compiler/sessions.md#budgets).
                                 let usage = UsageUpdate::new(0, 0).meta(
                                     serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({
-                                        "jazyk": {"completionTokens": tokens, "totalCompletionTokens": total_tokens}
+                                        "jazyk": {"tokens": tokens, "totalTokens": total_tokens}
                                     }))
                                     .ok(),
                                 );

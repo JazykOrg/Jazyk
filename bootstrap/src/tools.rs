@@ -35,6 +35,69 @@ impl ToolError {
     }
 }
 
+// A value that says nothing: an empty or blank string, or a list or an object whose
+// every member says nothing. Numbers and booleans always say something.
+fn hollow(v: &Value) -> Option<Value> {
+    match v {
+        Value::Null => None,
+        Value::String(s) => (!s.trim().is_empty()).then(|| v.clone()),
+        Value::Array(a) => {
+            let kept: Vec<Value> = a.iter().filter_map(hollow).collect();
+            (!kept.is_empty()).then(|| Value::Array(kept))
+        }
+        Value::Object(o) => {
+            let kept: serde_json::Map<String, Value> =
+                o.iter().filter_map(|(k, x)| hollow(x).map(|x| (k.clone(), x))).collect();
+            (!kept.is_empty()).then(|| Value::Object(kept))
+        }
+        _ => Some(v.clone()),
+    }
+}
+
+// The arguments with every empty value removed, at any depth. A top-level `null`
+// stays: some tools read it as "remove" (update_diagnostic's prompt). A transition
+// that names no state (`from` and `to` both empty) is a filled-in blank and goes too.
+// Mirrors docs/compiler/tools.md#validation-and-errors.
+pub(crate) fn normalize_args(args: &Value) -> Value {
+    let Value::Object(o) = args else {
+        return args.clone();
+    };
+    let mut out = serde_json::Map::new();
+    for (k, v) in o {
+        if v.is_null() {
+            out.insert(k.clone(), Value::Null);
+        } else if let Some(v) = hollow(v) {
+            out.insert(k.clone(), v);
+        }
+    }
+    if let Some(t) = out.get("transition") {
+        if t.get("from").is_none() && t.get("to").is_none() {
+            out.remove("transition");
+        }
+    }
+    Value::Object(out)
+}
+
+// A fact that arrives with its quote and a derivation both keeps the quote: the one
+// provenance of a stated fact is the sentence that states it. The derivation is
+// dropped and the reply says so. Mirrors docs/compiler/tools.md#validation-and-errors.
+fn prefer_quote(name: &str, args: &mut Value) -> Option<String> {
+    let quoted = match name {
+        "upsert_entity" => args.get("mention").is_some(),
+        "upsert_requirement" | "upsert_criterion" => args.get("quote").is_some() && args.get("section").is_some(),
+        _ => false,
+    };
+    if !quoted || args.get("provenance").is_none() {
+        return None;
+    }
+    args.as_object_mut()?.remove("provenance");
+    let what = if name == "upsert_entity" { "the mention" } else { "section and quote" };
+    Some(format!(
+        "provenance dropped: the call carried {} and a derivation; a fact the documents state keeps its quote as its one provenance, so send `provenance` only for what no sentence states",
+        what
+    ))
+}
+
 pub fn catalog() -> Vec<ToolDef> {
     fn obj(props: Value, required: &[&str]) -> Value {
         json!({"type": "object", "properties": props, "required": required, "additionalProperties": false})
@@ -4880,10 +4943,16 @@ impl ToolSession {
                 };
                 let has_edit = Self::present(&o["edit"]);
                 let answer = o["answer"].as_str().filter(|s| !s.trim().is_empty());
-                if has_edit == answer.is_some() {
+                if has_edit && answer.is_some() {
                     return Err(ToolError::new(
                         "bad-prompt",
-                        format!("option {} needs exactly one of edit or answer; an option with neither is a filled-in blank, and a diagnostic that asks nothing of a human omits `prompt` entirely", i),
+                        format!("option {} carries both edit and answer; keep one: `edit` when the option changes the document (the edit is its answer), `answer` when it replies in words; drop the other and send the call again", i),
+                    ));
+                }
+                if !has_edit && answer.is_none() {
+                    return Err(ToolError::new(
+                        "bad-prompt",
+                        format!("option {} carries neither edit nor answer; give it one (`edit` to change the document, `answer` to reply in words); an option with neither is a filled-in blank, and a diagnostic that asks nothing of a human omits `prompt` entirely", i),
                     ));
                 }
                 let edit = if has_edit {
@@ -4958,7 +5027,26 @@ impl ToolSession {
         }))
     }
 
+    // Every tool call enters here. Its arguments are normalized first, so a model
+    // that fills every schema field with an empty value makes the same call as one
+    // that omits them, and a fact the documents state keeps its quote as its one
+    // provenance. Mirrors docs/compiler/tools.md#validation-and-errors.
     pub fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        let mut args = normalize_args(args);
+        let note = prefer_quote(name, &mut args);
+        let result = self.dispatch_normalized(name, &args);
+        match (result, note) {
+            (Ok(mut v), Some(note)) => {
+                if v.is_object() {
+                    v["note"] = json!(note);
+                }
+                Ok(v)
+            }
+            (r, _) => r,
+        }
+    }
+
+    fn dispatch_normalized(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
         self.loaded.next_round();
         // Targets a call names count as referenced, for the unload suggestions.
         for key in ["target", "id", "goal", "section", "ref"] {
@@ -8293,6 +8381,58 @@ mod tests {
         assert_eq!(err.rule, "provenance-required");
     }
 
+    // A fact sent with its quote and a derivation keeps the quote and says so; a
+    // transition naming no state is absent; an exclusive pair names the case it met;
+    // filler variants of one call are one call to the repeat guard.
+    // Mirrors docs/compiler/tools.md#validation-and-errors.
+    #[test]
+    fn a_quote_wins_over_a_derivation_and_refusals_name_their_case() {
+        let mut t = session();
+        let v = t
+            .dispatch(
+                "upsert_entity",
+                &json!({
+                    "name": "Gadget", "definition": "A gadget.",
+                    "mention": {"section": "/shop/cart", "quote": "A Gadget and a Line sit beside"},
+                    "provenance": {"derived": {"from": ["ent:line"], "reasoning": "the cart names it"}}
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true);
+        assert!(v["note"].as_str().unwrap_or_default().contains("provenance dropped"), "{}", v);
+        let v = t
+            .dispatch(
+                "upsert_requirement",
+                &json!({
+                    "statement": "The gadget holds items.",
+                    "entities": ["ent:gadget"],
+                    "section": "/shop/cart", "quote": "holds items",
+                    "facets": [{"facet": "constraint", "reasoning": "an invariant the gadget holds"}],
+                    "transition": {"subject": "ent:gadget", "from": "", "to": ""},
+                    "provenance": {"derived": {"from": ["ent:gadget"], "reasoning": "a reading"}}
+                }),
+            )
+            .unwrap();
+        assert_eq!(v["created"], true, "{}", v);
+        assert!(v["note"].as_str().unwrap_or_default().contains("section and quote"), "{}", v);
+        let both = normalize_args(&json!({"prompt": {"question": "Which?", "options": [
+            {"label": "A", "answer": "a", "edit": {"doc": "d.md", "section": "/s", "old_text": "x", "new_text": "y"}}]}}));
+        let err = t.parse_prompt(&both["prompt"]).unwrap_err();
+        assert_eq!(err.rule, "bad-prompt");
+        assert!(err.message.contains("both edit and answer"), "{}", err.message);
+        let neither = normalize_args(&json!({"prompt": {"question": "Which?", "options": [{"label": "A", "answer": ""}]}}));
+        let err = t.parse_prompt(&neither["prompt"]).unwrap_err();
+        assert!(err.message.contains("neither edit nor answer"), "{}", err.message);
+        // A top-level null survives; filler inside goes.
+        assert_eq!(normalize_args(&json!({"prompt": null, "scope": "", "tags": ["", " "]})), json!({"prompt": null}));
+        // Filler variants of one search are the same call to the repeat guard.
+        for filler in [json!({"query": "gadget"}), json!({"query": "gadget", "queries": []}), json!({"query": "gadget", "queries": [""]})] {
+            let _ = t.dispatch("search", &filler);
+        }
+        let err = t.dispatch("search", &json!({"query": "gadget", "entities": []})).unwrap_err();
+        assert_eq!(err.rule, "repeated-call");
+    }
+
     #[test]
     fn get_entity_sees_the_sessions_staged_entities() {
         // canon_entity_id resolves staged ids, so the lookup must too: a session
@@ -8986,10 +9126,12 @@ mod tests {
         assert!(!results[0]["hits"].as_array().unwrap().is_empty(), "{}", many);
         assert_eq!(results[1]["query"], "Zebra Crossing");
         assert!(results[1]["hits"].as_array().is_none_or(|h| h.is_empty()), "{}", many);
-        let err = t
+        // An empty item in the list is filler, dropped where the call enters
+        // (docs/compiler/tools.md#validation-and-errors): the call answers the rest.
+        let one = t
             .dispatch("search", &json!({"queries": ["Customer", ""]}))
-            .unwrap_err();
-        assert_eq!(err.rule, "bad-args");
+            .unwrap();
+        assert_eq!(one["results"].as_array().map(|a| a.len()), Some(1), "{}", one);
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
     }

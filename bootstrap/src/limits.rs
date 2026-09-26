@@ -116,6 +116,10 @@ pub const SESSION_MUTATIONS: usize = 64;
 pub const CONTEXT_BUDGET: usize = 24_000;
 pub const ROUNDS_PER_SECTION: u32 = 8;
 pub const SKILLS_PER_SESSION: usize = 4;
+// The most derive-criteria goals one batch packs: each lists several requirements
+// with their source sections and grows the changeset's mutation budget.
+// Mirrors docs/compiler/reconciler.md#batching.
+pub const CRITERIA_GOALS_PER_BATCH: usize = 4;
 // The fraction of the context budget past which `load` refuses.
 pub const LOADED_HIGH_WATER: f64 = 0.9;
 

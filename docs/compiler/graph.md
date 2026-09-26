@@ -458,7 +458,7 @@ The kinds, who writes them, and the goal each feeds:
 | `section-removed` | the `edit` entry of a build | the sweep, in the same build; the record clears when the sweep has run |
 | `anchor-stale` | the `align` entry (a quote that stops locating) or a `reevaluate` placement | `reconcile-section` |
 | `alignment-pending` | the `align` entry (a proposal a document owes a decision on) | `place-anchors` |
-| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
+| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement (a statement that changes only in case or punctuation is refreshed in place and writes no `requirement-revised`, so its judged pairs stand) | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
 | `criterion-created`, `criterion-revised` | a commit that creates or revises a criterion, or the sweep marking a derived criterion revised because its requirement's statement changed (`via: requirement`) | nothing on the board; the ledger comparison reads them and marks the test keyed to the criterion stale ([the ledger](../consumers/gen.md#the-ledger)) |
 | `criterion-deleted` | a commit or the sweep that deletes a criterion | nothing (trail; the ledger prunes the row) |
 | `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |
@@ -508,7 +508,9 @@ The entry kinds:
 - `session`: a goal batch's changeset. Carries `batch`, `mutations`, `rounds`, `tokens`,
   and the model's `reasoning` where a mutation gave one. The entry commits inside the
   serving, before the turn's cost is known, so `tokens` is stamped afterwards by the
-  build that measured it, split across the entries that turn wrote. A session an
+  build that measured it, split across the `session` entries that turn wrote (a
+  `checks` or `settle-diagnostics` entry between them takes no share, so the parts sum
+  to the spend). A session an
   external agent drove ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp))
   spends tokens the harness never sees, so its entry carries no `tokens` at all rather
   than claiming zero: reading `tokens: 0` on every session, a person would price a build
@@ -689,6 +691,9 @@ document quality thresholds (6000 characters per section, 40 sections per docume
 the alignment thresholds (move 0.5, split 0.6) and the alignment candidate cap
 (`alignment-candidates`, three per anchor) are registry constants too, not settings.
 See [budgets](./sessions.md#budgets).
+
+The criteria batch cap is one too: `CRITERIA_GOALS_PER_BATCH` is 4, the most
+`derive-criteria` goals one batch packs ([batching](./reconciler.md#batching)).
 
 The pair degree cap is a registry constant of the same kind: `pairs-per-requirement`
 is 8, the most open `rejudge-pair` goals one requirement takes part in at once, the

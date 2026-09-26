@@ -624,6 +624,59 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             }
         }
     }
+    // Two criteria about one entity that describe the same situation (given and when)
+    // with different outcomes (then): the contradiction written into the evidence.
+    // Mirrors docs/compiler/compilation.md#checks.
+    {
+        let norm = |s: &Option<String>| s.as_deref().map(crate::store::normalize_statement).filter(|x| !x.is_empty());
+        let mut by_entity: BTreeMap<String, Vec<&String>> = BTreeMap::new();
+        for (cid, c) in &store.graph.criteria {
+            let ents = if c.entities.is_empty() {
+                store.graph.requirements.get(&c.requirement).map(|r| r.entities.clone()).unwrap_or_default()
+            } else {
+                c.entities.clone()
+            };
+            for e in ents {
+                by_entity.entry(e).or_default().push(cid);
+            }
+        }
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        for cids in by_entity.values() {
+            for (i, a) in cids.iter().enumerate() {
+                for b in &cids[i + 1..] {
+                    let (ca, cb) = (&store.graph.criteria[*a], &store.graph.criteria[*b]);
+                    let (Some(ga), Some(wa), Some(ta)) = (norm(&ca.given), norm(&ca.when), norm(&ca.then)) else {
+                        continue;
+                    };
+                    let (Some(gb), Some(wb), Some(tb)) = (norm(&cb.given), norm(&cb.when), norm(&cb.then)) else {
+                        continue;
+                    };
+                    if ga != gb || wa != wb || ta == tb {
+                        continue;
+                    }
+                    let key = if a < b { ((*a).clone(), (*b).clone()) } else { ((*b).clone(), (*a).clone()) };
+                    if !seen.insert(key.clone()) {
+                        continue;
+                    }
+                    f.push((
+                        "criteria-conflict".to_string(),
+                        vec![key.0.clone(), key.1.clone()],
+                        "warning".to_string(),
+                        format!(
+                            "{} and {} describe the same situation (given {}, when {}) with different outcomes ({} versus {}); one of them, or the rule behind it, is wrong",
+                            key.0,
+                            key.1,
+                            ca.given.as_deref().unwrap_or_default(),
+                            ca.when.as_deref().unwrap_or_default(),
+                            store.graph.criteria[&key.0].then.as_deref().unwrap_or_default(),
+                            store.graph.criteria[&key.1].then.as_deref().unwrap_or_default()
+                        ),
+                        None,
+                    ));
+                }
+            }
+        }
+    }
     // Reachability from root entities (entities mentioned in a root document).
     let root_entities: BTreeSet<String> = store
         .graph
@@ -3703,6 +3756,37 @@ mod tests {
         p.gen_deliverable = Some("product".into());
         let f = checks(&s, &p);
         assert_eq!(rules_for(&f, "criterion-missing")[0].2, "warning");
+    }
+
+    // The same situation observed two ways is flagged; a different situation is not.
+    // Mirrors docs/compiler/compilation.md#checks.
+    #[test]
+    fn criteria_with_one_situation_and_two_outcomes_conflict() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:sort".into(), Entity { name: "Sort".into(), ..Default::default() });
+        for rid in ["req:a-1", "req:t-1"] {
+            s.graph.requirements.insert(
+                rid.into(),
+                Requirement { statement: format!("{} holds.", rid), entities: vec!["ent:sort".into()], ..Default::default() },
+            );
+        }
+        let crit = |req: &str, given: &str, when: &str, then: &str| crate::model::Criterion {
+            requirement: req.into(),
+            statement: format!("{} {} {}", given, when, then),
+            given: Some(given.into()),
+            when: Some(when.into()),
+            then: Some(then.into()),
+            kind: "positive".into(),
+            ..Default::default()
+        };
+        s.graph.criteria.insert("crit:a-1".into(), crit("req:a-1", "the lines `321`, `654`, `453`", "the utility sorts", "it prints `321`, `453`, `654`"));
+        s.graph.criteria.insert("crit:t-1".into(), crit("req:t-1", "The lines `321`, `654`, `453`.", "The utility sorts.", "it prints `321`, `654`, `453`"));
+        s.graph.criteria.insert("crit:a-2".into(), crit("req:a-1", "the lines `321`, `654`, `453`", "the utility sorts with `-r`", "it prints `654`, `453`, `321`"));
+        let f = checks(&s, &Project::default());
+        let conflicts = rules_for(&f, "criteria-conflict");
+        assert_eq!(conflicts.len(), 1, "{:?}", conflicts);
+        assert_eq!(conflicts[0].1, vec!["crit:a-1".to_string(), "crit:t-1".to_string()]);
+        assert_eq!(conflicts[0].2, "warning");
     }
 
     #[test]

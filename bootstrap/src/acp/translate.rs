@@ -177,10 +177,10 @@ impl UpdateTranslator {
                 });
             }
             SessionUpdate::UsageUpdate(u) => {
-                // The embedded agent reports completion tokens in the meta; other
-                // agents may not report usage at all, and tokens stay 0.
+                // The embedded agent reports each round's billed tokens in the meta;
+                // other agents may not report usage at all, and tokens stay 0.
                 if let Ok(v) = serde_json::to_value(&u.meta) {
-                    if let Some(t) = v["jazyk"]["completionTokens"].as_u64() {
+                    if let Some(t) = v["jazyk"]["tokens"].as_u64() {
                         self.tokens += t;
                     }
                 }

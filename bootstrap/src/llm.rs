@@ -37,6 +37,26 @@ pub fn set_tools_mode(mode: u8) {
     TOOLS_MODE.store(mode, Ordering::Relaxed);
 }
 
+// What one model call cost. `completion` is the tokens it produced (the throughput and
+// efficiency figures the benchmark reports); `billed` is what the endpoint bills, its
+// input and output tokens together (the session's cost). `measured` says the endpoint
+// reported usage; otherwise both are estimates from characters, a quarter token each.
+// Mirrors docs/compiler/sessions.md#budgets.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Spend {
+    pub completion: u64,
+    pub billed: u64,
+    pub measured: bool,
+}
+
+// The billed tokens a usage object reports: its total, or its input plus output.
+fn usage_billed(u: &Value) -> Option<u64> {
+    u["total_tokens"].as_u64().or_else(|| {
+        let prompt = u["prompt_tokens"].as_u64()?;
+        Some(prompt + u["completion_tokens"].as_u64().unwrap_or(0))
+    })
+}
+
 // Token meter: completion tokens across all calls this run, for status.yaml reporting.
 static SPENT_TOKENS: AtomicU64 = AtomicU64::new(0);
 
@@ -366,7 +386,7 @@ impl Llm {
         tools: Option<&[Value]>,
         label: &str,
         step: &str,
-    ) -> Result<(Value, u64), String> {
+    ) -> Result<(Value, Spend), String> {
         // A boosted cap serves this one call, retries included, whatever its outcome.
         struct ClearBoost;
         impl Drop for ClearBoost {
@@ -415,7 +435,7 @@ impl Llm {
                         label: label.to_string(),
                         step: step.to_string(),
                         ms: started.elapsed().as_millis() as u64,
-                        tokens,
+                        tokens: tokens.completion,
                         message: msg.clone(),
                     });
                     return Ok((msg, tokens));
@@ -566,7 +586,7 @@ impl Llm {
         messages: &[Value],
         tools: Option<&[Value]>,
         streaming: bool,
-    ) -> Result<(Value, u64), String> {
+    ) -> Result<(Value, Spend), String> {
         // History goes out as-is, reasoning fields included, so a reasoning model keeps
         // its chain across rounds. Stripped only under the sticky rejection fallback.
         let outgoing: Vec<Value> = if REASONING_UNSUPPORTED.load(Ordering::Relaxed) {
@@ -608,8 +628,15 @@ impl Llm {
         // One transport call: the bytes of a reply, or the assembled message when the
         // endpoint streamed it. Native speaks HTTP; the browser backend speaks to the
         // in-page model (docs/frontends/wasm.md#the-model).
+        // A reply without usage is billed by estimate: what went out and what came back.
+        let sent_estimate = (body.chars().count() as u64).div_ceil(4);
         let resp_body = match self.transport(&body, streaming)? {
-            Transported::Message(m) => return Ok(m),
+            Transported::Message((m, mut spend)) => {
+                if !spend.measured {
+                    spend.billed += sent_estimate;
+                }
+                return Ok((m, spend));
+            }
             Transported::Body(b) => b,
         };
         let v: Value = serde_json::from_str(&resp_body)
@@ -627,11 +654,16 @@ impl Llm {
         if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
             msg["finish_reason"] = Value::String(f.to_string());
         }
-        let tokens = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| {
-            (msg["content"].as_str().unwrap_or("").chars().count() as u64).div_ceil(4)
-        });
-        SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
-        Ok((msg, tokens))
+        let received = (msg["content"].as_str().unwrap_or("").chars().count()
+            + msg["tool_calls"].to_string().chars().count() * usize::from(msg["tool_calls"].is_array()))
+            as u64;
+        let completion = v["usage"]["completion_tokens"].as_u64().unwrap_or_else(|| received.div_ceil(4));
+        let spend = match usage_billed(&v["usage"]) {
+            Some(billed) => Spend { completion, billed, measured: true },
+            None => Spend { completion, billed: sent_estimate + completion, measured: false },
+        };
+        SPENT_TOKENS.fetch_add(completion, Ordering::Relaxed);
+        Ok((msg, spend))
     }
 
     // The HTTP transport. Everything above it is protocol, shared by both targets.
@@ -718,7 +750,7 @@ impl Llm {
 // the message already assembled from the chunks.
 enum Transported {
     Body(String),
-    Message((Value, u64)),
+    Message((Value, Spend)),
 }
 
 // Read a streamed (SSE) chat completion and assemble the assistant message: content
@@ -734,7 +766,7 @@ fn read_stream_message<R: BufRead>(
     reader: R,
     cap_tokens: u64,
     deadline: Duration,
-) -> Result<(Value, u64), String> {
+) -> Result<(Value, Spend), String> {
     struct TcAcc {
         id: String,
         name: String,
@@ -745,6 +777,7 @@ fn read_stream_message<R: BufRead>(
     let mut reasoning = String::new();
     let mut tcs: Vec<TcAcc> = Vec::new();
     let mut usage_tokens: Option<u64> = None;
+    let mut usage_billed_tokens: Option<u64> = None;
     let mut finish_reason: Option<String> = None;
     let started = crate::sys::Instant::now();
     // Chars per token runs 3 to 4; the slack keeps an honest near-cap reply alive while
@@ -786,6 +819,9 @@ fn read_stream_message<R: BufRead>(
             };
             if let Some(u) = v["usage"]["completion_tokens"].as_u64() {
                 usage_tokens = Some(u);
+            }
+            if let Some(b) = usage_billed(&v["usage"]) {
+                usage_billed_tokens = Some(b);
             }
             if let Some(f) = v["choices"][0]["finish_reason"].as_str() {
                 finish_reason = Some(f.to_string());
@@ -836,6 +872,11 @@ fn read_stream_message<R: BufRead>(
             .div_ceil(4)
     });
     SPENT_TOKENS.fetch_add(tokens, Ordering::Relaxed);
+    // Billed is the usage's total; without one the caller adds what went out.
+    let spend = match usage_billed_tokens {
+        Some(billed) => Spend { completion: tokens, billed, measured: true },
+        None => Spend { completion: tokens, billed: tokens, measured: false },
+    };
     let mut msg = json!({"role": "assistant", "content": content});
     if let Some(f) = finish_reason {
         msg["finish_reason"] = json!(f);
@@ -854,7 +895,7 @@ fn read_stream_message<R: BufRead>(
             })
             .collect::<Vec<_>>());
     }
-    Ok((msg, tokens))
+    Ok((msg, spend))
 }
 
 // Extract the first balanced JSON object from possibly noisy model output. The text codec
@@ -964,6 +1005,29 @@ mod tests {
         let body = sse(&vec![chunk; 400]);
         let err = read_stream_message(body.as_bytes(), 256, Duration::from_secs(600)).unwrap_err();
         assert!(err.contains("runaway completion"), "{}", err);
+    }
+
+    // A session's cost is what the endpoint bills: input and output, read from the
+    // usage the stream ends with; without usage, an estimate the caller completes.
+    // Mirrors docs/compiler/sessions.md#budgets.
+    #[test]
+    fn stream_spend_bills_input_and_output() {
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9749,"completion_tokens":31,"total_tokens":9780}}"#,
+        ]);
+        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!(spend, Spend { completion: 31, billed: 9780, measured: true });
+        let body = sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"}}]}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5}}"#,
+        ]);
+        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert_eq!(spend.billed, 105);
+        let body = sse(&[r#"{"choices":[{"delta":{"content":"eight ch"}}]}"#]);
+        let (_msg, spend) = read_stream_message(body.as_bytes(), 4096, Duration::from_secs(600)).unwrap();
+        assert!(!spend.measured);
+        assert_eq!(spend.completion, 2);
     }
 
     #[test]

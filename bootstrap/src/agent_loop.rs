@@ -405,8 +405,10 @@ pub fn run_loop(a: LoopArgs) -> Stop {
             .llm
             .chat_messages(a.history, tools_param.as_deref(), &a.label, &step)
         {
+            // The cost a session carries is what the endpoint bills, input and output
+            // (docs/compiler/sessions.md#budgets).
             Ok((m, t)) => {
-                (a.emit)(AgentEvent::Usage { tokens: t });
+                (a.emit)(AgentEvent::Usage { tokens: t.billed });
                 m
             }
             Err(e) if e.starts_with("tools-rejected:") && mode != 2 => {

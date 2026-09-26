@@ -733,7 +733,22 @@ try again. Resolution is lenient toward intent, and that includes shape: an opti
 argument that is empty (an empty string, an empty list, or an object whose fields are
 all empty) counts as absent. An all-empty item inside a list argument is dropped the
 same way. A model that fills every schema field with empty values makes the same call
-as one that omits them.
+as one that omits them. Some endpoints hand the model every schema field as required,
+and a model then fills the ones it means to omit.
+
+- The arguments are normalized once, where every call enters, before any gate or the
+  repeated-call guard reads them: empty values go at any depth, so two calls that
+  differ only in filler are the same call. A top-level `null` stays, since some tools
+  read it as "remove".
+- A `transition` that names no state (`from` and `to` both empty) is a filled-in blank
+  and counts as absent.
+- A fact that arrives with its quote and a derivation both (an entity's `mention`, a
+  requirement's or a criterion's `section` and `quote`, beside `provenance.derived`)
+  keeps the quote, its one provenance, and the derivation is dropped. The reply says
+  so in `note`. A quote that does not locate is still refused (`bad-quote`).
+- A refusal names the case it met. An exclusive pair that arrives with both says to
+  drop one and which; with neither, it says which to give. E.g., a prompt option with
+  both `edit` and `answer` is told to keep `edit` when the option changes the document.
 
 The named errors a caller meets beyond the gates:
 

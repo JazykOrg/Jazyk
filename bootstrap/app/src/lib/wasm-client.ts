@@ -9,8 +9,9 @@ import type { Backend, BackendReply } from './backend'
 import type { Capabilities } from './capabilities'
 import type { FolderMirror } from './folder'
 
-// The shared control block the worker blocks on: [0] state, [1] reply length.
-const CONTROL_INTS = 2
+// The shared control block the worker blocks on: [0] state, [1] reply length,
+// [2] the chat cancel flag (docs/frontends/wasm.md#chat).
+const CONTROL_INTS = 3
 // One megabyte holds any completion this demo produces.
 const REPLY_BYTES = 1 << 20
 
@@ -37,6 +38,9 @@ export interface WasmBackendOptions {
   model: ModelHost
   // Called with each trace event as the build emits it.
   onTrace?: (events: unknown[]) => void
+  // Called with each chat event as a turn emits it, in the event stream's shape
+  // (docs/frontends/wasm.md#chat).
+  onEvent?: (event: Record<string, unknown>) => void
   // Called after every write request returns: the app refetches, since there is no
   // event stream to say what moved.
   onWrite?: () => void
@@ -73,6 +77,17 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
   const replyView = replyBuf ? new Uint8Array(replyBuf) : null
   const encoder = new TextEncoder()
 
+  // The model call the worker is blocked on, by number. A cancel answers it at once;
+  // the model's own reply, arriving later, is then dropped rather than waking the
+  // worker in the middle of another call.
+  let callSeq = 0
+  let inflight = 0
+  function settle(call: number, payload: { body?: string; error?: string }) {
+    if (inflight !== call) return
+    inflight = 0
+    answer(payload)
+  }
+
   // Write one reply into the shared buffer and wake the worker.
   function answer(payload: { body?: string; error?: string }) {
     if (!controlView || !replyView) return
@@ -100,12 +115,19 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       opts.onTrace?.([JSON.parse(msg.event)])
       return
     }
+    if (msg?.kind === 'event') {
+      // A chat turn's progress, posted while the prompt request is still running.
+      opts.onEvent?.(JSON.parse(msg.event))
+      return
+    }
     if (msg?.kind === 'llm') {
       // The worker is blocked until this answers, so every path must answer.
+      const call = ++callSeq
+      inflight = call
       opts.model
         .chat(msg.body)
-        .then((body) => answer({ body }))
-        .catch((err) => answer({ error: err instanceof Error ? err.message : String(err) }))
+        .then((body) => settle(call, { body }))
+        .catch((err) => settle(call, { error: err instanceof Error ? err.message : String(err) }))
       return
     }
     if (msg?.kind === 'reply') {
@@ -138,7 +160,9 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     events: 'pushed',
     lsp: false,
     jobs: opts.model.available() ? ['compile'] : [],
-    agent: 'none',
+    // The chat loop runs in the worker; `model` says whether it has a model to call
+    // (docs/frontends/wasm.md#chat).
+    agent: 'embedded',
     model: opts.model.available() ? 'in-page' : opts.model.loadable?.() ? 'loadable' : 'none',
     rendering: 'none',
     persistence: project?.mirror ? 'browser' : 'memory',
@@ -153,6 +177,16 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
       })
     }
     if (!project) return reply(501, { error: 'no project is open in this tab yet' })
+    // A cancel cannot reach the worker: it is inside the turn. The flag stops the loop
+    // at its next check, and failing the model call in flight ends the wait now.
+    if (method === 'POST' && /^\/api\/chat\/sessions\/[^/]+\/cancel$/.test(bare)) {
+      if (controlView) Atomics.store(controlView, 2, 1)
+      if (inflight) {
+        inflight = 0
+        answer({ error: 'the turn was cancelled' })
+      }
+      return reply(202, { ok: true })
+    }
     const out = await send<{ status: number; body: unknown }>({ kind: 'request', method, path, body })
     if (method !== 'GET') opts.onWrite?.()
     return reply(out.status, out.body)

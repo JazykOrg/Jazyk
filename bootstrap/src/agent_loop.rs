@@ -343,6 +343,10 @@ pub struct LoopArgs<'a> {
     pub cancelled: &'a dyn Fn() -> bool,
     pub max_rounds: u32,
     pub label: String,
+    // A conversation (a chat turn in a tab): a prose reply after tool calls is the
+    // answer and ends the turn, with no finish nudge holding it back.
+    // Mirrors docs/frontends/wasm.md#chat.
+    pub conversation: bool,
 }
 
 pub fn run_loop(a: LoopArgs) -> Stop {
@@ -571,7 +575,7 @@ pub fn run_loop(a: LoopArgs) -> Stop {
                     "You announced an action but made no tool call, and announcing is not acting: make that call now. If the work is finished, reply with a one-line summary and nothing else."}));
                 continue;
             }
-            if called_any && !nudged {
+            if called_any && !nudged && !a.conversation {
                 nudged = true;
                 a.history.push(json!({"role": "user", "content":
                     "If the task is not finished, continue with tool calls. If it is finished, reply with a one-line summary and nothing else."}));

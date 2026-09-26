@@ -528,15 +528,18 @@ renders against it:
     (the demo's examples), `folder-picker` (the browser backend's File System Access
     flow).
   - `docs`: `read` or `write`.
-  - `events`: `stream` (the [event stream](#events)), `pushed` (trace events posted
-    from a build running in the page), `refetch` (no stream; the app refetches after
-    every write).
+  - `events`: `stream` (the [event stream](#events)), `pushed` (trace events and
+    chat events posted from work running in the page), `refetch` (no stream; the app
+    refetches after every write).
   - `lsp`: whether `GET /lsp` exists. Without it the editor derives the same
     decorations from the graph's mentions and quotes on the client.
   - `jobs`: the job kinds the backend runs, from `compile`, `gen`, `verify`, `audit`,
     `decompile`, `benchmark`.
   - `agent`: `embedded`, `external`, or `none`. Without an agent the chat column
-    shows build threads only and says why.
+    shows build threads only and says why. In a tab, `embedded` is the
+    [chat loop in the worker](./wasm.md#chat) on the page's model. It holds whether
+    or not that model is ready; `model` says which, and while it is not `in-page` the
+    chat column offers the model chooser in place of the prompt box.
   - `model`: `configured`, `in-page` (a model loaded in the tab), `loadable` (the
     tab can load one, on request), `needs-key`, or `none`.
   - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
@@ -988,11 +991,18 @@ The column's behaviors:
   again.
 - A backend without an agent shows build threads only and says why the chat is
   unavailable.
+- In a tab the agent is the embedded loop run in the worker on the model the page
+  chose ([chat in a tab](./wasm.md#chat)). While that model is not ready the column
+  says the chat needs it and shows the model chooser with its load button, so a
+  person can pick a source and start talking without leaving the pane. A turn the
+  model fails, a context window too small for the conversation included, ends with
+  the model's error in the transcript.
 
 API: `POST /api/chat/sessions` creates a session, `GET /api/chat/sessions` lists
 them, `GET /api/chat/sessions/{id}` returns one with its transcript and its loaded
 set, `POST /api/chat/sessions/{id}/prompt` sends a prompt (progress streams over the
-event stream), `POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
+event stream; a tab posts the same events from the worker),
+`POST /api/chat/sessions/{id}/cancel` cancels the open prompt, and
 `POST /api/chat/permissions` answers a pending permission request with body
 `{sessionId, id, optionId?}` (a missing `optionId` cancels the request). Updates
 travel as `chat.update` events, elided like `job.trace`; permission requests as

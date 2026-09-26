@@ -417,6 +417,36 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             }
         }
 
+        // The chat pane: conversations run in the worker on the page's model, and
+        // their progress is posted to the page as events while the prompt request
+        // is still running. See docs/frontends/wasm.md#chat.
+        ("POST", "/chat/sessions") => ok(crate::wasm::chat::create()),
+        ("GET", "/chat/sessions") => ok(crate::wasm::chat::list()),
+        ("GET", p) if p.starts_with("/chat/sessions/") => {
+            let id = decode(p.trim_start_matches("/chat/sessions/"));
+            match crate::wasm::chat::get(&id) {
+                Some(v) => ok(v),
+                None => err(404, format!("no chat session {}", id)),
+            }
+        }
+        ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/prompt") => {
+            let id = decode(
+                p.trim_start_matches("/chat/sessions/")
+                    .trim_end_matches("/prompt"),
+            );
+            let (status, v) = crate::wasm::chat::prompt(&id, &body);
+            reply(status, v)
+        }
+        // The page answers a cancel while a turn runs; one that reaches the worker
+        // found no turn running, so there is nothing to stop.
+        ("POST", p) if p.starts_with("/chat/sessions/") && p.ends_with("/cancel") => {
+            reply(202, json!({ "ok": true }))
+        }
+        ("POST", "/chat/permissions") => err(
+            409,
+            "a chat in this tab never asks permission, so there is nothing to answer",
+        ),
+
         _ => err(
             501,
             format!("the browser backend does not serve {} {}", method, path),

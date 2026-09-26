@@ -1,11 +1,12 @@
 // The chat pane: the persistent conversation surface on the far right. Chat sessions
-// talk to the configured ACP agent; follow entries render the running build from the
+// talk to the configured ACP agent (in a tab, the loop in the worker); follow entries render the running build from the
 // live trace the jobs already stream. Mirrors docs/frontends/gui.md#chat.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { get, post, verdictText } from '../lib/api'
 import { useApp, type ChatUpdateRow, type TurnProgress } from '../lib/store'
-import { useCapabilities } from '../lib/capabilities'
+import { needsPageModel, useCapabilities } from '../lib/capabilities'
+import ModelSourcePanel from '../components/ModelSourcePanel'
 import { useWords, verdictWords } from '../lib/words'
 
 interface Command {
@@ -381,6 +382,9 @@ function OpenPane({ close }: { close: () => void }) {
   const caps = useCapabilities()
   const w = useWords()
   const noAgent = caps.data?.agent === 'none'
+  // A tab's agent runs the page's model; until it is ready the pane offers the
+  // chooser instead of the prompt box (docs/frontends/gui.md#chat).
+  const needsModel = !noAgent && needsPageModel(caps.data)
 
   // Build threads: one per job this page has seen, live ones first
   // (docs/frontends/gui.md#chat).
@@ -437,16 +441,36 @@ function OpenPane({ close }: { close: () => void }) {
       {active?.startsWith('follow-') ? (
         <FollowView jobId={Number(active.slice(7))} />
       ) : active ? (
-        <ChatView id={active} />
+        <ChatView id={active} needsModel={needsModel} />
+      ) : needsModel ? (
+        <NeedsModel />
       ) : (
         <div className="chat-empty muted">
           {noAgent ? (
             <p>This backend has no agent to talk to. Syncs still show here as build threads while they run.</p>
           ) : (
-            <p>No conversations yet. Start one with +, or run a sync and follow it here.</p>
+            <>
+              <p>No conversations yet. Ask about the project, or run a sync and follow it here.</p>
+              <p>
+                <button className="chat-start" onClick={() => void newChat()}>
+                  New conversation
+                </button>
+              </p>
+            </>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// The model chooser in place of the prompt box, while a tab has no model to call.
+// Mirrors docs/frontends/wasm.md#chat.
+function NeedsModel() {
+  return (
+    <div className="chat-model">
+      <p className="chat-model-head">Chat needs a model in this browser.</p>
+      <ModelSourcePanel />
     </div>
   )
 }
@@ -516,7 +540,7 @@ function useSelectionContext(): string | null {
   return null
 }
 
-function ChatView({ id }: { id: string }) {
+function ChatView({ id, needsModel }: { id: string; needsModel: boolean }) {
   const updates = useApp((a) => a.chatUpdates[id])
   const context = useSelectionContext()
   const dev = useApp((a) => a.dev)
@@ -572,42 +596,46 @@ function ChatView({ id }: { id: string }) {
       {(info?.pending ?? []).map((ask) => (
         <PermissionAsk key={ask.id} sessionId={id} ask={ask as never} />
       ))}
-      <div className="chat-input">
-        {completions.length > 0 && (
-          <div className="chat-completions">
-            {completions.map((c) => (
-              <button key={c.name} onClick={() => setText(c.name + ' ')}>
-                <span className="mono">{c.name}</span> <span className="muted">{c.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {context && !text && (
-          <button className="chat-context" onClick={() => setText(`About ${context}: `)} title="start the question with what you are looking at">
-            ask about {context.length > 40 ? `${context.slice(0, 38)}…` : context}
-          </button>
-        )}
-        <textarea
-          value={text}
-          placeholder={running ? 'the agent is working…' : 'ask the agent, or / for commands'}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
-          }}
-        />
-        <div className="chat-input-row">
-          {running ? (
-            <button onClick={() => void post(`/api/chat/sessions/${id}/cancel`)}>cancel</button>
-          ) : (
-            <button onClick={() => void send()} disabled={!text.trim()}>
-              send
+      {needsModel && !running ? (
+        <NeedsModel />
+      ) : (
+        <div className="chat-input">
+          {completions.length > 0 && (
+            <div className="chat-completions">
+              {completions.map((c) => (
+                <button key={c.name} onClick={() => setText(c.name + ' ')}>
+                  <span className="mono">{c.name}</span> <span className="muted">{c.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {context && !text && (
+            <button className="chat-context" onClick={() => setText(`About ${context}: `)} title="start the question with what you are looking at">
+              ask about {context.length > 40 ? `${context.slice(0, 38)}…` : context}
             </button>
           )}
+          <textarea
+            value={text}
+            placeholder={running ? 'the agent is working…' : commands.length > 0 ? 'ask the agent, or / for commands' : 'ask the agent about the project'}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
+          <div className="chat-input-row">
+            {running ? (
+              <button onClick={() => void post(`/api/chat/sessions/${id}/cancel`)}>cancel</button>
+            ) : (
+              <button onClick={() => void send()} disabled={!text.trim()}>
+                send
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   )
 }

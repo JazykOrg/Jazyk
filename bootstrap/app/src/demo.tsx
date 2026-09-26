@@ -17,7 +17,7 @@ import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProjec
 import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
 import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
-import { pushTraceEvents, refreshAfterWrite } from './lib/events'
+import { pushTraceEvents, pushWireEvent, refreshAfterWrite } from './lib/events'
 import { ensurePermission, FolderMirror, pickFolder, readFolder } from './lib/folder'
 import { folderHandle, readRecent, rememberFolder, setRecentMode, touchRecent, type FolderMode } from './lib/recent'
 import { DEMOS } from './shell/Home'
@@ -148,6 +148,8 @@ async function boot() {
       for (const e of events) console.info('[jazyk trace]', JSON.stringify(e))
       pushTraceEvents(qc, events)
     },
+    // A chat turn's updates, as the event stream would carry them.
+    onEvent: (event) => pushWireEvent(qc, event),
     onWrite: () => refreshAfterWrite(qc),
   })
   setBackend(backend)
@@ -160,6 +162,8 @@ async function boot() {
   const opened = async (p: WasmProject) => {
     await backend.open(p)
     qc.clear()
+    // The conversations belonged to the project the tab had open before.
+    useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null })
     window.location.hash = '#/docs'
   }
 

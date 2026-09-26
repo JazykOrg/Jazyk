@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { post, put } from '../lib/api'
-import { useCapabilities, whyNot } from '../lib/capabilities'
+import { needsPageModel, useCapabilities, whyNot } from '../lib/capabilities'
 import { useInbox } from '../lib/product'
 import { useDocs, useGenPending, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
@@ -136,7 +136,7 @@ function ActionSheet({ close }: { close: () => void }) {
       )}
 
       <h3>{w.sync}</h3>
-      {caps.data && caps.data.backend !== 'server' && caps.data.model !== 'in-page' ? (
+      {needsPageModel(caps.data) ? (
         <ModelSourcePanel />
       ) : cannot('compile') ? (
         <p className="why">{cannot('compile')}</p>

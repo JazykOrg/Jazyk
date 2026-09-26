@@ -183,6 +183,7 @@ impl SessionRunner for InPageRunner {
             cancelled: &never_cancelled,
             max_rounds: crate::limits::SESSION_ROUNDS,
             label: label.clone(),
+            conversation: false,
         });
         rounds += 1;
 

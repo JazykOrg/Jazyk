@@ -818,6 +818,20 @@ button.btn-on {
 .chat-empty {
   padding: 12px;
 }
+/* The model chooser in place of the prompt box (docs/frontends/wasm.md#chat). */
+.chat-model {
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  overflow: auto;
+  max-height: 70%;
+}
+.chat-transcript + .chat-model {
+  flex-shrink: 0;
+}
+.chat-model-head {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
 .chat-transcript {
   flex: 1;
   overflow: auto;

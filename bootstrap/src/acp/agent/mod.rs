@@ -257,6 +257,7 @@ pub fn run() -> i32 {
                             cancelled: &|| cancelled.load(Ordering::Relaxed),
                             max_rounds: max_rounds(),
                             label,
+                            conversation: false,
                         });
                         let _ = match stop {
                             Stop::EndTurn => responder.respond(PromptResponse::new(StopReason::EndTurn)),

@@ -2,7 +2,7 @@
 
 [docs]
 glob = [
-    "**/*.md",
+    "docs/**/*.md",
 ]
 
 [roots]

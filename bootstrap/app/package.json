@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "build:demo": "sh scripts/build-wasm.sh && tsc -b && JAZYK_DEMO=1 vite build",
     "preview:demo": "JAZYK_DEMO=1 vite preview --outDir dist-demo",
-    "pack-demos": "sh scripts/pack-demos.sh"
+    "pack-demos": "sh scripts/pack-demos.sh",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -37,6 +38,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/cytoscape": "^3.21.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

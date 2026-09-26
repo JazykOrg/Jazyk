@@ -447,6 +447,15 @@ Known gaps, and the emitter rules they dictate:
   their aliases.
 - The crate rejects a diagram with no elements, so a view with no members renders as
   one `rectangle "<title>: no members"`.
+- In a component diagram the crate draws no `actor` (declared with an alias it drops the
+  element and draws a link to it as the bare alias) and, when no `interface` is
+  declared, no link but `-->` and `..>`: `--`, `*--`, `o--`, `--|>`, and `..|>` between
+  components vanish. The emitted `.puml` stays standard, so the official binary draws the
+  true notation; the in-process conversion alone adapts it: an actor converts as a
+  `component` with the `«actor»` stereotype, and without an interface each link converts
+  to `-->` (`..>` for the dotted forms) in the relationship's stated direction, its label
+  kept. The ERP's top view had drawn three bare boxes where its source declared an actor
+  and three associations.
 - A renderer panic (observed on non-ASCII characters in the edge labels of
   graphviz-routed kinds) is caught at the seam and reported as a render failure like
   any other: the `.puml` stays, the stale `.svg` is removed, the build continues.

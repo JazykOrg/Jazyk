@@ -48,6 +48,7 @@ pub fn render_svg(puml: &str) -> Result<String, RenderError> {
 #[cfg(not(target_arch = "wasm32"))]
 fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
+    let plain = adapt_component_for_crate(&plain);
     match std::panic::catch_unwind(|| plantuml_little::convert(&plain)) {
         Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
@@ -638,6 +639,46 @@ fn link_suffix(id: &str) -> String {
 // [(element key, href)])`. A link is a ` [[../...]]` on a declaration line; the key is
 // the alias after ` as `, or the quoted name of a package declared without one, the
 // same name the crate writes as the element's `data-qualified-name`.
+// The crate draws no actor in a component diagram and, with no interface declared, no
+// link but `-->` and `..>`. The emitted `.puml` stays standard for the official binary;
+// only the in-process conversion adapts it: an actor converts as a component with the
+// «actor» stereotype, and without an interface each link converts to `-->` (`..>` for the
+// dotted forms) in its stated direction, its label kept.
+// Mirrors docs/compiler/diagrams.md#the-renderer.
+fn adapt_component_for_crate(puml: &str) -> String {
+    let lines: Vec<&str> = puml.lines().collect();
+    let is_component = lines.iter().any(|l| l.trim_start().starts_with("component "));
+    if !is_component {
+        return puml.to_string();
+    }
+    let has_interface = lines.iter().any(|l| l.trim_start().starts_with("interface "));
+    let mut out = String::with_capacity(puml.len());
+    for line in lines {
+        let t = line.trim_start();
+        let adapted = if let Some(rest) = t.strip_prefix("actor ") {
+            // `actor "Name" as alias ...` or `actor Name`.
+            if rest.starts_with('"') {
+                format!("component {} <<actor>>", rest.trim_end())
+            } else {
+                let name = rest.split_whitespace().next().unwrap_or(rest);
+                format!("component \"{}\" as {} <<actor>>", name, name)
+            }
+        } else if !has_interface {
+            let parts: Vec<&str> = t.splitn(3, ' ').collect();
+            match parts.as_slice() {
+                [a, op, rest] if ["--", "*--", "o--", "--|>"].contains(op) => format!("{} --> {}", a, rest),
+                [a, op, rest] if ["..", "..|>"].contains(op) => format!("{} ..> {}", a, rest),
+                _ => line.to_string(),
+            }
+        } else {
+            line.to_string()
+        };
+        out.push_str(&adapted);
+        out.push('\n');
+    }
+    out
+}
+
 fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
     let mut plain = String::with_capacity(puml.len());
     let mut links: Vec<(String, String)> = Vec::new();
@@ -2222,6 +2263,24 @@ mod tests {
         );
     }
 
+    // The crate draws no actor and no undirected link in a component diagram without an
+    // interface; the in-process conversion adapts the standard source.
+    // Mirrors docs/compiler/diagrams.md#the-renderer.
+    #[test]
+    fn a_component_view_without_interfaces_draws_its_links_and_actor() {
+        let puml = "@startuml\ncomponent \"Frontend\" as frontend [[../../docsgen/entities/frontend.md]]\ncomponent \"Backend\" as backend [[../../docsgen/entities/backend.md]]\ncomponent \"Product\" as product <<entity>> [[../../docsgen/entities/product.md]]\nactor \"Warehouse Staff\" as warehouse_staff [[../../docsgen/entities/warehouse-staff.md]]\nbackend -- frontend\nbackend -- product\nbackend -- warehouse_staff\n@enduml\n";
+        let adapted = adapt_component_for_crate(&strip_element_links(puml).0);
+        assert!(adapted.contains("component \"Warehouse Staff\" as warehouse_staff <<actor>>"), "{}", adapted);
+        assert!(adapted.contains("backend --> frontend\n"), "{}", adapted);
+        let svg = render_svg(puml).unwrap();
+        assert!(svg.contains(">Warehouse Staff<"), "the actor is drawn with its name");
+        assert!(svg.matches("<path").count() >= 3, "three links drawn: {}", svg.matches("<path").count());
+        assert!(svg.contains("warehouse-staff.md"), "the actor keeps its link");
+        // A class or use case diagram passes through untouched.
+        let uc = "@startuml\nactor \"A\" as a\nusecase \"U\" as u\na -- u\n@enduml\n";
+        assert_eq!(adapt_component_for_crate(uc), uc);
+    }
+
     #[test]
     fn component_emitter_draws_lollipops_and_sockets() {
         let s = showcase();
@@ -3105,3 +3164,4 @@ mod tests {
         let _ = crate::vfs::remove_dir_all(&out);
     }
 }
+

@@ -66,12 +66,14 @@ before the backend boots:
 - `seed_file(path, bytes)` writes one file.
 - `boot(root)` adopts the tree as the project and answers the resolved project, or an
   error naming what the tree is missing.
-- `list_files()` answers every path, for a host that wants to persist or download
-  what the session produced.
+- `list_files()` answers every path, and `read_file(path)` one file's bytes, for a
+  host that wants to persist or download what the session produced.
+- `enable_fs_sink()` posts every later mutation to the page (below).
 
-The tree lives as long as the tab. In the demo's in-memory mode nothing is written
-through to the machine and a reload starts from the seed again. With
-[a folder on disk](#a-folder-on-disk) open, every mutation is mirrored into it.
+The tree lives as long as the tab. The page keeps the project beyond it: every
+mutation is posted to the page, which writes it to
+[a folder on disk](#a-folder-on-disk) or to [browser storage](#browser-storage),
+depending on where the project came from.
 
 ### A folder on disk
 
@@ -88,7 +90,8 @@ open a directory on the computer as the project instead of the bundled demo.
   folder.
 - The page applies mutations one after another in the order they arrived, so a
   write and the remove that follows it never race. A mutation that fails to land
-  is logged; the tree in the worker is still the truth the compiler reads.
+  is kept in browser storage, never dropped. See
+  [when a folder cannot be written](#when-a-folder-cannot-be-written).
 - Reads never touch the disk again. An edit made outside the tab is not seen until
   the folder is opened again. Nothing watches the folder.
 
@@ -104,11 +107,137 @@ mutation either way.
   order they happened. Documents, a build's shards, and the journal all stay in the
   tab. The top bar shows how many paths are held and offers to write them; a save in
   the editor asks the same. Writing asks the browser for write access, applies the
-  held mutations in order, and switches to writing mode. Closing the tab with
-  mutations held asks first.
+  held mutations in order, and switches to writing mode. The held mutations are
+  also kept in [browser storage](#browser-storage), so a reload or a closed tab
+  does not lose them. Closing the tab with mutations held still asks first.
 
 The recent list on [Home](./gui.md#home) remembers each folder's mode, so a folder
 reopens the way it was left.
+
+### Browser storage
+
+A project that is not a folder on disk lives in the browser's own storage, so it
+survives a reload and a closed tab. Three things use it:
+
+- A browser project: a project started from scratch on [Home](./gui.md#home), not tied
+  to any folder. See [a project in the browser](#a-project-in-the-browser).
+- A demo with edits. See [an edited demo](#an-edited-demo).
+- The changes a folder has not taken yet: the ones read-only mode holds, and the
+  ones a failed write left. See
+  [when a folder cannot be written](#when-a-folder-cannot-be-written).
+
+What is stored where:
+
+- File contents go to IndexedDB, database `jazyk-projects`, object store `files`,
+  one record per file, so a write stores one file and never the whole project.
+  - `file:<project>:<path>`: the bytes of one file of a stored project. `<project>`
+    is `browser:<uuid>` for a browser project and `demo:<id>` for an edited demo.
+  - `kept:<folder>:<path>`: one change a folder has not taken yet, `{ seq, op,
+    bytes, dir }`, where `op` is `write` or `remove` and `seq` orders the changes.
+    `<folder>` is the folder's recent entry, `folder:<uuid>`.
+- The small metadata stays in local storage under `jazyk.recent`, as before: each
+  entry's id, kind, name, a folder's mode, whether a demo carries edits, and how many
+  changes a folder has kept. A folder's directory handle stays in IndexedDB's
+  default database under its entry id.
+
+Writes are coalesced. The page collects the posted mutations and stores them a
+moment after the last one (a third of a second, and at most two seconds after the
+first), the latest per path, in the order the paths were last touched, in one
+transaction. A build's burst of shard and journal writes is one transaction, not
+hundreds. Leaving the page (hiding it or closing it) stores what is pending at once.
+
+Size and quota:
+
+- A browser sets the quota per site, usually a share of the free disk. A browser
+  project is a few kilobytes of documents plus its `jazyk-out`. An edited demo is
+  about the size of its fixture, up to about 1.3MB.
+- The page asks the browser to keep the site's storage persistent
+  (`navigator.storage.persist()`) when it first stores a project, so the browser
+  does not evict it under storage pressure. A browser may refuse; the project is
+  still stored.
+- A write the browser refuses (the quota is full, or storage is unavailable) is
+  not swallowed. The top bar says the project could not be saved in this browser and
+  how many changes are in this tab only, and offers to retry and to download the
+  project. The changes stay queued: every later store tries them again, in order.
+- Browser storage is not a backup. Clearing the site's data deletes every browser
+  project and every demo's edits. Save a project to a folder, or download it, to keep
+  a copy.
+- A browser with no IndexedDB (some private windows) stores nothing: a demo's edits
+  stay in the tab, as the descriptor's `persistence: memory` says, and a new project
+  is not offered.
+
+### A project in the browser
+
+`New project` on [Home](./gui.md#home) asks for a name and creates a minimal project
+in browser storage, then opens it:
+
+- `jazyk.toml`: the docs glob `docs/**/*.md` and the root `docs/README.md`.
+- `docs/README.md`: a heading with the project's name and one line saying what to
+  write.
+
+E.g.:
+
+```markdown
+# Garden planner
+
+Describe what this project is in plain sentences: what it is for, who uses it, and what it must do.
+```
+
+The recent list shows it as a browser project that lives in this browser only.
+Reopening it from `Recent` reads its files from storage and seeds the tree with them.
+It works in every browser, since it needs no folder API. Removing its entry from the
+list deletes it, after asking.
+
+A browser project leaves the browser two ways, both offered in the top bar:
+
+- `Save to a folder…` (where the File System Access API exists): the page asks for a
+  folder, asks again if the folder is not empty, and writes every file of the tree
+  into it. From then on the project is that folder in writing mode: the recent entry
+  becomes the folder's, and the copy in browser storage is deleted once every file
+  landed. A write that fails stops the save and says why: the project stays in the
+  browser, and nothing kept there is deleted. Edits made while the files are written
+  follow them into the folder.
+- `Download`: the whole tree as one `.zip` named after the project, the same layout a
+  folder would hold. It works in every browser.
+
+A demo offers the same two.
+
+### An edited demo
+
+An unedited demo is fetched fresh every time it opens. The first mutation the backend
+posts for a demo (a save in the editor, a chat edit, a build) turns it into a stored
+copy under `demo:<id>`: the fixture's files as they were seeded, then every mutation
+since. Its recent entry says it carries your edits.
+
+- Reopening it from `Recent`, or picking the same demo again, opens the edited copy,
+  not the fixture.
+- `Reset to the original`, on its recent row and in the top bar, deletes the copy
+  after asking. A demo that is open reopens from the fixture.
+- Removing its entry from the list deletes the copy too, after asking.
+
+The stored copy is a snapshot of the fixture it started from. A newer fixture in a
+later release does not reach it until it is reset.
+
+### When a folder cannot be written
+
+A folder write can fail: the permission lapsed, the folder was moved or deleted, the
+disk refused. The change is not lost:
+
+- The failed mutation is kept in browser storage under the folder, and so is every
+  mutation after it, so the folder never takes a later change before an earlier one.
+  The tab keeps working on the tree as before.
+- The top bar says it plainly: `Could not write to <folder>: N changes kept in this
+  browser`, with `Retry`. Retry asks the browser for write access if it needs to,
+  writes the kept changes in order, and stops at the first that fails again; the rest
+  stay kept. While it writes, the top bar says `Writing N changes to <folder>…`.
+- The recent row says how many changes the folder has kept.
+
+Read-only mode's held changes are the same kept changes. Reopening a folder that has
+kept changes, after a reload or on another day, reads the folder, lays the kept
+changes over it in order, and opens that, so the tab shows the work as it was left.
+The top bar offers to write them (`Write to folder`) or to discard them (`Discard`,
+after asking, reopens the folder as it is on disk). In writing mode, while changes are
+kept, new mutations queue behind them rather than landing first.
 
 So a build in a tab lands in the same `jazyk-out/` the native binary would write,
 with the same shards and the same journal, and the two can be used on the same
@@ -260,7 +389,8 @@ What the serving does in a tab:
 - The same [gates](../compiler/graph.md#validation-gates), the same staged
   changesets, the same [dual writes](./acp.md#dual-write-tools). A chat edit to a
   document lands in the tree. With a [folder](#a-folder-on-disk) open it follows the
-  folder's mode: applied in writing mode, held in read-only mode.
+  folder's mode: applied in writing mode, held in read-only mode. In a stored project
+  it is stored like any edit ([browser storage](#browser-storage)).
 - The binding, generation, and verification lifecycles are not served: each needs a
   shell. The compilation lifecycle stays. Fewer tools is also a shorter prompt, since
   the text codec writes every tool's schema into it.
@@ -314,12 +444,15 @@ drawn at another level of detail, has no picture in a tab, and its page says why
 once against a backend with no project open, which answers the
 [capability descriptor](./gui.md#backends-and-capabilities) itself (`backend:
 demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `agent: embedded`,
-`rendering: none`) and
+`rendering: none`, `persistence: browser`) and
 refuses every other route with `501` until a project is open. Home renders the
-picker from that descriptor and dispatches `jazyk:open-demo` or
-`jazyk:pick-folder`; the entry listens, seeds the backend with the bundled project
-or the [folder](#a-folder-on-disk) picked, and moves to the documents. Opening a
-folder flips the descriptor to `backend: wasm`, `persistence: browser`.
+picker from that descriptor and dispatches `jazyk:open-demo`, `jazyk:pick-folder`,
+`jazyk:new-project`, or `jazyk:open-recent`; the entry listens, seeds the backend
+with the bundled project, the [folder](#a-folder-on-disk) picked, or the
+[stored project](#browser-storage), and moves to the documents. Opening a folder
+flips the descriptor to `backend: wasm`, `persistence: folder`; opening a
+[browser project](#a-project-in-the-browser) flips it to `backend: wasm`,
+`persistence: browser`.
 
 The model loads only when asked, because every read works without one and only a
 build or a [chat](#chat) needs it, and a first visit would otherwise download
@@ -334,7 +467,9 @@ Every example Home lists is a fixture: the project's documents, its `jazyk.toml`
 and its whole `jazyk-out` as last built (the shards, the journal, the coverage, the
 rendered diagrams), packed by `app/scripts/pack-demo.mjs` into one JSON per example
 under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
-for replays, leases, sockets, dotfiles, and an archived out directory are left out. The fixtures are committed, since the
+for replays, leases, worker registrations, sockets, dotfiles, and an archived out
+directory are left out: a stale worker registration would be reaped on the first
+read, and that removal would count as an edit. The fixtures are committed, since the
 examples' out directories are not, and `npm run pack-demos` repacks all of them
 after an example is rebuilt. The page fetches a fixture when its demo is picked
 rather than carrying them all.
@@ -342,7 +477,8 @@ rather than carrying them all.
 So a visitor lands on a populated graph rather than an empty one: the entities, the
 requirements, the views, the diagrams, and the verdict the last build left. Editing
 a document dirties its sections, which opens goals, and a build runs them through
-the model in the page.
+the model in the page. The first edit keeps the demo in
+[browser storage](#an-edited-demo), so it survives a reload until it is reset.
 
 ## Building
 
@@ -365,7 +501,10 @@ demo opens with only its own documents, the Model pages read by name with no ids
 a requirement keeps the Requirements list, a diagram shows its picture, a demo
 autosaves, a read-only folder holds its writes until asked and a writing one
 autosaves (a folder in the browser's private file system stands in for a picked
-one), the recent list remembers and forgets, a phone-width screen gives the editor
+one), the recent list remembers and forgets, a new project and an edited demo
+reopen with their edits after a reload and the demo resets to its original, a
+folder whose writes fail keeps them and Retry lands them, a read-only folder's held
+changes survive a reload, a phone-width screen gives the editor
 the width, nothing downloads the model on arrival, the chat pane offers the model
 chooser while no model is ready, and a chat on an endpoint source (a mocked one)
 calls a read tool and streams its answer into the pane. The deploy workflow runs
@@ -406,5 +545,6 @@ policy; nothing client-side is needed.
 - No binding, generation, or verification in chat, and no slash commands. See
   [chat](#chat).
 - No rendering to `.svg` or `.png`. See [diagrams](#diagrams).
-- No file watching, and no writing through to a machine.
+- No file watching. The only way onto the machine is a folder the person opened or
+  saved to, or a download.
 - No [benchmark](../benchmark/benchmark.md).

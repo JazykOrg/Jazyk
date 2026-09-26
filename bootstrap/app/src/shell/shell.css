@@ -1003,6 +1003,62 @@ a.trail-step:hover .trail-label {
   padding: 2px 8px;
 }
 
+/* A write that did not land, said plainly with the way to recover beside it
+   (docs/frontends/wasm.md#when-a-folder-cannot-be-written). */
+.ws-top .ws-folder.failed {
+  color: var(--err);
+  border-color: var(--err);
+  font-weight: 500;
+}
+
+/* A project kept in this browser, or a demo: the chip opens a small menu saying what
+   that means and what can be done (docs/frontends/wasm.md#browser-storage). */
+.ws-top .ws-place-chip {
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.ws-top .ws-place-chip:hover,
+.ws-top .ws-place-chip[aria-expanded='true'] {
+  color: var(--ink);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.ws-place-menu {
+  position: fixed;
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 12px 14px;
+  z-index: 50;
+  white-space: normal;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ws-place-menu p {
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
+.ws-place-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ws-place-actions button {
+  font-size: 12.5px;
+}
+
 /* The recent list in the browser (docs/frontends/gui.md#home). */
 .home .proj.recent {
   display: flex;
@@ -1040,6 +1096,70 @@ a.trail-step:hover .trail-label {
 
 .home .recent-forget:hover {
   color: var(--ink);
+}
+
+.home .recent-reset {
+  align-self: center;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 3px 9px;
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+.home .recent-reset:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.home .proj .shape.kept {
+  color: var(--warn);
+}
+
+/* New project: a name, then Create (docs/frontends/gui.md#home). */
+.home .home-new {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: -14px 0 24px;
+  background: var(--panel);
+}
+
+.home .home-new-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.home .home-new-row input {
+  flex: 1;
+  font-size: 14px;
+}
+
+.home .home-new-row button {
+  padding: 7px 14px;
+  font-size: 14px;
+}
+
+.home .home-new button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.home .home-new p {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+.home .home-nostore {
+  border-left-color: var(--warn);
 }
 
 .home .home-readonly {

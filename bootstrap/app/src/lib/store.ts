@@ -79,6 +79,34 @@ export interface ChatUpdateRow {
 
 const CHAT_RING = 2000
 
+export interface FolderState {
+  name: string
+  mode: FolderMode
+  // Changes the folder has not taken: held in read-only mode, kept after a failed
+  // write, or kept from an earlier visit.
+  held: number
+  // Why the last write to the folder failed, until the kept changes land.
+  error: string | null
+  // The kept changes are being written now.
+  writing: boolean
+  // Why browser storage refused to keep the changes, if it did.
+  storeError: string | null
+}
+
+export interface StoredState {
+  // The recent entry's id: `demo:<id>` or `browser:<uuid>`.
+  id: string
+  kind: 'demo' | 'browser'
+  name: string
+  // A demo whose copy carries edits.
+  edited: boolean
+  // Why the last store failed, and how many changes are in the tab only.
+  error: string | null
+  unsaved: number
+  // Whether the browser can store at all; without it, changes stay in the tab.
+  available: boolean
+}
+
 interface AppStore {
   connected: boolean
   // A request answered 401: the token is missing or stale (server restart).
@@ -100,10 +128,14 @@ interface AppStore {
   activityOpen: boolean
   // The open document's unsaved-edit state, for tree ops that need a save first.
   editorDirty: boolean
-  // The folder the browser backend has open, its mode, and how many paths its
-  // read-only mode holds (docs/frontends/wasm.md#a-folder-on-disk). Null for the
-  // demo and the server.
-  folder: { name: string; mode: FolderMode; held: number } | null
+  // The folder the browser backend has open, its mode, how many changes it has not
+  // taken (held in read-only mode, or kept after a failed write), and why the last
+  // write failed (docs/frontends/wasm.md#a-folder-on-disk). Null for a stored
+  // project and the server.
+  folder: FolderState | null
+  // The project the tab keeps in browser storage: a browser project or a demo
+  // (docs/frontends/wasm.md#browser-storage). Null for a folder and the server.
+  stored: StoredState | null
   // The in-page model's load, while it runs or after it failed
   // (docs/frontends/wasm.md#the-demo).
   modelLoad: { text: string; failed?: boolean } | null
@@ -146,7 +178,8 @@ interface AppStore {
   setLastCommit: (generation: number) => void
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
-  setFolder: (f: { name: string; mode: FolderMode; held: number } | null) => void
+  setFolder: (f: FolderState | null) => void
+  setStored: (s: StoredState | null) => void
   setModelLoad: (m: { text: string; failed?: boolean } | null) => void
 }
 
@@ -165,6 +198,7 @@ export const useApp = create<AppStore>((set) => ({
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
   folder: null,
+  stored: null,
   modelLoad: null,
   chatOpen: readPref('jazyk-chat') !== 'closed',
   chatFollow: false,
@@ -223,6 +257,7 @@ export const useApp = create<AppStore>((set) => ({
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
   setFolder: (folder) => set({ folder }),
+  setStored: (stored) => set({ stored }),
   setModelLoad: (modelLoad) => set({ modelLoad }),
   turns: {},
   goalNotes: {},

@@ -3,8 +3,8 @@
 // needs no server rewriting unknown paths to index.html.
 //
 // The app mounts at once against a backend with no project, so Home renders the
-// picker from the capability descriptor; the bundled project or a folder on the
-// computer opens on the events Home dispatches. The model loads behind all of it,
+// picker from the capability descriptor; a bundled project, a project kept in the
+// browser, or a folder on the computer opens on the events Home dispatches. The model loads behind all of it,
 // because every read works without one and only a build needs it.
 // See docs/frontends/wasm.md#the-demo.
 import React from 'react'
@@ -18,8 +18,8 @@ import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './l
 import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents, pushWireEvent, refreshAfterWrite } from './lib/events'
-import { ensurePermission, FolderMirror, pickFolder, readFolder } from './lib/folder'
-import { folderHandle, readRecent, rememberFolder, setRecentMode, touchRecent, type FolderMode } from './lib/recent'
+import { probeStorage } from './lib/browser-store'
+import { installLocalProjects } from './lib/local-projects'
 import { DEMOS } from './shell/Home'
 import './tokens.css'
 import './app.css'
@@ -132,7 +132,7 @@ function loadModelOnRequest() {
 // The bundled projects (docs/frontends/wasm.md#the-demo): one fixture per example,
 // packed by scripts/pack-demos.sh, fetched when picked rather than carried in the
 // page.
-async function fetchDemo(id: string): Promise<WasmProject> {
+async function fetchDemo(id: string): Promise<{ files: Record<string, string>; name: string }> {
   const demo = DEMOS.find((d) => d.id === id)
   if (!demo) throw new Error(`no demo named ${id}`)
   const res = await fetch(`demos/${id}.json`)
@@ -142,7 +142,11 @@ async function fetchDemo(id: string): Promise<WasmProject> {
 }
 
 async function boot() {
+  // Whether this browser can keep projects: without storage a demo's edits stay in
+  // the tab and no project can be started here.
+  const stored = await probeStorage()
   const backend = await startWasmBackend({
+    persistence: () => (stored ? 'browser' : 'memory'),
     model,
     onTrace: (events) => {
       for (const e of events) console.info('[jazyk trace]', JSON.stringify(e))
@@ -159,113 +163,30 @@ async function boot() {
   // (or a test) pokes at it without the app in the way.
   ;(window as unknown as { jazyk: unknown }).jazyk = backend
 
-  const opened = async (p: WasmProject) => {
+  // `stay` keeps the route: a demo reset to its original reopens where it was.
+  const opened = async (p: WasmProject, stay = false) => {
     await backend.open(p)
-    qc.clear()
+    // A page that stays mounted refetches what it shows; everything else is dropped.
+    if (stay) void qc.resetQueries()
+    else qc.clear()
     // The conversations belonged to the project the tab had open before.
     useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null })
-    window.location.hash = '#/docs'
+    if (!stay) window.location.hash = '#/docs'
   }
 
-  // The folder open in this tab, if any: its mirror and its recent-list id.
-  let folder: { id: string; mirror: FolderMirror } | null = null
-  const publish = () => {
-    useApp.getState().setFolder(
-      folder ? { name: folder.mirror.root.name, mode: folder.mirror.currentMode, held: folder.mirror.heldCount } : null,
-    )
-  }
-  const fail = (what: string, err: unknown) => {
-    console.warn(`[jazyk ${what}]`, err)
-    window.alert(err instanceof Error ? err.message : String(err))
-  }
-
-  const openDemo = async (id: string) => {
-    const p = await fetchDemo(id)
-    folder = null
-    publish()
-    touchRecent({ id: `demo:${id}`, kind: 'demo', name: p.name })
-    await opened(p)
-  }
-
-  const openFolder = async (id: string, handle: FileSystemDirectoryHandle, mode: FolderMode) => {
-    const files = await readFolder(handle as Parameters<typeof readFolder>[0])
-    if (!('jazyk.toml' in files)) {
-      window.alert(`${handle.name} has no jazyk.toml at its top; pick a project directory.`)
-      return
-    }
-    const mirror = new FolderMirror(handle as ConstructorParameters<typeof FolderMirror>[0], '/project', mode)
-    mirror.onChange = publish
-    folder = { id, mirror }
-    publish()
-    touchRecent({ id, kind: 'folder', name: handle.name, mode })
-    await opened({ files, name: handle.name, mirror })
-  }
-
-  window.addEventListener('jazyk:open-demo', (e) => {
-    openDemo(String((e as CustomEvent).detail ?? '')).catch((err) => fail('demo', err))
-  })
-
-  // `detail.mode` is the read-only choice beside the button.
-  window.addEventListener('jazyk:pick-folder', async (e) => {
-    const mode: FolderMode = (e as CustomEvent).detail?.mode === 'write' ? 'write' : 'read'
-    let handle: FileSystemDirectoryHandle
-    try {
-      handle = await pickFolder(mode)
-    } catch (err) {
-      // The picker was dismissed, or refused: nothing to do.
-      console.info('[jazyk folder]', err)
-      return
-    }
-    try {
-      await openFolder(await rememberFolder(handle), handle, mode)
-    } catch (err) {
-      fail('folder', err)
-    }
-  })
-
-  // A row of the recent list. The click is the gesture the permission prompt needs.
-  window.addEventListener('jazyk:open-recent', async (e) => {
-    const id = String((e as CustomEvent).detail ?? '')
-    const entry = readRecent().find((r) => r.id === id)
-    if (!entry) return
-    try {
-      if (entry.kind === 'demo') return await openDemo(id.slice('demo:'.length))
-      const handle = await folderHandle(id)
-      if (!handle) {
-        window.alert(`${entry.name} is no longer remembered by this browser; open it with Open folder.`)
-        return
-      }
-      const mode = entry.mode ?? 'read'
-      if (!(await ensurePermission(handle, mode))) return
-      await openFolder(id, handle, mode)
-    } catch (err) {
-      fail('folder', err)
-    }
-  })
-
-  // The top bar's switch and the editor's prompt. Writing asks for write access,
-  // then lands everything held.
-  window.addEventListener('jazyk:folder-mode', async (e) => {
-    const mode: FolderMode = (e as CustomEvent).detail === 'write' ? 'write' : 'read'
-    if (!folder) return
-    const { id, mirror } = folder
-    try {
-      if (mode === 'write') {
-        if (!(await ensurePermission(mirror.root, 'write'))) return
-        await mirror.startWriting()
-      } else {
-        mirror.readOnly()
-      }
-      setRecentMode(id, mode)
-      publish()
-    } catch (err) {
-      fail('folder', err)
-    }
-  })
-
-  // Held changes live only in this tab: closing it asks first.
-  window.addEventListener('beforeunload', (e) => {
-    if (folder && folder.mirror.heldCount > 0) e.preventDefault()
+  // Demos, projects started in the browser, and folders, with where their changes
+  // go (docs/frontends/wasm.md#browser-storage).
+  installLocalProjects({
+    backend,
+    opened,
+    closed: () => {
+      qc.clear()
+      useApp.setState({ chatSessions: {}, chatUpdates: {}, chatSelected: null })
+      window.location.hash = '#/'
+    },
+    refresh: () => qc.invalidateQueries({ queryKey: ['capabilities'] }),
+    fetchDemo,
+    demoName: (id) => DEMOS.find((d) => d.id === id)?.name ?? id,
   })
 
   root.render(

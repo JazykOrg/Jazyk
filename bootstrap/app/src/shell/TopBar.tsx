@@ -1,44 +1,18 @@
 // The top bar: the project switcher, the three lenses, Inbox with its count,
 // History, the command palette, the action button, settings
-// (docs/frontends/gui.md#layout). Until a project is open, the switcher alone. A
-// folder open in the browser shows its mode and what read-only mode holds
-// (docs/frontends/wasm.md#a-folder-on-disk).
+// (docs/frontends/gui.md#layout). Until a project is open, the switcher alone. In the
+// browser it also says where the project's changes go (Place).
 import { Link, NavLink, useLocation } from 'react-router'
 import { useProject } from '../lib/queries'
 import { useInbox } from '../lib/product'
 import { useApp } from '../lib/store'
 import { useWords } from '../lib/words'
 import ActionButton from './ActionSheet'
+import Place from './Place'
 
 function projectName(root: string | undefined): string {
   if (!root) return 'jazyk'
   return root.replace(/\/+$/, '').split('/').pop() || root
-}
-
-function FolderMode() {
-  const folder = useApp((a) => a.folder)
-  if (!folder) return null
-  const set = (mode: 'read' | 'write') => window.dispatchEvent(new CustomEvent('jazyk:folder-mode', { detail: mode }))
-  if (folder.mode === 'write')
-    return (
-      <span className="ws-folder" title={`${folder.name}: every change is written to the folder`}>
-        writing
-        <button onClick={() => set('read')} title="hold changes in this tab instead of writing them">
-          read-only
-        </button>
-      </span>
-    )
-  return (
-    <span
-      className={`ws-folder read${folder.held > 0 ? ' held' : ''}`}
-      title={`${folder.name}: changes stay in this tab until written`}
-    >
-      read-only{folder.held > 0 ? ` · ${folder.held} unwritten` : ''}
-      <button onClick={() => set('write')} title="write what this tab holds to the folder, and keep writing">
-        {folder.held > 0 ? 'write to disk' : 'writing'}
-      </button>
-    </span>
-  )
 }
 
 export default function TopBar({
@@ -51,6 +25,8 @@ export default function TopBar({
   toggleNav: () => void
 }) {
   const { data: proj } = useProject()
+  // In the browser the project's own name: a folder's, a demo's, a browser project's.
+  const placeName = useApp((a) => a.folder?.name ?? a.stored?.name)
   const inbox = useInbox()
   const dev = useApp((a) => a.dev)
   const w = useWords()
@@ -62,7 +38,7 @@ export default function TopBar({
   const project = (
     <Link to="/" className="ws-project" title={proj?.root ?? 'choose a project'}>
       <span className="ws-mark">J</span>
-      <span>{open ? projectName(proj?.root) : 'jazyk'}</span>
+      <span>{open ? (placeName ?? projectName(proj?.root)) : 'jazyk'}</span>
     </Link>
   )
   if (!open) return <header className="ws-top">{project}</header>
@@ -97,7 +73,7 @@ export default function TopBar({
         )}
       </nav>
       <span className="ws-spacer" />
-      <FolderMode />
+      <Place />
       <button className="ws-palette" onClick={openPalette} title="search the model (⌘K)">
         search… <span className="muted">⌘K</span>
       </button>

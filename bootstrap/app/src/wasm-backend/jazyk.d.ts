@@ -8,3 +8,4 @@ export function set_model(name: string): void
 export function enable_fs_sink(): void
 export function list_files(): string
 export function request(method: string, path: string, body: string): string
+export function read_file(path: string): Uint8Array | undefined

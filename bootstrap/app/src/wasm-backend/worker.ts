@@ -4,7 +4,7 @@
 // blocks on Atomics.wait until the page answers.
 // See docs/frontends/wasm.md#the-worker.
 
-import init, { boot, enable_fs_sink, list_files, request, reset, seed_file, set_model } from './jazyk.js'
+import init, { boot, enable_fs_sink, list_files, read_file, request, reset, seed_file, set_model } from './jazyk.js'
 import { installBridge } from './bridge.js'
 
 const ROOT = '/project'
@@ -21,17 +21,18 @@ console.error = (...args: unknown[]) => {
 
 type Req =
   | { id: number; kind: 'install'; control: SharedArrayBuffer; reply: SharedArrayBuffer }
-  // Files arrive as text (the bundled demo) or as bytes (a folder read off disk).
-  // `mirror` turns on the write-through to the page for the folder case.
+  // Files arrive as text (the bundled demo) or as bytes (a folder read off disk, a
+  // stored project).
   | {
       id: number
       kind: 'seed'
       files: Record<string, string | Uint8Array>
       model: string
-      mirror?: boolean
     }
   | { id: number; kind: 'request'; method: string; path: string; body?: unknown }
   | { id: number; kind: 'files' }
+  // Every file of the tree under the root, keyed by its path relative to the root.
+  | { id: number; kind: 'dump' }
 
 let ready: Promise<void> | null = null
 
@@ -63,7 +64,9 @@ self.onmessage = async (e: MessageEvent<Req>) => {
           seed_file(`${ROOT}/${rel}`, bytes)
         }
         set_model(msg.model)
-        if (msg.mirror) enable_fs_sink()
+        // Every mutation from here on reaches the page, which keeps it in the folder
+        // or in browser storage (docs/frontends/wasm.md#browser-storage).
+        enable_fs_sink()
         post(msg.id, JSON.parse(boot(ROOT)))
         break
       }
@@ -77,6 +80,16 @@ self.onmessage = async (e: MessageEvent<Req>) => {
       case 'files':
         post(msg.id, JSON.parse(list_files()))
         break
+      case 'dump': {
+        const out: Record<string, Uint8Array> = {}
+        for (const path of JSON.parse(list_files()) as string[]) {
+          if (!path.startsWith(`${ROOT}/`)) continue
+          const bytes = read_file(path)
+          if (bytes) out[path.slice(ROOT.length + 1)] = bytes
+        }
+        post(msg.id, out)
+        break
+      }
     }
   } catch (err) {
     post(msg.id, null, err instanceof Error ? err.message : String(err))

@@ -1,20 +1,30 @@
-// The browser's own recent list (docs/frontends/gui.md#home): every demo and folder
-// opened in this browser, newest first, in local storage under `jazyk.recent`. A
-// folder's directory handle cannot be written as text, so it lives in IndexedDB
-// under the entry's id. Storage that is absent or refuses is simply not remembered.
+// The browser's own recent list (docs/frontends/gui.md#home): every demo, browser
+// project, and folder opened in this browser, newest first, in local storage under
+// `jazyk.recent`. A folder's directory handle cannot be written as text, so it lives
+// in IndexedDB under the entry's id; a stored project's files live in browser storage
+// (lib/browser-store.ts). Storage that is absent or refuses is simply not remembered.
 import { useSyncExternalStore } from 'react'
 import { del as idbDel, get as idbGet, keys as idbKeys, set as idbSet } from 'idb-keyval'
 
 export type FolderMode = 'read' | 'write'
 
 export interface RecentEntry {
+  // `demo:<id>`, `browser:<uuid>`, or `folder:<uuid>`.
   id: string
-  kind: 'demo' | 'folder'
+  kind: 'demo' | 'browser' | 'folder'
   name: string
   // A folder's mode when it was last left.
   mode?: FolderMode
+  // A demo whose edited copy is in browser storage.
+  edited?: boolean
+  // How many changes a folder has kept in browser storage, not yet on disk.
+  kept?: number
   openedAt: number
 }
+
+// An entry whose data lives in browser storage: dropping it from the list would
+// strand that data, so it is never dropped to make room.
+export const holdsData = (r: RecentEntry) => r.kind === 'browser' || !!r.edited || (r.kept ?? 0) > 0
 
 const KEY = 'jazyk.recent'
 const READ_ONLY_KEY = 'jazyk.folder.readOnly'
@@ -48,16 +58,29 @@ export function readRecent(): RecentEntry[] {
   return cache
 }
 
-// Put an entry at the top, replacing the one with the same id.
+// Put an entry at the top, over the one with the same id. Past the limit the oldest
+// entries that hold no stored data are dropped.
 export function touchRecent(e: Omit<RecentEntry, 'openedAt'>) {
-  const rest = cache.filter((r) => r.id !== e.id)
-  const dropped = rest.slice(MAX - 1)
-  save([{ ...e, openedAt: Date.now() }, ...rest.slice(0, MAX - 1)])
+  const prior = cache.find((r) => r.id === e.id)
+  const list = [{ ...prior, ...e, openedAt: Date.now() }, ...cache.filter((r) => r.id !== e.id)]
+  const dropped: RecentEntry[] = []
+  for (let i = list.length - 1; i > 0 && list.length > MAX; i--) {
+    if (holdsData(list[i])) continue
+    dropped.push(...list.splice(i, 1))
+  }
+  save(list)
   for (const d of dropped) if (d.kind === 'folder') void idbDel(d.id).catch(() => {})
 }
 
+// Change fields of an entry in place, keeping its position.
+export function updateRecent(id: string, patch: Partial<Omit<RecentEntry, 'id' | 'openedAt'>>) {
+  const at = cache.find((r) => r.id === id)
+  if (!at || Object.entries(patch).every(([k, v]) => at[k as keyof RecentEntry] === v)) return
+  save(cache.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+}
+
 export function setRecentMode(id: string, mode: FolderMode) {
-  save(cache.map((r) => (r.id === id ? { ...r, mode } : r)))
+  updateRecent(id, { mode })
 }
 
 export function removeRecent(id: string) {

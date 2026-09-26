@@ -108,6 +108,13 @@ pub fn list_files() -> String {
     .to_string()
 }
 
+// One file's bytes, for the host to save the project to a folder or download it.
+// Undefined when the tree has no such file.
+#[wasm_bindgen]
+pub fn read_file(path: &str) -> Option<Vec<u8>> {
+    crate::vfs::read(path).ok()
+}
+
 // The model the page holds. The host names it at boot; the base url is the bridge,
 // not an endpoint, so `Llm` carries a marker where a URL would go.
 thread_local! {

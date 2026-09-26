@@ -1541,3 +1541,84 @@ a.trail-step:hover .trail-label {
   padding: 0 3px;
   border-radius: 3px;
 }
+
+/* The model source chooser (docs/frontends/wasm.md#model-sources). */
+.msrc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 560px;
+}
+
+.msrc-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--panel);
+}
+
+.msrc-option.on {
+  border-color: var(--accent);
+}
+
+.msrc-option.off {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.msrc-option input {
+  margin-top: 3px;
+}
+
+.msrc-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.msrc-note {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.msrc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 0 28px;
+}
+
+.msrc-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+}
+
+.msrc-form input {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+.msrc-status {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.msrc-privacy {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.settings-model {
+  margin-bottom: 28px;
+}
+
+.home .home-nofolder {
+  border-left-color: var(--warn);
+}

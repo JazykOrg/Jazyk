@@ -100,34 +100,13 @@ export default function Home() {
 
         {needsSetup && proj && settings.data && <Wizard payload={settings.data} root={proj.root} />}
 
-        <div className="actions">
-          {proj && !needsSetup && (
+        {proj && !needsSetup && (
+          <div className="actions">
             <Link to="/docs" className="btn">
               Open {proj.root.replace(/\/+$/, '').split('/').pop()} →
             </Link>
-          )}
-          {picker && (
-            <>
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder', { detail: { mode: readOnly ? 'read' : 'write' } }))}
-                title={readOnly ? 'a directory with a jazyk.toml; changes stay in this tab until you write them' : 'a directory with a jazyk.toml; edits and builds write back into it'}
-              >
-                Open folder…
-              </button>
-              <label className="muted home-readonly" title="hold every change in this tab until you choose to write it">
-                <input
-                  type="checkbox"
-                  checked={readOnly}
-                  onChange={(e) => {
-                    setReadOnly(e.target.checked)
-                    setReadOnlyPref(e.target.checked)
-                  }}
-                />{' '}
-                read-only
-              </label>
-            </>
-          )}
-        </div>
+          </div>
+        )}
 
         {kind === 'bundled' && recent.length > 0 && (
           <>
@@ -135,6 +114,42 @@ export default function Home() {
             {recent.map((r) => (
               <RecentRow key={r.id} r={r} />
             ))}
+          </>
+        )}
+
+        {(kind === 'bundled' || kind === 'folder-picker') && (
+          <>
+            <h2>Local project</h2>
+            <p className="muted">
+              A folder on this computer with a <span className="mono">jazyk.toml</span> at its top. It is read here, in this browser; nothing is
+              uploaded.
+            </p>
+            {picker ? (
+              <div className="actions">
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent('jazyk:pick-folder', { detail: { mode: readOnly ? 'read' : 'write' } }))}
+                  title={readOnly ? 'changes stay in this tab until you write them' : 'edits and syncs write back into the folder'}
+                >
+                  Open folder…
+                </button>
+                <label className="muted home-readonly" title="hold every change in this tab until you choose to write it">
+                  <input
+                    type="checkbox"
+                    checked={readOnly}
+                    onChange={(e) => {
+                      setReadOnly(e.target.checked)
+                      setReadOnlyPref(e.target.checked)
+                    }}
+                  />{' '}
+                  read-only
+                </label>
+              </div>
+            ) : (
+              <div className="banner home-nofolder">
+                This browser cannot open a folder: it has no File System Access API. Use Chrome, Edge, or another Chromium browser to open a
+                local project. The demos below work here.
+              </div>
+            )}
           </>
         )}
 
@@ -169,7 +184,7 @@ export default function Home() {
           </>
         )}
 
-        {!needsSetup && (
+        {!needsSetup && kind !== 'bundled' && (
           <>
             <h2>New project</h2>
             <p className="muted">

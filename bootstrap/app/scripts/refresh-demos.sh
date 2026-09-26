@@ -55,11 +55,8 @@ for id in $ORDER; do
   verdict=$(sed -n 's/^verdict: //p' <<< "$("$JAZYK" status 2>/dev/null)")
   tests="-"
   if [ -f jazyk-out/gen/ledger.yaml ]; then
-    # The ledger holds one row per requirement; `test --list` names the rows that
-    # do not pass.
-    rows=$(grep -c '^  req:' jazyk-out/gen/ledger.yaml)
-    behind=$("$JAZYK" test --list 2>/dev/null | grep -c '^req:')
-    tests="$((rows - behind)) of $rows"
+    read passing rows <<< "$(python3 "$ROOT/bootstrap/app/scripts/ledger-count.py" jazyk-out/gen/ledger.yaml)"
+    tests="$passing of $rows"
   fi
   cost=$(sed -n 's/^cost: //p' <<< "$("$JAZYK" status 2>/dev/null)")
   summary+=("$id|$verdict|$tests|$cost")

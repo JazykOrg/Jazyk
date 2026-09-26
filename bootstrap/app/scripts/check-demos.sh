@@ -27,10 +27,9 @@ for f in "$DEMOS"/*.json; do
     warn "$id" "the current compiler derives $open open goal(s) for it."
   fi
   if [ -f "$dir/jazyk-out/gen/ledger.yaml" ]; then
-    # One ledger row per requirement; `test --list` names the rows that do not pass.
-    rows=$(grep -c '^  req:' "$dir/jazyk-out/gen/ledger.yaml" || true)
-    behind=$(cd "$dir" && "$JAZYK" test --list 2>/dev/null | grep -c '^req:' || true)
-    passing=$((rows - behind))
+    set -- $(python3 "$HERE/ledger-count.py" "$dir/jazyk-out/gen/ledger.yaml")
+    passing=$1
+    rows=$2
     if [ "$rows" -gt 0 ] && [ "$passing" -lt "$rows" ]; then
       warn "$id" "$passing of $rows tests pass."
     fi

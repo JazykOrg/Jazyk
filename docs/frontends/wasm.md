@@ -233,9 +233,15 @@ refuses every other route with `501` until a project is open. Home renders the
 picker from that descriptor and dispatches `jazyk:open-demo` or
 `jazyk:pick-folder`; the entry listens, seeds the backend with the bundled project
 or the [folder](#a-folder-on-disk) picked, and moves to the documents. Opening a
-folder flips the descriptor to `backend: wasm`, `persistence: browser`. The model
-loads behind all of it, because every read works without one and only a build
-needs it; `jobs` lists `compile` once the model is ready.
+folder flips the descriptor to `backend: wasm`, `persistence: browser`.
+
+The model loads only when asked, because every read works without one and only a
+build needs it, and a first visit would otherwise download gigabytes to read a
+document. Where the browser has WebGPU the descriptor says `model: loadable`, and
+the Sync sheet offers `Load the model` with its download size; the load shows its
+progress there, and the weights cache in the browser, so a later visit loads from
+the cache. `jobs` lists `compile` once the model is ready. The model's code
+(WebLLM) is fetched with the model, not with the page.
 
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
 and its whole `jazyk-out` as last built (the shards, the journal, the coverage, the
@@ -264,6 +270,10 @@ the model in the page.
 
 The demo lands in its own directory so the dist the binary embeds never grows a 7MB
 module. `npm run build` is unchanged and still builds only the workbench.
+
+The page's first script carries the app alone. What only some visits use loads when
+it is first used: the model's code when the model loads, and the graph layout
+library when the Developer [map](./gui.md#map) opens.
 
 The wasm target lives in the rustup toolchain. A `cargo` earlier on `PATH` from
 another installation (a Homebrew rustc has no wasm std) is the usual failure;

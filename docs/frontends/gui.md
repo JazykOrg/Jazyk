@@ -537,8 +537,8 @@ renders against it:
     `decompile`, `benchmark`.
   - `agent`: `embedded`, `external`, or `none`. Without an agent the chat column
     shows build threads only and says why.
-  - `model`: `configured`, `in-page` (a model loaded in the tab), `needs-key`, or
-    `none`.
+  - `model`: `configured`, `in-page` (a model loaded in the tab), `loadable` (the
+    tab can load one, on request), `needs-key`, or `none`.
   - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
     renderings.
   - `persistence`: `disk`, `memory` (the demo: a reload starts from the seed), or

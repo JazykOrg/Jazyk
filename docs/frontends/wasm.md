@@ -92,6 +92,24 @@ open a directory on the computer as the project instead of the bundled demo.
 - Reads never touch the disk again. An edit made outside the tab is not seen until
   the folder is opened again. Nothing watches the folder.
 
+A folder opens in one of two modes, chosen on [Home](./gui.md#home) and switchable
+from the top bar at any time. The mode is the page's: the worker posts every
+mutation either way.
+
+- Writing: every mutation is applied to the folder as it arrives, and the
+  [editor](./gui.md#editor) saves on its own.
+- Read-only: the page asks the browser for read access only, and holds mutations
+  instead of applying them: the latest one per path, in the order the paths were last
+  touched, so a remove and a later write under the same directory replay in the
+  order they happened. Documents, a build's shards, and the journal all stay in the
+  tab. The top bar shows how many paths are held and offers to write them; a save in
+  the editor asks the same. Writing asks the browser for write access, applies the
+  held mutations in order, and switches to writing mode. Closing the tab with
+  mutations held asks first.
+
+The recent list on [Home](./gui.md#home) remembers each folder's mode, so a folder
+reopens the way it was left.
+
 So a build in a tab lands in the same `jazyk-out/` the native binary would write,
 with the same shards and the same journal, and the two can be used on the same
 project in turn.

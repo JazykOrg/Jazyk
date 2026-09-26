@@ -534,10 +534,18 @@ folder it mirrors to.
 The first screen is the project picker:
 
 - Open a project: the entries the descriptor allows. `Open folder` (the browser
-  backend), `Try a demo` (the bundled examples: the shop, the sort utility, the ERP,
-  the slide deck, the novel, the organization), `Recent` (the server's list from
-  `GET /api/projects`: each with its path, its shape, its sync state in product
-  words, and its waiting count).
+  backend, with a `read-only` choice beside it, see
+  [a folder on disk](./wasm.md#a-folder-on-disk)), `Try a demo` (the bundled
+  examples: the shop, the sort utility, the ERP, the slide deck, the novel, the
+  organization), `Recent` (the server's list from `GET /api/projects`: each with its
+  path, its shape, its sync state in product words, and its waiting count).
+- In the browser the `Recent` list is the browser's own, kept in its local storage
+  under `jazyk.recent`: every demo and folder opened in this browser, newest first,
+  each with its name, its kind, and a folder's mode. A folder's directory handle
+  cannot be written as text, so it is kept in the browser's IndexedDB under the
+  entry's id. Clicking an entry reopens it; a folder asks the browser for permission
+  again, since the grant does not outlive the tab. An entry can be removed from the
+  list. The `read-only` choice is remembered the same way.
 - New project: a wizard. Pick the documents folder and glob, optionally the product
   folder, pick the model or agent (or "none: browse only"), name the root documents.
   The wizard writes `jazyk.toml` through `PUT /api/settings`, then runs the first sync
@@ -576,6 +584,10 @@ counts ride beside it, because a project can be up to date with open errors stan
 There is no bottom activity panel. Its control line is the action button, its build
 progress is the chat column's build thread, and its run console is the Developer
 lens's [Runs](#runs).
+
+Until a project is open, the top bar shows only the project switcher and every route
+but Home redirects to Home. A server always has one open; the browser backend has
+none until a demo or a folder is picked, and none again after a reload.
 
 Addressable state: `/docs/<path>` (a document in the editor), `/model/<section>` and
 `/model/<section>/<id>` (entities, requirements, criteria, diagrams, relations,
@@ -1029,7 +1041,12 @@ from the graph's mentions, quotes, and section tree.
   `preview` toggle is on. The Reader toggle replaces the editor with the rendered
   page carrying the same markers, underlines, bands, and read states.
 - Saving writes through the documents API with the conditional hash, so an edit made
-  outside the GUI is never silently overwritten. When a build commits, the server
+  outside the GUI is never silently overwritten.
+- In the browser, where a write lands without asking (the demo, and a folder in
+  writing mode), the editor saves on its own a beat after typing stops and when the
+  document is left, so there is nothing to click. In a folder's read-only mode a
+  save keeps the text in the tab and asks, in a bar over the editor, whether to write
+  to disk now ([modes](./wasm.md#a-folder-on-disk)). When a build commits, the server
   republishes diagnostics for every open document, the same refresh the
   [LSP](./lsp.md#rebuilds-and-refresh) does.
 - Document URIs are `file://` paths under the project root, as reported by

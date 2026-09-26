@@ -302,6 +302,8 @@ Generation tier:
   falsifiability.
 - [bind-descriptor](./cases/bind-descriptor.md): a test that reads a descriptor object
   is never bound as the evidence a requirement is met.
+- [tech-constraint](./cases/tech-constraint.md): a technology constraint is bound to the
+  build's evidence, never to a value the product reports about itself.
 
 Verification tier:
 

@@ -13,7 +13,7 @@ use crate::store::Store;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-const CASE_FILES: [&str; 29] = [
+const CASE_FILES: [&str; 30] = [
     include_str!("../../docs/benchmark/cases/criteria-observation.md"),
     include_str!("../../docs/benchmark/cases/enumeration.md"),
     include_str!("../../docs/benchmark/cases/properties.md"),
@@ -42,6 +42,7 @@ const CASE_FILES: [&str; 29] = [
     include_str!("../../docs/benchmark/cases/stated-containment.md"),
     include_str!("../../docs/benchmark/cases/gen-basic.md"),
     include_str!("../../docs/benchmark/cases/bind-descriptor.md"),
+    include_str!("../../docs/benchmark/cases/tech-constraint.md"),
     include_str!("../../docs/benchmark/cases/verify-judge.md"),
 ];
 
@@ -2689,9 +2690,9 @@ mod tests {
     #[test]
     fn parses_all_embedded_cases() {
         let cases = parse_cases();
-        // Twenty-nine files; review, verify-judge, rejudge-pair, dedupe-candidates,
+        // Thirty files; review, verify-judge, rejudge-pair, dedupe-candidates,
         // abstract-entity, and declare-edges hold two blocks each.
-        assert_eq!(cases.len(), 35);
+        assert_eq!(cases.len(), 36);
         // The new tiers parse with their pars and fixtures.
         let gen = cases.iter().find(|c| c.name == "gen-basic").unwrap();
         assert_eq!(gen.tier, "generation");
@@ -2763,7 +2764,7 @@ mod tests {
     fn derived_cases_seed_and_derive_their_goal() {
         let cases = parse_cases();
         let derived: Vec<&Case> = cases.iter().filter(|c| c.derives_goal()).collect();
-        assert_eq!(derived.len(), 13);
+        assert_eq!(derived.len(), 14);
         for case in derived {
             let tmp = own_dir(&case.name);
             let (store, goal) = seed_derived(case, &tmp)
@@ -2843,6 +2844,13 @@ mod tests {
                 }
                 "rejudge-pair-contradiction" | "rejudge-pair-duplicate" => {
                     assert!(goal.mandatory);
+                }
+                "tech-constraint" => {
+                    // The self-reporting server and its passing test sit in the
+                    // deliverable, with the seeded criterion to bind.
+                    assert_eq!(goal.change["criteria"], 1, "{:?}", goal.change);
+                    assert!(tmp.join("deliverable/src/server.js").vexists());
+                    assert!(tmp.join("deliverable/test/backend.test.js").vexists());
                 }
                 "bind-descriptor" => {
                     // The seeded criterion is what the test binds to, and the

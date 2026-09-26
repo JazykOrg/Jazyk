@@ -63,7 +63,8 @@ One page.
   - Tests: the generated tests that assert the criteria above, named for their
     requirements.
   - Code: the generated program, condensed.
-- A link to [the editor](#the-editor) to open the demos or a folder.
+- A link to [the editor](#the-editor) to open the demos, start a project, or open a
+  folder.
 - No link to the repository.
 
 ### 404
@@ -74,8 +75,9 @@ One page.
 
 [jazyk.dev](https://jazyk.dev) is the [GUI](./frontends/gui.md) built for the
 browser: the [demo build](./frontends/wasm.md#the-demo) of `bootstrap/app`, with the
-compiler as wasm, every example as a fixture, and a folder on the computer openable
-through the File System Access API.
+compiler as wasm, every example as a fixture, a new project kept in the browser's
+own storage ([a project in the browser](./frontends/wasm.md#a-project-in-the-browser)),
+and a folder on the computer openable through the File System Access API.
 
 - Hosted like [jazyk.org](#hosting): a private bucket `jazyk.dev`, a distribution
   for `jazyk.dev` and `www.jazyk.dev` with its own certificate, origin access

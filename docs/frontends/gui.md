@@ -544,8 +544,16 @@ renders against it:
     tab can load one, on request), `needs-key`, or `none`.
   - `rendering`: `server` or `none`. A tab renders no `.svg`; a demo seed ships its
     renderings.
-  - `persistence`: `disk`, `memory` (the demo: a reload starts from the seed), or
-    `browser` (the folder handle, mirrored back).
+  - `persistence`: where a change goes.
+    - `disk`: the server writes the project's files.
+    - `folder`: a folder on the computer, through its directory handle, mirrored
+      back from the tab ([a folder on disk](./wasm.md#a-folder-on-disk)).
+    - `browser`: the browser's own storage, on this browser only: a
+      [project started in the browser](./wasm.md#a-project-in-the-browser) or a
+      demo, whose first edit keeps a copy ([browser storage](./wasm.md#browser-storage)).
+      A reload keeps the changes.
+    - `memory`: the tab only. The browser has no storage to offer, and a reload
+      starts from the seed.
 - A route the backend does not serve answers `501` with a reason
   (the browser backend's rule). A panel whose read answers `501` hides
   behind that reason; it never renders empty or errors.
@@ -555,33 +563,60 @@ renders against it:
   `request(method, path, body)` the backend implements, so the app never knows which
   backend it has beyond the descriptor.
 
-The demo banners "Demo: changes stay in this tab". The browser backend banners the
-folder it mirrors to.
+Home's banner says where changes go, from `backend` and `persistence`:
+
+- A demo: "Demos keep your edits in this browser until you reset them." With
+  `persistence: memory`: "Demo: changes stay in this tab."
+- A folder: the folder it mirrors to, and that nothing leaves the machine.
+- A browser project: that it is stored in this browser only, and that `Save to a
+  folder…` or `Download` keeps a copy on disk.
 
 ## Home
 
 The first screen is the project picker:
 
-- Open a project: the entries the descriptor allows. `Open folder` (the browser
-  backend, with a `read-only` choice beside it, see
+- Open a project: the entries the descriptor allows. `New project` and `Open folder`
+  (the browser backend, the latter with a `read-only` choice beside it, see
   [a folder on disk](./wasm.md#a-folder-on-disk)), `Try a demo` (the bundled
   examples: the shop, the sort utility, the ERP, the slide deck, the novel, the
   organization), `Recent` (the server's list from `GET /api/projects`: each with its
   path, its shape, its sync state in product words, and its waiting count).
-- In the browser, Home reads top to bottom: `Recent`, then `Local project` (a folder on
-  this computer with a `jazyk.toml` at its top, the `Open folder` button and the
-  `read-only` choice under it), then the demos. A browser without the File System
-  Access API (Firefox, Safari) shows `Local project` with the reason instead of the
-  button: opening a folder needs Chrome, Edge, or another Chromium browser, and the
-  demos work everywhere.
+- In the browser, Home reads top to bottom: `Recent`, then `Local project`, then the
+  demos. `Local project` offers two ways to start:
+  - `New project`: a name, then `Create`. It starts a project from scratch in this
+    browser's storage (a `jazyk.toml` and a `docs/README.md` saying what to write)
+    and opens it in the editor. It works in every browser. See
+    [a project in the browser](./wasm.md#a-project-in-the-browser).
+  - `Open folder…`: a folder on this computer with a `jazyk.toml` at its top, with
+    the `read-only` choice beside it. A browser without the File System Access API
+    (Firefox, Safari) shows the reason in place of this button: opening a folder
+    needs Chrome, Edge, or another Chromium browser. `New project` and the demos
+    work everywhere.
 - In the browser the `Recent` list is the browser's own, kept in its local storage
-  under `jazyk.recent`: every demo and folder opened in this browser, newest first,
-  each with its name, its kind, and a folder's mode. A folder's directory handle
-  cannot be written as text, so it is kept in the browser's IndexedDB under the
-  entry's id. Clicking an entry reopens it; a folder asks the browser for permission
-  again, since the grant does not outlive the tab. An entry can be removed from the
-  list. The `read-only` choice is remembered the same way.
-- New project: a wizard. Pick the documents folder and glob, optionally the product
+  under `jazyk.recent`: every demo, browser project, and folder opened in this
+  browser, newest first, each with its name and its kind in words:
+  - `demo`: the fixture, fetched fresh.
+  - `demo with your edits`: a stored copy ([an edited demo](./wasm.md#an-edited-demo)),
+    with `Reset to the original` on the row.
+  - `browser project · only in this browser`.
+  - `folder · writing` or `folder · read-only`, and `N changes kept in this browser`
+    when the folder has changes it has not taken
+    ([when a folder cannot be written](./wasm.md#when-a-folder-cannot-be-written)).
+- A folder's directory handle cannot be written as text, so it is kept in the
+  browser's IndexedDB under the entry's id. Clicking an entry reopens it; a folder
+  asks the browser for permission again, since the grant does not outlive the tab.
+  An entry can be removed from the list. Removing a browser project, a demo with
+  edits, or a folder with kept changes deletes what the browser stored for it, so it
+  asks first. The list holds the twelve newest entries; an entry that holds stored
+  data is never dropped to make room. The `read-only` choice is remembered the same
+  way.
+- In the browser the top bar says where the open project's changes go, beside the
+  lenses: a folder's mode (and its held or kept changes), a demo's edits with
+  `Reset to the original`, a browser project's `in this browser`. A browser project
+  or a demo offers `Save to a folder…` (where the File System Access API exists) and
+  `Download` (a `.zip` of the project). After a save the project is that folder, in
+  writing mode.
+- New project on the server: a wizard. Pick the documents folder and glob, optionally the product
   folder, pick the model or agent (or "none: browse only"), name the root documents.
   The wizard writes `jazyk.toml` through `PUT /api/settings`, then runs the first sync
   with its plan visible and an estimate beside it. It names the shape it detected:
@@ -1117,8 +1152,8 @@ from the graph's mentions, quotes, and section tree.
   page carrying the same markers, underlines, bands, and read states.
 - Saving writes through the documents API with the conditional hash, so an edit made
   outside the GUI is never silently overwritten.
-- In the browser, where a write lands without asking (the demo, and a folder in
-  writing mode), the editor saves on its own a beat after typing stops and when the
+- In the browser, where a write lands without asking (a demo, a browser project, and
+  a folder in writing mode), the editor saves on its own a beat after typing stops and when the
   document is left, so there is nothing to click. In a folder's read-only mode a
   save keeps the text in the tab and asks, in a bar over the editor, whether to write
   to disk now ([modes](./wasm.md#a-folder-on-disk)). When a build commits, the server

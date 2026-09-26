@@ -68,7 +68,7 @@ Project and store reads:
 - `GET /api/overview`: the same summary without the board counts, plus verification
   counts by [derived status](../consumers/gen.md#status-is-derived-never-stored).
   The viewer-style rollup, served live.
-- `GET /api/graph`: every shard (entities, requirements, views, relationships, state
+- `GET /api/graph`: every shard (entities, requirements, criteria, views, relationships, state
   machines, diagnostics, redirects) plus the generation counter.
 - `GET /api/entities/{id}`: the entity, its parent and children, its attributes, the
   requirements referencing it, its relationships, the views it belongs to, its derived
@@ -483,11 +483,37 @@ beside the product word wherever both apply.
 | view | Diagram |
 | relationship, state machine | Relation, States |
 | deliverable, medium | Product, Product form |
-| ledger row, derived status | Trace row; the statuses stay: verified, failing, stale, unimplemented, missing |
+| ledger row | Trace row |
+| status `verified`, `failing`, `partial` | Passing, Failing, Partly passing |
+| status `missing`, `unimplemented` | No test yet, Not built yet |
+| status `stale-requirement`, `stale-test`, `stale-code` | Outdated (the requirement changed), Needs a rerun |
+| relationship type, from the entity's side | a verb: uses, is used by, is part of, is made of, has, belongs to, is a kind of, implements, is related to |
+| stereotype | the kind in words beside the name (a component, an actor), never in guillemets |
+| section id (`#/backend/database`) | the document's file name and the section's title (backend.md › Database) |
+| criterion kind `positive`, `negative`, `boundary`, `quality` | Example, Failure case, Edge case, Measure |
 | unclaimed report | Not described: files no document describes |
 | draft (`unratified`) | Draft |
 | journal, generation, changeset | History, Sync #N, Change |
 | ripple | What this caused |
+
+### Presentation
+
+A page reads without knowing jazyk. Four rules hold on every page and in the
+inspector:
+
+- Names and sentences, never ids. An entity shows as its name, a requirement as its
+  statement, a criterion as its statement, a document reference as the file name and
+  the section's title. An id appears only in Developer mode and in a tooltip.
+- Each fact once. A page never states a fact in two places: an entity's relations are
+  its connections picture, its children are the picture's `contains` arrows, its
+  requirements are one list. A second rendering of the same fact is a Developer
+  detail or nothing.
+- The compiler's own records are Developer details: the history of the goals that
+  touched a node, what a change caused, the loaded context, the diagram membership
+  records, the relation ids, the provenance's reasoning. They sit at the foot of the
+  page under `Developer details`, shown only in Developer mode, so nothing is lost.
+- Long lists start short. Past a handful of rows a list shows the first few and a
+  `show all N` toggle.
 
 ## Backends and capabilities
 
@@ -677,23 +703,43 @@ The navigator has six sections:
 
 The center is a page per selection:
 
-- The entity page: the [card](../consumers/docsgen.md#entity-cards) the API serves
-  (`GET /api/entities/{id}/card`): definition, stereotype, parent, attributes; the
-  entity's level diagram rendered as SVG with clickable members; its requirements; its
-  relations grouped by type; `Mentioned in` (document, section, quote, each a jump to
-  the editor); the files implementing it and their verification rollup; its open
-  proposals and problems.
-- The requirement page: the statement; the provenance chip (Quoted, with the sentence
-  and a jump; Inferred or Your edit, with the proposal and its Accept and Retract);
-  entities and edges; transition; facets; criteria, each with its kind, its test, its
-  verdict, its last run, and its evidence; code sites (`exact`, `moved`, `lost`);
-  related requirements; its history. The trail draws as one chain with a status dot
-  per step: section, requirement, criterion, test, file.
+- The entity page, top to bottom, each fact once ([presentation](#presentation)):
+  - The header: the name, the kind in words, the path of the entities it is part of
+    (each a link), the definition (editable), its other names, and its attributes.
+    A grouping no document states says so in a line with its proposal.
+  - One status line: how many requirements it carries and how many pass, and the
+    files that implement it, or "Not built yet".
+  - Connections: one picture of the entity and its one-hop neighbors, each arrow
+    labeled with its relation in words, the parent as `is part of` and the children as
+    `contains`. Selecting a neighbor lists the sentences that connect the two, each
+    opening its requirement, and a link to the neighbor's page. There is no second
+    list of the same relations.
+  - Diagrams: the diagrams that show its inside or its flows, by title.
+  - Requirements: each statement with its status in words, opening its page.
+  - In the documents: each mention as the file name, the section title, and the
+    quoted sentence, opening the editor at the quote.
+  - Problems: the open problems naming it.
+  - Developer details, in Developer mode only.
+- The requirement page, top to bottom:
+  - The statement (editable), and the entities it is about, by name.
+  - One status line in words: the status, the test's name, the implementing files.
+  - Where it comes from: the file, the section title, and the quoted sentence, opening
+    the editor at the quote; or, when no document states it, `Inferred` or `Your
+    edit` with the reasoning and the proposal's Accept and Retract.
+  - Acceptance criteria: each criterion's statement, its kind in words, its measure,
+    and where the criterion comes from (the quote, or `Inferred`). A criterion split
+    into given, when, and then shows the three as one sentence each.
+  - Details, only when present: the relations it states in words ("Backend uses
+    Database"), the state change it declares ("Order: placed → paid, on payment"),
+    and its code sites (`exact`, `moved`, `lost`).
+  - Developer details, in Developer mode only: the id, the facets with their
+    reasoning, the evidence, the history, and what it caused.
 - The diagram page: the rendered diagram with live drill-down anchors
-  ([drill-down](../compiler/diagrams.md#drill-down)), the members in order, the
-  excluded members with notes, the collapse set, the limits state, and membership
-  edits (a decree, which clears `default` with the warning). The Diagrams section
-  lands on a gallery by kind.
+  ([drill-down](../compiler/diagrams.md#drill-down)), then the members by name. The
+  excluded members with notes, the query, the collapse set, the limits state, and
+  membership edits (a decree, which clears `default` with the warning) are Developer
+  details. The Diagrams section lands on a gallery by kind, each diagram by title
+  with its member count.
 - The criteria page: the given, when, and then of each criterion, its kind, its
   measure, and its binding.
 
@@ -704,10 +750,13 @@ Every id in a page opens the inspector; the page never changes under it.
 The walk the [cards](../consumers/docsgen.md#entity-cards) give a markdown reader,
 served live from `GET /api/entities/{id}/card` and `GET /api/views/{id}/page`:
 
-- Every entity is a card first: the definition, `Sits in`, the in-context diagram,
-  `Inside`, relations, flows, siblings, children, each item a link that moves the
-  walk. A diagram's boxes are live: clicking one opens that entity and, when it has a
-  level, offers the level below.
+- Every entity is a page first, laid out as the [entity page](#model) above: the
+  path of what it is part of, its connections, its diagrams, each item a link that
+  moves the walk. A diagram's boxes are live: clicking one opens that entity and,
+  when it has a level, offers the level below. The card's `Sits in`, `Inside`, and
+  `Siblings` rows are the [docsgen card](../consumers/docsgen.md#entity-cards)'s
+  vocabulary for a markdown reader; the GUI says the same as the path, the Diagrams
+  list, and the parent's page.
 - History: the walk keeps a stack of positions (`/model/entities/<id>` with `?view=`).
   Back and forward walk it, and the browser's back lands on the same entry.
 - Detail: a level diagram opens with its groupings collapsed; `more detail` expands
@@ -716,9 +765,10 @@ served live from `GET /api/entities/{id}/card` and `GET /api/views/{id}/page`:
   `?detail=` holds it.
 - Sideways: the card's siblings and the page's `Around` list are chips: the level
   above, the other diagrams of the same level, the levels below.
-- The neighborhood widget: every inspector card carries a small map of the selected
-  node and its one-hop neighbors with typed edges, drawn from the graph. It is the only
-  map the default mode shows; the whole-graph map is a Developer tool ([map](#map)).
+- The neighborhood widget: the Connections picture, the selected entity and its
+  one-hop neighbors with each arrow's relation in words, drawn from the graph. It is
+  the only map the default mode shows; the whole-graph map is a Developer tool
+  ([map](#map)).
 
 ### Product
 
@@ -943,9 +993,9 @@ travel as `chat.update` events, elided like `job.trace`; permission requests as
 
 ## Inspector
 
-The detail pane for one node, opened from anywhere, layered over nothing. Every card
-opens with the trail: where the node sits between the documents and the product, one
-step per hop with its status dot. Under it, the detail per kind:
+The detail pane for one node, opened from anywhere, layered over nothing. It shows
+the same layout as the node's page ([entity page, requirement page](#model)), narrower,
+under the same [presentation](#presentation) rules. What each kind carries:
 
 - An entity: name, definition, scope, stereotype, parent (opens it) and children,
   attributes (each with its provenance), mentions (each opens the editor at the
@@ -969,6 +1019,8 @@ step per hop with its status dot. Under it, the detail per kind:
 - A problem: message, severity, subjects, reasoning, the triage actions, and its
   question when it carries one.
 - A product file: the entities and requirements bound to it, its sites, its tests.
+- A document, when nothing is selected in it: the requirements its sentences state,
+  by statement with their status, and the files that implement them.
 - In Developer mode: a goal (kind, class, target, change, cause, state, hints, and its
   explanation from `GET /api/explain`), a change record, and a `Raw` tab with the
   node's YAML.

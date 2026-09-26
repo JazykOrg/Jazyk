@@ -603,7 +603,11 @@ criteria localities of one class, tier, and executor pack on into the same batch
 neighborhood after neighborhood in locality order, until the budget is spent. Criteria
 goals pack at most four to a batch (`CRITERIA_GOALS_PER_BATCH`, a
 [registry constant](./graph.md#limits)), since each lists several requirements with
-their source sections and grows the changeset's mutation budget. A corpus of hundreds
+their source sections and grows the changeset's mutation budget. A pair batch charges
+each requirement once: a statement that sits in several of the batch's pairs loads
+once, so each further pair adds only its other side. Charging both sides per pair
+counted one changed requirement's six pairs as twelve statements and cut pair sessions
+at five to seven pairs where twelve fit. A corpus of hundreds
 of small pair judgments therefore runs as a few full sessions, never one session per
 shared entity. The skills of the batch's goal kinds render
 into the same session context budget (24000 chars, a

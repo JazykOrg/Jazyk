@@ -164,7 +164,8 @@ the blocking handshake above. Streaming has no transport to stream over, so the 
 answers once.
 
 `SharedArrayBuffer` requires a [cross-origin isolated](#serving) page. Without it the
-backend still serves every read; only a build is refused, with the reason. The same
+backend still serves every read; only a build or a chat turn is refused, with the
+reason. The same
 holds without WebGPU: there is no model to call, and the page says so instead of
 hanging.
 
@@ -185,8 +186,9 @@ machinery, not the quality.
 
 ### Model sources
 
-The page's model comes from one of three sources, chosen in the Sync sheet and in
-Settings. The choice, and an endpoint's URL, model name, and key, are kept in this
+The page's model comes from one of three sources, chosen in the Sync sheet, in
+Settings, and in the chat pane while no model is ready. Syncs and [chat](#chat) use
+the same one. The choice, and an endpoint's URL, model name, and key, are kept in this
 browser's local storage under `jazyk.modelSource`. Nothing is saved on a jazyk server;
 an endpoint's key goes only to that endpoint.
 
@@ -219,6 +221,63 @@ reply (tokens in and out, the finish reason, the tools called, the first words),
 and a progress line every hundred chunks while a slow model works, because the
 backend is blocked on the answer and can say nothing itself.
 
+## Chat
+
+The [chat column](./gui.md#chat) works in a tab, on the model the page chose. There
+is no agent process to spawn, so a conversation runs the way a goal batch does in
+[sessions](#sessions): the generic loop, a serving, and the page's model, in one
+module.
+
+- `POST /api/chat/sessions` opens a conversation in the worker. It holds an
+  `McpServer` in `chat` mode (ephemeral, like the serving a native chat session
+  gets), the running history, and the numbered updates. The serving lives as long as
+  the conversation, so the loaded set carries from one prompt to the next.
+- `POST /api/chat/sessions/{id}/prompt` runs one turn: `crate::agent_loop::run_loop`
+  with the serving's tools and a dispatch closure that calls `tools/call` on it,
+  against the page's model through [the bridge](#the-model). The first turn opens
+  with the serving's instructions, so the model knows which project it is in and
+  which tools move the prose.
+- The request answers when the turn ends. Until then the worker posts each event to
+  the page as it happens, in the shape the native [event stream](./gui.md#events)
+  carries: `chat.update` (a message, a tool call, its result, the end of the turn),
+  `chat.sessions` (a conversation starts or stops running), and `store.generation`
+  when a tool call commits. The page hands them to the handler the stream drives, so
+  the pane renders a tab's conversation exactly as it renders a server's.
+- `GET /api/chat/sessions` and `GET /api/chat/sessions/{id}` answer the native
+  shapes.
+- `POST /api/chat/sessions/{id}/cancel` is answered by the page, since the worker is
+  inside the turn. The page sets a cancel flag in the shared control buffer and fails
+  the model call in flight, so the turn ends at once as `cancelled`. A reply that
+  arrives after the cancel is dropped.
+
+What the serving does in a tab:
+
+- The same [gates](../compiler/graph.md#validation-gates), the same staged
+  changesets, the same [dual writes](./acp.md#dual-write-tools). A chat edit to a
+  document lands in the tree. With a [folder](#a-folder-on-disk) open it follows the
+  folder's mode: applied in writing mode, held in read-only mode.
+- The binding, generation, and verification lifecycles are not served: each needs a
+  shell. The compilation lifecycle stays. Fewer tools is also a shorter prompt, since
+  the text codec writes every tool's schema into it.
+- No [slash commands](./acp.md#slash-commands): the catalog lives in `acp`, which is
+  gated off the wasm build. The list answers empty, and a prompt that starts with
+  `/` reaches the model as text.
+- No permission requests: the loop never asks.
+- A conversation lives in the worker for the life of the tab. Nothing is written to
+  the [session store](./acp.md#session-store), so a reload starts with none.
+
+The model:
+
+- The descriptor says `agent: embedded` in a tab whether or not a model is ready;
+  `model` says whether it is. While it is not `in-page`, the pane says the chat needs
+  the model and shows the [model sources](#model-sources) chooser with its load
+  button, the one the Sync sheet shows.
+- A turn the model fails ends with the model's error in the transcript, never a hang.
+  A small context window is the usual cause: the conversation, the instructions, and
+  the tool schemas travel on every call, and on the browser's built-in model they may
+  not fit at all. The error line then says the conversation does not fit the model's
+  context and names the remedy: a new conversation, or a source with a larger window.
+
 ## A measured run
 
 On an Apple laptop with Hermes-3-Llama-3.2-3B on WebGPU, one `reconcile-section`
@@ -249,7 +308,8 @@ drawn at another level of detail, has no picture in a tab, and its page says why
 `bootstrap/app/demo.html` is the same app with a different entry. The app mounts at
 once against a backend with no project open, which answers the
 [capability descriptor](./gui.md#backends-and-capabilities) itself (`backend:
-demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `rendering: none`) and
+demo`, `projects: bundled`, `events: pushed`, `lsp: false`, `agent: embedded`,
+`rendering: none`) and
 refuses every other route with `501` until a project is open. Home renders the
 picker from that descriptor and dispatches `jazyk:open-demo` or
 `jazyk:pick-folder`; the entry listens, seeds the backend with the bundled project
@@ -257,10 +317,10 @@ or the [folder](#a-folder-on-disk) picked, and moves to the documents. Opening a
 folder flips the descriptor to `backend: wasm`, `persistence: browser`.
 
 The model loads only when asked, because every read works without one and only a
-build needs it, and a first visit would otherwise download gigabytes to read a
-document. The descriptor says `model: loadable` while the chosen
-[source](#model-sources) still has to load, and the Sync sheet offers `Load the model`
-with its download size; the load shows its
+build or a [chat](#chat) needs it, and a first visit would otherwise download
+gigabytes to read a document. The descriptor says `model: loadable` while the chosen
+[source](#model-sources) still has to load, and the Sync sheet and the chat pane
+offer `Load the model` with its download size; the load shows its
 progress there, and the weights cache in the browser, so a later visit loads from
 the cache. `jobs` lists `compile` once the model is ready. The model's code
 (WebLLM) is fetched with the model, not with the page.
@@ -301,7 +361,9 @@ a requirement keeps the Requirements list, a diagram shows its picture, a demo
 autosaves, a read-only folder holds its writes until asked and a writing one
 autosaves (a folder in the browser's private file system stands in for a picked
 one), the recent list remembers and forgets, a phone-width screen gives the editor
-the width, and nothing downloads the model on arrival. The deploy workflow runs
+the width, nothing downloads the model on arrival, the chat pane offers the model
+chooser while no model is ready, and a chat on an endpoint source (a mocked one)
+calls a read tool and streams its answer into the pane. The deploy workflow runs
 them after the build and publishes only when they pass.
 
 The page's first script carries the app alone. What only some visits use loads when
@@ -334,7 +396,10 @@ policy; nothing client-side is needed.
 - No [generation](../consumers/gen.md) or verification runs: both shell out to the
   deliverable's build and test commands, and `crate::sys::run_shell` has no shell.
 - No [LSP](./lsp.md), no [ACP](./acp.md), no external [executors](./acp.md#agents):
-  all three need a process or a socket.
+  all three need a process or a socket. [Chat](#chat) runs the loop in the worker
+  instead of an agent.
+- No binding, generation, or verification in chat, and no slash commands. See
+  [chat](#chat).
 - No rendering to `.svg` or `.png`. See [diagrams](#diagrams).
 - No file watching, and no writing through to a machine.
 - No [benchmark](../benchmark/benchmark.md).

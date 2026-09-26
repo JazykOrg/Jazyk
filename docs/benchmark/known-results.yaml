@@ -10,30 +10,21 @@
 # - qwen3:4b-instruct via Ollama: native codec routes best; verification capable,
 #   text codec collapses on big packs.
 #
-# Graded 2026-08-15 (case set 1f6fb2e4...):
-# - qwen3.8:27b-mlx via Ollama: best local model graded so far. Native pass 56/56,
-#   every case 1.0, but three cases finished on the sticky text downgrade after
-#   ollama's tool-channel XML errors, so the native verdict withholds compilation.
-#   Text pass 55/56: the one miss is density paraphrasing the `addProduct`
-#   identifier out of the statement text; an identifier-preservation prompt rule landed
-#   after this run and a filtered rerun re-graded density 1.00 on both codecs. Extraction scores ranged 0.78-0.98 across earlier repeat runs;
-#   this entry is the post-fix-loop record. Slow: ~7-8 tok/s, a full two-codec
-#   grading takes hours.
+# Graded 2026-09-26 (case set 4e0f58b3...):
+# - qwen3.8:27b-mlx via Ollama: 36 cases (the doctrine, criteria, narrative, containment,
+#   binding, and technology-constraint cases added since August). Native 148/152, text
+#   150/152; review, structure, generation, and verification 1.00 on both codecs.
+#   Misses: native properties (no Store entity for "every store opens at nine") and
+#   machine-subject (a minted Stance entity carried the arc; a skill rule followed),
+#   text stated-containment (the Lantern Room left without a parent). Compilation stays
+#   not-capable because extraction is below 1.00. ~11-12 tok/s; a full two-codec
+#   grading takes about seven hours.
 results:
 - baseUrl: agent
   caseSetHash: f41d8375dddd312f
   codecs:
     agent:
       cases:
-        gen-basic:
-          calls: 2
-          checks: 4/4
-          efficiency: 1.0
-          fail: ''
-          name: gen-basic
-          parRounds: 10
-          score: 1.0
-          tier: generation
         converge:
           calls: 0
           checks: 3/3
@@ -79,6 +70,15 @@ results:
           parRounds: 6
           score: 1.0
           tier: extraction
+        gen-basic:
+          calls: 2
+          checks: 4/4
+          efficiency: 1.0
+          fail: ''
+          name: gen-basic
+          parRounds: 10
+          score: 1.0
+          tier: generation
         repair:
           calls: 7
           checks: 2/2
@@ -189,14 +189,6 @@ results:
   codecs:
     native:
       cases:
-        gen-basic:
-          checks: 0/4
-          efficiency: 0.0
-          fail: 'turn aborted: three consecutive replies without a usable tool call'
-          parRounds: 10
-          rounds: 3
-          score: 0.0
-          tokens: 1865
         converge:
           checks: 3/3
           efficiency: 1.0
@@ -237,6 +229,14 @@ results:
           rounds: 17
           score: 0.67
           tokens: 7987
+        gen-basic:
+          checks: 0/4
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive replies without a usable tool call'
+          parRounds: 10
+          rounds: 3
+          score: 0.0
+          tokens: 1865
         repair:
           checks: 1/2
           efficiency: 0.5
@@ -332,14 +332,6 @@ results:
         verification: capable
     text:
       cases:
-        gen-basic:
-          checks: 0/4
-          efficiency: 1.0
-          fail: 'generationRecorded: record_generation never landed'
-          parRounds: 10
-          rounds: 3
-          score: 0.0
-          tokens: 1261
         converge:
           checks: 3/3
           efficiency: 1.0
@@ -380,6 +372,14 @@ results:
           rounds: 14
           score: 1.0
           tokens: 3849
+        gen-basic:
+          checks: 0/4
+          efficiency: 1.0
+          fail: 'generationRecorded: record_generation never landed'
+          parRounds: 10
+          rounds: 3
+          score: 0.0
+          tokens: 1261
         repair:
           checks: 2/2
           efficiency: 0.75
@@ -480,14 +480,6 @@ results:
   codecs:
     native:
       cases:
-        gen-basic:
-          checks: 1/4
-          efficiency: 1.0
-          fail: 'rowPerRequirement: no test row for req:greeter-1'
-          parRounds: 10
-          rounds: 10
-          score: 0.25
-          tokens: 1866
         converge:
           checks: 3/3
           efficiency: 1.0
@@ -528,6 +520,14 @@ results:
           rounds: 6
           score: 0.5
           tokens: 776
+        gen-basic:
+          checks: 1/4
+          efficiency: 1.0
+          fail: 'rowPerRequirement: no test row for req:greeter-1'
+          parRounds: 10
+          rounds: 10
+          score: 0.25
+          tokens: 1866
         repair:
           checks: 2/2
           efficiency: 1.0
@@ -623,14 +623,6 @@ results:
         verification: capable
     text:
       cases:
-        gen-basic:
-          checks: 0/4
-          efficiency: 0.0
-          fail: 'turn aborted: three consecutive replies without a usable tool call'
-          parRounds: 10
-          rounds: 6
-          score: 0.0
-          tokens: 12390
         converge:
           checks: 3/3
           efficiency: 0.75
@@ -671,6 +663,14 @@ results:
           rounds: 19
           score: 0.0
           tokens: 1148
+        gen-basic:
+          checks: 0/4
+          efficiency: 0.0
+          fail: 'turn aborted: three consecutive replies without a usable tool call'
+          parRounds: 10
+          rounds: 6
+          score: 0.0
+          tokens: 12390
         repair:
           checks: 1/2
           efficiency: 0.67
@@ -767,193 +767,114 @@ results:
   gradedAt: 1785776324
   model: qwen3:4b-instruct
 - baseUrl: http://127.0.0.1:11434/v1
-  caseSetHash: 1f6fb2e48101b4a5
+  caseSetHash: 4e0f58b385b5299c
   codecs:
     native:
       cases:
-        gen-basic:
-          checks: 4/4
-          efficiency: 0.42
-          fail: ''
-          parRounds: 10
-          rounds: 24
-          score: 1.0
-          tokens: 10825
-        converge:
-          checks: 3/3
+        abstract-entity:
+          checks: 9/9
           efficiency: 1.0
           fail: ''
-          parRounds: 6
-          rounds: 3
-          score: 1.0
-          tokens: 1446
-        declarative:
-          checks: 6/6
-          efficiency: 1.0
-          fail: ''
-          parRounds: 6
+          parRounds: 5
           rounds: 4
           score: 1.0
-          tokens: 2235
-        density:
-          checks: 6/6
-          efficiency: 0.33
-          fail: endpoint or model rejected native tool calls
-          parRounds: 6
-          rounds: 18
-          score: 1.0
-          tokens: 3519
-        edges:
-          checks: 6/6
-          efficiency: 0.46
-          fail: endpoint or model rejected native tool calls
-          parRounds: 6
-          rounds: 13
-          score: 1.0
-          tokens: 1782
-        extract:
-          checks: 6/6
-          efficiency: 1.0
+          tokens: 5442
+        abstract-entity-namesake:
+          checks: 9/9
+          efficiency: 0.71
           fail: ''
-          parRounds: 6
-          rounds: 5
+          parRounds: 5
+          rounds: 7
           score: 1.0
-          tokens: 2567
-        navigation:
-          checks: 4/4
-          efficiency: 1.0
-          fail: ''
-          parRounds: 3
-          rounds: 2
-          score: 1.0
-          tokens: 540
-        repair:
+          tokens: 12962
+        bind-descriptor:
           checks: 2/2
-          efficiency: 0.5
-          fail: endpoint or model rejected native tool calls
-          parRounds: 6
-          rounds: 12
-          score: 1.0
-          tokens: 3235
-        reuse:
-          checks: 2/2
-          efficiency: 1.0
-          fail: ''
-          parRounds: 6
-          rounds: 5
-          score: 1.0
-          tokens: 1514
-        review:
-          checks: 1/1
-          efficiency: 1.0
-          fail: ''
-          parRounds: 3
-          rounds: 3
-          score: 1.0
-          tokens: 708
-        review-clean:
-          checks: 1/1
-          efficiency: 1.0
-          fail: ''
-          parRounds: 3
-          rounds: 1
-          score: 1.0
-          tokens: 391
-        review-duplicate:
-          checks: 3/3
-          efficiency: 0.75
-          fail: ''
-          parRounds: 3
-          rounds: 4
-          score: 1.0
-          tokens: 1087
-        review-lint:
-          checks: 2/2
-          efficiency: 1.0
-          fail: ''
-          parRounds: 3
-          rounds: 3
-          score: 1.0
-          tokens: 1012
-        review-lookalike:
-          checks: 3/3
-          efficiency: 1.0
-          fail: ''
-          parRounds: 3
-          rounds: 3
-          score: 1.0
-          tokens: 1012
-        steps:
-          checks: 5/5
           efficiency: 1.0
           fail: ''
           parRounds: 8
-          rounds: 6
+          rounds: 8
           score: 1.0
-          tokens: 1403
-        verify-judge-fail:
-          checks: 1/1
-          efficiency: 1.0
-          fail: ''
-          parRounds: 1
-          rounds: 1
-          score: 1.0
-          tokens: 0
-        verify-judge-pass:
-          checks: 1/1
-          efficiency: 1.0
-          fail: ''
-          parRounds: 1
-          rounds: 1
-          score: 1.0
-          tokens: 0
-      checks: 56/56
-      efficiency: 0.85
-      scores:
-        extraction: 1.0
-        generation: 1.0
-        review: 1.0
-        verification: 1.0
-      throughput: 8
-      tokens: 33276
-      verdicts:
-        compilation: not-capable
-        generation: capable
-        verification: capable
-    text:
-      cases:
-        gen-basic:
-          checks: 4/4
-          efficiency: 0.63
-          fail: ''
-          parRounds: 10
-          rounds: 16
-          score: 1.0
-          tokens: 4153
+          tokens: 4613
         converge:
+          checks: 3/3
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 2844
+        criteria-density:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 3
+          score: 1.0
+          tokens: 2230
+        criteria-observation:
           checks: 3/3
           efficiency: 1.0
           fail: ''
-          parRounds: 6
-          rounds: 5
+          parRounds: 3
+          rounds: 3
           score: 1.0
-          tokens: 1136
+          tokens: 1760
+        curate-view:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 1109
         declarative:
           checks: 6/6
-          efficiency: 0.4
+          efficiency: 0.86
           fail: ''
           parRounds: 6
-          rounds: 15
+          rounds: 7
           score: 1.0
-          tokens: 1662
+          tokens: 5215
+        declare-edges:
+          checks: 5/5
+          efficiency: 0.5
+          fail: ''
+          parRounds: 2
+          rounds: 4
+          score: 1.0
+          tokens: 624
+        declare-edges-none:
+          checks: 3/3
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 878
+        dedupe-candidates:
+          checks: 4/4
+          efficiency: 0.5
+          fail: ''
+          parRounds: 2
+          rounds: 4
+          score: 1.0
+          tokens: 1827
+        dedupe-candidates-separate:
+          checks: 4/4
+          efficiency: 1.0
+          fail: ''
+          parRounds: 2
+          rounds: 2
+          score: 1.0
+          tokens: 562
         density:
-          checks: 5/6
-          efficiency: 0.29
-          fail: 'requirementExists: no requirement matching `addProduct` on ent:inventory-system'
+          checks: 6/6
+          efficiency: 0.67
+          fail: ''
           parRounds: 6
-          rounds: 21
-          score: 0.83
-          tokens: 5746
+          rounds: 9
+          score: 1.0
+          tokens: 8012
         edges:
           checks: 6/6
           efficiency: 0.67
@@ -961,31 +882,87 @@ results:
           parRounds: 6
           rounds: 9
           score: 1.0
-          tokens: 1290
-        extract:
-          checks: 6/6
-          efficiency: 0.38
+          tokens: 6206
+        enumeration:
+          checks: 9/9
+          efficiency: 0.86
           fail: ''
           parRounds: 6
-          rounds: 16
+          rounds: 7
           score: 1.0
-          tokens: 4291
-        navigation:
-          checks: 4/4
-          efficiency: 0.75
-          fail: ''
-          parRounds: 3
-          rounds: 4
-          score: 1.0
-          tokens: 817
-        repair:
-          checks: 2/2
+          tokens: 4368
+        extract:
+          checks: 6/6
           efficiency: 0.6
           fail: ''
           parRounds: 6
           rounds: 10
           score: 1.0
-          tokens: 2766
+          tokens: 12450
+        gen-basic:
+          checks: 4/4
+          efficiency: 0.71
+          fail: ''
+          parRounds: 10
+          rounds: 14
+          score: 1.0
+          tokens: 5372
+        machine-subject:
+          checks: 3/6
+          efficiency: 0.89
+          fail: 'transitionSubject: 0 transitions on ent:ines, min 3; other subjects: ent:stance'
+          parRounds: 8
+          rounds: 9
+          score: 0.5
+          tokens: 9002
+        narrative-behavior:
+          checks: 8/8
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 7495
+        navigation:
+          checks: 4/4
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 2097
+        properties:
+          checks: 5/6
+          efficiency: 1.0
+          fail: 'requirementExists: entity Store not found'
+          parRounds: 6
+          rounds: 6
+          score: 0.83
+          tokens: 4555
+        rejudge-pair-contradiction:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 1237
+        rejudge-pair-duplicate:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 702
+        repair:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 3602
         reuse:
           checks: 2/2
           efficiency: 0.75
@@ -993,55 +970,79 @@ results:
           parRounds: 6
           rounds: 8
           score: 1.0
-          tokens: 1442
+          tokens: 4912
         review:
           checks: 1/1
-          efficiency: 1.0
+          efficiency: 0.6
           fail: ''
           parRounds: 3
-          rounds: 2
+          rounds: 5
           score: 1.0
-          tokens: 511
+          tokens: 2450
         review-clean:
           checks: 1/1
           efficiency: 1.0
           fail: ''
           parRounds: 3
-          rounds: 1
+          rounds: 3
           score: 1.0
-          tokens: 354
+          tokens: 1251
         review-duplicate:
           checks: 3/3
-          efficiency: 0.6
+          efficiency: 0.43
           fail: ''
           parRounds: 3
-          rounds: 5
+          rounds: 7
           score: 1.0
-          tokens: 1153
+          tokens: 2844
         review-lint:
           checks: 2/2
-          efficiency: 1.0
+          efficiency: 0.75
           fail: ''
           parRounds: 3
-          rounds: 2
+          rounds: 4
           score: 1.0
-          tokens: 876
+          tokens: 2438
         review-lookalike:
           checks: 3/3
-          efficiency: 0.6
+          efficiency: 0.43
           fail: ''
           parRounds: 3
-          rounds: 5
+          rounds: 7
           score: 1.0
-          tokens: 1255
-        steps:
+          tokens: 2765
+        split-view:
           checks: 5/5
           efficiency: 0.8
           fail: ''
-          parRounds: 8
-          rounds: 10
+          parRounds: 4
+          rounds: 5
           score: 1.0
-          tokens: 1114
+          tokens: 4932
+        stated-containment:
+          checks: 7/7
+          efficiency: 0.86
+          fail: ''
+          parRounds: 6
+          rounds: 7
+          score: 1.0
+          tokens: 7336
+        steps:
+          checks: 5/5
+          efficiency: 1.0
+          fail: ''
+          parRounds: 8
+          rounds: 7
+          score: 1.0
+          tokens: 4724
+        tech-constraint:
+          checks: 2/2
+          efficiency: 0.89
+          fail: ''
+          parRounds: 8
+          rounds: 9
+          score: 1.0
+          tokens: 6347
         verify-judge-fail:
           checks: 1/1
           efficiency: 1.0
@@ -1058,18 +1059,323 @@ results:
           rounds: 1
           score: 1.0
           tokens: 0
-      checks: 55/56
-      efficiency: 0.73
+      checks: 148/152
+      efficiency: 0.78
       scores:
-        extraction: 0.98
+        extraction: 0.95
         generation: 1.0
         review: 1.0
+        structure: 1.0
         verification: 1.0
-      throughput: 7
-      tokens: 28566
+      throughput: 11
+      tokens: 145163
       verdicts:
         compilation: not-capable
         generation: capable
         verification: capable
-  gradedAt: 1786842422
+    text:
+      cases:
+        abstract-entity:
+          checks: 9/9
+          efficiency: 1.0
+          fail: ''
+          parRounds: 5
+          rounds: 5
+          score: 1.0
+          tokens: 5256
+        abstract-entity-namesake:
+          checks: 9/9
+          efficiency: 0.45
+          fail: ''
+          parRounds: 5
+          rounds: 11
+          score: 1.0
+          tokens: 9825
+        bind-descriptor:
+          checks: 2/2
+          efficiency: 0.89
+          fail: ''
+          parRounds: 8
+          rounds: 9
+          score: 1.0
+          tokens: 7450
+        converge:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 1413
+        criteria-density:
+          checks: 2/2
+          efficiency: 0.75
+          fail: ''
+          parRounds: 3
+          rounds: 4
+          score: 1.0
+          tokens: 2253
+        criteria-observation:
+          checks: 3/3
+          efficiency: 0.75
+          fail: ''
+          parRounds: 3
+          rounds: 4
+          score: 1.0
+          tokens: 1784
+        curate-view:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 1335
+        declarative:
+          checks: 6/6
+          efficiency: 0.38
+          fail: ''
+          parRounds: 6
+          rounds: 16
+          score: 1.0
+          tokens: 4837
+        declare-edges:
+          checks: 5/5
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 464
+        declare-edges-none:
+          checks: 3/3
+          efficiency: 1.0
+          fail: ''
+          parRounds: 2
+          rounds: 2
+          score: 1.0
+          tokens: 986
+        dedupe-candidates:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 1033
+        dedupe-candidates-separate:
+          checks: 4/4
+          efficiency: 1.0
+          fail: ''
+          parRounds: 2
+          rounds: 1
+          score: 1.0
+          tokens: 468
+        density:
+          checks: 6/6
+          efficiency: 0.25
+          fail: ''
+          parRounds: 6
+          rounds: 24
+          score: 1.0
+          tokens: 9201
+        edges:
+          checks: 6/6
+          efficiency: 0.55
+          fail: ''
+          parRounds: 6
+          rounds: 11
+          score: 1.0
+          tokens: 5318
+        enumeration:
+          checks: 9/9
+          efficiency: 0.33
+          fail: ''
+          parRounds: 6
+          rounds: 18
+          score: 1.0
+          tokens: 5412
+        extract:
+          checks: 6/6
+          efficiency: 0.38
+          fail: ''
+          parRounds: 6
+          rounds: 16
+          score: 1.0
+          tokens: 8392
+        gen-basic:
+          checks: 4/4
+          efficiency: 0.59
+          fail: ''
+          parRounds: 10
+          rounds: 17
+          score: 1.0
+          tokens: 5645
+        machine-subject:
+          checks: 6/6
+          efficiency: 0.42
+          fail: ''
+          parRounds: 8
+          rounds: 19
+          score: 1.0
+          tokens: 6864
+        narrative-behavior:
+          checks: 8/8
+          efficiency: 0.55
+          fail: ''
+          parRounds: 6
+          rounds: 11
+          score: 1.0
+          tokens: 7556
+        navigation:
+          checks: 4/4
+          efficiency: 0.5
+          fail: ''
+          parRounds: 3
+          rounds: 6
+          score: 1.0
+          tokens: 2345
+        properties:
+          checks: 6/6
+          efficiency: 1.0
+          fail: ''
+          parRounds: 6
+          rounds: 6
+          score: 1.0
+          tokens: 6684
+        rejudge-pair-contradiction:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 1003
+        rejudge-pair-duplicate:
+          checks: 4/4
+          efficiency: 0.67
+          fail: ''
+          parRounds: 2
+          rounds: 3
+          score: 1.0
+          tokens: 639
+        repair:
+          checks: 2/2
+          efficiency: 0.55
+          fail: ''
+          parRounds: 6
+          rounds: 11
+          score: 1.0
+          tokens: 5910
+        reuse:
+          checks: 2/2
+          efficiency: 0.75
+          fail: ''
+          parRounds: 6
+          rounds: 8
+          score: 1.0
+          tokens: 2181
+        review:
+          checks: 1/1
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 1553
+        review-clean:
+          checks: 1/1
+          efficiency: 0.6
+          fail: ''
+          parRounds: 3
+          rounds: 5
+          score: 1.0
+          tokens: 870
+        review-duplicate:
+          checks: 3/3
+          efficiency: 0.43
+          fail: ''
+          parRounds: 3
+          rounds: 7
+          score: 1.0
+          tokens: 1702
+        review-lint:
+          checks: 2/2
+          efficiency: 1.0
+          fail: ''
+          parRounds: 3
+          rounds: 2
+          score: 1.0
+          tokens: 6841
+        review-lookalike:
+          checks: 3/3
+          efficiency: 0.3
+          fail: ''
+          parRounds: 3
+          rounds: 10
+          score: 1.0
+          tokens: 1943
+        split-view:
+          checks: 5/5
+          efficiency: 0.67
+          fail: ''
+          parRounds: 4
+          rounds: 6
+          score: 1.0
+          tokens: 4390
+        stated-containment:
+          checks: 5/7
+          efficiency: 0.5
+          fail: 'parentIs: ent:lantern-room sits under no parent, expected ent:port-alder'
+          parRounds: 6
+          rounds: 12
+          score: 0.71
+          tokens: 6562
+        steps:
+          checks: 5/5
+          efficiency: 0.53
+          fail: ''
+          parRounds: 8
+          rounds: 15
+          score: 1.0
+          tokens: 3364
+        tech-constraint:
+          checks: 2/2
+          efficiency: 0.89
+          fail: ''
+          parRounds: 8
+          rounds: 9
+          score: 1.0
+          tokens: 6742
+        verify-judge-fail:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+        verify-judge-pass:
+          checks: 1/1
+          efficiency: 1.0
+          fail: ''
+          parRounds: 1
+          rounds: 1
+          score: 1.0
+          tokens: 0
+      checks: 150/152
+      efficiency: 0.66
+      scores:
+        extraction: 0.98
+        generation: 1.0
+        review: 1.0
+        structure: 1.0
+        verification: 1.0
+      throughput: 12
+      tokens: 138221
+      verdicts:
+        compilation: not-capable
+        generation: capable
+        verification: capable
+  gradedAt: 1790459217
   model: qwen3.8:27b-mlx

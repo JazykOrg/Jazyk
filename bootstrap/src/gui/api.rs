@@ -18,6 +18,14 @@ pub fn err(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
 }
 
+// A refusal from a crate::webapi value, in the same error shape.
+pub fn refused((status, msg): crate::webapi::Refusal) -> Response {
+    err(
+        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        msg,
+    )
+}
+
 // Load the store off the async runtime. Reads are lock-free with generation retry.
 pub async fn load_store(st: &SharedState) -> Store {
     let out = st.out.clone();
@@ -633,19 +641,15 @@ pub async fn doc_baseline(State(st): State<SharedState>, Query(p): Query<DocQ>) 
 
 pub async fn gen_pending(State(st): State<SharedState>) -> Json<Value> {
     let store = load_store(&st).await;
-    Json(json!({ "pending": crate::gen::pending(&store, &st.gs()) }))
+    Json(crate::webapi::product::gen_pending_value(&store, &st.gs()))
 }
 
 // The per-entity generation package a session receives.
 pub async fn gen_package(State(st): State<SharedState>, UrlPath(id): UrlPath<String>) -> Response {
     let store = load_store(&st).await;
-    let id = store.resolve_id(&id).to_string();
-    if !store.graph.entities.contains_key(&id) {
-        return err(StatusCode::NOT_FOUND, format!("no entity {}", id));
-    }
-    match crate::gen::task_package(&store, &id, &st.gs()) {
+    match crate::webapi::product::gen_package_value(&store, &id, &st.gs()) {
         Ok(v) => Json(v).into_response(),
-        Err(e) => err(StatusCode::BAD_REQUEST, e),
+        Err(r) => refused(r),
     }
 }
 
@@ -660,25 +664,18 @@ pub async fn verify_pending(
     Query(p): Query<VerifyPendingQ>,
 ) -> Json<Value> {
     let store = load_store(&st).await;
-    let pending =
-        crate::verify::pending(&store, &st.gs(), p.filter.as_deref(), p.entity.as_deref());
-    Json(json!({ "pending": pending, "counts": crate::verify::pending_counts(&store, &st.gs()) }))
+    Json(crate::webapi::product::verify_pending_value(
+        &store,
+        &st.gs(),
+        p.filter.as_deref(),
+        p.entity.as_deref(),
+    ))
 }
 
 pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<String>) -> Response {
-    if slug.contains('/') || slug.contains("..") || slug.contains('\\') {
-        return err(StatusCode::BAD_REQUEST, format!("invalid slug {}", slug));
-    }
-    let f = st
-        .out
-        .join("docsgen")
-        .join(format!("{}.md", slug.trim_end_matches(".md")));
-    match crate::vfs::read_to_string(&f) {
-        Ok(text) => Json(json!({ "slug": slug, "text": text })).into_response(),
-        Err(_) => err(
-            StatusCode::NOT_FOUND,
-            format!("no requirements document for {}", slug),
-        ),
+    match crate::webapi::outfiles::docsgen_value(&st.out, &slug) {
+        Ok(v) => Json(v).into_response(),
+        Err(r) => refused(r),
     }
 }
 

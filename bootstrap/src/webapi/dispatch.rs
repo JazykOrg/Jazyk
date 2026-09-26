@@ -22,6 +22,14 @@ fn err(status: u16, msg: impl Into<String>) -> String {
     reply(status, json!({ "error": msg.into() }))
 }
 
+// A value, or the refusal the value function names, in the server's error shape.
+fn answer(r: Result<Value, super::Refusal>) -> String {
+    match r {
+        Ok(v) => ok(v),
+        Err((status, msg)) => err(status, msg),
+    }
+}
+
 fn project() -> Project {
     Project::load(&crate::wasm::root())
 }
@@ -382,38 +390,99 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             ))
         }
         ("GET", "/questions") => ok(json!({ "questions": [] })),
-        ("GET", "/gen/pending") => ok(json!({ "pending": [] })),
-        // Each empty answer keeps the native handler's shape (gui.md#api): the pages
-        // index `rows` and `counts` as objects and crash on an array or a hole.
-        ("GET", "/verify/pending") => ok(json!({ "pending": [], "counts": {} })),
-        ("GET", "/verify/matrix") => ok(json!({ "rows": {}, "counts": {} })),
         ("GET", "/benchmarks") => ok(json!({ "caseSetHash": "", "results": [] })),
         ("GET", "/benchmarks/models") => ok(json!({ "models": [] })),
-        ("GET", "/deliverable") => ok(json!({ "root": "", "files": [], "medium": null, "build": null })),
         ("GET", "/trace") => ok(json!({ "traces": [] })),
+
+        // The product the project carries, read from the tree with the server's
+        // own values (docs/frontends/wasm.md#the-product).
+        ("GET", "/gen/pending") => {
+            let p = project();
+            let store = Store::load(&p.out);
+            ok(super::product::gen_pending_value(&store, &crate::gen::GenSettings::resolve(&p)))
+        }
+        ("GET", path) if path.starts_with("/gen/package/") => {
+            let id = decode(path.trim_start_matches("/gen/package/"));
+            let p = project();
+            let store = Store::load(&p.out);
+            answer(super::product::gen_package_value(
+                &store,
+                &id,
+                &crate::gen::GenSettings::resolve(&p),
+            ))
+        }
+        ("GET", "/verify/pending") => {
+            let p = project();
+            let store = Store::load(&p.out);
+            ok(super::product::verify_pending_value(
+                &store,
+                &crate::gen::GenSettings::resolve(&p),
+                param(&q, "filter").as_deref(),
+                param(&q, "entity").as_deref(),
+            ))
+        }
+        // The export answers its text as the body, so the page reads it the way it
+        // reads the server's file.
+        ("GET", "/verify/matrix") => {
+            let p = project();
+            let store = Store::load(&p.out);
+            let gs = crate::gen::GenSettings::resolve(&p);
+            match param(&q, "format").as_deref() {
+                None | Some("json") => ok(super::product::matrix_value(&store, &gs)),
+                Some(f) => {
+                    let (rows, _) = super::product::matrix_rows(&store, &gs);
+                    match super::product::matrix_export(&rows, f) {
+                        Some((body, _, _)) => ok(Value::String(body)),
+                        None => err(400, format!("unknown format {}; csv, md, or json", f)),
+                    }
+                }
+            }
+        }
+        ("GET", "/deliverable") => {
+            let p = project();
+            ok(super::deliverable::deliverable_value(
+                &p.out,
+                &crate::gen::GenSettings::resolve(&p),
+            ))
+        }
+        ("GET", "/deliverable/file") => {
+            let p = project();
+            answer(super::deliverable::deliverable_file(
+                &p.out,
+                &crate::gen::GenSettings::resolve(&p),
+                &param(&q, "path").unwrap_or_default(),
+            ))
+        }
+        ("GET", "/deliverable/baseline") => answer(super::deliverable::deliverable_baseline(
+            &out(),
+            &param(&q, "path").unwrap_or_default(),
+        )),
+        ("GET", path) if path.starts_with("/docsgen/") => {
+            let slug = decode(path.trim_start_matches("/docsgen/"));
+            answer(super::outfiles::docsgen_value(&out(), &slug))
+        }
 
         ("GET", "/watch") => ok(json!({ "watch": false })),
         ("GET", "/settings") => ok(crate::project::settings_read(&crate::wasm::root())),
 
-        ("GET", "/out/list") => {
-            let out = out();
-            let mut files: Vec<Value> = Vec::new();
-            for p in crate::vfs::list_all() {
-                if let Ok(rel) = p.strip_prefix(&out) {
-                    files.push(json!({
-                        "path": rel.to_string_lossy().replace('\\', "/"),
-                        "size": crate::vfs::read(&p).map(|b| b.len()).unwrap_or(0),
-                    }));
-                }
-            }
-            ok(json!({ "files": files }))
-        }
+        ("GET", "/out/list") => answer(super::outfiles::out_list(
+            &out(),
+            &param(&q, "path").unwrap_or_default(),
+        )),
 
+        // The file's text is the body, the way the server's bytes are. The envelope
+        // carries JSON, so a file that is not text is not served.
         ("GET", "/out/file") => {
             let rel = param(&q, "path").unwrap_or_default();
-            match read_out(&rel) {
-                Some(text) => ok(json!({ "path": rel, "text": text })),
-                None => err(404, format!("no {} in the out directory", rel)),
+            match super::outfiles::out_file(&out(), &rel) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => ok(Value::String(text)),
+                    Err(_) => err(
+                        501,
+                        format!("the browser backend serves text files only; {} is not text", rel),
+                    ),
+                },
+                Err((status, msg)) => err(status, msg),
             }
         }
 
@@ -452,9 +521,4 @@ pub fn request(method: &str, path: &str, body: &str) -> String {
             format!("the browser backend does not serve {} {}", method, path),
         ),
     }
-}
-
-// A file under the out directory, as text. Diagrams are the common case.
-pub fn read_out(rel: &str) -> Option<String> {
-    crate::vfs::read_to_string(out().join(rel)).ok()
 }

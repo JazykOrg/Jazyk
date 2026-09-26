@@ -271,6 +271,17 @@ the model in the page.
 The demo lands in its own directory so the dist the binary embeds never grows a 7MB
 module. `npm run build` is unchanged and still builds only the workbench.
 
+`npm run test:e2e` runs the editor's browser tests (`app/e2e/`, Playwright) against
+the built `dist-demo/` served with the isolation headers. They drive the page the
+way a visitor does: every route but Home redirects until a project is open, each
+demo opens with only its own documents, the Model pages read by name with no ids,
+a requirement keeps the Requirements list, a diagram shows its picture, a demo
+autosaves, a read-only folder holds its writes until asked and a writing one
+autosaves (a folder in the browser's private file system stands in for a picked
+one), the recent list remembers and forgets, a phone-width screen gives the editor
+the width, and nothing downloads the model on arrival. The deploy workflow runs
+them after the build and publishes only when they pass.
+
 The page's first script carries the app alone. What only some visits use loads when
 it is first used: the model's code when the model loads, and the graph layout
 library when the Developer [map](./gui.md#map) opens.

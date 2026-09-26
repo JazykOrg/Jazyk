@@ -1056,7 +1056,6 @@ impl Board {
                     g.kind.as_str(),
                     "place-anchors"
                         | "reconcile-section"
-                        | "derive-criteria"
                         | "bind"
                         | "generate"
                         | "verify"
@@ -1091,6 +1090,7 @@ impl Board {
             let mut label = String::new();
             let mut size = 0usize;
             let mut sections = 0usize;
+            let mut criteria = 0usize;
             let flush = |current: &mut Vec<String>,
                          skills: &mut Vec<&str>,
                          label: &mut String,
@@ -1117,6 +1117,7 @@ impl Board {
                     flush(&mut current, &mut skills, &mut label, &mut batches);
                     size = 0;
                     sections = 0;
+                    criteria = 0;
                 }
                 // Parked goals first, pairs before entity reviews, sections in
                 // document order, deepest abstraction first.
@@ -1135,6 +1136,7 @@ impl Board {
                     let g = self.goal(&id).unwrap();
                     let cost = estimate(store, g);
                     let is_section = g.kind == "reconcile-section";
+                    let is_criteria = g.kind == "derive-criteria";
                     let max_sections =
                         (limits::SESSION_ROUNDS / limits::ROUNDS_PER_SECTION) as usize;
                     let mut with_goal = skills.clone();
@@ -1145,11 +1147,13 @@ impl Board {
                     }
                     let over = !current.is_empty()
                         && (size + cost > budget_with(&with_goal)
-                            || (is_section && sections >= max_sections));
+                            || (is_section && sections >= max_sections)
+                            || (is_criteria && criteria >= limits::CRITERIA_GOALS_PER_BATCH));
                     if over {
                         flush(&mut current, &mut skills, &mut label, &mut batches);
                         size = 0;
                         sections = 0;
+                        criteria = 0;
                         with_goal = goals::skills_for(&g.kind, store, &g.target);
                     }
                     if current.is_empty() {
@@ -1161,11 +1165,15 @@ impl Board {
                     if is_section {
                         sections += 1;
                     }
+                    if is_criteria {
+                        criteria += 1;
+                    }
                 }
                 if wall {
                     flush(&mut current, &mut skills, &mut label, &mut batches);
                     size = 0;
                     sections = 0;
+                    criteria = 0;
                 }
             }
             flush(&mut current, &mut skills, &mut label, &mut batches);
@@ -2624,6 +2632,42 @@ pub(crate) mod tests {
         assert_eq!(localities.len(), 2, "{:?}", localities);
         assert_eq!(b.batches.len(), 1, "{:?}", b.batches);
         assert_eq!(b.batches[0].goals.len(), 2);
+    }
+
+    // Criteria goals share batches, at most CRITERIA_GOALS_PER_BATCH to one, instead
+    // of one session per entity. Mirrors docs/compiler/reconciler.md#batching.
+    #[test]
+    fn criteria_goals_pack_up_to_the_cap() {
+        let mut s = Store::default();
+        for i in 0..6 {
+            let eid = format!("ent:e{}", i);
+            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.requirements.insert(
+                format!("req:r-{}", i),
+                Requirement {
+                    statement: format!("The E{} answers within {} seconds.", i, i + 1),
+                    entities: vec![eid],
+                    ..Default::default()
+                },
+            );
+        }
+        let proj = Project {
+            out: s.out.clone(),
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
+        let b = Board::derive(&s, &proj, &control_auto());
+        let criteria: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "derive-criteria").collect();
+        assert_eq!(criteria.len(), 6, "{:?}", b.goals.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let per_batch: Vec<usize> = b
+            .batches
+            .iter()
+            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .filter(|n| *n > 0)
+            .collect();
+        assert_eq!(per_batch.iter().sum::<usize>(), 6, "{:?}", b.batches);
+        assert!(per_batch.iter().all(|n| *n <= limits::CRITERIA_GOALS_PER_BATCH), "{:?}", per_batch);
+        assert!(per_batch.iter().any(|n| *n > 1), "criteria goals never shared a batch: {:?}", per_batch);
     }
 
     // A read-only derivation never commits: Board::compute on a store whose documents

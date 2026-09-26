@@ -50,6 +50,14 @@ jobs:
       - name: Build
         run: npm ci && npm run build:demo
         working-directory: bootstrap/app
+      # The fixtures' diagrams are redrawn by the renderer this commit carries, so a
+      # renderer change reaches the demos without a rebuild of the examples
+      # (docs/frontends/wasm.md#keeping-the-demos-current).
+      - name: Redraw the demo diagrams
+        run: |
+          cargo build --release --bin jazyk
+          sh app/scripts/rerender-fixtures.sh target/release/jazyk app/dist-demo/demos
+        working-directory: bootstrap
       # The editor's browser tests drive the built page; nothing publishes unless
       # they pass (docs/frontends/wasm.md#building).
       - name: Test in the browser

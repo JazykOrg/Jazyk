@@ -27,3 +27,7 @@ jobs:
       - name: Test
         run: cargo test --release
         working-directory: bootstrap
+      # A demo that fell behind this compiler is a warning on the run, never a
+      # failure (docs/frontends/wasm.md#keeping-the-demos-current).
+      - name: Check the demos
+        run: sh bootstrap/app/scripts/check-demos.sh bootstrap/target/release/jazyk bootstrap/app/public/demos

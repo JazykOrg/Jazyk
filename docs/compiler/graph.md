@@ -508,7 +508,9 @@ The entry kinds:
 - `session`: a goal batch's changeset. Carries `batch`, `mutations`, `rounds`, `tokens`,
   and the model's `reasoning` where a mutation gave one. The entry commits inside the
   serving, before the turn's cost is known, so `tokens` is stamped afterwards by the
-  build that measured it, split across the entries that turn wrote. A session an
+  build that measured it, split across the `session` entries that turn wrote (a
+  `checks` or `settle-diagnostics` entry between them takes no share, so the parts sum
+  to the spend). A session an
   external agent drove ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp))
   spends tokens the harness never sees, so its entry carries no `tokens` at all rather
   than claiming zero: reading `tokens: 0` on every session, a person would price a build

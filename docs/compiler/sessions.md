@@ -464,7 +464,15 @@ to repairing its own claims.
 
 Every session's token count lands in `status.yaml` under `costs` (`sessions`, `tokens`,
 `by_kind`, `by_class`), so the choice of executor per kind is informed by what each kind
-spends ([storage layout](./graph.md#storage-layout)).
+spends ([storage layout](./graph.md#storage-layout)). A session's tokens are what the
+endpoint bills: the input and the output tokens of every model round, refused rounds
+included, read from the usage the response carries (its total, or its prompt plus
+completion tokens). A response without usage is billed by estimate, a quarter token per
+character sent and received. The output tokens alone are a separate figure: the
+throughput and efficiency the [benchmark](../benchmark/benchmark.md) reports, and the
+`llmResponse` trace event. An agent loop resends its whole history every round, so the
+input tokens are most of a session's bill; one build counted output alone and reported
+13k tokens where the endpoint saw 29k of input.
 
 ## Snapshots
 

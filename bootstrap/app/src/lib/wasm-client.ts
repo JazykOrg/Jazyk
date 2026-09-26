@@ -20,6 +20,8 @@ export interface ModelHost {
   name(): string
   // Whether a call can be answered at all right now.
   available(): boolean
+  // Whether the page can load a model on request (docs/frontends/wasm.md#the-demo).
+  loadable?(): boolean
 }
 
 export interface WasmProject {
@@ -137,7 +139,7 @@ export async function startWasmBackend(opts: WasmBackendOptions): Promise<WasmBa
     lsp: false,
     jobs: opts.model.available() ? ['compile'] : [],
     agent: 'none',
-    model: opts.model.available() ? 'in-page' : 'none',
+    model: opts.model.available() ? 'in-page' : opts.model.loadable?.() ? 'loadable' : 'none',
     rendering: 'none',
     persistence: project?.mirror ? 'browser' : 'memory',
   })

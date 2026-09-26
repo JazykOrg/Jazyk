@@ -1,7 +1,7 @@
 // The workspace shell: top bar | navigator | center + inspector | chat column,
 // status bar under everything. Navigation swaps panes, never the page
 // (docs/frontends/gui.md#layout).
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router'
 import TopBar from './shell/TopBar'
 import StatusBar from './shell/StatusBar'
@@ -19,7 +19,9 @@ import { useNarrow } from './lib/narrow'
 import DocEditor from './workbench/DocEditor'
 import DelivFile from './workbench/DelivFile'
 import OutFile from './workbench/OutFile'
-import MapCenter from './workbench/MapCenter'
+// The map pulls in the graph layout library; it loads when the map first opens
+// (docs/frontends/wasm.md#building).
+const MapCenter = lazy(() => import('./workbench/MapCenter'))
 import Inspector from './workbench/Inspector'
 import ChatPane from './chat/ChatPane'
 import Board from './routes/Board'
@@ -167,7 +169,7 @@ export default function App() {
               <Route path="/dev/prompt" element={<DevGate><Prompt /></DevGate>} />
               <Route path="/dev/journal" element={<DevGate><Journal /></DevGate>} />
               <Route path="/dev/workers" element={<DevGate><Workers /></DevGate>} />
-              <Route path="/dev/map" element={<DevGate><MapCenter /></DevGate>} />
+              <Route path="/dev/map" element={<DevGate><Suspense fallback={<p className="muted ws-scroll">loading the map…</p>}><MapCenter /></Suspense></DevGate>} />
               <Route path="/dev/benchmarks" element={<DevGate><Scroll><Benchmarks /></Scroll></DevGate>} />
               <Route path="/dev/feedback" element={<DevGate><Scroll><Feedback /></Scroll></DevGate>} />
               <Route path="/dev/gen/:id" element={<DevGate><Scroll><GenTask /></Scroll></DevGate>} />

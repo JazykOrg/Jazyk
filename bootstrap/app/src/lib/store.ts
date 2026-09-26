@@ -104,6 +104,9 @@ interface AppStore {
   // read-only mode holds (docs/frontends/wasm.md#a-folder-on-disk). Null for the
   // demo and the server.
   folder: { name: string; mode: FolderMode; held: number } | null
+  // The in-page model's load, while it runs or after it failed
+  // (docs/frontends/wasm.md#the-demo).
+  modelLoad: { text: string; failed?: boolean } | null
   turns: Record<string, TurnProgress>
   goalNotes: Record<string, GoalNote>
   noteGoal: (goal: string, event: string, text: string) => void
@@ -144,6 +147,7 @@ interface AppStore {
   setActivityOpen: (v: boolean) => void
   setEditorDirty: (v: boolean) => void
   setFolder: (f: { name: string; mode: FolderMode; held: number } | null) => void
+  setModelLoad: (m: { text: string; failed?: boolean } | null) => void
 }
 
 export const useApp = create<AppStore>((set) => ({
@@ -161,6 +165,7 @@ export const useApp = create<AppStore>((set) => ({
   activityOpen: readPref('jazyk-activity') === 'open',
   editorDirty: false,
   folder: null,
+  modelLoad: null,
   chatOpen: readPref('jazyk-chat') !== 'closed',
   chatFollow: false,
   chatSelected: null,
@@ -218,6 +223,7 @@ export const useApp = create<AppStore>((set) => ({
   },
   setEditorDirty: (v) => set((s) => (s.editorDirty === v ? s : { editorDirty: v })),
   setFolder: (folder) => set({ folder }),
+  setModelLoad: (modelLoad) => set({ modelLoad }),
   turns: {},
   goalNotes: {},
   noteGoal: (goal, event, text) =>

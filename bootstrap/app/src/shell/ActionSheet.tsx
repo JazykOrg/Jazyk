@@ -133,7 +133,9 @@ function ActionSheet({ close }: { close: () => void }) {
       )}
 
       <h3>{w.sync}</h3>
-      {cannot('compile') ? (
+      {caps.data?.model === 'loadable' ? (
+        <ModelLoad />
+      ) : cannot('compile') ? (
         <p className="why">{cannot('compile')}</p>
       ) : (
         <>
@@ -230,5 +232,28 @@ function ActionSheet({ close }: { close: () => void }) {
         </button>
       </div>
     </div>
+  )
+}
+
+// The in-page model, loaded on request: its size, then its progress
+// (docs/frontends/wasm.md#the-demo).
+function ModelLoad() {
+  const load = useApp((a) => a.modelLoad)
+  return (
+    <>
+      <p className="why">
+        Sync runs a model in this browser. It downloads once, about 1.7 GB, and the browser keeps it for later visits.
+      </p>
+      {load && <p className={`why${load.failed ? ' v-bad' : ''}`}>{load.text}</p>}
+      <div className="row">
+        <button
+          className="run"
+          disabled={!!load && !load.failed}
+          onClick={() => window.dispatchEvent(new CustomEvent('jazyk:load-model'))}
+        >
+          {load && !load.failed ? 'Loading…' : 'Load the model'}
+        </button>
+      </div>
+    </>
   )
 }

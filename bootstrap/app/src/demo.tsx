@@ -57,9 +57,11 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   }
 }
 
-// The model, once. Until it resolves a build is not offered; if it fails, a build
-// is refused with the reason rather than hanging.
-let host: ModelHost = unavailableModel('the model is still loading')
+// The model, loaded on request (docs/frontends/wasm.md#the-demo). Until it resolves
+// a build is not offered; if it fails, a build is refused with the reason rather
+// than hanging.
+let host: ModelHost = unavailableModel('the model is not loaded')
+let loading = false
 let reason: string | null = null
 if (!crossOriginIsolated_()) {
   reason = 'this page is not cross-origin isolated, so the backend cannot call a model (COOP/COEP headers are required for SharedArrayBuffer)'
@@ -74,25 +76,32 @@ const model: ModelHost = {
   name: () => DEFAULT_MODEL,
   chat: (body) => host.chat(body),
   available: () => host.available(),
+  // WebGPU and isolation are there, and nothing is loaded or loading yet.
+  loadable: () => !reason && !host.available(),
 }
 
-function loadModelInBackground(say: (l: string) => void) {
-  if (reason) {
-    say(reason)
-    return
+// Loads the model, its progress on the console and in the Sync sheet.
+function loadModelOnRequest() {
+  if (reason || loading || host.available()) return
+  loading = true
+  const say = (text: string, failed = false) => {
+    console.info('[jazyk model]', text)
+    useApp.getState().setModelLoad({ text, failed })
   }
-  say(`loading ${DEFAULT_MODEL} (cached after the first visit)`)
+  say(`Loading ${DEFAULT_MODEL}…`)
   loadModel(DEFAULT_MODEL, (p) => say(p.text || `${Math.round(p.progress * 100)}%`))
     .then((m) => {
       host = m
-      say('the model is ready')
+      loading = false
+      say('The model is ready.')
+      useApp.getState().setModelLoad(null)
       // The descriptor changed: a build is on offer now.
       qc.invalidateQueries({ queryKey: ['capabilities'] })
     })
     .catch((e) => {
+      loading = false
       const msg = e instanceof Error ? e.message : String(e)
-      host = unavailableModel(`the model failed to load: ${msg}`)
-      say(`the model failed to load: ${msg}`)
+      say(`The model failed to load: ${msg}`, true)
     })
 }
 
@@ -243,7 +252,8 @@ async function boot() {
     </React.StrictMode>,
   )
 
-  loadModelInBackground((l) => console.info('[jazyk model]', l))
+  window.addEventListener('jazyk:load-model', loadModelOnRequest)
+  if (reason) console.info('[jazyk model]', reason)
 }
 
 boot().catch((e) => {

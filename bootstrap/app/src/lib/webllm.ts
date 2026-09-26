@@ -4,7 +4,10 @@
 // already speaks, so nothing in the compiler knows the model is local.
 // See docs/frontends/wasm.md#the-model.
 
-import * as webllm from '@mlc-ai/web-llm'
+// The library is imported when the model loads, not with the page: it is most of
+// the page's script, and a visit that only reads never needs it
+// (docs/frontends/wasm.md#building).
+import type * as webllm from '@mlc-ai/web-llm'
 import type { ModelHost } from './wasm-client'
 
 // A small instruct model with tool calling, so a first visit downloads ~2GB rather
@@ -34,7 +37,8 @@ export async function loadModel(
 ): Promise<ModelHost> {
   // A session prompt carries the whole toolset in text (see CONTEXT_WINDOW), and the
   // engine's default window is 4k. The KV cache is what the window costs.
-  const engine = await webllm.CreateMLCEngine(
+  const { CreateMLCEngine } = await import('@mlc-ai/web-llm')
+  const engine = await CreateMLCEngine(
     model,
     { initProgressCallback: (r) => onProgress({ text: r.text, progress: r.progress }) },
     { context_window_size: CONTEXT_WINDOW },

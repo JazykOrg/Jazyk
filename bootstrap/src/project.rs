@@ -297,6 +297,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recorded_criteria_files_are_never_doc_input() {
+        // An llm row's criteria file under the deliverable is generation metadata,
+        // even under a glob that matches it. Mirrors docs/compiler/project-settings.md#docs.
+        let dir = std::env::temp_dir().join(format!("jazyk-critdoc-test-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&dir).ok();
+        for d in ["docs", "project/tests", "jazyk-out/gen"] {
+            crate::vfs::create_dir_all(dir.join(d)).unwrap();
+        }
+        crate::vfs::write(dir.join("jazyk.toml"), "[docs]\nglob = [\"**/*.md\"]\n\n[gen]\ndeliverable = \"project\"\n").unwrap();
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n").unwrap();
+        crate::vfs::write(dir.join("project/tests/crit_a.md"), "---\nrequirement: req:a-1\n---\n").unwrap();
+        crate::vfs::write(dir.join("project/README.md"), "# Readme\n").unwrap();
+        crate::vfs::write(
+            dir.join("jazyk-out/gen/ledger.yaml"),
+            "requirements:\n  req:a-1:\n    entity: ent:a\n    test: {kind: llm, label: judged, artifact: tests/crit_a.md, name: crit_a, run: \"\"}\n    hashes: {requirement: x, test: y, files: z}\n",
+        )
+        .unwrap();
+        let p = Project::load(&dir);
+        assert_eq!(crate::gen::Ledger::load(&p.out).requirements.len(), 1, "the fixture ledger parses");
+        let docs = p.doc_files();
+        assert!(docs.contains(&dir.join("docs/a.md")), "{:?}", docs);
+        assert!(docs.contains(&dir.join("project/README.md")), "an unrecorded deliverable file follows the glob: {:?}", docs);
+        assert!(!docs.contains(&dir.join("project/tests/crit_a.md")), "{:?}", docs);
+        crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn generated_dirs_are_never_doc_input() {
         let dir = std::env::temp_dir().join(format!("jazyk-outdir-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
@@ -505,6 +532,7 @@ impl Project {
             });
         }
         patterns.extend(self.docs_glob.iter().cloned());
+        let recorded = self.recorded_test_artifacts();
         let mut all = Vec::new();
         collect_files(&self.root, &self.out, &mut all);
         let mut out: Vec<PathBuf> = Vec::new();
@@ -523,12 +551,36 @@ impl Project {
                     included = !neg;
                 }
             }
-            if included {
+            if included && !recorded.contains(&rel) {
                 out.push(f);
             }
         }
         out.sort();
         out.dedup();
+        out
+    }
+
+    // The deliverable files the ledger records as test artifacts, project-relative: an
+    // llm row's criteria file under the deliverable is generation metadata, never doc
+    // input. Mirrors docs/compiler/project-settings.md#docs.
+    fn recorded_test_artifacts(&self) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        let Some(rel) = self.deliverable_rel() else {
+            return out;
+        };
+        let ledger = crate::gen::Ledger::load(&self.out);
+        let mut add = |t: &crate::gen::TestRef| {
+            if t.kind == "llm" && !t.artifact.is_empty() {
+                let a = t.artifact.trim_start_matches("./");
+                out.insert(if rel.is_empty() { a.to_string() } else { format!("{}/{}", rel, a) });
+            }
+        };
+        for row in ledger.requirements.values() {
+            add(&row.test);
+            for c in row.tests.values() {
+                add(&c.test);
+            }
+        }
         out
     }
 

@@ -48,6 +48,11 @@ Some paths are never doc input, regardless of the glob:
 - Any directory whose name starts with `jazyk-out` (e.g. the `jazyk-out.bak` archive
   the [store version](./graph.md#store-version) check leaves behind).
 - Hidden directories (name starting with `.`), `target`, and `node_modules`.
+- A file the [ledger](../consumers/gen.md#the-ledger) records as a test artifact under
+  the deliverable (an `llm` row's criteria file): it is generation metadata, never a
+  document, whatever the glob says. An erp deliverable's `tests/crit_*.md` criteria
+  files, pulled in by a `**/*.md` glob, once reconciled as documents and dropped the
+  project's coverage to 40 percent.
 
 The [deliverable directory](#generation) is excluded too, but through the glob rather
 than unconditionally: an implicit `!<deliverable>/**` pattern runs before the

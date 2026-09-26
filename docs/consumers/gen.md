@@ -34,7 +34,11 @@ deliverable = "../project2"
   generation produces lands under it.
 - The deliverable directory is excluded from doc input; the docs glob whitelists paths
   back in ([docs settings](../compiler/project-settings.md#docs)). Generation metadata
-  (the ledger, criteria files) stays in the out directory, never in the deliverable.
+  is not documentation: the ledger stays in the out directory, and an `llm` row's
+  criteria file lives under `<out>/gen/criteria/` when the built-in worker writes it, or
+  under the deliverable when an external worker writes it with its own file tools. The
+  recorded path resolves against both, and a criteria file under the deliverable is
+  never doc input, whatever the glob says.
 
 `deliverable` is the only setting that says where things go. The other two keys of
 [`[gen]`](../compiler/project-settings.md#generation) say nothing about the product

@@ -237,6 +237,11 @@ module.
   against the page's model through [the bridge](#the-model). The first turn opens
   with the serving's instructions, so the model knows which project it is in and
   which tools move the prose.
+- The loop runs as a conversation: a prose reply after tool calls is the answer and
+  ends the turn. The finish nudge a worker session gets
+  ([the embedded agent](./acp.md#the-embedded-agent)) would hold the answer back and
+  ask for a one-line summary in its place. The other nudges (an announced action, an
+  empty reply, a cut call) still apply.
 - The request answers when the turn ends. Until then the worker posts each event to
   the page as it happens, in the shape the native [event stream](./gui.md#events)
   carries: `chat.update` (a message, a tool call, its result, the end of the turn),

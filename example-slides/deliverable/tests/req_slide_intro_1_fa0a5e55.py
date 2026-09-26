@@ -1,12 +1,15 @@
-"""The Introduction slide shall show a headline title `Jazyk`."""
+"""Criterion test for req:slide-intro-1: the Introduction slide shows headline title `Jazyk`."""
 
 import sys
 
 from pptx import Presentation
 
+TEST_NAME = "crit_slide_intro_1_40941ccb"
+PPTX = "dist/jazyk-slides.pptx"
 
-def req_slide_intro_1_fa0a5e55():
-    prs = Presentation("dist/jazyk-slides.pptx")
+
+def crit_slide_intro_1_40941ccb():
+    prs = Presentation(PPTX)
     intro = list(prs.slides)[0]
     headline = None
     for shape in intro.shapes:
@@ -22,6 +25,7 @@ def req_slide_intro_1_fa0a5e55():
 
 
 if __name__ == "__main__":
-    req_slide_intro_1_fa0a5e55()
-    print("PASS req:slide-intro-1")
-    sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] != TEST_NAME:
+        raise SystemExit("unknown test name: %s" % sys.argv[1])
+    crit_slide_intro_1_40941ccb()
+    print("PASS %s" % TEST_NAME)

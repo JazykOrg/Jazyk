@@ -94,3 +94,40 @@ test('req_main_test_js_2_1c6d8c96', () => {
   // Reverse order case: documented input/expected output with the reverse flag on.
   assert.strictEqual(runCli(['-r'], '321\n654\n453\n'), '654\n453\n321\n');
 });
+
+
+test('crit_main_js_4_6a469921', () => {
+  // JavaScript runtime invocation: Node runs the CLI, accepts stdin, and produces sorted output.
+  assert.strictEqual(runCli([], 'banana\napple\n'), 'apple\nbanana\n');
+});
+
+
+test('crit_main_js_7_1af05f95', () => {
+  // With no stdin lines, the initialized lines collection has no preexisting values to print.
+  assert.strictEqual(runCli([], ''), '');
+});
+
+
+test('crit_main_js_8_fe12c7a1', () => {
+  // STDIN is consumed line by line: each provided line appears as its own output line after sorting.
+  const out = runCli([], '321\n654\n453\n');
+  assert.deepStrictEqual(out.trimEnd().split('\n'), ['321', '453', '654']);
+});
+
+
+test('crit_main_js_9_92851975', () => {
+  // A current input line is stripped before sorting and output, removing surrounding spaces.
+  assert.strictEqual(runCli([], ' 321 \n'), '321\n');
+});
+
+
+test('crit_main_js_11_7827105c', () => {
+  // A stripped stdin line is added to the collected lines and appears in CLI output.
+  assert.strictEqual(runCli([], '321\n'), '321\n');
+});
+
+
+test('crit_main_test_js_1_ec7f6f48', () => {
+  // Simple case: documented input/expected output for the current statement hash.
+  assert.strictEqual(runCli([], '321\n654\n453\n'), '321\n654\n453\n');
+});

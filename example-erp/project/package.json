@@ -1,0 +1,23 @@
+{
+  "name": "warehouse-erp-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node app.js",
+    "test:frontend-stack": "node tests/crit_main_4_56255dbe.test.js crit_main_4_56255dbe"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "express": "latest",
+    "pg": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}

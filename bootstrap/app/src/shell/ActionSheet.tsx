@@ -3,12 +3,15 @@
 // (docs/frontends/gui.md#the-action-button). In on-request mode Run records the
 // release and starts the job, or wakes the attached agent.
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { post, put } from '../lib/api'
 import { useCapabilities, whyNot } from '../lib/capabilities'
 import { useInbox } from '../lib/product'
 import { useDocs, useGenPending, useStatus, useWorkers } from '../lib/queries'
 import { useApp } from '../lib/store'
+import ModelSourcePanel from '../components/ModelSourcePanel'
+import { useModelSource } from '../lib/model-source'
+import { DEFAULT_MODEL } from '../lib/webllm'
 import { useWords } from '../lib/words'
 
 function useRunning() {
@@ -133,8 +136,8 @@ function ActionSheet({ close }: { close: () => void }) {
       )}
 
       <h3>{w.sync}</h3>
-      {caps.data?.model === 'loadable' ? (
-        <ModelLoad />
+      {caps.data && caps.data.backend !== 'server' && caps.data.model !== 'in-page' ? (
+        <ModelSourcePanel />
       ) : cannot('compile') ? (
         <p className="why">{cannot('compile')}</p>
       ) : (
@@ -147,6 +150,7 @@ function ActionSheet({ close }: { close: () => void }) {
                 : 'Nothing has changed since the last sync.'}
             {estimate ? ` ${estimate}.` : ''}
           </p>
+          {caps.data?.backend !== 'server' && <ModelLine />}
           <p className="why" style={{ margin: '2px 0' }}>
             {agentMissing
               ? 'Your settings prefer an attached agent, but none is connected. The built-in runner will run instead.'
@@ -235,25 +239,13 @@ function ActionSheet({ close }: { close: () => void }) {
   )
 }
 
-// The in-page model, loaded on request: its size, then its progress
-// (docs/frontends/wasm.md#the-demo).
-function ModelLoad() {
-  const load = useApp((a) => a.modelLoad)
+// The browser's model, once ready, and where to change it.
+function ModelLine() {
+  const src = useModelSource()
+  const name = src.kind === 'endpoint' ? src.model : src.kind === 'chrome' ? "the browser's built-in model" : DEFAULT_MODEL
   return (
-    <>
-      <p className="why">
-        Sync runs a model in this browser. It downloads once, about 1.7 GB, and the browser keeps it for later visits.
-      </p>
-      {load && <p className={`why${load.failed ? ' v-bad' : ''}`}>{load.text}</p>}
-      <div className="row">
-        <button
-          className="run"
-          disabled={!!load && !load.failed}
-          onClick={() => window.dispatchEvent(new CustomEvent('jazyk:load-model'))}
-        >
-          {load && !load.failed ? 'Loading…' : 'Load the model'}
-        </button>
-      </div>
-    </>
+    <p className="why" style={{ margin: '2px 0' }}>
+      Model: {name}. <Link to="/settings">Change</Link>
+    </p>
   )
 }

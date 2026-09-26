@@ -2,6 +2,7 @@
 // effective value is the default. Saving rewrites the file canonically and applies
 // live. Limits are a built-in registry, not settings; the executors table routes
 // goal kinds and classes to agent profiles (docs/compiler/project-settings.md#executors).
+import ModelSourcePanel from '../components/ModelSourcePanel'
 import { useState } from 'react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { get, put } from '../lib/api'
@@ -136,7 +137,7 @@ function Connection() {
   )
 }
 
-export default function Settings() {
+function ProjectSettings() {
   const qc = useQueryClient()
   const project = useProject()
   const q = useQuery({
@@ -362,5 +363,23 @@ export default function Settings() {
         )}
       </div>
     </div>
+  )
+}
+
+// In the browser the model is this browser's choice, not the project's: it leads the
+// page (docs/frontends/wasm.md#model-sources).
+export default function Settings() {
+  const caps = useCapabilities()
+  const browser = !!caps.data && caps.data.backend !== 'server'
+  return (
+    <>
+      {browser && (
+        <section className="settings-model">
+          <h1>Model</h1>
+          <ModelSourcePanel />
+        </section>
+      )}
+      <ProjectSettings />
+    </>
   )
 }

@@ -15,6 +15,7 @@ import App from './App'
 import { setBackend } from './lib/backend'
 import { startWasmBackend, crossOriginIsolated_, type ModelHost, type WasmProject } from './lib/wasm-client'
 import { DEFAULT_MODEL, loadModel, unavailableModel, webgpuAvailable } from './lib/webllm'
+import { builtInModel, builtInPresent, endpointModel, endpointReady, readSource, type ModelSource } from './lib/model-source'
 import { applyTheme, useApp } from './lib/store'
 import { pushTraceEvents, refreshAfterWrite } from './lib/events'
 import { ensurePermission, FolderMirror, pickFolder, readFolder } from './lib/folder'
@@ -57,51 +58,74 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   }
 }
 
-// The model, loaded on request (docs/frontends/wasm.md#the-demo). Until it resolves
-// a build is not offered; if it fails, a build is refused with the reason rather
-// than hanging.
+// The model, from the source this browser chose (docs/frontends/wasm.md#model-sources),
+// loaded on request. Until it is ready a build is not offered; if it fails, a build is
+// refused with the reason rather than hanging.
 let host: ModelHost = unavailableModel('the model is not loaded')
 let loading = false
-let reason: string | null = null
-if (!crossOriginIsolated_()) {
-  reason = 'this page is not cross-origin isolated, so the backend cannot call a model (COOP/COEP headers are required for SharedArrayBuffer)'
-} else if (!webgpuAvailable()) {
-  reason = 'this browser has no WebGPU, so there is no model to call'
+// Bumped by every source change, so a load that finishes after a switch is dropped.
+let epoch = 0
+
+// Every source needs the shared buffers the worker blocks on; the downloaded model
+// also needs WebGPU.
+const isolation = crossOriginIsolated_()
+  ? null
+  : 'this page is not cross-origin isolated, so the backend cannot call a model (COOP/COEP headers are required for SharedArrayBuffer)'
+const reasonFor = (s: ModelSource): string | null => {
+  if (isolation) return isolation
+  if (s.kind === 'webllm' && !webgpuAvailable()) return 'this browser has no WebGPU, so it cannot run the downloaded model'
+  if (s.kind === 'chrome' && !builtInPresent()) return 'this browser has no built-in model'
+  if (s.kind === 'endpoint' && !endpointReady(s)) return 'the endpoint needs a URL and a model name'
+  return null
 }
-if (reason) host = unavailableModel(reason)
+
+// The endpoint needs no loading: it is the model as soon as it is configured.
+function applySource() {
+  epoch += 1
+  loading = false
+  const s = readSource()
+  host = s.kind === 'endpoint' && !reasonFor(s) ? endpointModel(s) : unavailableModel(reasonFor(s) ?? 'the model is not loaded')
+  useApp.getState().setModelLoad(null)
+  qc.invalidateQueries({ queryKey: ['capabilities'] })
+}
 
 // The bridge hands every call to whatever `host` is at the time of the call, so the
 // backend can start before the model has finished loading.
 const model: ModelHost = {
-  name: () => DEFAULT_MODEL,
+  name: () => (readSource().kind === 'webllm' ? DEFAULT_MODEL : host.name()),
   chat: (body) => host.chat(body),
   available: () => host.available(),
-  // WebGPU and isolation are there, and nothing is loaded or loading yet.
-  loadable: () => !reason && !host.available(),
+  // The source can run here, and nothing is loaded or loading yet.
+  loadable: () => !reasonFor(readSource()) && !host.available(),
 }
 
-// Loads the model, its progress on the console and in the Sync sheet.
+// Loads the chosen source, its progress on the console and in the Sync sheet.
 function loadModelOnRequest() {
-  if (reason || loading || host.available()) return
+  const s = readSource()
+  if (reasonFor(s) || loading || host.available()) return
   loading = true
+  const mine = epoch
   const say = (text: string, failed = false) => {
+    if (mine !== epoch) return
     console.info('[jazyk model]', text)
     useApp.getState().setModelLoad({ text, failed })
   }
-  say(`Loading ${DEFAULT_MODEL}…`)
-  loadModel(DEFAULT_MODEL, (p) => say(p.text || `${Math.round(p.progress * 100)}%`))
+  const start = s.kind === 'chrome'
+    ? (say('Starting the built-in model…'), builtInModel((t) => say(t)))
+    : (say(`Loading ${DEFAULT_MODEL}…`), loadModel(DEFAULT_MODEL, (p) => say(p.text || `${Math.round(p.progress * 100)}%`)))
+  start
     .then((m) => {
+      if (mine !== epoch) return
       host = m
       loading = false
-      say('The model is ready.')
       useApp.getState().setModelLoad(null)
       // The descriptor changed: a build is on offer now.
       qc.invalidateQueries({ queryKey: ['capabilities'] })
     })
     .catch((e) => {
+      if (mine !== epoch) return
       loading = false
-      const msg = e instanceof Error ? e.message : String(e)
-      say(`The model failed to load: ${msg}`, true)
+      say(`The model failed to load: ${e instanceof Error ? e.message : String(e)}`, true)
     })
 }
 
@@ -253,7 +277,9 @@ async function boot() {
   )
 
   window.addEventListener('jazyk:load-model', loadModelOnRequest)
-  if (reason) console.info('[jazyk model]', reason)
+  // The Sync sheet and Settings choose the source; the choice is already stored.
+  window.addEventListener('jazyk:model-source-changed', applySource)
+  applySource()
 }
 
 boot().catch((e) => {

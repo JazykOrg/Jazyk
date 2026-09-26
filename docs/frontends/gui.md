@@ -585,6 +585,12 @@ There is no bottom activity panel. Its control line is the action button, its bu
 progress is the chat column's build thread, and its run console is the Developer
 lens's [Runs](#runs).
 
+On a narrow screen (a phone, 760 pixels wide or less) the center takes the width.
+The navigator is a drawer opened from a menu button at the left of the top bar and
+closed by any navigation, the inspector is a drawer over the center shown only while
+a node is selected, the chat column is hidden, the editor's preview stacks under the
+text, and the top bar and the status bar scroll sideways.
+
 Until a project is open, the top bar shows only the project switcher and every route
 but Home redirects to Home. A server always has one open; the browser backend has
 none until a demo or a folder is picked, and none again after a reload.

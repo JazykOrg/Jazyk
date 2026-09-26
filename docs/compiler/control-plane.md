@@ -52,7 +52,12 @@ until a release approves them:
 A release records the approval: `jazyk release [compile|generate]` from the CLI, the
 compile and generate actions in the [GUI](../frontends/gui.md#workflow-modes), or an
 explicit `jazyk compile` or `jazyk gen` (a typed command is an approval; `manual`
-means nothing acts unprompted, not that prompts need a second prompt). Every watcher
+means nothing acts unprompted, not that prompts need a second prompt). The approval
+covers the command's own work: its sessions carry the run's build token, and a release
+gate never refuses a session holding one, only real readiness does; `jazyk gen` also
+stamps the release again after its bind phase. An erp run bound all 34 requirements and
+then every generate session read "awaiting release" against a release stamped before
+the bindings committed. Every watcher
 wakes on it: the control file is a watched surface of
 [`await_changes`](../frontends/mcp.md#the-work-loop) and `jazyk monitor`, so the
 release a user clicks is the trigger an attached agent acts on. In `manual` mode the

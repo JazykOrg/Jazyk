@@ -2237,6 +2237,12 @@ pub fn run_gen(opts: &Options, entities: &[String]) -> i32 {
             eprintln!("jazyk: bind: {}", e);
         }
     }
+    // The typed gen approves its own work: the bind phase committed newer generations,
+    // so the release is stamped again before the generate phase, or every generate
+    // session reads the goals its own bindings opened as awaiting release.
+    // Mirrors docs/compiler/control-plane.md#modes-and-releases.
+    crate::control::release(&proj, &out, Some("generate"));
+    let store = Store::load(&out);
     let result = crate::gen::run_all(&store, &runner, &gs, entities, opts.force, &trace);
     match &result {
         Ok(v) => trace.finish_transcript("done", v),

@@ -2144,9 +2144,15 @@ impl McpServer {
                         let gid = format!("g:generate:{}", ent);
                         // A lease (this serving's own retry, or another worker's) is the
                         // claim below's to answer.
+                        // An internal run's session is the approval: the release gate
+                        // never refuses it, only real readiness does, since the run's own
+                        // commits advance the generation past the release it stamped
+                        // (docs/compiler/control-plane.md#modes-and-releases).
+                        let only_gated = self.bridge.build_token.is_some() && board.gated.contains(&gid);
                         if board.goals.iter().any(|g| g.id == gid)
                             && !board.is_ready(&gid)
                             && !board.claimed.contains_key(&gid)
+                            && !only_gated
                         {
                             if let Some(r) = board.readiness.get(&gid).and_then(|r| r.reason()) {
                                 return Ok(text_result(

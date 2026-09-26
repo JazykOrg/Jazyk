@@ -480,6 +480,30 @@ a document dirties its sections, which opens goals, and a build runs them throug
 the model in the page. The first edit keeps the demo in
 [browser storage](#an-edited-demo), so it survives a reload until it is reset.
 
+### Keeping the demos current
+
+The demos show the work as it stands, so they are rebuilt as the compiler changes: the
+graph, the criteria, the diagrams, and the product each example generates (its code or
+output and its tests), with the tests run and their results in the ledger.
+
+- `app/scripts/refresh-demos.sh` rebuilds every example in its own directory and
+  repacks the fixtures: `jazyk compile` until the graph converges, `jazyk gen` (bind,
+  generate, and verify the product), `jazyk test` (run every test), every diagram
+  redrawn by the current renderer, then `npm run pack-demos` and the browser tests. It
+  ends with a table per example: the verdict, the open and blocked goals, the tests
+  passing out of the ledger's rows, and the tokens the refresh billed. The model steps
+  cost money, so the script runs only when a person runs it, with the model named
+  (`--model gpt-5.5`); `--only <id>` rebuilds one example; `--free` skips every model
+  step and only redraws and repacks.
+- The deploy redraws the committed fixtures' diagrams with the renderer it just built
+  (`app/scripts/rerender-fixtures.sh`), so a renderer change reaches jazyk.dev without a
+  rebuild. Nothing else of a fixture changes at deploy.
+- CI reports a demo that fell behind as a warning on the run, never a failure, so a
+  compiler change is never held up by a demo: a fixture whose store version is not the
+  binary's, a fixture with open goals the current compiler would derive, or a fixture
+  whose ledger has failing, stale, or missing tests. The warning names
+  `refresh-demos.sh`.
+
 ## Building
 
 `cd bootstrap/app && npm run build:demo` runs the whole pipeline:

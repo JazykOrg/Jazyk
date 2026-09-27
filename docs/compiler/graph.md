@@ -122,7 +122,10 @@ Their semantics:
   [the natural key under containment](./concepts/identity.md#the-natural-key-under-containment).
   For requirements the natural key is the source section plus the punctuation-insensitive
   `statement`, so a punctuation or spacing edit to a sentence matches its existing
-  requirement and refreshes the `statement` and `quote` in place. A derived requirement
+  requirement and refreshes the `statement` and `quote` in place. Punctuation-insensitive
+  means case, spacing, and punctuation fall away; a comparison operator, a sign, and a
+  decimal point stay, so `under 30 s` and `under 3.0 s`, or `> 30` and `< 30`, are
+  different statements. A derived requirement
   keys on its punctuation-insensitive `statement` within its `from` set; a decreed one
   keys on the statement alone. For criteria the natural key is the owning requirement
   plus the punctuation-insensitive `statement`, whatever the provenance. For views the

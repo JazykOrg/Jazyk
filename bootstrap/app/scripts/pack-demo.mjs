@@ -17,7 +17,18 @@ if (!dest || pairs.length === 0) {
 // the leases and worker registrations of a running server, and an archived out
 // directory. A stale worker registration would be reaped on the first read in the
 // tab, and that removal would count as an edit of the demo.
-const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '.git', 'jazyk-out.bak'])
+const SKIP = new Set(['trace', 'sessions', 'snapshots', 'leases', 'workers', 'node_modules', '__pycache__', '.git', 'jazyk-out.bak'])
+
+// A fixture carries text: a binary file (a built deck, a compiled module) would only
+// arrive as replacement characters, so it is left out.
+const utf8 = new TextDecoder('utf-8', { fatal: true })
+function textOf(bytes) {
+  try {
+    return utf8.decode(bytes)
+  } catch {
+    return null
+  }
+}
 
 function walk(dir, files) {
   for (const name of readdirSync(dir)) {
@@ -39,14 +50,21 @@ for (const pair of pairs) {
   const src = pair.slice(eq + 1)
   const out = {}
   let bytes = 0
-  const files = walk(src, []).sort()
-  for (const p of files) {
+  let count = 0
+  let binary = 0
+  for (const p of walk(src, []).sort()) {
     const rel = relative(src, p).split('\\').join('/')
-    const text = readFileSync(p, 'utf8')
+    const text = textOf(readFileSync(p))
+    if (text === null) {
+      binary++
+      continue
+    }
     out[rel] = text
     bytes += text.length
+    count++
   }
   const file = join(dest, `${id}.json`)
   writeFileSync(file, JSON.stringify(out))
-  console.log(`packed ${files.length} files, ${(bytes / 1024).toFixed(0)}KB, into ${file}`)
+  const left = binary > 0 ? `, ${binary} binary file(s) left out` : ''
+  console.log(`packed ${count} files, ${(bytes / 1024).toFixed(0)}KB, into ${file}${left}`)
 }

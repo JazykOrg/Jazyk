@@ -454,6 +454,9 @@ The model:
   the tool schemas travel on every call, and on the browser's built-in model they may
   not fit at all. The error line then says the conversation does not fit the model's
   context and names the remedy: a new conversation, or a source with a larger window.
+  A rate limit or a spent quota (`429`, `rate limit`, `quota`) is told apart from that:
+  its line says to wait or choose another source, since a new conversation would not
+  help.
 
 ## A measured run
 
@@ -509,9 +512,11 @@ Every example Home lists is a fixture: the project's documents, its `jazyk.toml`
 its product folder when it has one, and its whole `jazyk-out` as last built (the
 shards, the journal, the coverage, the rendered diagrams, the ledger), packed by
 `app/scripts/pack-demo.mjs` into one JSON per example under `app/public/demos/`. Traces, session transcripts, the per-batch snapshots kept
-for replays, leases, worker registrations, sockets, dotfiles, and an archived out
-directory are left out: a stale worker registration would be reaped on the first
-read, and that removal would count as an edit. The fixtures are committed, since the
+for replays, leases, worker registrations, sockets, dotfiles, `__pycache__`, an
+archived out directory, and any file that is not UTF-8 text (a built deck, a compiled
+module) are left out: a stale worker registration would be reaped on the first
+read, and that removal would count as an edit, and a binary file would only arrive
+as replacement characters. The fixtures are committed, since the
 examples' out directories are not, and `npm run pack-demos` repacks all of them
 after an example is rebuilt. The page fetches a fixture when its demo is picked
 rather than carrying them all.

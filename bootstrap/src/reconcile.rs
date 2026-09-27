@@ -3790,6 +3790,35 @@ mod tests {
     }
 
     #[test]
+    fn criteria_with_opposite_bounds_do_not_conflict() {
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:pay".into(), Entity { name: "Payment".into(), ..Default::default() });
+        s.graph.requirements.insert(
+            "req:p-1".into(),
+            Requirement { statement: "Payments over 100 need a review.".into(), entities: vec!["ent:pay".into()], ..Default::default() },
+        );
+        let crit = |id: &str, given: &str, then: &str| {
+            (
+                id.to_string(),
+                crate::model::Criterion {
+                    requirement: "req:p-1".into(),
+                    statement: format!("{} the payment is submitted {}", given, then),
+                    given: Some(given.into()),
+                    when: Some("the payment is submitted".into()),
+                    then: Some(then.into()),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
+            )
+        };
+        for (id, c) in [crit("crit:p-1", "an amount > 100", "it waits for a review"), crit("crit:p-2", "an amount < 100", "it goes through")] {
+            s.graph.criteria.insert(id, c);
+        }
+        let f = checks(&s, &Project::default());
+        assert!(rules_for(&f, "criteria-conflict").is_empty(), "{:?}", rules_for(&f, "criteria-conflict"));
+    }
+
+    #[test]
     fn normative_signals_catch_prose_without_shall() {
         assert!(looks_normative(
             "The user management system handles user accounts and authentication.\n"

@@ -60,7 +60,9 @@ keys per authored kind:
 - Entity: `name` plus `scope`, and `parent` joins the key when the caller supplies it.
   See [entity identity](../model/entity.md#identity) and
   [scope in the natural key](./scopes.md#scope-in-the-natural-key).
-- Requirement: the source section plus the punctuation-insensitive `statement`.
+- Requirement: the source section plus the punctuation-insensitive `statement` (case,
+  spacing, and punctuation ignored; operators, signs, and decimals kept, see
+  [mutations](../graph.md#mutations)).
   Derived and decreed requirements key on `statement` alone within their `from` set.
   See [requirement identity](../model/requirement.md#identity).
 - View: `kind` plus `title`. See [view identity](../model/view.md#identity).

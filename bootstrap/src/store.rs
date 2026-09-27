@@ -610,12 +610,37 @@ pub(crate) fn is_content_token(t: &str) -> bool {
 
 // Punctuation-insensitive statement normalization: the requirement natural key. A comma
 // or spacing edit to a sentence keeps matching its existing requirement.
+// The punctuation-insensitive form of a statement (graph.md#mutations): case,
+// spacing, and punctuation fall away, but a comparison operator, a sign, and a
+// decimal point stay, since `x > 30` and `x < 30` are different facts.
 pub(crate) fn normalize_statement(s: &str) -> String {
-    s.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    let chars: Vec<char> = s.to_lowercase().chars().collect();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut tok = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        let prev = i.checked_sub(1).map(|j| chars[j]);
+        let next = chars.get(i + 1).copied();
+        let digit = |c: Option<char>| c.map_or(false, |c| c.is_ascii_digit());
+        if c.is_alphanumeric() || (c == '.' && digit(prev) && digit(next)) {
+            tok.push(c);
+            continue;
+        }
+        // A sign is a minus right before a digit that does not follow a word (`-1`,
+        // not `2024-09` or `read-only`).
+        let sign = c == '-' && digit(next) && !prev.map_or(false, |p| p.is_alphanumeric());
+        if !tok.is_empty() {
+            tokens.push(std::mem::take(&mut tok));
+        }
+        if sign {
+            tok.push('-');
+        } else if "<>=!≤≥≠+*/%".contains(c) {
+            tokens.push(c.to_string());
+        }
+    }
+    if !tok.is_empty() {
+        tokens.push(tok);
+    }
+    tokens.join(" ")
 }
 
 // Same fact reworded: one statement's content tokens contained in the other's. A
@@ -5842,6 +5867,17 @@ impl Drop for FileLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_statement_keeps_operators_signs_and_decimals() {
+        assert_eq!(normalize_statement("The reply arrives, under 30 s."), "the reply arrives under 30 s");
+        assert_ne!(normalize_statement("latency > 30 s"), normalize_statement("latency < 30 s"));
+        assert_ne!(normalize_statement("under 30 s"), normalize_statement("under 3.0 s"));
+        assert_ne!(normalize_statement("an offset of -1"), normalize_statement("an offset of 1"));
+        assert_eq!(normalize_statement("Read-only mode."), normalize_statement("read only mode"));
+        assert_eq!(normalize_statement("on 2024-09-27"), "on 2024 09 27");
+        assert_eq!(normalize_statement("x >= 5"), "x > = 5");
+    }
 
     fn tmp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("jazyk-store-test-{}", crate::sys::process_id()));

@@ -317,6 +317,8 @@ mod imp {
         if moved.is_empty() {
             return Err(not_found(&a));
         }
+        // The host mirrors this tree (a folder on disk, browser storage), so each
+        // source leaves the way a removed file does, or the mirror keeps both.
         for (k, v) in moved {
             let rest = k.strip_prefix(&a).ok();
             let dest = match rest {
@@ -325,6 +327,20 @@ mod imp {
             };
             write(&dest, &v)?;
             FILES.with(|f| f.borrow_mut().remove(&k));
+            crate::wasm::fs_bridge::removed(&k, false);
+        }
+        let dirs: Vec<PathBuf> = DIRS.with(|d| d.borrow().iter().filter(|k| k.starts_with(&a)).cloned().collect());
+        if !dirs.is_empty() {
+            DIRS.with(|d| {
+                let mut d = d.borrow_mut();
+                for k in &dirs {
+                    d.remove(k);
+                    if let Ok(rest) = k.strip_prefix(&a) {
+                        d.insert(b.join(rest));
+                    }
+                }
+            });
+            crate::wasm::fs_bridge::removed(&a, true);
         }
         Ok(())
     }

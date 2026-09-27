@@ -185,7 +185,13 @@ fn push_user(history: &mut Vec<Value>, text: String) {
 // the conversation. See docs/frontends/wasm.md#chat.
 fn explain(err: &str) -> String {
     let e = err.to_lowercase();
-    let too_big = ["context", "too long", "too large", "exceed", "quota", "maximum"]
+    // A rate limit or a spent quota says so first: it exceeds a limit too, but a
+    // new conversation would not help.
+    let limited = ["rate limit", "rate_limit", "429", "quota"].iter().any(|k| e.contains(k));
+    if limited {
+        return format!("{} (the model source is rate limited or out of quota. Wait, or choose another source.)", err);
+    }
+    let too_big = ["context", "too long", "too large", "exceed", "maximum"]
         .iter()
         .any(|k| e.contains(k));
     if too_big {

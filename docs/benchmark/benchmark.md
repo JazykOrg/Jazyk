@@ -320,6 +320,11 @@ against a fixture graph and a temp deliverable):
   fails after the harness plants a break (a mandated exact value replaced in the
   product). A test that passes either way scores nothing.
   See [gen-basic](./cases/gen-basic.md).
+- Deliverable conventions: the dependency manifest pins every version (never `latest`
+  or `*`), the package is named for the entity that owns it, and exactly one module
+  that is not a test exists, the entry point the manifest names. Graded over the files,
+  since every test was green on the generation that broke all three.
+  See [gen-node](./cases/gen-node.md).
 
 Verification tier (the llm-judge path of the [`verify`](../compiler/goals/verify.md)
 goal over a planted ledger row):

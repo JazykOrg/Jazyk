@@ -52,7 +52,7 @@ for id in $ORDER; do
       JAZYK_MODEL="$MODEL" "$JAZYK" test | tail -3
     fi
     # A rate limit leaves the graph half done: such an example is not packed.
-    if [ -d .jazyk/trace ] && find .jazyk/trace -name '*.jsonl' -newer "$since" -exec grep -l 'HTTP 429' {} + 2>/dev/null | grep -q .; then
+    if [ -d .jazyk/trace ] && find .jazyk/trace -name '*.jsonl' -newer "$since" -exec grep -lE 'HTTP 429|hit your limit|usage limit|rate limit' {} + 2>/dev/null | grep -q .; then
       echo "$id: the model was rate limited; its fixture is left as committed"
       limited+=("$id")
     fi

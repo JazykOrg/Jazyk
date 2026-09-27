@@ -198,3 +198,14 @@ describe('the stored source', () => {
     expect(changed).toHaveBeenCalledOnce()
   })
 })
+
+describe('the remembered load', () => {
+  it('reloads the source that was loaded, and not another choice', async () => {
+    localStorage.clear()
+    const { rememberLoaded, wasLoaded } = await import('./model-source')
+    expect(wasLoaded('webllm')).toBe(false)
+    rememberLoaded('chrome')
+    expect(wasLoaded('chrome')).toBe(true)
+    expect(wasLoaded('webllm')).toBe(false)
+  })
+})

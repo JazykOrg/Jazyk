@@ -55,6 +55,27 @@ export function useModelSource(): ModelSource {
   )
 }
 
+// The source that was loaded in this browser, so the next visit loads it again
+// without asking (docs/frontends/wasm.md#the-demo). A different choice since means
+// no load until asked.
+const LOADED_KEY = 'jazyk.modelLoaded'
+
+export function rememberLoaded(kind: SourceKind) {
+  try {
+    localStorage.setItem(LOADED_KEY, kind)
+  } catch {
+    // not remembered
+  }
+}
+
+export function wasLoaded(kind: SourceKind): boolean {
+  try {
+    return localStorage.getItem(LOADED_KEY) === kind
+  } catch {
+    return false
+  }
+}
+
 export function endpointReady(s: ModelSource): boolean {
   return s.kind === 'endpoint' && !!s.baseUrl?.trim() && !!s.model?.trim()
 }
@@ -118,6 +139,17 @@ function completion(model: string, content: string): string {
   })
 }
 
+// The built-in model's context is small: a prompt it cannot hold fails with its own
+// words, and the remedy rides along, since a retry cannot help
+// (docs/frontends/wasm.md#model-sources).
+function tooLarge(e: unknown): Error {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/too large|too long|quota|context/i.test(msg)) {
+    return new Error(`${msg} (the built-in model's context cannot hold this prompt; choose Download a model or Your endpoint)`)
+  }
+  return e instanceof Error ? e : new Error(msg)
+}
+
 // The built-in model as a host. The Prompt API is session-shaped, so each call opens
 // a session primed with the history and prompts the last message: the backend sends
 // the whole conversation every turn, as it does to any endpoint.
@@ -150,9 +182,16 @@ export async function builtInModel(onProgress: (text: string) => void): Promise<
       const system = history.filter((m) => m.role === 'system')
       const rest = history.filter((m) => m.role !== 'system')
       const initial = system.length > 0 ? [{ role: 'system' as const, content: system.map((m) => m.content).join('\n\n') }, ...rest] : rest
-      const session = await lm.create({ initialPrompts: initial })
+      let session: PromptSession
+      try {
+        session = await lm.create({ initialPrompts: initial })
+      } catch (e) {
+        throw tooLarge(e)
+      }
       try {
         return completion(name, await session.prompt(last ? text(last) : ''))
+      } catch (e) {
+        throw tooLarge(e)
       } finally {
         session.destroy()
       }

@@ -698,7 +698,11 @@ consecutive failed sessions that spent no tokens park what is open the same way,
 last error named in the reason, because an endpoint answering only errors (a rate
 limit, an outage) must not grind the session cap into hundreds of futile attempts. A
 failure naming a rate limit (HTTP 429, a rate, usage, or quota limit, an agent's "hit
-your limit") trips the breaker at once, since a quota does not reset between sessions. A session that failed without
+your limit") trips the breaker at once, since a quota does not reset between sessions,
+and so does one saying the prompt does not fit the model's context ("too large", "too
+long", "context length"), since the fixed part of a session's prompt is the same for
+every batch and a retry cannot help (a browser's built-in model once failed every
+batch of a sync that way before the cap). A session that failed without
 spending a token never counts as its goals' attempt: the model never saw them, so their
 one retry stays theirs. A novel build under an exhausted quota had parked goals on
 attempts no model made, 302 in its last minutes.

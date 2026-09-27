@@ -585,7 +585,8 @@ const CmHost = forwardRef<EditorHandle, Props>(function CmHost(props, ref) {
       for (const secRef of b.sections) {
         const sec = p.record.sections[secRef]
         if (!sec) continue
-        const [start, end] = sec.lines
+        // Lines are one-based in the editor; a section record at 0 is the top.
+        const [start, end] = [Math.max(sec.lines[0], 1), Math.max(sec.lines[1], 1)]
         if (start > view.state.doc.lines) continue
         const active = secRef === b.active
         const cls = done ? outcome : active ? 'build-active' : 'build-queued'

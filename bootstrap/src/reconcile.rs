@@ -3143,7 +3143,7 @@ pub fn render_ripple(tree: &RippleTree) -> String {
 pub(crate) fn breaker_step(streak: usize, tokens: u64, failed: Option<&str>) -> (usize, bool) {
     match failed {
         Some(e) if tokens == 0 => {
-            if rate_limited(e) {
+            if rate_limited(e) || context_overflow(e) {
                 (crate::limits::ENDPOINT_BREAKER, true)
             } else {
                 (streak + 1, true)
@@ -3151,6 +3151,20 @@ pub(crate) fn breaker_step(streak: usize, tokens: u64, failed: Option<&str>) -> 
         }
         _ => (0, false),
     }
+}
+
+// An error saying the prompt does not fit the model's context: the fixed part of a
+// session's prompt is the same for every batch, so a retry cannot help and the build
+// stops at the first one (a browser's built-in model failed every batch of a sync
+// with "The input is too large."). Mirrors docs/compiler/reconciler.md#escalation.
+pub(crate) fn context_overflow(error: &str) -> bool {
+    let e = error.to_lowercase();
+    e.contains("too large")
+        || e.contains("too long")
+        || e.contains("context length")
+        || e.contains("maximum context")
+        || e.contains("exceeds the context")
+        || e.contains("context window")
 }
 
 // An error naming a rate or quota limit: HTTP 429, "rate limit", "usage limit", "quota".
@@ -3177,6 +3191,7 @@ mod tests {
         let b = crate::limits::ENDPOINT_BREAKER;
         assert_eq!(breaker_step(0, 0, Some("http error: HTTP 429 :: {\"error\":\"Rate limit exceeded\"}")), (b, true));
         assert_eq!(breaker_step(0, 0, Some("You've hit your usage limit.")), (b, true));
+        assert_eq!(breaker_step(0, 0, Some("The input is too large.")), (b, true));
         assert_eq!(breaker_step(2, 0, Some("transport: connection refused")), (3, true));
         assert_eq!(breaker_step(3, 1200, Some("the session left the batch open")), (0, false));
         assert_eq!(breaker_step(3, 0, None), (0, false));

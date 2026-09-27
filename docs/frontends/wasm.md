@@ -376,7 +376,10 @@ an endpoint's key goes only to that endpoint.
   weights, a few gigabytes, the first time any page asks, and the page says so
   (`Chrome is downloading its built-in model for the first time`) with the progress
   the browser reports; later loads are instant. Its context window is small, so a
-  large session may not fit and fails with the model's own error.
+  sync's prompt may not fit at all: the session fails with the model's own words
+  ("The input is too large.") and the remedy beside them (a downloaded model or an
+  endpoint), and the build stops at that first failure rather than retrying every
+  batch ([escalation](../compiler/reconciler.md#escalation)).
 - Your endpoint: any OpenAI-compatible chat completions URL (a local server, LocalRouter,
   a provider), with a model name and an optional key. The page calls it directly, so
   the endpoint must allow this page's origin (CORS). Ready at once, nothing to load.
@@ -526,8 +529,11 @@ gigabytes to read a document. The descriptor says `model: loadable` while the ch
 [source](#model-sources) still has to load, and the Sync sheet and the chat pane
 offer `Load the model` with its download size; the load shows its
 progress there, and the weights cache in the browser, so a later visit loads from
-the cache. `jobs` lists `compile` once the model is ready. The model's code
-(WebLLM) is fetched with the model, not with the page.
+the cache. A source loaded once in this browser loads again on the next visit
+without asking (`jazyk.modelLoaded` in local storage remembers which), so a reload
+lands in a project with its model ready; choosing another source in the chooser
+stops that until the new one is loaded once. `jobs` lists `compile` once the model
+is ready. The model's code (WebLLM) is fetched with the model, not with the page.
 
 Every example Home lists is a fixture: the project's documents, its `jazyk.toml`,
 its product folder when it has one, and its whole `.jazyk` as last built (the
@@ -565,7 +571,8 @@ output and its tests), with the tests run and their results in the ledger.
   cost money, so the script runs only when a person runs it, with the model named
   (`--model gpt-5.5`); `--only <id>` rebuilds one example; `--free` skips every model
   step and only redraws and repacks. An example whose model steps hit a rate limit (an
-  `HTTP 429` in a trace the run wrote) is not packed: its fixture stays as committed,
+  `HTTP 429`, or a rate, usage, or quota limit named in a trace the run wrote) is not
+  packed: its fixture stays as committed,
   the table says `rate limited`, and the script exits non-zero, so a half-finished
   graph never reaches the demos.
 - The deploy redraws the committed fixtures' diagrams with the renderer it just built

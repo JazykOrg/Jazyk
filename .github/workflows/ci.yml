@@ -27,6 +27,19 @@ jobs:
       - name: Test
         run: cargo test --release
         working-directory: bootstrap
+      # The built frontend (app/dist) is committed and embedded into the binary, so a
+      # source change without a rebuild ships the old GUI: the build must reproduce
+      # the committed output (docs/frontends/gui.md#frontend).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bootstrap/app/package-lock.json
+      - name: Check that app/dist is the build of the app
+        run: |
+          npm ci && npm run build
+          git -C .. diff --exit-code --stat -- app/dist || { echo "::error title=stale dist::bootstrap/app/dist is not the build of bootstrap/app/src; run npm run build and commit app/dist"; exit 1; }
+        working-directory: bootstrap/app
       # A demo that fell behind this compiler is a warning on the run, never a
       # failure (docs/frontends/wasm.md#keeping-the-demos-current).
       - name: Check the demos

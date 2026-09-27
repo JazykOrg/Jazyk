@@ -1,15 +1,21 @@
 name: Deploy editor
 
-# Publishes the editor in the browser (bootstrap/app built with JAZYK_DEMO=1) to the
-# jazyk.dev S3 bucket behind CloudFront on every push to master that touches the
-# app or the compiler. The build compiles the crate to wasm, binds it, bundles the
-# page, runs the browser tests against it, and bootstrap/app/deploy.sh syncs
-# dist-demo/ and invalidates the distribution. Credentials come from the jazyk-site-deploy IAM role through
-# GitHub's OIDC provider; no AWS secret is stored in this repository.
+# Builds the editor in the browser (bootstrap/app built with JAZYK_DEMO=1) and, on a
+# push to master that touches the app or the compiler, publishes it to the jazyk.dev
+# S3 bucket behind CloudFront. The build compiles the crate to wasm, binds it, bundles
+# the page, redraws the demo diagrams, and runs the browser tests against the built
+# page; a pull request stops there, so a change is tested in the browser before it
+# lands. On master, bootstrap/app/deploy.sh syncs dist-demo/ and invalidates the
+# distribution. Credentials come from the jazyk-site-deploy IAM role through GitHub's
+# OIDC provider; no AWS secret is stored in this repository.
 
 on:
   push:
     branches: [master]
+    paths:
+      - 'bootstrap/**'
+      - '.github/workflows/editor.yml'
+  pull_request:
     paths:
       - 'bootstrap/**'
       - '.github/workflows/editor.yml'
@@ -19,16 +25,11 @@ permissions:
   contents: read
   id-token: write
 
-# Allow one concurrent deployment, never cancel an in-progress one.
-concurrency:
-  group: editor
-  cancel-in-progress: false
-
 env:
   WASM_BINDGEN_VERSION: 0.2.128
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -69,6 +70,27 @@ jobs:
           name: e2e-results
           path: bootstrap/app/test-results
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: dist-demo
+          path: bootstrap/app/dist-demo
+          retention-days: 1
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # Allow one concurrent deployment, never cancel an in-progress one.
+    concurrency:
+      group: editor
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-demo
+          path: bootstrap/app/dist-demo
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::750984813907:role/jazyk-site-deploy

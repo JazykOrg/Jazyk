@@ -1438,7 +1438,9 @@ not for the project's authors; nothing here is a statement about the documents.
 ## Frontend
 
 The app lives in `bootstrap/app` and its built output (`bootstrap/app/dist`,
-committed) embeds into the binary. The stack: React, TypeScript, Vite, TanStack Query
+committed) embeds into the binary. CI rebuilds the app and fails when the committed
+output differs from the build, so a source change never ships the old GUI. The stack:
+React, TypeScript, Vite, TanStack Query
 for server state, zustand for the ephemeral client state (connection, jobs, the trace
 ring, the Developer toggle), CodeMirror 6 for the editor, react-router, react-markdown,
 Radix primitives for menus, dialogs, sheets, and tooltips, and cytoscape for the

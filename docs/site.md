@@ -90,6 +90,7 @@ and a folder on the computer openable through the File System Access API.
   with status 200 rather than a 404 page.
 - Deploying is `bootstrap/app/deploy.sh`: the hashed assets with a week of cache,
   `index.html` and the fixtures with none, then an invalidation. The GitHub Actions
-  workflow builds the wasm and the page and runs the script on every push to `master`
-  that touches `bootstrap/`. `bootstrap/app/hosting.sh` creates every piece above
-  and skips the ones that exist.
+  workflow builds the wasm and the page, redraws the demo diagrams, and runs the
+  browser tests on every push to `master` and every pull request that touches
+  `bootstrap/`; only a push to `master` then runs the script. `bootstrap/app/hosting.sh`
+  creates every piece above and skips the ones that exist.

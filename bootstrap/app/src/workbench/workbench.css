@@ -981,3 +981,31 @@ button.btn-on {
   display: inline-block;
   width: 14px;
 }
+
+/* Working (docs/frontends/gui.md#chat): the line at the end of a running
+   transcript, the session's row, and the running batch pulse the same way. */
+.chat-row.working pre {
+  color: var(--muted);
+  font-style: italic;
+}
+.chat-row.working,
+.chat-sess.working .dot,
+.plan-entry.working .plan-mark {
+  animation: chat-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chat-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-row.working,
+  .chat-sess.working .dot,
+  .plan-entry.working .plan-mark {
+    animation: none;
+  }
+}

@@ -288,6 +288,22 @@ manifest.
   the last session saw is exactly why the file exists. The ledger keeps them in their own
   `support` list, ownership never applies to them, and their content does not enter an
   entity's fact hash.
+- A dependency manifest pins each dependency to a version that resolved: a caret or
+  exact range on a version that exists (`^4.19.2`), never `latest`, `*`, or an empty
+  range. A generation of a Node deliverable once pinned every dependency to `latest`
+  with every test green; the tests judged the statements, and a manifest that installs
+  a different program on every install is a defect no statement names, so the
+  [contract](../compiler/goals/prompts/generate-contract.md) states it.
+- The package or module is named for the deliverable or the entity that owns it, never
+  for one part of it. The same generation named the package that held the backend
+  beside the frontend after the frontend alone.
+- One entry point per deliverable: the file the manifest's `main` or `scripts.start`
+  names. It is a support file, like the entry point a build runs, so a session that
+  needs it extends it rather than writing a second one beside it. A second file that
+  repeats the first's role (two servers, each requiring the framework and opening the
+  database) is a defect the session repairs by keeping one. The harness cannot tell a
+  duplicate from a module, so the rule lives in the contract and the benchmark case
+  counts the modules that are not tests.
 - The ledger's file lists are sets: the harness deduplicates them on write.
 - Every path a manifest or a binding names is deliverable-relative, and the record
   confines it before any side effect: an absolute path, or one that climbs out with
